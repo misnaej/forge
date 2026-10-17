@@ -2,10 +2,11 @@
 # Block dependency-installation commands (FOUNDATION §2: agents must not
 # install dependencies — it breaks carefully configured environments).
 #
-# Covers pip, conda (with mamba / micromamba), pipenv, poetry, uv (with
-# `uv tool run` / `uvx`) and pixi (install / uninstall / sync / lock /
-# update / add / remove), plus the `<mgr> run pip install ...` wrapper
-# forms that slip past a start-anchored `pip` match.
+# Covers the install, removal, sync, lock and update verbs of pip, conda
+# (with mamba / micromamba), pipenv, poetry and uv (with `uv tool run` /
+# `uvx`), every pixi verb outside its allowlist (below), and the
+# `<mgr> run pip install ...` wrapper forms that slip past a
+# start-anchored `pip` match.
 #
 # pixi is scoped differently from the other five, deliberately, and is the
 # only one governed by an ALLOWLIST. `pixi run` / `pixi shell` /
@@ -156,9 +157,6 @@ fi
 # the command: `pixi list && pixi lock` must block on the `lock` despite
 # the `list`.
 PIXI_ALLOWED_VERBS='run|shell|install|list|info|tree'
-# `pixi lock --check` only verifies the lock is current and writes nothing.
-# Plain `pixi lock` stays blocked: re-resolving the lock is the agent
-# choosing dependencies (FOUNDATION §2).
 
 if blocked pixi; then
     # The verb is the FIRST token after `pixi`, flags included. Skipping
@@ -184,8 +182,15 @@ match($0, PFX) {
     v = ""; first = 0
     for (i = 1; i <= n; i++) if (T[i] != "") { v = T[i]; first = i; break }
     if (v == "" || v == "--version" || v == "-V" || v == "--help" || v == "-h" || v == "help") next
+    # `pixi lock --check` only verifies the lock is current; plain
+    # `pixi lock` re-resolves it, which is the agent choosing dependencies
+    # (FOUNDATION §2). Only that exact form passes: a `--check` anywhere
+    # else in the segment may be a flag value, a here-string body or an
+    # argument after `--`, and other flags beside it are unclassified.
     if (v == "lock") {
-        for (i = first + 1; i <= n; i++) if (T[i] == "--check") next
+        rest = 0
+        for (i = first + 1; i <= n; i++) if (T[i] != "") rest++
+        if (rest == 1 && T[first + 1] == "--check") next
     }
     if (v !~ ("^(" OK ")$")) { print v; exit }
 }') || verb="(the pixi verb check could not run)"
@@ -200,11 +205,15 @@ fi
 # install`) doesn't trigger. (Accepted slip-through: `xargs pip install`.)
 # Removing a package changes the environment as surely as adding one, so
 # the removal verbs block too. mamba and micromamba are conda's drop-in
-# front ends and share its opt-out name.
-if blocked pip && invoked "${CMD_PFX}"'(python[0-9.]*[[:space:]]+-m[[:space:]]+)?pip[0-9.]*[[:space:]]+(install|uninstall)\b'; then
+# front ends and share its opt-out name. Dash flags may sit between the
+# manager and its verb (`pip -q install`, `pip --user uninstall`); a flag
+# that takes a separate value (`pip --cache-dir d install`) is an accepted
+# slip-through, like a wrapper option that takes one.
+MGR_FLAGS='([[:space:]]+-[^[:space:]]+)*'
+if blocked pip && invoked "${CMD_PFX}"'(python[0-9.]*[[:space:]]+-m[[:space:]]+)?pip[0-9.]*'"${MGR_FLAGS}"'[[:space:]]+(install|uninstall)\b'; then
     block
 fi
-if blocked conda && invoked "${CMD_PFX}"'(conda|mamba|micromamba)[[:space:]]+(install|uninstall|create|remove|update|upgrade|env[[:space:]]+(create|update|remove))\b'; then
+if blocked conda && invoked "${CMD_PFX}"'(conda|mamba|micromamba)'"${MGR_FLAGS}"'[[:space:]]+(install|uninstall|create|remove|update|upgrade|env[[:space:]]+(create|update|remove))\b'; then
     block
 fi
 if blocked pipenv && invoked "${CMD_PFX}"'pipenv[[:space:]]+(install|sync|lock|update|uninstall)\b'; then
@@ -215,8 +224,9 @@ if blocked poetry && invoked "${CMD_PFX}"'poetry[[:space:]]+(add|install|update|
 fi
 # `uv tool run` and its alias `uvx` fetch and execute an arbitrary package
 # from the index — the same shape as `pixi exec`, with no committed lock
-# behind it.
-if blocked uv && invoked "${CMD_PFX}"'uv[[:space:]]+(add|sync|lock|remove|(pip|tool|python)[[:space:]]+install|tool[[:space:]]+run)\b'; then
+# behind it. `uv pip` / `tool` / `python` install, uninstall, sync and
+# upgrade all change an environment or the global tool store.
+if blocked uv && invoked "${CMD_PFX}"'uv'"${MGR_FLAGS}"'[[:space:]]+(add|sync|lock|remove|(pip|tool|python)[[:space:]]+(install|uninstall|sync|upgrade)|tool[[:space:]]+run)\b'; then
     block
 fi
 if blocked uv && invoked "${CMD_PFX}"'uvx([[:space:]]|$)'; then

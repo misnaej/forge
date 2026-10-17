@@ -452,6 +452,11 @@ def test_install_deps_blocks_pixi_run_python_module_pip_install() -> None:
         "pixi exec ruff",
         "pixi lock --check && pixi lock",
         "pixi lock --checkx",
+        "pixi lock <<< --check",
+        "pixi lock -- --check",
+        "pixi lock --manifest-path --check",
+        "pixi lock --check --update",
+        "pixi lock --check x",
     ],
 )
 def test_install_deps_blocks_pixi_lock_project_and_exec_verbs(command: str) -> None:
@@ -530,6 +535,13 @@ def test_install_deps_blocks_wrapper_run_for_every_declared_manager(
         "uv pip install x",
         "uvx ruff",
         "uv tool run ruff",
+        "uv pip uninstall x",
+        "uv python uninstall 3.12",
+        "uv tool uninstall x",
+        "uv pip sync r.txt",
+        "uv tool upgrade x",
+        "uv -q add x",
+        "uv --quiet tool run x",
     ],
 )
 def test_install_deps_blocks_uv_install_and_ephemeral_run_forms(command: str) -> None:
@@ -557,10 +569,16 @@ def test_install_deps_blocks_uv_install_and_ephemeral_run_forms(command: str) ->
         "sudo pixi add x",
         "FOO=1 pixi add x",
         "sudo conda run pip install x",
-        # Intentional: the hook's forge-upgrade rule shares the command-prefix
-        # pattern, so a prefix does not walk past it either.
+        # The hook's forge-upgrade rule shares the command-prefix pattern, so
+        # a prefix does not walk past it either.
         "sudo forge-upgrade --apply",
         "pip  install x",
+        # Dash flags between the manager and the verb do not hide it.
+        "pip -q install x",
+        "pip --user install x",
+        "python -m pip -q install x",
+        "python -m pip --user uninstall x",
+        "conda -y install x",
     ],
 )
 def test_install_deps_blocks_prefixed_and_path_qualified_installs(
@@ -620,6 +638,12 @@ def test_install_deps_blocks_removal_verbs_and_mamba(command: str) -> None:
         "echo 'uv tool run ruff'",
         "ls /usr/bin/pip",
         "echo 'conda remove x'",
+        "pip -V",
+        "pip -q list",
+        "uv pip list",
+        "uv -q run pytest",
+        "conda -V",
+        "uv --help",
     ],
 )
 def test_install_deps_allows_read_only_and_quoted_mentions(command: str) -> None:
@@ -633,34 +657,31 @@ def test_install_deps_allows_read_only_and_quoted_mentions(command: str) -> None
     assert _run_hook(_INSTALL_DEPS, command) == 0
 
 
-def test_install_deps_mamba_shares_the_conda_opt_out_name(tmp_path: Path) -> None:
-    """`mamba` is governed by the `conda` entry of the manager list.
+@pytest.mark.parametrize(
+    ("command", "unrelated_list", "owning_list"),
+    [
+        pytest.param("mamba install x", '["pip"]', '["conda"]', id="mamba-is-conda"),
+        pytest.param("uvx ruff", '["pip"]', '["uv"]', id="uvx-is-uv"),
+    ],
+)
+def test_install_deps_alias_follows_its_manager_opt_out_name(
+    tmp_path: Path, command: str, unrelated_list: str, owning_list: str
+) -> None:
+    """`mamba` and `uvx` are governed by the `conda` and `uv` list entries.
 
-    Behavior test: a consumer opting out of `conda` must not silently keep
-    a mamba block, and one listing only `pip` must leave mamba alone.
+    Behavior test: a consumer opting out of the owning manager must not
+    silently keep its alias blocked, and a list naming only another
+    manager must leave the alias alone.
+
+    Args:
+        command: An invocation of the alias.
+        unrelated_list: A manager list that does not name the owning manager.
+        owning_list: A manager list that names the owning manager.
     """
-    pip_only = _project_env(tmp_path, '["pip"]')
-    assert (
-        _run_hook(_INSTALL_DEPS, "mamba install x", options=HookOptions(env=pip_only))
-        == 0
-    )
-    conda_only = _project_env(tmp_path, '["conda"]')
-    assert (
-        _run_hook(_INSTALL_DEPS, "mamba install x", options=HookOptions(env=conda_only))
-        == 2
-    )
-
-
-def test_install_deps_uvx_follows_the_uv_opt_out_name(tmp_path: Path) -> None:
-    """`uvx` is governed by the `uv` entry of the manager list.
-
-    Behavior test: a list naming only `pip` leaves `uvx` alone, while one
-    naming `uv` blocks it.
-    """
-    pip_only = _project_env(tmp_path, '["pip"]')
-    assert _run_hook(_INSTALL_DEPS, "uvx ruff", options=HookOptions(env=pip_only)) == 0
-    uv_only = _project_env(tmp_path, '["uv"]')
-    assert _run_hook(_INSTALL_DEPS, "uvx ruff", options=HookOptions(env=uv_only)) == 2
+    unrelated = _project_env(tmp_path, unrelated_list)
+    assert _run_hook(_INSTALL_DEPS, command, options=HookOptions(env=unrelated)) == 0
+    owning = _project_env(tmp_path, owning_list)
+    assert _run_hook(_INSTALL_DEPS, command, options=HookOptions(env=owning)) == 2
 
 
 def test_install_deps_blocks_pixi_lock_despite_leading_pip_list() -> None:
