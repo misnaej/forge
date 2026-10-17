@@ -40,8 +40,9 @@ guard_begin
 # command-positions view (git_anchor.sh), so `rm` quoted in prose never
 # fires while `bash -c "rm …"` and `eval rm …` do. A redirection word
 # before the verb (`2>&1 rm …`, GUARD_REDIR in git_anchor.sh) is read
-# past like a wrapper word.
-RM_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|command|env|exec|builtin|sudo|xargs|-[^[:space:]]+|'"${GUARD_REDIR}"')[[:space:]]+)*(rm|unlink)([[:space:]]|$)'
+# past like a wrapper word, and `rm` or a wrapper launched by path
+# (`/bin/rm`, `/usr/bin/sudo rm`) is still `rm` (GUARD_BINPATH).
+RM_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|'"${GUARD_BINPATH}"'(command|env|exec|builtin|sudo|xargs)|-[^[:space:]]+|'"${GUARD_REDIR}"')[[:space:]]+)*'"${GUARD_BINPATH}"'(rm|unlink)([[:space:]]|$)'
 if ! command_positions "$COMMAND" | grep -qE "${RM_ANCHOR}"; then
     exit 0
 fi
