@@ -15,8 +15,8 @@ Releases without that lane are additive or internal and need nothing
 from you.
 
 **Format.** Per release: an optional **⚠️ Upgrade notes** lane, then
-change groups by conventional-commit type (**Features / Fixes / Refactor
-/ Tooling / Docs / Chore**).
+change groups by changelog fragment type (**Features / Changes / Fixes
+/ Removed / Docs**).
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 

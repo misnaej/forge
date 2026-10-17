@@ -45,7 +45,7 @@ the switch; `forge-upgrade` and `forge-doctor` now detect the mismatch.
 name: ci
 on:
   push:
-    branches: [main, dev]
+    branches: [main]
   pull_request:
     # ready_for_review added to the default set so a draft PR (the /pr
     # skill's early-visibility escape hatch) gets its first CI run the

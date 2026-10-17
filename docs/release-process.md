@@ -85,6 +85,8 @@ Forge runs `[tool.forge.changelog].mode = "fragments"`:
   line is `bump: patch|minor|major` — a bump *level* only; a concrete
   version number anywhere in a fragment (filename or body) is
   gate-rejected. Versions are written exactly once, by the assembler.
+  What one-fragment-per-PR means for bullets, type, bump and slug is in
+  [`consumer-release.md`](consumer-release.md) "Fragments mode".
 - **`CHANGELOG.md` is output, never input.** The assembler collates the
   pending fragments into one curated entry and stages their deletion;
   nothing reads `CHANGELOG.md` as a version or bump signal.

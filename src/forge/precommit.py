@@ -2403,7 +2403,9 @@ def _changelog_version_skip_gate(repo_root: Path) -> StepResult | None:
                 "PR is stacked on an unmerged PR, the parent's fragment is "
                 "not yours: leave it and retarget or wait for the parent to "
                 "merge. Otherwise move your own bullets into a single "
-                "<slug>.<type>.md (strongest bump level wins)."
+                "<slug>.<type>.md (strongest bump level wins; the slug "
+                "names the change, not the category — `fixes.fixed.md` "
+                "collides with another PR's)."
             )
         return StepResult(
             name=name,

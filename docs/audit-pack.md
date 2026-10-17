@@ -260,8 +260,8 @@ duplication is guaranteed to survive.
 
 ### `forge-audit-all`
 
-Runs every sub-script in order (`suppressions`, `dup`, `deps`, `orphans`,
-`data`, `claims`) and writes a single summary log at
+Runs every sub-audit in the order `SUB_AUDITS` (`src/forge/audit/all.py`)
+lists them and writes a single summary log at
 `code_health/audit_summary.log`. Exit code is the maximum of the
 sub-scripts' exit codes. `--only <name> [<name>...]` runs a subset.
 
@@ -290,8 +290,8 @@ describe (`forge-precommit --freshness` compares it with the current
 tree), says the scope the audit ran at (`full`, or `changed` — only the
 files changed against the base; a log without the line is of unknown
 scope), and carries the finding count; the body lists findings ordered by
-severity. Format is stable across the suite — agents parse all six logs
-with one schema.
+severity. Format is stable across the suite — agents parse every audit
+log with one schema.
 
 ```text
 # produced-at: tree=<40-hex tree sha> head=<short sha>[+dirty] 2026-05-15T07:32:37+00:00
