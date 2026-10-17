@@ -8561,6 +8561,14 @@ def test_main_skips_the_panel_for_partial_ci_and_wip_runs(
     assert not (panel_repo / ".plan" / "CONTINUATION.md").exists()
 
 
+def test_main_skip_run_leaves_continuation_panel_unwritten(
+    panel_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``--skip`` run omits steps, so it is not a commit attempt: no panel."""
+    _drive_main(monkeypatch, lambda **_kw: [], "--skip", "pip_audit")
+    assert not (panel_repo / ".plan" / "CONTINUATION.md").exists()
+
+
 # ---------------------------------------------------------------------------
 # Untracked files: some steps skip them, and the run always says which
 # ---------------------------------------------------------------------------

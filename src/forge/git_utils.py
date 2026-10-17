@@ -2251,9 +2251,9 @@ def _ls_files_z(cwd: Path | None, *args: str) -> list[str]:
     r"""Return ``git ls-files -z [args]`` paths exactly as they are named on disk.
 
     Without ``-z`` git C-quotes any name holding a non-ASCII or control
-    byte (``"caf\\303\\251.py"``), so such files dropped out of every
+    byte (``"caf\303\251.py"``), so such files dropped out of every
     file scope. NUL-separated output is never quoted. A name that is not
-    valid UTF-8 keeps its odd bytes as ``\\xNN`` escapes: still listed,
+    valid UTF-8 keeps its odd bytes as ``\xNN`` escapes: still listed,
     and printable by every summary and log, where a surrogate-escaped
     name would crash the first text write. Not :func:`_run_git`: its
     ``strip`` would eat a name's leading or trailing blanks.

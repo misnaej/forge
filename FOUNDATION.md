@@ -853,7 +853,7 @@ right now, and why.
    the costliest stretch of work is exactly the one that otherwise leaves
    no trace), by `forge-pr-wrapup post`, and by a `PreCompact` hook just
    before compaction. It is not written in CI, by a
-   `forge-precommit --only` run, by a `FORGE_WIP_SYNC` checkpoint (none
+   `forge-precommit --only` or `--skip` run, by a `FORGE_WIP_SYNC` checkpoint (none
    is a real attempt), or when the note is not gitignored — that last
    refusal is logged, never silent.
 2. **The written section** — everything outside the panel, written by the

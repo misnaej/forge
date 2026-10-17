@@ -3898,8 +3898,8 @@ def main() -> int:
         emit(f"{RED}forge-precommit: {exc}{NC}")
         return 1
     finally:
-        # A partial (--only) run is not a commit attempt.
-        if not only:
+        # A partial (--only or --skip) run is not a commit attempt.
+        if not (only or skip):
             _write_continuation_panel(outcome or "interrupted")
 
     blocking_failures = [r for r in results if not r.passed and not r.non_blocking]
