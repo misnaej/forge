@@ -481,6 +481,9 @@ def test_install_deps_blocks_pixi_lock_project_and_exec_verbs(command: str) -> N
         "conda run python -m pip install x",
         "conda run -n base pip install x",
         "pixi run --locked pip install x",
+        "pixi run poetry add x",
+        "pixi run --locked pipenv install",
+        "conda run poetry -q install",
     ],
 )
 def test_install_deps_blocks_wrapper_run_with_non_adjacent_install(
@@ -579,6 +582,9 @@ def test_install_deps_blocks_uv_install_and_ephemeral_run_forms(command: str) ->
         "python -m pip -q install x",
         "python -m pip --user uninstall x",
         "conda -y install x",
+        "poetry -q add x",
+        "poetry --no-ansi install",
+        "pipenv --quiet install",
     ],
 )
 def test_install_deps_blocks_prefixed_and_path_qualified_installs(
@@ -656,6 +662,10 @@ def test_install_deps_blocks_removal_verbs_and_mamba(command: str) -> None:
         "pixi run uv pip list",
         "pixi run --locked uv run pytest",
         "conda run -n b python -m pytest",
+        "poetry --version",
+        "poetry -q show",
+        "pipenv --venv",
+        "pixi run poetry show",
     ],
 )
 def test_install_deps_allows_read_only_and_quoted_mentions(command: str) -> None:

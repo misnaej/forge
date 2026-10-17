@@ -145,7 +145,7 @@ invoked() {
 # slip-through, like a wrapper option that takes one.
 MGR_FLAGS='([[:space:]]+-[^[:space:]]+)*'
 if invoked "${CMD_PFX}"'(conda|mamba|micromamba|pipenv|uv|poetry|pixi)[[:space:]]+run\b' &&
-    echo "$WORDS" | grep -qE "${CMD_PFX}"'(conda|mamba|micromamba|pipenv|uv|poetry|pixi)[[:space:]]+run\b[^;&|]*\b((python[0-9.]*[[:space:]]+-m[[:space:]]+)?pip[0-9.]*'"${MGR_FLAGS}"'[[:space:]]+(install|uninstall)|(conda|mamba|micromamba)'"${MGR_FLAGS}"'[[:space:]]+(install|uninstall|create|remove|update|upgrade|env[[:space:]]+(create|update|remove))|uv'"${MGR_FLAGS}"'[[:space:]]+(add|sync|lock|remove|(pip|tool|python)[[:space:]]+(install|uninstall|sync|upgrade)))\b' &&
+    echo "$WORDS" | grep -qE "${CMD_PFX}"'(conda|mamba|micromamba|pipenv|uv|poetry|pixi)[[:space:]]+run\b[^;&|]*\b((python[0-9.]*[[:space:]]+-m[[:space:]]+)?pip[0-9.]*'"${MGR_FLAGS}"'[[:space:]]+(install|uninstall)|(conda|mamba|micromamba)'"${MGR_FLAGS}"'[[:space:]]+(install|uninstall|create|remove|update|upgrade|env[[:space:]]+(create|update|remove))|uv'"${MGR_FLAGS}"'[[:space:]]+(add|sync|lock|remove|(pip|tool|python)[[:space:]]+(install|uninstall|sync|upgrade))|pipenv'"${MGR_FLAGS}"'[[:space:]]+(install|sync|lock|update|uninstall)|poetry'"${MGR_FLAGS}"'[[:space:]]+(add|install|update|lock|remove))\b' &&
     { blocked pip || blocked conda || blocked pipenv || blocked uv || blocked poetry || blocked pixi; }; then
     block
 fi
@@ -217,10 +217,10 @@ fi
 if blocked conda && invoked "${CMD_PFX}"'(conda|mamba|micromamba)'"${MGR_FLAGS}"'[[:space:]]+(install|uninstall|create|remove|update|upgrade|env[[:space:]]+(create|update|remove))\b'; then
     block
 fi
-if blocked pipenv && invoked "${CMD_PFX}"'pipenv[[:space:]]+(install|sync|lock|update|uninstall)\b'; then
+if blocked pipenv && invoked "${CMD_PFX}"'pipenv'"${MGR_FLAGS}"'[[:space:]]+(install|sync|lock|update|uninstall)\b'; then
     block
 fi
-if blocked poetry && invoked "${CMD_PFX}"'poetry[[:space:]]+(add|install|update|lock|remove)\b'; then
+if blocked poetry && invoked "${CMD_PFX}"'poetry'"${MGR_FLAGS}"'[[:space:]]+(add|install|update|lock|remove)\b'; then
     block
 fi
 # `uv tool run` and its alias `uvx` fetch and execute an arbitrary package
