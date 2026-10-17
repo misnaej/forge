@@ -513,8 +513,10 @@ advisories with the suggested pin; they never edit pins.
 - **Verification starts itself.** The moment a branch's implementation
   commits are done, run the finalization reviews automatically — they are
   read-only and need no permission. Stopping at "ready to finalize?" with
-  verification unrun is stopping too early; only genuinely outward-facing or
-  destructive steps pause for the user.
+  verification unrun is stopping too early. Within this flow, commit,
+  push and opening the PR do not pause once verification is done;
+  merging, force operations, and cutting a release or publishing a
+  package do — and every §2 bypass keeps its own confirmation.
 - **The wrap-up never waits on CI.** Post as soon as the checks are done and
   state plainly when CI has not completed — an unqualified wrap-up reads as
   "all green", a false claim.
@@ -572,8 +574,11 @@ advisories with the suggested pin; they never edit pins.
     SHAs; the
     refresh is a re-run of `/pr <N>` (delta mode) by whoever picks the
     work up, whose comment's newer `verified-at:` clears the signal by
-    itself. `fresh: null` (no `gh`, no wrap-up yet) → skip that poll,
-    never alert. **The monitor never posts the refresh** — same
+    itself. `fresh: null` (no `gh`, no wrap-up yet) means unknown *for
+    now*: skip this one poll, never alert, and check again next cycle —
+    the signal arms itself once a wrap-up appears. A monitor spawned at
+    finalization starts before the wrap-up is posted, so its first poll
+    is expected to be null. **The monitor never posts the refresh** — same
     read-only contract as the conflict signal. The same verdict has a
     second, at-the-cause surface: the `warn_stale_wrapup` Claude Code
     hook runs it after every `git push` from an agent session, so the

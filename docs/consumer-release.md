@@ -53,7 +53,9 @@ in spirit; the deliberate divergences are listed at the end.
   the heading with or without it.
 - Under each release heading, group entries as `### Added` /
   `### Changed` / `### Fixed` / `### Removed` — create a group when its
-  first entry appears; omit empty groups.
+  first entry appears; omit empty groups. (This is the hand-written
+  convention; fragments mode, below, assembles its own groups from the
+  fragment types instead.)
 - **No `## Unreleased` section.** The top heading always names the
   version **about to be released** — the CHANGELOG *declares* the next
   version, and the tag `forge-release` cuts *confirms* it. This is the
@@ -216,6 +218,24 @@ Consequences, by design:
   occur: fragments carry no version to strand.
 - The trade-off: the changelog is no longer release-ready at all times —
   which is exactly why the mode is opt-in.
+
+**One fragment per PR.** The fragment gate refuses a branch that adds
+more than one, so writing a fragment means deciding these:
+
+- **Several changes go in as several bullets in the one file.** The
+  bullet, not the file, is the unit of a changelog entry.
+- **The type names the PR as a whole.** It lives in the filename, so a
+  PR that fixes one thing and removes another files under the type that
+  best describes the whole PR; the minority bullets are grouped under it.
+- **The strongest `bump:` wins** — merging two would-be fragments keeps
+  the higher level.
+- **The slug must be distinctive.** It is the only thing keeping two
+  open PRs from adding the same path, so name the change, not the
+  category: `auto-tag-race-fix.fixed.md`, never `fixes.fixed.md`.
+- **Requiring a fragment at all is a separate step.** The fragment gate
+  (`changelog_version`) only refuses too many or malformed fragments;
+  "a user-facing change must add one" is `changelog_updated`, which is
+  opt-in.
 
 **Releasing in fragments mode** — the version is assembler-owned and
 tag-aware: a pending fragment already inside a `v*` tag's tree was
