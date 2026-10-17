@@ -513,10 +513,10 @@ advisories with the suggested pin; they never edit pins.
 - **Verification starts itself.** The moment a branch's implementation
   commits are done, run the finalization reviews automatically — they are
   read-only and need no permission. Stopping at "ready to finalize?" with
-  verification unrun is stopping too early. Commit, push and opening the
-  PR do not pause once verification is done; only merging, force
-  operations (both §2), and cutting a release or publishing a package
-  pause for the user.
+  verification unrun is stopping too early. Within this flow, commit,
+  push and opening the PR do not pause once verification is done;
+  merging, force operations, and cutting a release or publishing a
+  package do — and every §2 bypass keeps its own confirmation.
 - **The wrap-up never waits on CI.** Post as soon as the checks are done and
   state plainly when CI has not completed — an unqualified wrap-up reads as
   "all green", a false claim.

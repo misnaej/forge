@@ -53,7 +53,9 @@ in spirit; the deliberate divergences are listed at the end.
   the heading with or without it.
 - Under each release heading, group entries as `### Added` /
   `### Changed` / `### Fixed` / `### Removed` — create a group when its
-  first entry appears; omit empty groups.
+  first entry appears; omit empty groups. (This is the hand-written
+  convention; fragments mode, below, assembles its own groups from the
+  fragment types instead.)
 - **No `## Unreleased` section.** The top heading always names the
   version **about to be released** — the CHANGELOG *declares* the next
   version, and the tag `forge-release` cuts *confirms* it. This is the
