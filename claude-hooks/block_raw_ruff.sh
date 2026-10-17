@@ -18,6 +18,7 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
+guard_begin
 
 # Anchor: a real `ruff check` / `ruff format` invocation, matched on the
 # shared command-positions view (git_anchor.sh): quoted bodies (PR
@@ -51,7 +52,9 @@ source "$ANCHOR_LIB"
 # - the shared help exemption reads any `-h` token on the invocation, so a
 #   wrapper flag spelled `-h` (`nice -h ruff check`) counts as a help
 #   request and is allowed.
-CMDPOS=$(command_positions "$COMMAND")
+# Redirections are blanked (--no-redir), so one among a runner's
+# arguments (`uvx 2>&1 ruff check`) cannot end the runner's scan.
+CMDPOS=$(command_positions --no-redir "$COMMAND")
 # The prefix is taken from the shared anchor, not copied: a copy drifts
 # the moment the lib learns a new wrapper word, and this hook would
 # silently miss it. If the lib's shape changes so the cut no longer

@@ -24,6 +24,7 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
+guard_begin
 
 # `gh pr merge` at a real invocation position (see GH_ANCHOR in
 # git_anchor.sh for the exact shape). A plain space ahead of `gh` with
@@ -42,7 +43,7 @@ fi
 # Direct API merges that achieve the same effect: a real `gh api` call,
 # whose (often quoted) endpoint is read from the --words view.
 if echo "$CMDPOS" | grep -qE "${GH_ANCHOR}api\b" \
-    && command_positions --words "$COMMAND" | grep -qE "gh[[:space:]]+${GH_OPTS}api[^|]*pulls/[0-9]+/merge"; then
+    && command_positions --words --no-redir "$COMMAND" | grep -qE "gh[[:space:]]+${GH_OPTS}api[^|]*pulls/[0-9]+/merge"; then
     echo "BLOCKED: agents must not merge PRs via the API. Have the user run: ! $COMMAND" >&2
     exit 2
 fi

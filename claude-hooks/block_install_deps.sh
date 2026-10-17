@@ -60,6 +60,7 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
+guard_begin
 
 # Resolve the opt-out config. Prints ALL, NONE, or a comma-list of
 # managers. Defaults to ALL when pyproject / python / the key is absent —
@@ -99,14 +100,20 @@ block() {
     exit 2
 }
 
-CMDPOS=$(command_positions "$COMMAND")
-WORDS=$(command_positions --words "$COMMAND")
+# Both views blank redirections (--no-redir), so one between a manager
+# and its verb (`pip 2>&1 install`, `pip <in install`) reads as blank
+# space and the `&` of `2>&1` never splits an invocation.
+CMDPOS=$(command_positions --no-redir "$COMMAND")
+WORDS=$(command_positions --words --no-redir "$COMMAND")
 # The command boundary every rule below starts from (see the header), then
 # any run of the keywords that start a command inside a compound and of
-# redirection words (`2>&1 pip install`, GUARD_REDIR in git_anchor.sh).
+# redirection words (GUARD_REDIR in git_anchor.sh). The views are blanked,
+# so a leading redirection arrives as whitespace after the boundary; the
+# GUARD_REDIR term is left for the heredoc and here-string openers
+# (`<<<x pip install`), which the blanking keeps.
 # It accepts no `VAR=val` or wrapper word (`sudo`, `env`) yet, so
 # `sudo pip install x` is still unmatched — tracked as its own issue (#752).
-CMD_PFX='(^|[;&|(){}!]\s*)((then|else|elif|do)[[:space:]]+|'"${GUARD_REDIR}"'[[:space:]]+)*'
+CMD_PFX='(^|[;&|(){}!])\s*((then|else|elif|do)[[:space:]]+|'"${GUARD_REDIR}"'[[:space:]]+)*'
 # invoked <regex> — a real invocation matching <regex> that is not only a
 # help request.
 invoked() {
@@ -146,34 +153,38 @@ fi
 PIXI_ALLOWED_VERBS='run|shell|install|list|info|tree'
 
 if blocked pixi; then
-    while IFS= read -r seg; do
-        echo "$seg" | grep -qE '^[[:space:]]*pixi([[:space:]]|$)' || continue
-        # The verb is the FIRST token after `pixi`, flags included. Skipping
-        # dash-prefixed tokens looked friendlier but failed open: a flag
-        # that takes a value put that value in the verb slot, so
-        # `pixi --manifest-path run lock` read as the allowed `run` and the
-        # real verb was never inspected. Anything that is not immediately
-        # an allowed verb blocks; `pixi -q list` costs one `!`.
-        rest="${seg#*pixi}"
-        verb=$(printf '%s' "$rest" | tr -s '[:space:]' '\n' | grep -v '^$' | head -1)
-        # Terminal forms that dispatch no subcommand at all.
-        case "$verb" in
-        "" | --version | -V | --help | -h | help) continue ;;
-        esac
-        if ! printf '%s' "$verb" | grep -qE "^($PIXI_ALLOWED_VERBS)$"; then
-            echo "BLOCKED: \`pixi $verb\` is not on the agent allowlist ($(printf '%s' "$PIXI_ALLOWED_VERBS" | tr '|' ' ')). Unrecognised pixi verbs block by default — most of pixi's surface writes pixi.toml, pixi.lock, or the global tool store. If this one only reads, tell the user to run it themselves with: ! $COMMAND" >&2
-            exit 2
-        fi
-    # Redirections are blanked before the split, so the `&` of
-    # `2>&1 pixi add x` cannot cut `pixi` away from its segment start.
-    done < <(guard_unredir "$CMDPOS" | tr ';&|(){}!' '\n')
+    # The verb is the FIRST token after `pixi`, flags included. Skipping
+    # dash-prefixed tokens looked friendlier but failed open: a flag
+    # that takes a value put that value in the verb slot, so
+    # `pixi --manifest-path run lock` read as the allowed `run` and the
+    # real verb was never inspected. Anything that is not immediately
+    # an allowed verb blocks; `pixi -q list` costs one `!`. Terminal forms
+    # (`--version`, `-V`, `--help`, `-h`, `help`) dispatch no subcommand.
+    #
+    # CMDPOS has its redirections blanked, so the `&` of `2>&1 pixi add x`
+    # cannot cut `pixi` away from its segment start. Every segment is
+    # judged in ONE awk pass: per-segment processes let a few hundred
+    # harmless `pixi run x;` segments run this hook past its timeout, and a
+    # timed-out hook does not block. Prints the first disallowed verb.
+    verb=$(printf '%s\n' "$CMDPOS" | tr ';&|(){}!' '\n' | LC_ALL=C awk -v OK="$PIXI_ALLOWED_VERBS" '
+/^[[:space:]]*pixi([[:space:]]|$)/ {
+    n = split(substr($0, index($0, "pixi") + 4), T, /[[:space:]]+/)
+    v = ""
+    for (i = 1; i <= n; i++) if (T[i] != "") { v = T[i]; break }
+    if (v == "" || v == "--version" || v == "-V" || v == "--help" || v == "-h" || v == "help") next
+    if (v !~ ("^(" OK ")$")) { print v; exit }
+}') || verb="(the pixi verb check could not run)"
+    if [ -n "$verb" ]; then
+        echo "BLOCKED: \`pixi $verb\` is not on the agent allowlist ($(printf '%s' "$PIXI_ALLOWED_VERBS" | tr '|' ' ')). Unrecognised pixi verbs block by default — most of pixi's surface writes pixi.toml, pixi.lock, or the global tool store. If this one only reads, tell the user to run it themselves with: ! $COMMAND" >&2
+        exit 2
+    fi
 fi
 
 # pip / conda — anchored to command start or after a shell separator so a
 # substring inside a quoted body (e.g. an issue body mentioning `pip
 # install`) doesn't trigger. (Accepted slip-through: `xargs pip install`.)
 if blocked pip || blocked conda; then
-    if invoked "${CMD_PFX}"'((python[0-9.]*[[:space:]]+-m[[:space:]]+)?pip[0-9.]*|conda) (install|create|env (create|update)|update)'; then
+    if invoked "${CMD_PFX}"'((python[0-9.]*[[:space:]]+-m[[:space:]]+)?pip[0-9.]*|conda)[[:space:]]+(install|create|env[[:space:]]+(create|update)|update)'; then
         block
     fi
 fi

@@ -72,11 +72,9 @@
 # reads as two words there and the payload is not unwrapped in that view;
 # likewise `> 'a b' git push` reads as a redirection then the word `b` in
 # the --words view, so a guard reading flags there loses that invocation),
-# a redirection among the ARGUMENTS of a guarded command, where a guard
-# reads it as an argument (`git push 2>&1 -f`, issue #751), a redirection
-# between a valued git option and its value (`git -C 2>&1 <dir> push`: the
-# anchor takes the redirection for the value, and `<dir>` then ends the
-# option run), a command word hidden by escapes inside `$'…'`
+# a redirection between a valued git option and its value
+# (`git -C 2>&1 <dir> push`: the anchor takes the redirection for the
+# value, and `<dir>` then ends the option run), a command word hidden by escapes inside `$'…'`
 # (`$'\x67it' push`), a quoted command word holding a variable or a blank
 # (`"$G" push`, `'git push'` as one word), a quoted global-option value
 # containing a blank (`git -C 'a b' push -f`, issue #754), and one
@@ -91,7 +89,9 @@
 # characters or one level of `(…)`. The shell accepts one wherever a word
 # of the command may stand — before the command name (`2>&1 git push`)
 # and between a tool and its subcommand (`git 2>&1 push`) — so every
-# anchor below reads past it in those places. It holds no `/` (a hook
+# anchor below reads past it in those places. Among a command's
+# ARGUMENTS a guard instead reads a copy with redirections blanked
+# (`command_positions --no-redir`, guard_unredir). It holds no `/` (a hook
 # splices GIT_ANCHOR into a `s/…//` sed expression) and no backslash
 # (guard_git_invocations hands the anchor to awk -v, which would eat it);
 # a test pins both. It also never spells the letters `git` — hence `[0-9]`,
@@ -210,7 +210,7 @@ function blanks(n) { while (length(SP) < n) SP = SP SP; return substr(SP, 1, n) 
 # ends there). `<<`, `<<-`, `<<<` and the emitted `<<_` are left alone:
 # they are heredoc / here-string openers, which the wrapper regexes read.
 # Same length, so offsets into t stay valid for the chain-base move.
-function unredir(t,   n, k, a, r, c, d, f, j, e) {
+function unredir(t,   n, k, a, r, c, d, f, j, e, m) {
     n = length(t); a = 1; r = ""; k = 1
     while (k <= n) {
         c = substr(t, k, 1)
@@ -228,7 +228,27 @@ function unredir(t,   n, k, a, r, c, d, f, j, e) {
         if (c == "&") e = (substr(t, k + 2, 1) == ">") ? k + 3 : k + 2
         else if (d != "" && index((c == ">") ? ">|&" : ">&", d)) e = k + 2
         while (e <= n && index(" \t", substr(t, e, 1))) e++
-        while (e <= n && !index(" \t\n;&|()<>", substr(t, e, 1))) e++
+        # The target, as GUARD_REDIR reads it: plain characters and
+        # unnested `(…)` groups, so `>$(mktemp)` is blanked whole rather
+        # than leaving `(mktemp)` to read as a subshell before the command.
+        # A group is a command bash runs (`>$(git clean -fd)`, `<(…)`), so
+        # each one blanked is recorded in G[1..NG] when REC is set (only
+        # guard_unredir sets it; calls from the scanner record nothing):
+        # guard_unredir prints them back on lines of their own, where
+        # guards still see them.
+        while (e <= n) {
+            if (substr(t, e, 1) == "(") {
+                m = index(substr(t, e + 1), ")")
+                if (m > 0 && index(substr(t, e + 1, m - 1), "(") == 0) {
+                    if (REC) G[++NG] = substr(t, e, m + 1)
+                    e += m + 1
+                    continue
+                }
+                break
+            }
+            if (index(" \t\n;&|()<>", substr(t, e, 1))) break
+            e++
+        }
         r = r substr(t, a, f - a) blanks(e - f); a = e; k = e
     }
     return r substr(t, a)
@@ -627,30 +647,118 @@ BEGIN {
 END { printf "%s\n", scan(src, 1, 0) }
 '
 
-# command_positions [--words] <command>
-# Prints the command-positions view of <command> (see above); with
-# --words, quoted spans keep their words.
-command_positions() {
-    local keep=0 view
-    if [ "$1" = "--words" ]; then
-        keep=1
-        shift
+# guard_begin — every blocking guard calls it right after sourcing this
+# lib. A PreToolUse hook that runs past its timeout (5 s, plugin.json) is
+# killed WITHOUT blocking — the command runs — so a guard must never be
+# slow, and must fail closed when it is:
+#   - a command longer than GUARD_MAX_CHARS is refused outright: a guard
+#     reads the whole command, so its cost grows with the length, and the
+#     command is not echoed back (it would flood the message);
+#   - a watchdog stops the guard at GUARD_DEADLINE_S and blocks. Bash runs
+#     a trap only once its foreground child exits, so the watchdog first
+#     terminates the guard's child processes, then the guard itself. Its
+#     output goes to /dev/null: a background job holding the hook's stdout
+#     would make Claude Code wait for it after every command.
+GUARD_MAX_CHARS=131072
+GUARD_DEADLINE_S=4
+# _guard_kill_tree <pid> <spare pid> — signal (TERM, or GUARD_KILL_SIGNAL)
+# every descendant of <pid>, deepest first, except <spare pid> and its
+# descendants. Needs `pgrep`: without it no child is signalled, and the
+# guard then stops only once its running child finishes on its own.
+_guard_kill_tree() {
+    local c
+    for c in $(pgrep -P "$1" 2> /dev/null); do
+        [ "$c" = "$2" ] && continue
+        _guard_kill_tree "$c" "$2"
+        kill "-${GUARD_KILL_SIGNAL:-TERM}" "$c" 2> /dev/null || true
+    done
+}
+guard_begin() {
+    local hook_pid=$$
+    if [ "${#COMMAND}" -gt "$GUARD_MAX_CHARS" ]; then
+        echo "BLOCKED: this command is ${#COMMAND} characters, over the $GUARD_MAX_CHARS the guards can judge within their timeout — and a guard that runs out of time lets a command through, so oversized commands are refused. Write large content with the Write tool, split the command, or run it yourself with \`!\`." >&2
+        exit 2
     fi
+    trap 'echo "BLOCKED: this guard could not finish judging the command within ${GUARD_DEADLINE_S}s, and a guard that runs out of time would let it through, so it is refused. Simplify or split the command, or run it yourself with \`!\`." >&2; exit 2' TERM
+    (
+        # The watchdog must reach its final kill whatever fails before it:
+        # a guard's `set -e` would end it at the first failed `kill`.
+        set +e
+        # Told to stop (the guard finished in time), it ends its own sleep,
+        # so a normal exit costs one signal and leaves nothing running.
+        trap 'kill "$sleeper" 2> /dev/null; exit 0' TERM
+        sleep "$GUARD_DEADLINE_S" &
+        sleeper=$!
+        wait "$sleeper"
+        trap - TERM
+        # The guard FIRST, its children second: killed first, a pipeline's
+        # upstream stage would hand the downstream one an early EOF, the
+        # guard would judge the truncated input as harmless and reach its
+        # own `exit 0` before the TERM landed. Bash holds the trap until
+        # the foreground child exits, which the tree kill then forces; a
+        # child ignoring TERM gets KILL after a short grace.
+        kill -TERM "$hook_pid" 2> /dev/null
+        self="$(sh -c 'echo $PPID')"
+        _guard_kill_tree "$hook_pid" "$self"
+        sleep 0.5
+        kill -0 "$hook_pid" 2> /dev/null && GUARD_KILL_SIGNAL=KILL _guard_kill_tree "$hook_pid" "$self"
+    ) < /dev/null > /dev/null 2>&1 &
+    GUARD_WATCHDOG_PID=$!
+    # `|| true`: under a guard's `set -e`, a failing command in an EXIT trap
+    # replaces the exit status — a watchdog already gone would turn a
+    # block (2) into 1, which allows.
+    trap 'kill -TERM "$GUARD_WATCHDOG_PID" 2> /dev/null || true' EXIT
+}
+
+# command_positions [--words] [--no-redir] <command>
+# Prints the command-positions view of <command> (see above); with
+# --words, quoted spans keep their words. With --no-redir, every
+# redirection is blanked as guard_unredir does: a guard that reads a
+# command's ARGUMENTS up to the next `;` `&` `|` matches this copy, so
+# the `&` of `2>&1` or the `|` of `>|` cannot end the scan before a flag
+# that follows. A command inside a blanked target (`>$(…)`, `<(…)`)
+# follows as an extra line, so a --no-redir view can have more lines than
+# the default one: read it as a set of segments, never pair its lines
+# with another view's. Guards that look for a redirection target keep the
+# default view.
+command_positions() {
+    local keep=0 noredir=0 view
+    while :; do
+        case "$1" in
+            --words) keep=1 ;;
+            --no-redir) noredir=1 ;;
+            *) break ;;
+        esac
+        shift
+    done
     view=$(printf '%s\n' "$1" | LC_ALL=C awk -v KEEP="$keep" "$_GUARD_CMDPOS_AWK" 2>/dev/null) || view="$1"
+    if [ "$noredir" = 1 ]; then
+        view=$(guard_unredir "$view")
+    fi
     printf '%s\n' "$view"
 }
 
 # guard_unredir <text>
 # Prints <text> with every redirection blanked (unredir, above): same
 # length, so a guard that splits a view at `;` `&` `|` can do it on this
-# copy without the `&` of `2>&1` cutting a command in two. If awk fails
-# the text is returned unchanged.
+# copy without the `&` of `2>&1` cutting a command in two. A target's
+# `(…)` group holds a command bash runs, so each one blanked is printed
+# again, redirections blanked, on a line of its own after the text: a
+# guard reading these lines still sees `git clean -fd` in
+# `echo >$(git clean -fd)`. If awk fails the text is returned unchanged.
 guard_unredir() {
     local out
     out=$(printf '%s\n' "$1" | LC_ALL=C awk "${_GUARD_UNREDIR_AWK}"'
-BEGIN { SP = " " }
+BEGIN { SP = " "; REC = 1 }
 { src = (NR == 1) ? $0 : src "\n" $0 }
-END { printf "%s\n", unredir(src) }' 2>/dev/null) || out="$1"
+END {
+    NG = 0
+    r = unredir(src)
+    n = NG
+    for (i = 1; i <= n; i++) H[i] = G[i]
+    printf "%s\n", r
+    for (i = 1; i <= n; i++) printf "%s\n", unredir(H[i])
+}' 2>/dev/null) || out="$1"
     printf '%s\n' "$out"
 }
 
@@ -666,7 +774,9 @@ END { printf "%s\n", unredir(src) }' 2>/dev/null) || out="$1"
 # substitution is reported on its own line as well. <verb> is a literal
 # subcommand; `git checkout-index` is not a `checkout`.
 guard_git_invocations() {
-    printf '%s\n' "$1" | LC_ALL=C awk -v ANCHOR="$GIT_ANCHOR" -v VERB="$2" '
+    # Read past redirections: blanked here, not by callers, so every view
+    # a caller compares (words against positions) is blanked the same way.
+    guard_unredir "$1" | LC_ALL=C awk -v ANCHOR="$GIT_ANCHOR" -v VERB="$2" '
     {
         line = $0
         while (match(line, ANCHOR VERB)) {
@@ -693,7 +803,8 @@ guard_git_invocations() {
 # guard_help_only <command-positions view> <verb regex>
 # True when <verb regex> matches at least one invocation in the view and
 # EVERY such invocation asks for help: a `--help` / `-h` token in its own
-# segment (up to the next `;` `&` `|` `)` or newline), outside quotes
+# segment (up to the next `;` `&` `|` `)` or newline — a redirection is
+# blanked first, so the `&` of `2>&1` is not a segment end), outside quotes
 # (quoted spans are already blanked in the view; the scanner deliberately
 # keeps a quoted `-h` / `--help` blank even though it decodes other quoted
 # plain words, so `git commit "-h"` is not a help request here — the
@@ -702,24 +813,28 @@ guard_git_invocations() {
 # another dash-option (`-m -h` hands `-h` to `-m` as its value, and the
 # command runs). `… ; echo --help` therefore exempts nothing. Help is
 # the only central exemption — dry-run forms stay per-hook.
+#
+# Every invocation is judged in one awk pass. A process per invocation let
+# a long chain of harmless invocations run a guard past its hook timeout —
+# and a timed-out hook allows the command.
 guard_help_only() {
-    local view="$1" verb_re="$2" inv tok prev ok found=0
-    while IFS= read -r inv; do
-        [ -n "$inv" ] || continue
-        found=1
-        inv="${inv%% -- *}"
-        ok=0
-        prev=""
-        while IFS= read -r tok; do
-            [ -n "$tok" ] || continue
-            case "$tok" in
-                --help | -h)
-                    case "$prev" in -*) ;; *) ok=1 ;; esac
-                    ;;
-            esac
-            prev="$tok"
-        done <<< "$(printf '%s\n' "$inv" | tr -s ' \t' '\n\n')"
-        [ "$ok" = 1 ] || return 1
-    done <<< "$(printf '%s\n' "$view" | grep -oE -- "${verb_re}[^;&|)]*" || true)"
-    [ "$found" = 1 ]
+    local out
+    out=$(guard_unredir "$1" | grep -oE -- "${2}[^;&|)]*" | LC_ALL=C awk '
+{
+    found = 1
+    s = $0
+    i = index(s, " -- ")
+    if (i) s = substr(s, 1, i - 1)
+    n = split(s, T, /[ \t]+/)
+    ok = 0; prev = ""
+    for (k = 1; k <= n; k++) {
+        t = T[k]
+        if (t == "") continue
+        if ((t == "--help" || t == "-h") && substr(prev, 1, 1) != "-") ok = 1
+        prev = t
+    }
+    if (!ok) { print "no"; exit }
+}
+END { if (!found) print "none" }') || return 1
+    [ -z "$out" ]
 }

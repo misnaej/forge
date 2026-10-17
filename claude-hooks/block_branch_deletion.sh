@@ -46,6 +46,7 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
+guard_begin
 
 # Cheap bail: no real git push or gh api at all. Found on the shared
 # command-positions view, so a quoted mention never counts and
@@ -61,7 +62,8 @@ fi
 # `||` before `|` so a double-pipe collapses to one break. Segments come
 # from the --words view: a separator inside a quoted argument never splits
 # an invocation, and a quoted refspec or endpoint is still read.
-SEGMENTS=$(command_positions --words "$COMMAND" | sed -E 's/(&&|\|\||;|\|)/\n/g')
+# Redirections are blanked, so the `|` of `>|` splits nothing.
+SEGMENTS=$(command_positions --words --no-redir "$COMMAND" | sed -E 's/(&&|\|\||;|\|)/\n/g')
 
 REPO_ROOT=$(echo "$INPUT" | jq -r '.cwd // empty')
 if [ -z "$REPO_ROOT" ] || ! echo "$REPO_ROOT" | grep -qE '^/'; then
@@ -89,47 +91,88 @@ print(sec.get("base_branch", "main"))
 PY
 )
 
-# Trailing word-boundary so "main" does not match "main-thing"/"mainframe".
-bound='([^A-Za-z0-9._/-]|$)'
-blocked=""
-reason=""
-while IFS= read -r seg; do
-    [ -z "$seg" ] && continue
+# A push segment: `git push` anywhere in it, or a git invocation the shared
+# anchor recognises — which reads past git's global options, so neither
+# `git -C x push` nor `git --git-dir=y push` hides the push.
+PUSH_RE="git[[:space:]]+push|${GIT_ANCHOR}push([[:space:]]|\$)"
+GH_API_RE="gh[[:space:]]+${GH_OPTS}api"
 
-    if echo "$seg" | grep -qE 'git[[:space:]]+push'; then
-        # Blanket-dangerous push modes: delete remote refs without naming
-        # a branch, so they threaten the base branch regardless of target.
-        if echo "$seg" | grep -qE '(--mirror|--prune)([[:space:]=]|$)'; then
-            blocked="protected"
-            reason="git push --mirror/--prune can delete remote branches"
-            break
-        fi
-        # Named deletion forms targeting a protected branch.
-        for b in $protected; do
-            if echo "$seg" | grep -qE \
-                "((--delete[[:space:]=]+|[[:space:]]-d[[:space:]]+)(refs/heads/)?${b}${bound}|[[:space:]]:(refs/heads/)?${b}${bound})"; then
-                blocked="$b"
-                reason="git push deletes '${b}'"
-                break
-            fi
-        done
-        [ -n "$blocked" ] && break
-    fi
-
-    if echo "$seg" | grep -qE "gh[[:space:]]+${GH_OPTS}api" \
-        && echo "$seg" | grep -qiE '(-X|--method)[[:space:]=]+DELETE'; then
-        for b in $protected; do
-            if echo "$seg" | grep -qE "(refs/heads/|/branches/)${b}${bound}"; then
-                blocked="$b"
-                reason="gh api DELETE of '${b}'"
-                break
-            fi
-        done
-        [ -n "$blocked" ] && break
-    fi
-done <<EOF
-$SEGMENTS
-EOF
+# Every segment is judged in ONE awk pass. A loop that started processes
+# per segment let a few hundred harmless segments (`git push origin x;`
+# repeated) run this hook past its timeout, and a timed-out hook does not
+# block. Prints `<branch><TAB><reason>` for the first deletion found.
+#
+# A push's words are read the way git reads them: long options by any
+# prefix git accepts (`--del`, `--mir`, `--pru`), `--opt=value`, short
+# clusters (`-fd` deletes), the value of `-o`/`--repo`/`--receive-pack`/
+# `--exec`/`--push-option`, and `--` ending the options. Then:
+#   - `--mirror` / `--prune`: can delete any remote ref — blocked;
+#   - delete mode (`--delete`/`-d`): ANY positional word naming a
+#     protected branch blocks — `--delete origin main` names the remote
+#     first;
+#   - a refspec with an empty source (`:main`, `+:main`) deletes its
+#     destination.
+# A branch is compared after dropping a leading `+`, `refs/heads/` or
+# `heads/`, so `main` never matches `main-thing`.
+verdict=$(printf '%s\n' "$SEGMENTS" | LC_ALL=C awk \
+    -v PUSHRE="$PUSH_RE" -v GHRE="$GH_API_RE" -v PROTECTED="$protected" '
+function norm(w) {
+    sub(/^\+/, "", w); sub(/^refs\/heads\//, "", w); sub(/^heads\//, "", w)
+    return w
+}
+function isprot(w,   i) {
+    w = norm(w)
+    for (i = 1; i <= NP; i++) if (w != "" && w == P[i]) return P[i]
+    return ""
+}
+function hit(b, why) { printf "%s\t%s\n", b, why; found = 1; exit }
+BEGIN { NP = split(PROTECTED, P, /[[:space:]]+/); found = 0 }
+{
+    # A subshell or substitution bracket is not part of a word: `$(git
+    # push origin :main)` names `:main`, not `:main)`.
+    seg = $0
+    gsub(/[()]/, " ", seg)
+    if (match(seg, PUSHRE)) {
+        n = split(substr(seg, RSTART + RLENGTH), T, /[[:space:]]+/)
+        del = 0; mir = 0; endopt = 0; skip = 0; np = 0
+        delete POS
+        for (i = 1; i <= n; i++) {
+            t = T[i]
+            if (t == "") continue
+            if (skip) { skip = 0; continue }
+            if (!endopt && t == "--") { endopt = 1; continue }
+            if (!endopt && substr(t, 1, 2) == "--") {
+                name = t; val = ""; hasval = 0
+                if (index(t, "=")) { name = substr(t, 1, index(t, "=") - 1); val = substr(t, index(t, "=") + 1); hasval = 1 }
+                if (name ~ /^--(de|del|dele|delet|delete)$/) { del = 1; if (val != "") POS[++np] = val; continue }
+                if (name ~ /^--(mi|mir|mirr|mirro|mirror|pru|prun|prune)$/) { mir = 1; continue }
+                if (!hasval && name ~ /^--(repo|receive-pack|exec|push-option)$/) skip = 1
+                continue
+            }
+            if (!endopt && t ~ /^-[^-]/) {
+                if (t ~ /d/) del = 1
+                if (t ~ /o$/) skip = 1
+                continue
+            }
+            POS[++np] = t
+        }
+        if (mir) hit("protected", "git push --mirror/--prune can delete remote branches")
+        for (i = 1; i <= np; i++) {
+            p = POS[i]
+            if (del && (b = isprot(p)) != "") hit(b, "git push deletes \x27" b "\x27")
+            c = index(p, ":")
+            if (c && (substr(p, 1, c - 1) == "" || substr(p, 1, c - 1) == "+") && (b = isprot(substr(p, c + 1))) != "")
+                hit(b, "git push deletes \x27" b "\x27")
+        }
+    }
+    if (match(seg, GHRE) && toupper(seg) ~ /(-X|--METHOD)[[:space:]=]*DELETE/) {
+        for (i = 1; i <= NP; i++)
+            if (P[i] != "" && seg ~ ("(refs/heads/|/branches/)" P[i] "/?([^A-Za-z0-9._/-]|$)"))
+                hit(P[i], "gh api DELETE of \x27" P[i] "\x27")
+    }
+}') || verdict="protected	the deletion check could not run"
+blocked="${verdict%%	*}"
+reason="${verdict#*	}"
 
 if [ -n "$blocked" ]; then
     echo "BLOCKED: refusing to delete a protected remote branch (${reason}). Deleting the base branch is irreversible and bypasses server-side rulesets when run with a privileged account (an agent runs with your credentials). If this is genuinely intended, run it yourself: ! ${COMMAND}" >&2

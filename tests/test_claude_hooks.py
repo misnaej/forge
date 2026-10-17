@@ -1307,6 +1307,122 @@ _REDIRECTION_BLOCKED = [
         "2>&1 gh api -X DELETE repos/o/n/git/refs/heads/main",
         id="before_gh_api",
     ),
+    pytest.param(_FORCE_PUSH, "git push 2>&1 --force", id="fd_dup_before_flag"),
+    pytest.param(
+        _FORCE_PUSH, "git push &>/dev/null --force", id="both_streams_before_flag"
+    ),
+    pytest.param(
+        _FORCE_PUSH, "git push 2>&1 origin +main", id="fd_dup_before_plus_refspec"
+    ),
+    pytest.param(
+        "block_git_destructive.sh",
+        "git checkout 2>&1 -f",
+        id="destructive_flag_after_redir",
+    ),
+    pytest.param(
+        "block_git_destructive.sh",
+        "git restore 2>&1 .",
+        id="destructive_restore_dot_after_redir",
+    ),
+    pytest.param(
+        "block_git_destructive.sh",
+        "git switch 2>&1 -f main",
+        id="destructive_switch_force",
+    ),
+    pytest.param(_NO_VERIFY, "git commit 2>&1 -n -m x", id="no_verify_short_flag"),
+    pytest.param(
+        _PR_MERGE,
+        "gh api >|x repos/o/r/pulls/1/merge -X PUT",
+        id="gh_api_merge_after_redir",
+    ),
+    pytest.param(
+        "block_branch_deletion.sh",
+        "git push origin >|x --delete main",
+        id="branch_delete_after_redir",
+    ),
+    pytest.param(_INSTALL_DEPS, "pip 2>&1 install x", id="pip_redir_before_verb"),
+    pytest.param(_INSTALL_DEPS, "pip <in install x", id="pip_input_redir_before_verb"),
+    pytest.param(_INSTALL_DEPS, "uv 2>&1 add x", id="uv_redir_before_verb"),
+    pytest.param(_INSTALL_DEPS, "conda 2>&1 install x", id="conda_redir_before_verb"),
+    pytest.param(_INSTALL_DEPS, "uv run 2>&1 pip install x", id="uv_run_redir_pip"),
+    pytest.param(
+        "block_raw_git.sh",
+        "python 2>&1 -c 'import os; os.system(\"git commit -m x\")'",
+        id="interpreter_redir_before_c",
+    ),
+    pytest.param(
+        "block_raw_git.sh",
+        "python <in -c 'import os; os.system(\"git commit -m x\")'",
+        id="interpreter_input_redir_before_c",
+    ),
+    pytest.param(
+        "block_raw_git.sh",
+        'python <<EOF\nimport os; os.system("git commit -m x")\nEOF',
+        id="interpreter_heredoc_still_blocked",
+    ),
+    pytest.param(
+        "block_raw_ruff.sh", "uv run 2>&1 ruff check .", id="ruff_uv_run_redir"
+    ),
+    pytest.param(
+        _FORCE_PUSH, 'git push "2>&1" --force', id="quoted_redirection_is_an_arg"
+    ),
+    pytest.param(
+        _PROTECTED, "git push 2>&1 origin main", id="protected_push_after_redir"
+    ),
+    pytest.param(
+        _PROTECTED,
+        "git push origin 2>&1 HEAD:main",
+        id="protected_refspec_after_redir",
+    ),
+    # A command inside a redirection target's (...) group is run by bash, so
+    # blanking the target must not erase it. Behavior tests: each pins a
+    # guard bypass found in review.
+    pytest.param(
+        "block_git_destructive.sh",
+        "echo >$(git clean -fd)",
+        id="clean_in_target_substitution",
+    ),
+    pytest.param(
+        "block_git_destructive.sh",
+        "cat <(git clean -fd)",
+        id="clean_in_process_substitution",
+    ),
+    pytest.param(
+        _FORCE_PUSH,
+        "echo >`git push --force`",
+        id="force_push_in_backtick_target",
+    ),
+    pytest.param(
+        _FORCE_PUSH,
+        "cat <(git push 2>&1 -f)",
+        id="force_push_redir_in_process_substitution",
+    ),
+    pytest.param(
+        _NO_VERIFY,
+        "echo >$(git commit -n -m x)",
+        id="no_verify_in_target_substitution",
+    ),
+    pytest.param(
+        "block_branch_deletion.sh",
+        "echo >$(git push origin :main)",
+        id="branch_delete_in_target_substitution",
+    ),
+    pytest.param(
+        _PROTECTED,
+        "echo >$(git push origin HEAD:main)",
+        id="protected_in_target_substitution",
+    ),
+    pytest.param(
+        _INSTALL_DEPS,
+        "echo x 2>$(pip install x)",
+        id="install_in_stderr_target_substitution",
+    ),
+    pytest.param(_INSTALL_DEPS, "cat <(pixi add x)", id="pixi_in_process_substitution"),
+    pytest.param(
+        "block_raw_ruff.sh",
+        "echo >$(ruff check .)",
+        id="ruff_in_target_substitution",
+    ),
 ]
 
 
@@ -1314,11 +1430,18 @@ _REDIRECTION_BLOCKED = [
 def test_guards_read_past_a_redirection_word(hook: str, command: str) -> None:
     """A redirection before a command, or between a tool and its subcommand, blocks.
 
+    The protected-branch rows run as the commit agent, as in the allowed
+    table, so the current-branch exemption leaves only the destination
+    check under test.
+
     Args:
         hook: Hook script under test.
         command: A command the hook refuses without the redirection.
     """
-    assert _run_hook(hook, command) == 2
+    options = (
+        HookOptions(agent_type="forge:git-commit-push") if hook == _PROTECTED else None
+    )
+    assert _run_hook(hook, command, options=options) == 2
 
 
 _REDIRECTION_ALLOWED = [
@@ -1327,6 +1450,21 @@ _REDIRECTION_ALLOWED = [
     pytest.param(_FORCE_PUSH, "2>&1 git push origin feat", id="plain_push_force"),
     pytest.param(_PROTECTED, "2>&1 git push origin feat", id="plain_push_protected"),
     pytest.param("block_raw_git.sh", "2>&1 git push --help", id="help_request"),
+    pytest.param(
+        "block_git_destructive.sh", "git stash 2>&1 list", id="stash_list_after_redir"
+    ),
+    pytest.param(
+        "block_raw_git.sh",
+        "git revert HEAD 2>&1 --no-commit",
+        id="sequencer_no_commit_after_redir",
+    ),
+    pytest.param("block_raw_git.sh", "git push 2>&1 --help", id="help_after_redir"),
+    pytest.param(
+        "block_git_destructive.sh",
+        "git restore --staged 2>&1 .",
+        id="restore_staged_dot_after_redir",
+    ),
+    pytest.param(_INSTALL_DEPS, "echo 2>&1 pip install x", id="pip_is_an_argument"),
 ]
 
 
@@ -1351,6 +1489,96 @@ def test_guards_do_not_take_a_redirection_target_for_a_command(
         HookOptions(agent_type="forge:git-commit-push") if hook == _PROTECTED else None
     )
     assert _run_hook(hook, command, options=options) == 0
+
+
+# --- Branch deletion behind git global options ---------------------------------
+# Behavior tests: a global option (`-C`, `--git-dir`, `-c`) between `git` and
+# `push` must not hide the push from the branch-deletion guard. Each blocked
+# row pins a bypass; each allowed row pins that the guard still judges the
+# refspec, not the mere presence of an option.
+
+_GIT_GLOBAL_OPTION_DELETE_BLOCKED = [
+    pytest.param("git -C x push origin --delete main", id="git_C_delete"),
+    pytest.param("git --git-dir=y push origin :main", id="git_dir_colon_delete"),
+    pytest.param("git -c a=b push origin :main", id="git_c_config_delete"),
+    pytest.param("sudo git -C x push origin --delete main", id="sudo_git_C_delete"),
+]
+
+
+@pytest.mark.parametrize("command", _GIT_GLOBAL_OPTION_DELETE_BLOCKED)
+def test_branch_deletion_guard_reads_past_git_global_options(command: str) -> None:
+    """A protected-branch delete is refused past any git global option before push.
+
+    Args:
+        command: The shell command handed to the branch-deletion hook.
+    """
+    assert _run_hook("block_branch_deletion.sh", command) == 2
+
+
+_GIT_GLOBAL_OPTION_PUSH_ALLOWED = [
+    pytest.param(
+        "git -C x push origin --delete feature", id="git_C_delete_unprotected"
+    ),
+    pytest.param("git -C x push origin main", id="git_C_plain_push"),
+]
+
+
+@pytest.mark.parametrize("command", _GIT_GLOBAL_OPTION_PUSH_ALLOWED)
+def test_branch_deletion_guard_allows_non_protected_pushes_with_global_options(
+    command: str,
+) -> None:
+    """Deleting a non-protected branch, or a plain push, stays allowed with `-C`.
+
+    Args:
+        command: The shell command handed to the branch-deletion hook.
+    """
+    assert _run_hook("block_branch_deletion.sh", command) == 0
+
+
+# Behavior tests: the branch-deletion guard reads push words the way git does
+# (prefix-abbreviated long options, short clusters, empty-source refspecs,
+# any positional naming the protected branch). Each row pins a distinct
+# bypass or a distinct over-block, so none duplicates another.
+_BRANCH_DELETION_VERDICTS = [
+    pytest.param("git push --delete origin main", 2, id="delete-long"),
+    pytest.param("git push -d origin main", 2, id="delete-short"),
+    pytest.param("git push --delete origin feature main", 2, id="delete-second-ref"),
+    pytest.param("git push origin +:main", 2, id="plus-empty-source"),
+    pytest.param("git push origin :heads/main", 2, id="colon-heads"),
+    pytest.param("git push origin -fd main", 2, id="cluster-fd"),
+    pytest.param("git push --del origin main", 2, id="delete-prefix"),
+    pytest.param("git push --mir origin", 2, id="mirror-prefix"),
+    pytest.param("git push --pru origin", 2, id="prune-prefix"),
+    pytest.param(
+        "gh api -XDELETE repos/o/r/git/refs/heads/main", 2, id="gh-attached-X"
+    ),
+    pytest.param(
+        "gh api -X DELETE repos/o/r/git/refs/heads/main/", 2, id="gh-trailing-slash"
+    ),
+    pytest.param("(cd x && git push -d origin main)", 2, id="subshell-delete"),
+    pytest.param("git push origin --delete main-thing", 0, id="delete-lookalike"),
+    pytest.param("git push origin feature:main", 0, id="feature-to-main-not-delete"),
+    pytest.param("git push -o x origin main", 0, id="push-option-value"),
+    pytest.param("git push origin -- --delete", 0, id="after-double-dash"),
+    pytest.param("git push --dry-run origin feature", 0, id="dry-run-feature"),
+    pytest.param(
+        "gh api -X DELETE repos/o/r/git/refs/heads/main-old", 0, id="gh-main-old"
+    ),
+    pytest.param(
+        "git -c push.default=simple branch -d main", 0, id="local-branch-delete"
+    ),
+]
+
+
+@pytest.mark.parametrize(("command", "expected"), _BRANCH_DELETION_VERDICTS)
+def test_branch_deletion_guard_verdict(command: str, expected: int) -> None:
+    """The branch-deletion guard blocks protected-branch deletes and nothing else.
+
+    Args:
+        command: The shell command handed to the branch-deletion hook.
+        expected: ``2`` when it must be blocked, ``0`` when allowed.
+    """
+    assert _run_hook("block_branch_deletion.sh", command) == expected
 
 
 # --- Path-qualified command names ---------------------------------------------
@@ -2202,6 +2430,16 @@ def test_destructive_restore_modified_tracked_blocked(restore_repo: Path) -> Non
     (restore_repo / "f").write_text("edited\n")
     assert _restore_exit(restore_repo, "git checkout -- f") == 2
     assert _restore_exit(restore_repo, "git restore f") == 2
+
+
+def test_destructive_restore_after_redirection_judges_the_path(
+    restore_repo: Path,
+) -> None:
+    """A redirection before the path changes nothing about what the restore destroys."""
+    (restore_repo / "f").write_text("edited\n")
+    assert _restore_exit(restore_repo, "git checkout 2>&1 -- f") == 2
+    assert _restore_exit(restore_repo, "git restore 2>&1 f") == 2
+    assert _restore_exit(restore_repo, "git checkout 2>&1 -- h") == 0
 
 
 def test_destructive_restore_untracked_in_the_way_blocked(restore_repo: Path) -> None:
@@ -6239,6 +6477,65 @@ def _scanner_view(command: str, *, words: bool) -> str:
     ).stdout
 
 
+@pytest.mark.parametrize(
+    "command",
+    ["git push 2>&1 --force", ">$(mktemp) git push -f"],
+)
+def test_command_positions_no_redir_blanks_redirections(command: str) -> None:
+    """With ``--no-redir`` no redirection operator survives, nor its substitution.
+
+    Args:
+        command: The shell command to scan, one parametrized case per call.
+    """
+    script = 'source "$1/git_anchor.sh"; command_positions --no-redir "$2"'
+    view = subprocess.run(
+        ["bash", "-c", script, "_", str(_HOOKS_DIR), command],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    # A blanked target's (...) group is printed back on its own later line
+    # (bash runs it), so only the command line itself is checked.
+    first_line = view.splitlines()[0]
+    assert ">" not in first_line
+    assert "mktemp" not in first_line
+
+
+def test_command_positions_no_redir_prints_a_blanked_target_group_back() -> None:
+    """A blanked target's ``(...)`` group is a command bash runs, so it re-emerges.
+
+    The first line is the blanked command line; the group follows on its
+    own line so the guards still see the command inside it.
+    """
+    script = 'source "$1/git_anchor.sh"; command_positions --words --no-redir "$2"'
+    view = subprocess.run(
+        ["bash", "-c", script, "_", str(_HOOKS_DIR), "echo >$(git clean -fd)"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    lines = view.splitlines()
+    assert ">" not in lines[0]
+    assert "git clean" not in lines[0]
+    assert "(git clean -fd)" in lines[1:]
+
+
+def test_command_positions_no_redir_keeps_a_quoted_redirection_inert() -> None:
+    """A quoted ``2>&1`` is an argument, so the scanner leaves its inert form.
+
+    Only the ``--words`` view keeps quoted words; the default view blanks
+    the whole span to ``_``.
+    """
+    script = 'source "$1/git_anchor.sh"; command_positions --words --no-redir "$2"'
+    view = subprocess.run(
+        ["bash", "-c", script, "_", str(_HOOKS_DIR), 'echo "2>&1" x'],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert "2__1" in view
+
+
 def _compute_snapshot() -> dict[str, dict[str, str]]:
     """Scan the whole corpus in both views.
 
@@ -6387,6 +6684,271 @@ def test_scanner_stays_fast_on_a_50kb_single_line_command(command: str) -> None:
 
     assert verdict == 2
     assert elapsed < 10
+
+
+def test_install_guard_blocks_within_timeout_past_thousands_of_redirection_groups() -> (
+    None
+):
+    """Thousands of `>(...)` groups cannot push the install guard past its timeout.
+
+    Plugin hooks run under a 5 s timeout and a timed-out hook ALLOWS the
+    command, so a guard that is merely slow is a guard that fails open: an
+    attacker (or a generated command) pads the line with redirection groups,
+    each printed back as its own segment, until a per-segment subprocess loop
+    overruns the timeout and `pip install` slips through. The bound is far
+    inside the timeout yet loose enough for a loaded runner; the filtered
+    implementation takes a fraction of a second.
+    """
+    command = "echo " + ">(a) " * 3000 + "; pip install x"
+
+    start = time.monotonic()
+    verdict = _run_hook(_INSTALL_DEPS, command)
+    elapsed = time.monotonic() - start
+
+    assert verdict == 2
+    assert elapsed < 2.0
+
+
+@pytest.mark.parametrize(
+    ("hook", "command"),
+    [
+        pytest.param(
+            "block_branch_deletion.sh",
+            "git push origin --delete main",
+            id="branch_deletion",
+        ),
+        pytest.param(_FORCE_PUSH, "git push --force", id="force_push"),
+        pytest.param(_DESTRUCTIVE, "git reset --hard", id="git_destructive"),
+        pytest.param(_INSTALL_DEPS, "pip install x", id="install_deps"),
+        pytest.param(
+            _RAW_GIT,
+            "python -c 'import os; os.system(\"git commit -m x\")'",
+            id="raw_git",
+        ),
+        pytest.param(_PR_MERGE, "gh pr merge 5", id="pr_merge"),
+        pytest.param(_NO_VERIFY, "git commit --no-verify -m x", id="no_verify"),
+        pytest.param(_REBASE, "git rebase main", id="git_rebase"),
+    ],
+)
+def test_guard_blocks_within_timeout_past_thousands_of_command_segments(
+    hook: str, command: str
+) -> None:
+    """Thousands of leading `a;` segments cannot push a guard past its timeout.
+
+    Plugin hooks run under a 5 s timeout and a timed-out hook ALLOWS the
+    command, so a guard that is merely slow fails open: padding the line with
+    trivial segments until a per-segment cost overruns the timeout lets the
+    guarded command through. The bound is far inside the timeout yet loose
+    enough for a loaded runner.
+
+    Args:
+        hook: The guard hook script under test.
+        command: A command that guard blocks, placed after the padding.
+    """
+    start = time.monotonic()
+    verdict = _run_hook(hook, "a;" * 3000 + command)
+    elapsed = time.monotonic() - start
+
+    assert verdict == 2
+    assert elapsed < 2.0
+
+
+@pytest.mark.parametrize(
+    ("hook", "padding", "command", "agent_type"),
+    [
+        pytest.param(
+            "block_branch_deletion.sh",
+            "git push origin feature",
+            "git push origin :main",
+            "",
+            id="branch_deletion",
+        ),
+        pytest.param(
+            _PROTECTED,
+            "git push origin feature",
+            "git push origin HEAD:main",
+            "forge:git-commit-push",
+            id="protected_branches",
+        ),
+        pytest.param(
+            _INSTALL_DEPS, "pixi run --locked x", "pixi add y", "", id="install_deps"
+        ),
+        pytest.param(
+            _RAW_GIT, "git revert --abort", "git revert HEAD", "", id="raw_git"
+        ),
+        pytest.param(
+            _DESTRUCTIVE,
+            "git checkout feature",
+            "git checkout -f",
+            "",
+            id="git_destructive",
+        ),
+    ],
+)
+def test_guard_blocks_within_timeout_past_thousands_of_matching_segments(
+    hook: str, padding: str, command: str, agent_type: str
+) -> None:
+    """Thousands of guard-shaped harmless segments cannot time a guard out.
+
+    Padding made of segments the guard must actually parse (not trivial `a;`)
+    is the real attack shape: a timed-out hook ALLOWS the command, so the
+    per-segment cost on matching segments must stay linear and cheap.
+
+    Args:
+        hook: The guard hook script under test.
+        padding: A harmless segment the guard recognises and allows.
+        command: The blocked command placed after the padding.
+        agent_type: Agent identity to run the hook as, or empty.
+    """
+    start = time.monotonic()
+    verdict = _run_hook(
+        hook,
+        (padding + ";") * 3000 + command,
+        options=HookOptions(agent_type=agent_type),
+    )
+    elapsed = time.monotonic() - start
+
+    assert verdict == 2
+    assert elapsed < 2.0
+
+
+# Every blocking Bash guard refuses an oversized command (a timed-out hook
+# allows). Discovered from the directory, not from the call, so a new guard
+# that forgets the refusal fails here. The exemptions guard file edits
+# (Edit/Write), not Bash commands. block_fixer_recon.sh only acts for the
+# fixer agent, so it is run as that agent.
+_SIZE_EXEMPT_HOOKS = {"block_forge_docs_edits.sh", "block_protected_files.sh"}
+_SIZE_GUARDED_HOOKS = sorted(
+    path.name
+    for path in _HOOKS_DIR.glob("block_*.sh")
+    if path.name not in _SIZE_EXEMPT_HOOKS
+)
+
+
+@pytest.mark.parametrize("hook", _SIZE_GUARDED_HOOKS)
+def test_blocking_hook_refuses_an_oversized_command(hook: str) -> None:
+    """A 140000-char harmless command is refused outright by every size-guarded hook.
+
+    Args:
+        hook: A block_* hook that calls the shared oversize refusal.
+    """
+    agent = "forge:precommit-fixer" if hook == "block_fixer_recon.sh" else ""
+    verdict = _run_hook(hook, "a" * 140000, options=HookOptions(agent_type=agent))
+    assert verdict == 2
+
+
+def test_force_push_allows_a_large_command_under_the_limit() -> None:
+    """A 100000-char harmless command is below the limit and passes."""
+    assert _run_hook(_FORCE_PUSH, "a" * 100000) == 0
+
+
+def test_guard_that_runs_out_of_time_blocks() -> None:
+    """Behavior: a guard still judging at its deadline blocks instead of timing out.
+
+    A hook killed by its 5 s timeout allows the command. Thousands of
+    minimal inline-interpreter invocations under the size limit keep the
+    raw-git guard busy past its own deadline; the watchdog must turn that
+    into a block (exit 2) before the hook timeout. Long by design: the
+    deadline is the thing under test.
+    """
+    command = "bun -e a;" * 14300 + " python -c 'git commit'"
+    start = time.monotonic()
+    verdict = _run_hook("block_raw_git.sh", command)
+    elapsed = time.monotonic() - start
+    assert verdict == 2
+    assert elapsed < 5.0
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param("sleep 30 | cat", id="pipeline"),
+        pytest.param("x=$(sleep 30 | cat)", id="pipeline-in-substitution"),
+        pytest.param("(trap '' TERM; sleep 30)", id="child-ignoring-term"),
+    ],
+)
+def test_watchdog_blocks_whatever_the_guard_is_waiting_on(
+    tmp_path: Path, body: str
+) -> None:
+    """Behavior: a guard past its deadline exits 2 even mid-pipeline.
+
+    Killing a pipeline's upstream stage first would hand the downstream
+    stage an early EOF and let the guard reach its own `exit 0`; the
+    watchdog must signal the guard before its children, and KILL a child
+    that ignores TERM. The deadline is shortened to 1 s for the test.
+
+    Args:
+        body: Shell the guard is busy running when the deadline passes.
+    """
+    script = tmp_path / "guard.sh"
+    script.write_text(
+        "set -e\nCOMMAND=x\n"
+        f"source {shlex.quote(str(_HOOKS_DIR / 'git_anchor.sh'))}\n"
+        f"GUARD_DEADLINE_S=1\nguard_begin\n{body}\nexit 0\n"
+    )
+    start = time.monotonic()
+    proc = subprocess.run(["bash", str(script)], capture_output=True, check=False)
+    assert proc.returncode == 2
+    assert time.monotonic() - start < 4.0
+
+
+@pytest.mark.parametrize(
+    "spelling",
+    [
+        pytest.param("git restore {abs}/f", id="restore"),
+        pytest.param("git checkout -- {abs}/f", id="checkout"),
+    ],
+)
+def test_destructive_restore_blocks_an_absolute_path_to_modified_work(
+    restore_repo: Path, spelling: str
+) -> None:
+    """Behavior: an absolute pathspec cannot hide a modified file.
+
+    Git accepts an absolute path inside the work tree; the guard does not
+    resolve it against the repository, so it is unknowable and blocks.
+
+    Args:
+        spelling: The restore command, with ``{abs}`` for the repo root.
+    """
+    (restore_repo / "f").write_text("edited\n")
+    assert _restore_exit(restore_repo, spelling.format(abs=restore_repo)) == 2
+
+
+def test_destructive_restore_blocks_a_path_holding_the_record_separator(
+    restore_repo: Path,
+) -> None:
+    """Behavior: a modified file whose name holds byte 0x01 is not split away.
+
+    The guard's status reader uses 0x01 as its record separator, so a name
+    holding it cannot be matched reliably and the directory is unknowable.
+    """
+    name = "c\x01x"
+    (restore_repo / name).write_text("one\n")
+    _git(restore_repo, "add", "--", name)
+    _git(restore_repo, "commit", "-q", "-m", "odd name")
+    (restore_repo / name).write_text("edited\n")
+    assert _restore_exit(restore_repo, f"git restore {name}") == 2
+
+
+@pytest.mark.parametrize(
+    ("count", "expected"),
+    [pytest.param(33, 2, id="over-directory-cap"), pytest.param(32, 0, id="at-cap")],
+)
+def test_destructive_restore_caps_distinct_directories(
+    tmp_path: Path, count: int, expected: int
+) -> None:
+    """Judging live state per directory is capped: past the cap the guard blocks.
+
+    Under the cap the directories are non-repositories (nothing to lose), so
+    the restores are allowed.
+
+    Args:
+        count: Number of distinct directories named.
+        expected: Expected hook exit code.
+    """
+    command = " ; ".join(f"git -C d{i} checkout -- x" for i in range(count))
+    verdict = _run_hook(_DESTRUCTIVE, command, options=HookOptions(cwd=tmp_path))
+    assert verdict == expected
 
 
 # One shape per class the scanner once read past: an option after `-c`, a
