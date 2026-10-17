@@ -139,8 +139,13 @@ invoked() {
 # the second being the very form this hook's own --locked advisory recommends.
 # `python -m pip` is covered here too; the bare-pip rule below understands that
 # form but anchors to a command start, which `run` has already consumed.
+# Dash flags may sit between a manager and its verb (`pip -q install`,
+# `pip --user uninstall`) here and in every rule below; a flag that takes
+# a separate value (`pip --cache-dir d install`) is an accepted
+# slip-through, like a wrapper option that takes one.
+MGR_FLAGS='([[:space:]]+-[^[:space:]]+)*'
 if invoked "${CMD_PFX}"'(conda|mamba|micromamba|pipenv|uv|poetry|pixi)[[:space:]]+run\b' &&
-    echo "$WORDS" | grep -qE "${CMD_PFX}"'(conda|mamba|micromamba|pipenv|uv|poetry|pixi)[[:space:]]+run\b[^;&|]*\b((python[0-9.]*[[:space:]]+-m[[:space:]]+)?pip[0-9.]*[[:space:]]+(install|uninstall)|(conda|mamba|micromamba)[[:space:]]+(install|uninstall|create|remove|update|upgrade|env[[:space:]]+(create|update|remove)))\b' &&
+    echo "$WORDS" | grep -qE "${CMD_PFX}"'(conda|mamba|micromamba|pipenv|uv|poetry|pixi)[[:space:]]+run\b[^;&|]*\b((python[0-9.]*[[:space:]]+-m[[:space:]]+)?pip[0-9.]*'"${MGR_FLAGS}"'[[:space:]]+(install|uninstall)|(conda|mamba|micromamba)'"${MGR_FLAGS}"'[[:space:]]+(install|uninstall|create|remove|update|upgrade|env[[:space:]]+(create|update|remove))|uv'"${MGR_FLAGS}"'[[:space:]]+(add|sync|lock|remove|(pip|tool|python)[[:space:]]+(install|uninstall|sync|upgrade)))\b' &&
     { blocked pip || blocked conda || blocked pipenv || blocked uv || blocked poetry || blocked pixi; }; then
     block
 fi
@@ -205,11 +210,7 @@ fi
 # install`) doesn't trigger. (Accepted slip-through: `xargs pip install`.)
 # Removing a package changes the environment as surely as adding one, so
 # the removal verbs block too. mamba and micromamba are conda's drop-in
-# front ends and share its opt-out name. Dash flags may sit between the
-# manager and its verb (`pip -q install`, `pip --user uninstall`); a flag
-# that takes a separate value (`pip --cache-dir d install`) is an accepted
-# slip-through, like a wrapper option that takes one.
-MGR_FLAGS='([[:space:]]+-[^[:space:]]+)*'
+# front ends and share its opt-out name.
 if blocked pip && invoked "${CMD_PFX}"'(python[0-9.]*[[:space:]]+-m[[:space:]]+)?pip[0-9.]*'"${MGR_FLAGS}"'[[:space:]]+(install|uninstall)\b'; then
     block
 fi

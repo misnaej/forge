@@ -608,6 +608,15 @@ def test_install_deps_blocks_prefixed_and_path_qualified_installs(
         "micromamba run pip install x",
         "mamba run conda remove x",
         "conda run pip uninstall x",
+        # Dash flags before the inner verb, and inner uv verbs, in a wrapper.
+        "pixi run pip -q install x",
+        "pixi run pip --user uninstall x",
+        "pixi run python -m pip -q install x",
+        "conda run -n b pip -q install x",
+        "conda run conda -y install x",
+        "uv run pip -q install x",
+        "pixi run uv pip sync r",
+        "pixi run --locked uv add x",
     ],
 )
 def test_install_deps_blocks_removal_verbs_and_mamba(command: str) -> None:
@@ -644,6 +653,9 @@ def test_install_deps_blocks_removal_verbs_and_mamba(command: str) -> None:
         "uv -q run pytest",
         "conda -V",
         "uv --help",
+        "pixi run uv pip list",
+        "pixi run --locked uv run pytest",
+        "conda run -n b python -m pytest",
     ],
 )
 def test_install_deps_allows_read_only_and_quoted_mentions(command: str) -> None:
