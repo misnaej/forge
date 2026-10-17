@@ -2,7 +2,8 @@
 # Block dependency-installation commands (FOUNDATION §2: agents must not
 # install dependencies — it breaks carefully configured environments).
 #
-# Covers pip, conda, pipenv, poetry, uv and pixi (install / sync / lock /
+# Covers pip, conda (with mamba / micromamba), pipenv, poetry, uv (with
+# `uv tool run` / `uvx`) and pixi (install / uninstall / sync / lock /
 # update / add / remove), plus the `<mgr> run pip install ...` wrapper
 # forms that slip past a start-anchored `pip` match.
 #
@@ -44,7 +45,9 @@
 #   block_install_deps = false                 # allow every manager
 #   block_install_deps = ["pip", "conda"]      # block only these
 #                                              # (names: pip, conda,
-#                                              #  pipenv, poetry, uv, pixi)
+#                                              #  pipenv, poetry, uv, pixi;
+#                                              #  conda covers mamba and
+#                                              #  micromamba, uv covers uvx)
 #   (unset / true)                             # block all (safe default)
 set -e
 INPUT=$(cat)
@@ -106,14 +109,16 @@ block() {
 CMDPOS=$(command_positions --no-redir "$COMMAND")
 WORDS=$(command_positions --words --no-redir "$COMMAND")
 # The command boundary every rule below starts from (see the header), then
-# any run of the keywords that start a command inside a compound and of
-# redirection words (GUARD_REDIR in git_anchor.sh). The views are blanked,
+# the shared command-prefix run from git_anchor.sh — `VAR=val`, wrapper
+# words (`sudo`, `env`, `nice`, …, each optionally path-qualified),
+# compound keywords and redirection words — then an optional directory
+# path before the manager itself (`/usr/bin/pip`). The views are blanked,
 # so a leading redirection arrives as whitespace after the boundary; the
-# GUARD_REDIR term is left for the heredoc and here-string openers
-# (`<<<x pip install`), which the blanking keeps.
-# It accepts no `VAR=val` or wrapper word (`sudo`, `env`) yet, so
-# `sudo pip install x` is still unmatched — tracked as its own issue (#752).
-CMD_PFX='(^|[;&|(){}!])\s*((then|else|elif|do)[[:space:]]+|'"${GUARD_REDIR}"'[[:space:]]+)*'
+# redirection term is left for the heredoc and here-string openers
+# (`<<<x pip install`), which the blanking keeps. Accepted slip-through: a
+# wrapper option that takes a value (`sudo -u user pip install`), the same
+# limit as the git guards.
+CMD_PFX='(^|[;&|(){}!])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"
 # invoked <regex> — a real invocation matching <regex> that is not only a
 # help request.
 invoked() {
@@ -133,8 +138,8 @@ invoked() {
 # the second being the very form this hook's own --locked advisory recommends.
 # `python -m pip` is covered here too; the bare-pip rule below understands that
 # form but anchors to a command start, which `run` has already consumed.
-if invoked "${CMD_PFX}"'(conda|pipenv|uv|poetry|pixi)[[:space:]]+run\b' &&
-    echo "$WORDS" | grep -qE "${CMD_PFX}"'(conda|pipenv|uv|poetry|pixi)[[:space:]]+run\b[^;&|]*\b((python[0-9.]*[[:space:]]+-m[[:space:]]+)?pip[0-9.]*[[:space:]]+install|conda[[:space:]]+(install|create|update|env[[:space:]]+(create|update)))\b' &&
+if invoked "${CMD_PFX}"'(conda|mamba|micromamba|pipenv|uv|poetry|pixi)[[:space:]]+run\b' &&
+    echo "$WORDS" | grep -qE "${CMD_PFX}"'(conda|mamba|micromamba|pipenv|uv|poetry|pixi)[[:space:]]+run\b[^;&|]*\b((python[0-9.]*[[:space:]]+-m[[:space:]]+)?pip[0-9.]*[[:space:]]+(install|uninstall)|(conda|mamba|micromamba)[[:space:]]+(install|uninstall|create|remove|update|upgrade|env[[:space:]]+(create|update|remove)))\b' &&
     { blocked pip || blocked conda || blocked pipenv || blocked uv || blocked poetry || blocked pixi; }; then
     block
 fi
@@ -151,6 +156,9 @@ fi
 # the command: `pixi list && pixi lock` must block on the `lock` despite
 # the `list`.
 PIXI_ALLOWED_VERBS='run|shell|install|list|info|tree'
+# `pixi lock --check` only verifies the lock is current and writes nothing.
+# Plain `pixi lock` stays blocked: re-resolving the lock is the agent
+# choosing dependencies (FOUNDATION §2).
 
 if blocked pixi; then
     # The verb is the FIRST token after `pixi`, flags included. Skipping
@@ -166,12 +174,19 @@ if blocked pixi; then
     # judged in ONE awk pass: per-segment processes let a few hundred
     # harmless `pixi run x;` segments run this hook past its timeout, and a
     # timed-out hook does not block. Prints the first disallowed verb.
-    verb=$(printf '%s\n' "$CMDPOS" | tr ';&|(){}!' '\n' | LC_ALL=C awk -v OK="$PIXI_ALLOWED_VERBS" '
-/^[[:space:]]*pixi([[:space:]]|$)/ {
-    n = split(substr($0, index($0, "pixi") + 4), T, /[[:space:]]+/)
-    v = ""
-    for (i = 1; i <= n; i++) if (T[i] != "") { v = T[i]; break }
+    # A segment opens with the same prefix run as every other rule here
+    # (`sudo pixi add`, `FOO=1 /usr/bin/pixi add`); PFX holds no backslash,
+    # so awk -v passes it through unchanged.
+    verb=$(printf '%s\n' "$CMDPOS" | tr ';&|(){}!' '\n' | LC_ALL=C awk -v OK="$PIXI_ALLOWED_VERBS" \
+        -v PFX="^[[:space:]]*${_GUARD_PREFIX}${GUARD_BINPATH}pixi([[:space:]]+|$)" '
+match($0, PFX) {
+    n = split(substr($0, RSTART + RLENGTH), T, /[[:space:]]+/)
+    v = ""; first = 0
+    for (i = 1; i <= n; i++) if (T[i] != "") { v = T[i]; first = i; break }
     if (v == "" || v == "--version" || v == "-V" || v == "--help" || v == "-h" || v == "help") next
+    if (v == "lock") {
+        for (i = first + 1; i <= n; i++) if (T[i] == "--check") next
+    }
     if (v !~ ("^(" OK ")$")) { print v; exit }
 }') || verb="(the pixi verb check could not run)"
     if [ -n "$verb" ]; then
@@ -183,10 +198,14 @@ fi
 # pip / conda — anchored to command start or after a shell separator so a
 # substring inside a quoted body (e.g. an issue body mentioning `pip
 # install`) doesn't trigger. (Accepted slip-through: `xargs pip install`.)
-if blocked pip || blocked conda; then
-    if invoked "${CMD_PFX}"'((python[0-9.]*[[:space:]]+-m[[:space:]]+)?pip[0-9.]*|conda)[[:space:]]+(install|create|env[[:space:]]+(create|update)|update)'; then
-        block
-    fi
+# Removing a package changes the environment as surely as adding one, so
+# the removal verbs block too. mamba and micromamba are conda's drop-in
+# front ends and share its opt-out name.
+if blocked pip && invoked "${CMD_PFX}"'(python[0-9.]*[[:space:]]+-m[[:space:]]+)?pip[0-9.]*[[:space:]]+(install|uninstall)\b'; then
+    block
+fi
+if blocked conda && invoked "${CMD_PFX}"'(conda|mamba|micromamba)[[:space:]]+(install|uninstall|create|remove|update|upgrade|env[[:space:]]+(create|update|remove))\b'; then
+    block
 fi
 if blocked pipenv && invoked "${CMD_PFX}"'pipenv[[:space:]]+(install|sync|lock|update|uninstall)\b'; then
     block
@@ -194,7 +213,13 @@ fi
 if blocked poetry && invoked "${CMD_PFX}"'poetry[[:space:]]+(add|install|update|lock|remove)\b'; then
     block
 fi
-if blocked uv && invoked "${CMD_PFX}"'uv[[:space:]]+(add|sync|lock|remove|(pip|tool|python)[[:space:]]+install)\b'; then
+# `uv tool run` and its alias `uvx` fetch and execute an arbitrary package
+# from the index — the same shape as `pixi exec`, with no committed lock
+# behind it.
+if blocked uv && invoked "${CMD_PFX}"'uv[[:space:]]+(add|sync|lock|remove|(pip|tool|python)[[:space:]]+install|tool[[:space:]]+run)\b'; then
+    block
+fi
+if blocked uv && invoked "${CMD_PFX}"'uvx([[:space:]]|$)'; then
     block
 fi
 

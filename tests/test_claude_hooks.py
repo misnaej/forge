@@ -373,6 +373,10 @@ def test_install_deps_blocks_pixi_add_after_a_read_only_verb() -> None:
         "pixi list",
         "pixi info",
         "pixi tree",
+        "pixi lock --check",
+        "cd /tmp && pixi lock --check",
+        "sudo pixi lock --check",
+        "FOO=1 pixi lock --check",
     ],
 )
 def test_install_deps_allows_pixi_materialisation_from_the_lock(command: str) -> None:
@@ -442,14 +446,22 @@ def test_install_deps_blocks_pixi_run_python_module_pip_install() -> None:
 
 @pytest.mark.parametrize(
     "command",
-    ["pixi lock", "pixi project channel add conda-forge", "pixi exec ruff"],
+    [
+        "pixi lock",
+        "pixi project channel add conda-forge",
+        "pixi exec ruff",
+        "pixi lock --check && pixi lock",
+        "pixi lock --checkx",
+    ],
 )
 def test_install_deps_blocks_pixi_lock_project_and_exec_verbs(command: str) -> None:
     """Verbs that write the lock, the manifest, or a temp env all block.
 
     `lock` rewrites pixi.lock, `project channel add` rewrites pixi.toml,
     and `exec` materialises a throwaway environment of arbitrary packages —
-    none of them are on the read-only allowlist.
+    none of them are on the read-only allowlist. The `--check` rows pin the
+    evasion where `pixi lock --check` is chained with, or only prefix-matches,
+    a real `lock`.
 
     Args:
         command: A pixi invocation whose verb writes state outside the
@@ -512,18 +524,143 @@ def test_install_deps_blocks_wrapper_run_for_every_declared_manager(
 
 @pytest.mark.parametrize(
     "command",
-    ["uv tool install ripgrep", "uv python install 3.13", "uv pip install x"],
+    [
+        "uv tool install ripgrep",
+        "uv python install 3.13",
+        "uv pip install x",
+        "uvx ruff",
+        "uv tool run ruff",
+    ],
 )
-def test_install_deps_blocks_uv_install_forms(command: str) -> None:
-    """`uv (pip|tool|python) install` all block.
+def test_install_deps_blocks_uv_install_and_ephemeral_run_forms(command: str) -> None:
+    """`uv (pip|tool|python) install` and the run-an-ephemeral-tool forms block.
 
     `uv pip install` is the pre-existing arm of the alternation; `tool`
-    and `python` cover uv's other install subcommands.
+    and `python` cover uv's other install subcommands. `uvx` and
+    `uv tool run` fetch and install a package into a throwaway env, so
+    they are the same act under another spelling.
 
     Args:
-        command: A `uv … install` invocation.
+        command: A `uv … install` invocation or an ephemeral-tool runner.
     """
     assert _run_hook(_INSTALL_DEPS, command) == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "sudo pip install x",
+        "FOO=1 pip install x",
+        "env pip install x",
+        "/usr/bin/env FOO=1 pip install x",
+        "/usr/bin/pip install x",
+        "sudo pixi add x",
+        "FOO=1 pixi add x",
+        "sudo conda run pip install x",
+        # Intentional: the hook's forge-upgrade rule shares the command-prefix
+        # pattern, so a prefix does not walk past it either.
+        "sudo forge-upgrade --apply",
+        "pip  install x",
+    ],
+)
+def test_install_deps_blocks_prefixed_and_path_qualified_installs(
+    command: str,
+) -> None:
+    """Command prefixes, a path-qualified manager and odd spacing do not evade.
+
+    Behavior test: a guard that `sudo`, `env`, `VAR=val` or an absolute
+    path walks past is no guard; each row is a distinct evasion route.
+
+    Args:
+        command: An install made through a prefix, path or spacing variant.
+    """
+    assert _run_hook(_INSTALL_DEPS, command) == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "mamba run pip install x",
+        "pip uninstall -y x",
+        "python3 -m pip uninstall x",
+        "conda remove x",
+        "conda env remove -n x",
+        "mamba install x",
+        "micromamba remove x",
+        "micromamba run pip install x",
+        "mamba run conda remove x",
+        "conda run pip uninstall x",
+    ],
+)
+def test_install_deps_blocks_removal_verbs_and_mamba(command: str) -> None:
+    """Removing packages mutates the environment as much as installing does.
+
+    Behavior test: pins the removal verbs and the mamba/micromamba
+    managers, which share conda's rules.
+
+    Args:
+        command: A removal, or a mamba-family install/remove.
+    """
+    assert _run_hook(_INSTALL_DEPS, command) == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "sudo pip list",
+        "FOO=1 pip --version",
+        "echo 'pip uninstall x'",
+        "uvx --help",
+        "pip show requests",
+        "mamba list",
+        "uv tool list",
+        "pip download x",
+        "pip freeze",
+        "echo uvx",
+        "echo 'uv tool run ruff'",
+        "ls /usr/bin/pip",
+        "echo 'conda remove x'",
+    ],
+)
+def test_install_deps_allows_read_only_and_quoted_mentions(command: str) -> None:
+    """Widening the prefix and verb sets must not catch read-only commands.
+
+    Behavior test: the false-positive side of the two block tables above.
+
+    Args:
+        command: A read-only manager call or a quoted mention of a verb.
+    """
+    assert _run_hook(_INSTALL_DEPS, command) == 0
+
+
+def test_install_deps_mamba_shares_the_conda_opt_out_name(tmp_path: Path) -> None:
+    """`mamba` is governed by the `conda` entry of the manager list.
+
+    Behavior test: a consumer opting out of `conda` must not silently keep
+    a mamba block, and one listing only `pip` must leave mamba alone.
+    """
+    pip_only = _project_env(tmp_path, '["pip"]')
+    assert (
+        _run_hook(_INSTALL_DEPS, "mamba install x", options=HookOptions(env=pip_only))
+        == 0
+    )
+    conda_only = _project_env(tmp_path, '["conda"]')
+    assert (
+        _run_hook(_INSTALL_DEPS, "mamba install x", options=HookOptions(env=conda_only))
+        == 2
+    )
+
+
+def test_install_deps_uvx_follows_the_uv_opt_out_name(tmp_path: Path) -> None:
+    """`uvx` is governed by the `uv` entry of the manager list.
+
+    Behavior test: a list naming only `pip` leaves `uvx` alone, while one
+    naming `uv` blocks it.
+    """
+    pip_only = _project_env(tmp_path, '["pip"]')
+    assert _run_hook(_INSTALL_DEPS, "uvx ruff", options=HookOptions(env=pip_only)) == 0
+    uv_only = _project_env(tmp_path, '["uv"]')
+    assert _run_hook(_INSTALL_DEPS, "uvx ruff", options=HookOptions(env=uv_only)) == 2
 
 
 def test_install_deps_blocks_pixi_lock_despite_leading_pip_list() -> None:
