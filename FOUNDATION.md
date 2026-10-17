@@ -858,7 +858,7 @@ right now, and why.
    the costliest stretch of work is exactly the one that otherwise leaves
    no trace), by `forge-pr-wrapup post`, and by a `PreCompact` hook just
    before compaction. It is not written in CI, by a
-   `forge-precommit --only` run, by a `FORGE_WIP_SYNC` checkpoint (none
+   `forge-precommit --only` or `--skip` run, by a `FORGE_WIP_SYNC` checkpoint (none
    is a real attempt), or when the note is not gitignored — that last
    refusal is logged, never silent.
 2. **The written section** — everything outside the panel, written by the
@@ -1017,7 +1017,7 @@ Reviewed by `forge:design-checker`.
 - Consumer `.githooks/pre-commit` hooks **write each check's stdout / stderr** to `code_health/<check>.log` (`ruff.log`, `docstring_verification.log`, …).
 - Foundation agents (`forge:precommit-fixer`, `forge:pr-manager`, `forge:design-checker`, `forge:git-commit-push`) **read these as the source of truth** instead of re-running the checks.
 - `forge:precommit-fixer` is the only agent that may run `forge-precommit` to (re)generate the logs — the only sanctioned wrapper; no agent invokes `ruff` / `git` / `gh` directly. Any agent may run the read-only `forge-precommit --freshness` and `forge-precommit --verdict` (whether every enabled step passed on the current tree; exits non-zero otherwise), which run no steps. `/pr`'s evidence commands (`forge-pr-plan --evidence`, `forge-pr-wrapup compose` in light-regen) run the generated-artifact checks through `forge-precommit --only`: they fix nothing in the tree and rewrite those steps' logs and `precommit_only_timing.log` — a `--only` run never replaces the full-run `precommit_timing.log` (`--evidence` also refreshes `audit_dup.log` and `audit_layering.log`). If a log is missing or stale, call precommit-fixer to refresh. **Never rewrite the logs from agents.**
-- **A log names the tree it describes.** Its first line is `# produced-at: tree=<sha> head=<short>[+dirty] <UTC time>`, where `tree` is the working tree the output was produced against. A log is **fresh** only when that tree equals the current working tree; `forge-precommit --freshness` reports a verdict per log (`fresh`, `stale`, `unstamped`, `unknown`; `n/a` for a step that checks the environment rather than files). Never judge freshness by file modification times.
+- **A log names the tree it describes.** Its first line is `# produced-at: tree=<sha> head=<short>[+dirty] <UTC time>`, where `tree` is the working tree the output was produced against. A log is **fresh** only when that tree equals the current working tree; `forge-precommit --freshness` reports a verdict per log (`fresh`, `stale`, `unstamped`, `unknown`; `n/a` for a step that checks the environment rather than files; `orphaned` for a log nothing forge runs still writes). Never judge freshness by file modification times.
 - **What cannot be read counts as unknown, never as passed.** A log that
   is missing, empty, unstamped, unparseable, or incomplete (no completion
   line where its producer writes one) says nothing about the code. A

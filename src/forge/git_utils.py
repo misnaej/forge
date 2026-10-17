@@ -2222,10 +2222,63 @@ def _parse_files(
     if not output:
         return []
     files = [line.strip() for line in output.split("\n") if line.strip()]
+    return _filter_paths(files, suffix=suffix, prefix=prefix)
+
+
+def _filter_paths(
+    files: list[str],
+    *,
+    suffix: str,
+    prefix: str | tuple[str, ...] | None,
+) -> list[str]:
+    """Keep the paths ending in *suffix* and, when given, starting with *prefix*.
+
+    Args:
+        files: Repo-relative paths.
+        suffix: File suffix to keep (``""`` keeps every path).
+        prefix: Optional path prefix, or tuple of acceptable prefixes.
+
+    Returns:
+        The matching paths, in input order.
+    """
     files = [f for f in files if f.endswith(suffix)]
     if prefix:
         files = [f for f in files if f.startswith(prefix)]
     return files
+
+
+def _ls_files_z(cwd: Path | None, *args: str) -> list[str]:
+    r"""Return ``git ls-files -z [args]`` paths exactly as they are named on disk.
+
+    Without ``-z`` git C-quotes any name holding a non-ASCII or control
+    byte (``"caf\303\251.py"``), so such files dropped out of every
+    file scope. NUL-separated output is never quoted. A name that is not
+    valid UTF-8 keeps its odd bytes as ``\xNN`` escapes: still listed,
+    and printable by every summary and log, where a surrogate-escaped
+    name would crash the first text write. Not :func:`_run_git`: its
+    ``strip`` would eat a name's leading or trailing blanks.
+
+    Args:
+        cwd: Directory to run git in; ``None`` is the cached
+            :func:`repo_root`.
+        *args: Extra ``ls-files`` arguments.
+
+    Returns:
+        The listed paths, or ``[]`` when git fails.
+    """
+    result = subprocess.run(
+        ["git", "ls-files", "-z", *args],
+        capture_output=True,
+        cwd=cwd if cwd is not None else repo_root(),
+        check=False,
+    )
+    if result.returncode != 0:
+        return []
+    return [
+        name.decode("utf-8", errors="backslashreplace")
+        for name in result.stdout.split(b"\0")
+        if name
+    ]
 
 
 def is_ancestor(
@@ -2446,8 +2499,8 @@ def get_tracked_files(
     Returns:
         Sorted, deduplicated list of tracked file paths matching the filters.
     """
-    out = _run_git("ls-files", cwd=repo_root)
-    return sorted(set(_parse_files(out, suffix=suffix, prefix=prefix)))
+    files = _ls_files_z(repo_root)
+    return sorted(set(_filter_paths(files, suffix=suffix, prefix=prefix)))
 
 
 def get_untracked_files(
@@ -2481,8 +2534,8 @@ def get_untracked_files(
         Sorted, deduplicated list of untracked (non-ignored) file paths
         matching the filters.
     """
-    out = _run_git("ls-files", "--others", "--exclude-standard", cwd=repo_root)
-    return sorted(set(_parse_files(out, suffix=suffix, prefix=prefix)))
+    files = _ls_files_z(repo_root, "--others", "--exclude-standard")
+    return sorted(set(_filter_paths(files, suffix=suffix, prefix=prefix)))
 
 
 def path_escapes_repo(repo_root: Path, path: str) -> bool:

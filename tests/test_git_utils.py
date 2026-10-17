@@ -14,7 +14,7 @@ import shutil
 import subprocess
 import sys
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
@@ -34,10 +34,6 @@ from tests.conftest import (
 from tests.conftest import (
     init_single_track_repo as _init_single_track_repo,
 )
-
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 @pytest.fixture(autouse=True)
@@ -480,22 +476,34 @@ def test_get_modified_files_threads_repo_root_into_main_fallback_call(
     assert head_prev_cwds == [other_root]
 
 
-def test_get_tracked_files_filters_suffix_and_prefix(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_get_tracked_files_filters_suffix_and_prefix(tmp_path: Path) -> None:
     """get_tracked_files lists `git ls-files` filtered by suffix/prefix."""
+    _init_git_repo(tmp_path)
+    for rel in ("src/a.py", "tests/b.py", "README.md", "src/c.txt"):
+        (tmp_path / rel).parent.mkdir(exist_ok=True)
+        (tmp_path / rel).write_text("")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, env=_GIT_ENV, check=True)
+    assert git_utils.get_tracked_files(repo_root=tmp_path, suffix=".py") == [
+        "src/a.py",
+        "tests/b.py",
+    ]
+    assert git_utils.get_tracked_files(
+        repo_root=tmp_path, suffix=".py", prefix=("tests/",)
+    ) == ["tests/b.py"]
 
-    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
-        if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
-            return type("P", (), {"returncode": 0, "stdout": f"{tmp_path}\n"})()
-        if cmd[1:2] == ["ls-files"]:
-            stdout = "src/a.py\ntests/b.py\nREADME.md\nsrc/c.txt\n"
-            return type("P", (), {"returncode": 0, "stdout": stdout})()
-        return type("P", (), {"returncode": 0, "stdout": ""})()
 
-    monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
-    assert git_utils.get_tracked_files() == ["src/a.py", "tests/b.py"]
-    assert git_utils.get_tracked_files(prefix=("tests/",)) == ["tests/b.py"]
+def test_get_tracked_files_lists_non_ascii_name_unquoted(tmp_path: Path) -> None:
+    """A non-ASCII tracked name comes back as the real name, not git's C-quoted form.
+
+    BEHAVIOR: without `-z` git quotes such names, so they silently dropped
+    out of every file scope.
+    """
+    _init_git_repo(tmp_path)
+    (tmp_path / "caf\u00e9.py").write_text("")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, env=_GIT_ENV, check=True)
+    assert git_utils.get_tracked_files(repo_root=tmp_path, suffix=".py") == [
+        "caf\u00e9.py"
+    ]
 
 
 def test_get_tracked_files_repo_root_kwarg_targets_explicit_repo(
@@ -558,6 +566,35 @@ def test_get_untracked_files_filters_suffix_and_prefix(tmp_path: Path) -> None:
     assert git_utils.get_untracked_files(repo_root=tmp_path, prefix="src/") == [
         "src/a.py"
     ]
+
+
+def test_get_untracked_files_lists_non_ascii_name_unquoted(tmp_path: Path) -> None:
+    """A non-ASCII untracked name is listed as the real name."""
+    _init_git_repo(tmp_path)
+    (tmp_path / "caf\u00e9.py").write_text("")
+    assert git_utils.get_untracked_files(repo_root=tmp_path) == ["caf\u00e9.py"]
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="needs non-UTF-8 filenames")
+def test_get_untracked_files_invalid_utf8_name_is_listed_printable(
+    tmp_path: Path,
+) -> None:
+    """A name that is not valid UTF-8 is still listed, with its bad byte escaped.
+
+    BEHAVIOR: the escaped form is printable, so every summary and log can
+    write it; a surrogate-escaped name would crash the first text write.
+    """
+    _init_git_repo(tmp_path)
+    try:
+        with Path(os.fsdecode(os.fsencode(tmp_path) + b"/bad\xff.py")).open("wb"):
+            pass
+    except OSError as exc:
+        pytest.skip(f"filesystem rejects non-UTF-8 names: {exc}")
+
+    [name] = git_utils.get_untracked_files(repo_root=tmp_path)
+
+    assert name == "bad\\xff.py"
+    assert name.isprintable()
 
 
 def test_get_untracked_files_repo_root_kwarg_targets_explicit_repo(
