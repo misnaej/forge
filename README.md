@@ -346,7 +346,7 @@ outside forge's refresh cycle, so forge never inspects or rewrites it.
 | `c4` | `forge-gen-c4 --check` — keeps the architecture diagram (`docs/architecture.dsl` + README block) in sync with the import graph | Opt-in via `[tool.forge.c4]`; self-skips otherwise |
 | `commit_types_parity` | `forge-gen-commit-types --check` — asserts the conventional-commit types in `claude-hooks/check_commit_format.sh` match the canonical `CONVENTIONAL_COMMIT_TYPES` tuple | Only when `claude-hooks/check_commit_format.sh` exists |
 | `plugin_version` | Asserts `plugin.json["version"] > latest_tag` (semver) | Only when `.claude-plugin/plugin.json` exists and tags exist; skipped on the release commit |
-| `pip_audit` | `pip-audit --skip-editable --desc` — dependency CVE scan | Always (skipped if `pip-audit` not on PATH). **Non-blocking**: failures render as yellow `WARN` and do NOT refuse the commit. |
+| `pip_audit` | `pip-audit --skip-editable --desc` — dependency CVE scan | Always. **Non-blocking by default**: CVE findings render as yellow `WARN` and do NOT refuse the commit; `[tool.forge.pip_audit].blocking = true` makes them a `FAIL`. A missing `pip-audit` binary is always a loud non-blocking `WARN`, never a silent skip. |
 
 Pytest is **not** in the default sequence — too slow for pre-commit.
 Run it in CI, or add a `pytest -q` line to `.githooks/pre-commit`
