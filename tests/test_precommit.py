@@ -21,6 +21,7 @@ import shutil
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 from unittest.mock import patch
 
@@ -54,7 +55,6 @@ from tests.conftest import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
 
 @pytest.fixture(autouse=True)
@@ -1805,6 +1805,91 @@ def test_main_echoes_blocking_step_output_in_ci(
     assert "(simulated naming violation)" in out
 
 
+@pytest.mark.parametrize(
+    ("setting", "expected"),
+    [
+        ("", True),
+        ("echo_ci_output = false", False),
+        ("echo_ci_output = true", True),
+        ('echo_ci_output = "false"', True),
+        ("echo_ci_output = 0", True),
+    ],
+)
+def test_echo_ci_output_enabled_only_boolean_false_disables(
+    tmp_path: Path, setting: str, *, expected: bool
+) -> None:
+    """Only the boolean ``false`` turns the CI echo off; anything else keeps it.
+
+    BEHAVIOR: a mistyped string ``"false"`` must not be read as truthy-off
+    and silently hide the failure text that makes a CI failure readable.
+
+    Args:
+        setting: Line written under ``[tool.forge.precommit]`` ("" = absent).
+        expected: Expected result of the helper.
+    """
+    _write_pyproject(tmp_path, f"[tool.forge.precommit]\n{setting}\n")
+    assert precommit._echo_ci_output_enabled(tmp_path) is expected
+
+
+@pytest.mark.parametrize(("echo", "shown"), [(True, True), (False, False)])
+def test_emit_human_summary_echo_ci_output_gates_step_output_in_ci(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    echo: bool,
+    shown: bool,
+) -> None:
+    """In CI the failing step's output appears only when echo is enabled.
+
+    BEHAVIOR: the log pointer is always printed; ``echo_ci_output=False``
+    drops just the step's own output.
+
+    Args:
+        echo: Value passed as ``echo_ci_output``.
+        shown: Whether the output text is expected in stdout.
+    """
+    monkeypatch.setattr(precommit, "is_ci", lambda: True)
+    failing = precommit.StepResult(name="ruff", passed=False, output="SECRET-DETAIL")
+
+    precommit._emit_human_summary([failing], [failing], [], echo_ci_output=echo)
+
+    out = capsys.readouterr().out
+    assert "ruff: see code_health/ruff.log" in out
+    assert ("SECRET-DETAIL" in out) is shown
+
+
+def test_main_config_echo_ci_output_false_keeps_only_the_pointer_in_ci(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`[tool.forge.precommit] echo_ci_output = false` suppresses the CI echo.
+
+    BEHAVIOR: the config key reaches the summary through `main`.
+    MOCK SETUP: same harness as ``test_main_echoes_blocking_step_output_in_ci``,
+    one failing step, with the key set in the repo's pyproject.
+    """
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    _write_pyproject(tmp_path, "[tool.forge.precommit]\necho_ci_output = false\n")
+    _stub_repo_structure_passing(monkeypatch)
+    _stub_pip_audit_skipped(monkeypatch)
+    _stub_docstring_coverage_skipped(monkeypatch)
+    monkeypatch.setattr(precommit, "is_ci", lambda: True)
+    monkeypatch.setattr(
+        precommit,
+        "step_docstrings",
+        lambda _root: precommit.StepResult(
+            name="docstring_verification", passed=False, output="(simulated error)"
+        ),
+    )
+    with patch.object(precommit.sys, "argv", ["forge-precommit"]):
+        rc = precommit.main()
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "docstring_verification: see code_health/docstring_verification.log" in out
+    assert "(simulated error)" not in out
+
+
 def test_main_does_not_echo_blocking_step_output_locally(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2539,8 +2624,7 @@ def test_step_api_digest_check_passes(
     """Runs `forge-gen-api-digest --check` and mirrors a passing exit.
 
     MOCK SETUP: `docs/api-digest.md` present (so the step doesn't skip);
-    the CLI resolves on PATH; ``_run`` captures the command and returns a
-    passing canned result.
+    ``_run`` captures the command and returns a passing canned result.
     """
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "api-digest.md").write_text("# API Digest\n", encoding="utf-8")
@@ -2553,7 +2637,7 @@ def test_step_api_digest_check_passes(
 
     monkeypatch.setattr(precommit, "_run", _run)
     result = precommit.step_api_digest_check(tmp_path)
-    assert captured["cmd"] == ["forge-gen-api-digest", "--check"]
+    assert captured["cmd"] == [sys.executable, "-m", "forge.gen_api_digest", "--check"]
     assert result.passed
     assert not result.non_blocking
     assert not result.skipped
@@ -2589,18 +2673,6 @@ def test_step_api_digest_check_no_doc_is_skipped(
     assert "(no docs/api-digest.md — skipped)" in result.output
 
 
-def test_step_api_digest_check_missing_cli_exits(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An opted-in-but-absent `forge-gen-api-digest` binary fails loudly."""
-    (tmp_path / "docs").mkdir()
-    (tmp_path / "docs" / "api-digest.md").write_text("# API Digest\n", encoding="utf-8")
-    monkeypatch.setattr(shutil, "which", lambda _name: None)
-    with pytest.raises(SystemExit):
-        precommit.step_api_digest_check(tmp_path)
-
-
 # ---------------------------------------------------------------------------
 # step_cli_reference_check
 # ---------------------------------------------------------------------------
@@ -2613,8 +2685,7 @@ def test_step_cli_reference_check_passes(
     """Runs `forge-gen-cli-reference --check` and mirrors a passing exit.
 
     MOCK SETUP: `docs/cli-reference.md` present (so the step doesn't skip);
-    the CLI resolves on PATH; ``_run`` captures the command and returns a
-    passing canned result.
+    ``_run`` captures the command and returns a passing canned result.
     """
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "cli-reference.md").write_text(
@@ -2629,7 +2700,12 @@ def test_step_cli_reference_check_passes(
 
     monkeypatch.setattr(precommit, "_run", _run)
     result = precommit.step_cli_reference_check(tmp_path)
-    assert captured["cmd"] == ["forge-gen-cli-reference", "--check"]
+    assert captured["cmd"] == [
+        sys.executable,
+        "-m",
+        "forge.gen_cli_reference",
+        "--check",
+    ]
     assert result.passed
     assert not result.non_blocking
     assert not result.skipped
@@ -2667,18 +2743,51 @@ def test_step_cli_reference_check_no_doc_is_skipped(
     assert "(no docs/cli-reference.md — skipped)" in result.output
 
 
-def test_step_cli_reference_check_missing_cli_exits(
+@pytest.mark.parametrize(
+    ("step", "doc", "module"),
+    [
+        ("step_api_digest_check", "docs/api-digest.md", "forge.gen_api_digest"),
+        (
+            "step_cli_reference_check",
+            "docs/cli-reference.md",
+            "forge.gen_cli_reference",
+        ),
+        ("step_c4", "docs/architecture.dsl", "forge.gen_c4"),
+    ],
+)
+def test_generator_check_steps_launch_running_install_not_path_decoy(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    step: str,
+    doc: str,
+    module: str,
 ) -> None:
-    """An opted-in-but-absent `forge-gen-cli-reference` binary fails loudly."""
+    """The generator is launched as ``python -m <module>``, never by bare name.
+
+    BEHAVIOR: a stale forge checkout earlier on PATH must not judge the
+    committed doc; the argv names the running interpreter and module.
+    MOCK SETUP: ``which`` resolves the bare CLI name to a decoy path and
+    ``_run`` captures the argv; c4 is opted in by stubbing its model lookup.
+
+    Args:
+        step: Name of the step function under test.
+        doc: Repo-relative generated doc the step guards.
+        module: Module the running install declares for the generator.
+    """
     (tmp_path / "docs").mkdir()
-    (tmp_path / "docs" / "cli-reference.md").write_text(
-        "# CLI Reference\n", encoding="utf-8"
-    )
-    monkeypatch.setattr(shutil, "which", lambda _name: None)
-    with pytest.raises(SystemExit):
-        precommit.step_cli_reference_check(tmp_path)
+    (tmp_path / doc).write_text("x\n", encoding="utf-8")
+    monkeypatch.setattr(shutil, "which", lambda name: f"/decoy/{name}")
+    monkeypatch.setattr(precommit, "resolve_model_section", lambda _root: object())
+    captured: dict[str, list[str]] = {}
+
+    def _run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        captured["cmd"] = cmd
+        return True, ""
+
+    monkeypatch.setattr(precommit, "_run", _run)
+    getattr(precommit, step)(tmp_path)
+
+    assert captured["cmd"] == [sys.executable, "-m", module, "--check"]
 
 
 # ---------------------------------------------------------------------------
@@ -7596,10 +7705,10 @@ def test_main_freshness_human_output_reports_verdict_per_log_and_skips_history(
     monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
     head_tree = git_utils.get_tree_sha(tmp_path, "HEAD")
 
-    _write_log_with_stamp(tmp_path, "fresh", tree=head_tree)
-    _write_log_with_stamp(tmp_path, "stale", tree="0" * 40)
-    _write_log_with_stamp(tmp_path, "unknown", tree="unknown")
-    (git_utils.code_health_dir(tmp_path) / "unstamped.log").write_text(
+    _write_log_with_stamp(tmp_path, "audit_fresh", tree=head_tree)
+    _write_log_with_stamp(tmp_path, "audit_stale", tree="0" * 40)
+    _write_log_with_stamp(tmp_path, "audit_unknown", tree="unknown")
+    (git_utils.code_health_dir(tmp_path) / "audit_unstamped.log").write_text(
         "no stamp here\n"
     )
     (git_utils.code_health_dir(tmp_path) / "smart_test_history.log").write_text(
@@ -7619,10 +7728,10 @@ def test_main_freshness_human_output_reports_verdict_per_log_and_skips_history(
         for line in capsys.readouterr().out.splitlines()
         if line.strip()
     }
-    assert ("fresh", "fresh.log") in reported
-    assert ("stale", "stale.log") in reported
-    assert ("unknown", "unknown.log") in reported
-    assert ("unstamped", "unstamped.log") in reported
+    assert ("fresh", "audit_fresh.log") in reported
+    assert ("stale", "audit_stale.log") in reported
+    assert ("unknown", "audit_unknown.log") in reported
+    assert ("unstamped", "audit_unstamped.log") in reported
     assert not any("history" in name for _verdict, name in reported)
     assert not any("pip_audit" in name for _verdict, name in reported)
 
@@ -7638,8 +7747,8 @@ def test_main_freshness_json_emits_name_to_verdict_map(
     commit_all(tmp_path, "seed")
     monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
     head_tree = git_utils.get_tree_sha(tmp_path, "HEAD")
-    _write_log_with_stamp(tmp_path, "fresh", tree=head_tree)
-    _write_log_with_stamp(tmp_path, "stale", tree="0" * 40)
+    _write_log_with_stamp(tmp_path, "audit_fresh", tree=head_tree)
+    _write_log_with_stamp(tmp_path, "audit_stale", tree="0" * 40)
 
     with patch.object(
         precommit.sys, "argv", ["forge-precommit", "--freshness", "--json"]
@@ -7647,8 +7756,84 @@ def test_main_freshness_json_emits_name_to_verdict_map(
         rc = precommit.main()
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload == {"fresh": "fresh", "stale": "stale"}
+    assert payload == {"audit_fresh": "fresh", "audit_stale": "stale"}
     assert rc == 0
+
+
+def test_freshness_verdicts_marks_log_without_producer_orphaned(
+    tmp_path: Path,
+) -> None:
+    """A log no step or known writer produces reads orphaned, even with a fresh stamp.
+
+    BEHAVIOR: a fresh stamp on a removed step's leftover log would read as
+    current evidence for a check that no longer runs.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+    head_tree = git_utils.get_tree_sha(tmp_path, "HEAD")
+    _write_log_with_stamp(tmp_path, "removed_step", tree=head_tree)
+    _write_log_with_stamp(tmp_path, "audit_summary", tree=head_tree)
+
+    verdicts = precommit.freshness_verdicts(tmp_path)
+
+    assert verdicts["removed_step"] == "orphaned"
+    assert verdicts["audit_summary"] == "fresh"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "precommit_timing",
+        "precommit_only_timing",
+        "pr_evidence",
+        "pytest",
+        "smart_test",
+        "audit_deps_tree",
+        "telemetry",
+        "telemetry_build",
+        "ruff",
+    ],
+)
+def test_freshness_verdicts_known_producers_are_not_orphaned(
+    tmp_path: Path, name: str
+) -> None:
+    """Logs written by non-step producers (and real steps) are never orphaned.
+
+    Args:
+        name: Log stem a forge component still writes.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+    _write_log_with_stamp(tmp_path, name, tree="0" * 40)
+
+    assert precommit.freshness_verdicts(tmp_path)[name] != "orphaned"
+
+
+def test_every_literal_step_log_name_in_src_has_a_producer() -> None:
+    """Each log name src/forge writes literally is recognised as having a producer.
+
+    Covers literal positional log names only: a name built dynamically or
+    passed by keyword is invisible to the pattern.
+
+    BEHAVIOR: guards the orphan rule against a new component writing a log
+    the rule would brand orphaned (and `--freshness` then misreport).
+    """
+    src = Path(precommit.__file__).parent
+    pattern = re.compile(
+        r'(?:write_step_log|capturing_to_step_log)\(\s*\w+\s*,\s*"([A-Za-z0-9_]+)"'
+    )
+    names = {
+        name
+        for path in src.rglob("*.py")
+        for name in pattern.findall(path.read_text(encoding="utf-8"))
+    }
+    step_names = frozenset(step.name for step in precommit._STEP_REGISTRY)
+
+    assert names, "regex found no literal log names; the pattern has rotted"
+    unowned = sorted(n for n in names if not precommit._log_has_producer(n, step_names))
+    assert unowned == []
 
 
 def test_main_freshness_only_filters_by_log_basename_without_step_registry_validation(
@@ -7785,7 +7970,8 @@ def test_main_freshness_human_output_drops_non_printable_chars_from_log_name(
     monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
     log_dir = git_utils.code_health_dir(tmp_path)
     log_dir.mkdir(exist_ok=True)
-    name = "\x1b[31mruff"
+    # `audit_` prefix gives the log a producer, so it reads unknown, not orphaned.
+    name = "audit_\x1b[31mruff"
     try:
         (log_dir / f"{name}.log").write_text(
             "# produced-at: tree=unknown head=abc1234 2024-01-01T00:00:00Z\nbody\n"
@@ -8155,6 +8341,34 @@ def test_run_all_only_writes_only_log_and_leaves_full_log_untouched(
     assert full.read_bytes() == before
 
 
+def test_run_all_skip_writes_only_log_and_leaves_full_log_untouched(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `--skip` run is partial too: it writes the only-log, not the full log.
+
+    BEHAVIOR: a skipped battery is not the whole battery's result, so it must
+    not replace the full-run record `--verdict` and wrap-ups read.
+    MOCK SETUP: `step_ruff` stubbed passing; every other step is skipped.
+    """
+
+    def _ruff(_root: object) -> precommit.StepResult:
+        return precommit.StepResult(name="ruff", passed=True, output="x")
+
+    monkeypatch.setattr(precommit, "step_ruff", _ruff)
+    log_dir = git_utils.code_health_dir(tmp_path)
+    log_dir.mkdir(exist_ok=True)
+    full = log_dir / "precommit_timing.log"
+    full.write_bytes(b"# produced-at: tree=abc head=x\nfull run body\n")
+    before = full.read_bytes()
+    others = [d.name for d in precommit.resolve_steps(tmp_path) if d.name != "ruff"]
+
+    precommit.run_all(tmp_path, print_progress=False, skip=others)
+
+    assert (log_dir / "precommit_only_timing.log").is_file()
+    assert full.read_bytes() == before
+
+
 def test_run_all_without_only_still_writes_full_log(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -8503,29 +8717,128 @@ def test_relevant_untracked_files_outside_git_is_empty(tmp_path: Path) -> None:
     assert precommit.relevant_untracked_files(tmp_path) == []
 
 
-def test_verdict_names_untracked_files_and_still_ends_pass(
-    untracked_repo: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """``--verdict`` adds a NOTE line; the closing PASS line stays last.
+def _untracked_verdict(
+    untracked_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    marker_for: str | None,
+    stamp_tree: str | None = None,
+) -> tuple[bool, list[str]]:
+    """Run ``verdict`` over a repo holding one untracked bad module.
 
-    The note is informational: every step passed on this tree, so the
-    verdict passes, but the reader is told what no step looked at.
+    Args:
+        untracked_repo: Repo fixture with docstring verification enabled.
+        monkeypatch: Pytest monkeypatch fixture.
+        marker_for: Step to record as ``FAIL`` in the timing log, or
+            ``None`` for an all-PASS run.
+        stamp_tree: Tree to stamp the timing log with, or ``None`` for the
+            current working tree.
+
+    Returns:
+        ``verdict``'s ``(ok, lines)``.
     """
     rows = _all_rows(untracked_repo)
+    if marker_for is not None:
+        rows[marker_for] = "FAIL"
     (untracked_repo / "src" / "pkg" / "new.py").write_text(_BAD_MODULE)
     body = timing_log(*(f"{name} {mark}" for name, mark in rows.items()), stamp=None)
-    tree = git_utils.working_tree_sha(untracked_repo)
+    tree = stamp_tree or git_utils.working_tree_sha(untracked_repo)
     assert tree is not None
     _write_log_with_stamp(untracked_repo, "precommit_timing", tree=tree, body=body)
     monkeypatch.chdir(untracked_repo)
+    return precommit.verdict(untracked_repo)
 
-    ok, lines = precommit.verdict(untracked_repo)
 
-    assert ok is True
-    assert lines[-1] == "verdict: PASS"
+def test_verdict_untracked_unchecked_files_fail_with_hook_safe_line(
+    untracked_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Untracked files no step checked fail the verdict, naming the steps.
+
+    BEHAVIOR: unknown is never a pass (FOUNDATION section 13); the closing
+    line keeps the literal ``verdict: FAIL`` the require_fixer_verdict hook
+    matches, with no leading FAIL/MISSING/STALE row for it to mistake.
+    """
+    ok, lines = _untracked_verdict(untracked_repo, monkeypatch, marker_for=None)
+
+    assert ok is False
+    assert lines[-1].startswith("verdict: FAIL — untracked files not checked by ")
+    assert "docstring_verification" in lines[-1]
+    assert lines[-1].endswith("gitignore them if not")
     [note] = [line for line in lines if line.startswith("NOTE ")]
-    assert "1 untracked file(s) skipped by some steps (not checked by" in note
     assert "`src/pkg/new.py`" in note
+    assert not [line for line in lines if line.startswith(("FAIL", "MISSING", "STALE"))]
+
+
+def test_verdict_failing_step_outranks_unchecked_untracked_files(
+    untracked_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failing step is the named cause even when untracked files exist too.
+
+    BEHAVIOR: precedence stale > failing/missing > unchecked, so the advice
+    shown first is the one that must be acted on first.
+    """
+    ok, lines = _untracked_verdict(
+        untracked_repo, monkeypatch, marker_for="docstring_verification"
+    )
+
+    assert ok is False
+    assert lines[-1].startswith("verdict: FAIL")
+    assert "untracked" not in lines[-1]
+    assert "docstring_verification" in lines[-1]
+
+
+def test_verdict_stale_evidence_outranks_unchecked_untracked_files(
+    untracked_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Evidence for another tree is the named cause, not the untracked files.
+
+    BEHAVIOR: precedence stale > failing/missing > unchecked; a stale log
+    says nothing about the code, so the untracked advice would be premature.
+    """
+    ok, lines = _untracked_verdict(
+        untracked_repo, monkeypatch, marker_for=None, stamp_tree="0" * 40
+    )
+
+    assert ok is False
+    assert lines[-1].startswith("verdict: FAIL — evidence describes another tree")
+    assert "untracked" not in lines[-1]
+
+
+@pytest.mark.parametrize(
+    "step_fn",
+    [
+        precommit.step_api_digest_check,
+        precommit.step_cli_reference_check,
+        precommit.step_c4,
+    ],
+    ids=["api_digest_check", "cli_reference_check", "c4"],
+)
+def test_gen_check_step_propagates_systemexit_when_cli_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    step_fn: Callable[[Path], precommit.StepResult],
+) -> None:
+    """A --check step lets the loud-fail SystemExit from forge_cli_argv escape.
+
+    BEHAVIOR: FOUNDATION section 2 -- a missing forge CLI must never degrade
+    into a failed or skipped StepResult.
+
+    Args:
+        step_fn: The ``--check`` step under test.
+    """
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "api-digest.md").write_text("x\n")
+    (tmp_path / "docs" / "cli-reference.md").write_text("x\n")
+    monkeypatch.setattr(precommit, "resolve_model_section", lambda _root: {})
+
+    def _raise_missing(_name: str, **_kw: object) -> list[str]:
+        raise SystemExit(2)
+
+    monkeypatch.setattr(precommit, "forge_cli_argv", _raise_missing)
+
+    with pytest.raises(SystemExit) as exc_info:
+        step_fn(tmp_path)
+    assert exc_info.value.code == 2
 
 
 def test_verdict_clean_tree_has_no_note(
