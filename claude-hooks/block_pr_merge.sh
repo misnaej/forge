@@ -45,8 +45,9 @@ fi
 # view — the REST merge endpoint, or a GraphQL mutation that merges now
 # (`mergePullRequest`), on green (`enablePullRequestAutoMerge`, the same
 # effect as the blocked `gh pr merge --auto`) or through the merge queue
-# (`enqueuePullRequest`). A query read from a file (`-F query=@q.graphql`)
-# or from stdin (`--input -`) is not visible here.
+# (`enqueuePullRequest`). A query read from a file (`-F query=@q.graphql`),
+# from stdin (`--input -`), from a shell variable or command substitution,
+# or behind a `gh alias` is not visible here.
 if echo "$CMDPOS" | grep -qE "${GH_ANCHOR}api\b" \
     && command_positions --words --no-redir "$COMMAND" | grep -qE "gh[[:space:]]+${GH_OPTS}api[^|]*(pulls/[0-9]+/merge|graphql[^|]*(mergePullRequest|enablePullRequestAutoMerge|enqueuePullRequest))"; then
     echo "BLOCKED: agents must not merge PRs via the API. Have the user run: ! $COMMAND" >&2

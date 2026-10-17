@@ -157,17 +157,20 @@ _interp_code_source() {
             '<<'*) SRC=stdin; return 0 ;;
             -) SRC=stdin; return 0 ;;
             --) return 0 ;;
-            -W | -X | -Q | --require | --import | --loader | --experimental-loader) skip=1 ;;
+            -W | -X | -Q | --require | --import | --loader | --experimental-loader | --preload) skip=1 ;;
+            -d) case "$interp" in php*) skip=1 ;; esac ;;
             # These letters mean different things per interpreter, so the
-            # interpreter decides: perl `-I dir` / `-M mod` and ruby
-            # `-I dir` take a value; ruby and node `-r lib` take one; php
-            # `-r` IS the inline code; python's `-I` (isolated mode)
-            # takes none, so treating it as valued hid `python -I -c`.
+            # interpreter decides: perl and ruby `-I dir` take a value
+            # (perl's detached `-M` is skipped the same way, which can only
+            # over-block); ruby, node and bun `-r lib` take one; php `-r`
+            # IS the inline code; python's `-I` (isolated mode) and deno's
+            # `-r` (reload) take none, so treating them as valued would
+            # hide the inline code that follows.
             -I | -M) case "$interp" in perl* | ruby*) skip=1 ;; esac ;;
             -r)
                 case "$interp" in
                     php*) SRC=inline; return 0 ;;
-                    ruby* | node* | bun* | deno*) skip=1 ;;
+                    ruby* | node* | bun*) skip=1 ;;
                 esac
                 ;;
             --eval | --eval=* | --print | --print=*) SRC=inline; return 0 ;;

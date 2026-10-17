@@ -1993,6 +1993,10 @@ def test_raw_git_blocks_ref_plumbing_for_everyone(
         "perl -I lib -e 'system(\"git commit\")'",
         "php -r 'system(\"git commit\");'",
         "ruby -r json -e 'system(\"git push\")'",
+        "deno -r -e 'git push'",
+        'bun --preload x -e \'require("child_process").execSync("git push")\'',
+        "php -d x=1 -r 'system(\"git push\");'",
+        "python -d -c 'import os; os.system(\"git commit\")'",
     ],
 )
 def test_raw_git_blocks_inline_interpreter_git(command: str) -> None:
@@ -2035,6 +2039,10 @@ def test_raw_git_interpreter_rule_has_no_commit_agent_bypass(command: str) -> No
         "python3 -I -m pytest -k git",
         "php -r 'echo 1;'",
         "ruby -r json script.rb",
+        "bun --preload x script.ts",
+        "php -d x=1 script.php",
+        "deno -r run x.ts",
+        "python -d script.py",
     ],
 )
 def test_raw_git_allows_interpreter_lookalikes(command: str) -> None:

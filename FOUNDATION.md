@@ -274,7 +274,8 @@ gate.
   this, defaulting to the same `main` as `block_branch_deletion`.
 - **NEVER merge PRs autonomously.** Merging is the user's decision — produce the
   squash-merge message and wrap-up comment, then stop. `block_pr_merge` enforces
-  this (blocks `gh pr merge` and the equivalent `gh api .../pulls/N/merge`); users
+  this (blocks `gh pr merge` and the equivalent API merges — REST
+  `.../pulls/N/merge` and the GraphQL merge, auto-merge and enqueue mutations); users
   merge via `! gh pr merge ...`.
 - **NEVER delete a protected remote branch** (`base_branch`).
   Irreversible, and since an agent runs with the user's credentials it *bypasses*
