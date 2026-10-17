@@ -137,7 +137,7 @@ GIT_WORD_RE='(^|[^[:alnum:]_.-])git([^[:alnum:]_./-]|$)'
 # per interpreter invocation, and a process per invocation let a long
 # chain run this hook past its timeout — which allows the command.
 _interp_code_source() {
-    local inv="$1" tok k=-1 i skip=0 piped=0
+    local inv="$1" tok k=-1 i skip=0 piped=0 interp
     local -a toks
     SRC=""
     case "$inv" in [[:space:]]*'|'* | '|'*) piped=1 ;; esac
@@ -149,6 +149,7 @@ _interp_code_source() {
         if [[ "${toks[$i]}" =~ $INTERP_TOKEN_RE ]]; then k=$i; break; fi
     done
     [ "$k" -ge 0 ] || return 0
+    interp="${toks[$k]##*/}"
     for ((i = k + 1; i < ${#toks[@]}; i++)); do
         tok="${toks[$i]}"
         if [ "$skip" = 1 ]; then skip=0; continue; fi
@@ -156,7 +157,19 @@ _interp_code_source() {
             '<<'*) SRC=stdin; return 0 ;;
             -) SRC=stdin; return 0 ;;
             --) return 0 ;;
-            -W | -X | -Q | -r | -I | -M | --require | --import | --loader | --experimental-loader) skip=1 ;;
+            -W | -X | -Q | --require | --import | --loader | --experimental-loader) skip=1 ;;
+            # These letters mean different things per interpreter, so the
+            # interpreter decides: perl `-I dir` / `-M mod` and ruby
+            # `-I dir` take a value; ruby and node `-r lib` take one; php
+            # `-r` IS the inline code; python's `-I` (isolated mode)
+            # takes none, so treating it as valued hid `python -I -c`.
+            -I | -M) case "$interp" in perl* | ruby*) skip=1 ;; esac ;;
+            -r)
+                case "$interp" in
+                    php*) SRC=inline; return 0 ;;
+                    ruby* | node* | bun* | deno*) skip=1 ;;
+                esac
+                ;;
             --eval | --eval=* | --print | --print=*) SRC=inline; return 0 ;;
             -m) return 0 ;;
             --*) ;;
