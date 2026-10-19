@@ -53,9 +53,10 @@ in spirit; the deliberate divergences are listed at the end.
   the heading with or without it.
 - Under each release heading, group entries as `### Added` /
   `### Changed` / `### Fixed` / `### Removed` — create a group when its
-  first entry appears; omit empty groups. (This is the hand-written
-  convention; fragments mode, below, assembles its own groups from the
-  fragment types instead.)
+  first entry appears; omit empty groups. Actions a consumer must take
+  go first, under `### ⚠️ Upgrade notes` — the lane `forge-upgrade`
+  prints. (This is the hand-written convention; fragments mode, below,
+  assembles its own groups from the fragment types instead.)
 - **No `## Unreleased` section.** The top heading always names the
   version **about to be released** — the CHANGELOG *declares* the next
   version, and the tag `forge-release` cuts *confirms* it. This is the
@@ -227,6 +228,15 @@ more than one, so writing a fragment means deciding these:
 - **The type names the PR as a whole.** It lives in the filename, so a
   PR that fixes one thing and removes another files under the type that
   best describes the whole PR; the minority bullets are grouped under it.
+- **`upgrade` is for what a consumer must do.** Its bullets render
+  first, under **⚠️ Upgrade notes** — the lane `forge-upgrade` prints
+  and the changelog tells readers to check before anything else — so
+  file a PR as `upgrade` when it needs action from consumers (a breaking
+  change, a config change, new mandatory behaviour), and word each
+  bullet as that action.
+- **Bodies carry no headings.** The assembler writes every heading; a
+  heading line inside a body is refused, since it could forge or end a
+  group.
 - **The strongest `bump:` wins** — merging two would-be fragments keeps
   the higher level.
 - **The slug must be distinctive.** It is the only thing keeping two

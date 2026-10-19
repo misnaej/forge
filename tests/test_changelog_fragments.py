@@ -231,13 +231,23 @@ def test_validate_fragment_empty_body(tmp_path: Path) -> None:
     assert errors == ["note.added.md: empty entry body"]
 
 
-def test_validate_fragment_embedded_heading(tmp_path: Path) -> None:
-    """A `## ` heading in the body would splice fake structure — rejected."""
-    path = _write_fragment(
-        tmp_path, "note.added.md", "bump: minor\n## Sneaky heading\n- x\n"
-    )
+@pytest.mark.parametrize(
+    "heading",
+    ["## Sneaky heading", "### ⚠️ Upgrade notes", "### Features", "# Top"],
+)
+def test_validate_fragment_embedded_heading(tmp_path: Path, heading: str) -> None:
+    """Any heading in a body could forge or end a group — rejected.
+
+    A `### ⚠️ Upgrade notes` line in an ordinary fragment would inject a
+    lane forge-upgrade prints to consumers; a `### Features` line in an
+    upgrade fragment would cut that lane short.
+
+    Args:
+        heading: The heading line planted in the body.
+    """
+    path = _write_fragment(tmp_path, "note.added.md", f"bump: minor\n{heading}\n- x\n")
     _fragment, errors = validate_fragment(path)
-    assert any("embedded '## ' heading in body" in e for e in errors)
+    assert any("embedded markdown heading in body" in e for e in errors)
 
 
 def test_validate_fragment_unreadable_path_returns_only_unreadable_error(

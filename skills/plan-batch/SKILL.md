@@ -96,10 +96,12 @@ stop.
 
 Add only what the coordinator knows and the drafter does not: where
 this issue sits in the queue, and any collision with a draft already
-relayed in this run. The `Plan` drafter cannot delegate, so it marks
-each new file, CLI or symbol `prior-art: pending`: run
-`forge:prior-art` for each before relaying, and relay its verdict with
-the draft — a REUSE verdict is a decision the user needs.
+relayed in this run. The `Plan` drafter cannot delegate, so it leaves
+the prior-art check `pending` (`/plan-issue` Step 2): run
+`forge:prior-art` for each pending addition — and for any new file,
+CLI or symbol the draft names with neither a verdict nor the marker —
+and append the verdicts beneath the unedited draft. A REUSE verdict is
+a decision the user needs.
 
 ## Step 4: Record only what the user validates
 

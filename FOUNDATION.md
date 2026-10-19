@@ -1279,8 +1279,9 @@ instruction.
   <forwarded task>")`. For new agent rules / extra review context. A
   wrapper around a **reporter** delegates in the foreground and returns
   the base agent's report as its own result — handing back before the
-  base agent reports leaves the caller with no verdict. Where the extras
-  fit in the prompt, pass them to `forge:<base>` directly instead.
+  base agent reports leaves the caller with no verdict. When the extras
+  fit in the calling prompt, skip the wrapper and pass them to
+  `forge:<base>` directly.
 - **B — skill wrapper**: `.claude/skills/<base>-<scope>/SKILL.md` that (1)
   invokes the foundation skill via `Skill(skill="forge:<base>")`, then (2)
   does the repo-specific follow-up; frontmatter `name` is the wrapper name,

@@ -1,6 +1,6 @@
 bump: minor
 
-- New `upgrade` changelog fragment type (`changelog.d/<slug>.upgrade.md`), assembled first under **⚠️ Upgrade notes** — the lane `forge-upgrade` already reads and the changelog tells consumers to read first, which no fragment could produce until now.
+- New `upgrade` changelog fragment type (`changelog.d/<slug>.upgrade.md`), assembled first under **⚠️ Upgrade notes** — the lane `forge-upgrade` already reads and the changelog tells consumers to read first, which no fragment could produce until now. Fragment bodies may no longer contain any markdown heading, so no fragment can forge that lane or cut it short.
 - FOUNDATION §16 Pattern A: a wrapper around a reporter agent delegates in the foreground and returns the base agent's report as its own result.
 - The agent template's scope boundaries now say to revise your own edit by editing again, never with a tree-wide restore.
 - `/plan-issue` runs `forge:prior-art` for every new file, CLI or symbol a plan proposes and carries the verdict into the plan; `/plan-batch` runs it for drafters that cannot delegate.
