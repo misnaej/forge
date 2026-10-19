@@ -192,7 +192,7 @@ def _earn_light(root: Path, base: str) -> str | None:
     return None
 
 
-def _claim_emergency(root: Path) -> str | None:
+def _claim_emergency(root: Path, branch: str) -> str | None:
     """Claim the armed emergency bypass for this publish, or refuse.
 
     Exactly one publication per ``forge-emergency start``, which filed a
@@ -203,12 +203,13 @@ def _claim_emergency(root: Path) -> str | None:
 
     Args:
         root: Checkout holding the branch.
+        branch: Branch being published, recorded with the claim.
 
     Returns:
         A refusal reason, or ``None`` when the bypass is claimed.
     """
     try:
-        claimed = emergency.claim(root)
+        claimed = emergency.claim(root, branch)
     except OSError as exc:
         return f"the emergency sentinel could not be read ({exc})."
     if claimed != 0:
@@ -235,7 +236,11 @@ def _pr_number_from_url(stdout: str) -> int | None:
 
 
 def _existing_pr(branch: str) -> list[int] | None:
-    """List PRs (any state) whose head is *branch*.
+    """List open PRs whose head is *branch*.
+
+    Open only: a closed or merged PR from an earlier use of the same
+    branch name is not one this publish created, and naming it would
+    invite recording the wrong PR.
 
     Args:
         branch: Branch that was being published.
@@ -253,7 +258,7 @@ def _existing_pr(branch: str) -> list[int] | None:
                 "--head",
                 branch,
                 "--state",
-                "all",
+                "open",
                 "--json",
                 "number",
             ],
@@ -276,8 +281,9 @@ def _publish_emergency(root: Path, branch: str, cmd: list[str]) -> int:
     """Run ``gh pr create`` under a claimed bypass, then commit or release it.
 
     Success with a PR URL spends the bypass with that PR number. A
-    definite failure — gh never ran, or it failed and no PR exists for the
-    branch — releases the claim so the bypass survives for a retry. Any
+    definite failure — gh never ran, or it failed and no open PR exists
+    for the branch — releases the claim so the bypass survives for a
+    retry. Any
     other outcome is unclear (a PR may exist), so the claim is held and
     the recovery is named: guessing either way could burn a bypass or
     orphan a published PR's verification debt.
@@ -304,8 +310,8 @@ def _publish_emergency(root: Path, branch: str, cmd: list[str]) -> int:
     if number is not None:
         if emergency.commit(root, number) != 0:
             logger.error(
-                "PR #%d was created, but the emergency claim was gone when the "
-                "spend was recorded, so the ledger does not name it. Check "
+                "PR #%d was created, but the emergency spend could not be "
+                "recorded, so the ledger does not name it. Check "
                 "`forge-emergency status` and comment the PR on the ledger.",
                 number,
             )
@@ -316,8 +322,10 @@ def _publish_emergency(root: Path, branch: str, cmd: list[str]) -> int:
             number,
         )
         return 0
-    existing = _existing_pr(branch) if proc.returncode != 0 else None
-    if existing == []:
+    existing = _existing_pr(branch)
+    # Only a failed create may release: after a reported success an empty
+    # listing more likely lags than proves no PR exists.
+    if existing == [] and proc.returncode != 0:
         emergency.release(root)
         logger.error(
             "gh pr create failed and no PR exists for '%s' — the emergency "
@@ -325,16 +333,14 @@ def _publish_emergency(root: Path, branch: str, cmd: list[str]) -> int:
             branch,
         )
         return 2
-    found = (
-        f"PR #{existing[0]} exists for this branch"
-        if existing
-        else ("whether a PR was created cannot be determined")
-    )
+    if existing:
+        found = "open PR(s) on this branch: " + ", ".join(f"#{n}" for n in existing)
+    else:
+        found = "whether a PR was created cannot be determined"
     logger.error(
-        "emergency publish outcome unclear: %s. The bypass stays claimed. If "
-        "the PR exists, run `forge-emergency record-pr <N>`; if not, a human "
-        "runs `FORGE_EMERGENCY_ACK=1 forge-emergency end --abandon`.",
+        "emergency publish outcome unclear (%s). The bypass stays claimed. %s",
         found,
+        emergency.RECOVERY_HINT,
     )
     return 0 if proc.returncode == 0 else 2
 
@@ -515,7 +521,7 @@ def main() -> int:
         code_health_dir(root) / WRAPUP_NAME,
     )
     if is_emergency:
-        claim_refusal = _claim_emergency(root)
+        claim_refusal = _claim_emergency(root, branch)
         if claim_refusal is not None:
             logger.error("REFUSED: %s", claim_refusal)
             return 2

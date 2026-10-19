@@ -10,8 +10,9 @@
 # through ``_gh``), so that one case runs against a real ephemeral repo
 # built by ``tests.conftest.init_git_repo`` instead of being faked. The
 # ``O_CREAT|O_EXCL`` claim lock is likewise real filesystem state (a
-# plain ``.forge-emergency.lock`` file under ``tmp_path``), not faked —
-# "claimed" fixtures pre-create it directly. Every ``_cmd_start``
+# plain ``.forge-emergency.lock`` file under ``tmp_path``), not faked; it
+# only serialises the claim, so only the stale-lock tests create one. A
+# "claimed" fixture is a sentinel with ``claimed_branch`` set. Every ``_cmd_start``
 # test that expects arming to succeed sets ``FORGE_EMERGENCY_ACK=1`` via
 # ``monkeypatch.setenv`` — the human-authorization marker `start` refuses
 # without. No test freezes time: TTL/expiry assertions compare a freshly
@@ -28,13 +29,14 @@ from __future__ import annotations
 
 import json
 import subprocess
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
 
 from forge import emergency
-from forge.emergency_state import active_state
+from forge.emergency_state import active_state, armed_state
 from forge.pr_plan import WrapupFreshness
 from tests.conftest import GIT_ENV, FakeProc, init_git_repo
 
@@ -124,13 +126,17 @@ def _arm(root: Path) -> emergency.EmergencyState:
 
 
 def _claimed(root: Path) -> None:
-    """Write an armed sentinel plus its claim lock (a publish in flight).
+    """Write a sentinel claimed for branch ``fix/x`` (a publish in flight).
 
     Args:
         root: Repo root.
     """
-    _arm(root)
-    (root / emergency._CONSUME_LOCK).write_text("")
+    emergency.write_state(
+        root,
+        emergency.EmergencyState(
+            ledger_issue=5, reason="x", expires_at=_iso_in(1), claimed_branch="fix/x"
+        ),
+    )
 
 
 def test_read_state_returns_parsed_state_for_valid_sentinel(tmp_path: Path) -> None:
@@ -190,6 +196,13 @@ def test_read_state_degrades_to_none_on_corrupt_sentinel(
 # --- armed_state ---------------------------------------------------------
 
 
+def test_armed_state_returns_none_when_claimed(tmp_path: Path) -> None:
+    """A sentinel claimed by a publish in flight is not usable by another."""
+    _claimed(tmp_path)
+
+    assert armed_state(tmp_path) is None
+
+
 def test_armed_state_returns_none_when_expired(tmp_path: Path) -> None:
     """An expiry instant in the past disarms the sentinel."""
     emergency.write_state(
@@ -197,7 +210,7 @@ def test_armed_state_returns_none_when_expired(tmp_path: Path) -> None:
         emergency.EmergencyState(ledger_issue=1, reason="x", expires_at=_iso_in(-1)),
     )
 
-    assert emergency.armed_state(tmp_path) is None
+    assert armed_state(tmp_path) is None
 
 
 def test_armed_state_returns_none_when_spent(tmp_path: Path) -> None:
@@ -209,7 +222,7 @@ def test_armed_state_returns_none_when_spent(tmp_path: Path) -> None:
         ),
     )
 
-    assert emergency.armed_state(tmp_path) is None
+    assert armed_state(tmp_path) is None
 
 
 def test_armed_state_returns_none_on_unparseable_expiry(tmp_path: Path) -> None:
@@ -219,7 +232,7 @@ def test_armed_state_returns_none_on_unparseable_expiry(tmp_path: Path) -> None:
         emergency.EmergencyState(ledger_issue=1, reason="x", expires_at="not-a-date"),
     )
 
-    assert emergency.armed_state(tmp_path) is None
+    assert armed_state(tmp_path) is None
 
 
 # --- active_state ---------------------------------------------------------
@@ -340,12 +353,14 @@ def test_cmd_start_refuses_without_ack_env_var(
 
 
 @pytest.mark.parametrize(
-    ("state_factory", "with_lock"),
+    "state_factory",
     [
-        (lambda: emergency.EmergencyState(1, "first", _iso_in(1)), False),
-        (lambda: emergency.EmergencyState(1, "first", _iso_in(1)), True),
-        (lambda: emergency.EmergencyState(1, "first", _iso_in(1), spent=True), False),
-        (lambda: emergency.EmergencyState(1, "first", _iso_in(-1)), False),
+        lambda: emergency.EmergencyState(1, "first", _iso_in(1)),
+        lambda: emergency.EmergencyState(
+            1, "first", _iso_in(1), claimed_branch="fix/x"
+        ),
+        lambda: emergency.EmergencyState(1, "first", _iso_in(1), spent=True),
+        lambda: emergency.EmergencyState(1, "first", _iso_in(-1)),
     ],
     ids=["armed", "claimed", "spent", "expired"],
 )
@@ -353,20 +368,15 @@ def test_cmd_start_refuses_when_any_sentinel_exists(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     state_factory: Callable[[], emergency.EmergencyState],
-    *,
-    with_lock: bool,
 ) -> None:
     """Any recorded event refuses `start` without a `gh` call or a state rewrite.
 
     Args:
         state_factory: Builds the pre-existing sentinel.
-        with_lock: Whether a claim lock accompanies it.
     """
     monkeypatch.setenv("FORGE_EMERGENCY_ACK", "1")
     state = state_factory()
     emergency.write_state(tmp_path, state)
-    if with_lock:
-        (tmp_path / emergency._CONSUME_LOCK).write_text("")
     fake, calls = _fake_gh([])
     monkeypatch.setattr(emergency, "_gh", fake)
 
@@ -471,21 +481,21 @@ def test_start_clears_orphan_lock_when_no_sentinel_exists(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A lock whose sentinel was removed by hand must not block the next event.
+    """A lock left by a crashed claim must not block the next event.
 
     Regression pin: with no sentinel, a leftover lock is an orphan; a fresh
     `start` clears it so the new event's single legitimate claim succeeds
     instead of falsely refusing exactly when the mode is needed.
     """
     monkeypatch.setenv("FORGE_EMERGENCY_ACK", "1")
-    (tmp_path / emergency._CONSUME_LOCK).write_text("")
+    (tmp_path / emergency._CLAIM_LOCK).write_text("")
     fake, _calls = _fake_gh([FakeProc(stdout="https://github.com/o/r/issues/2\n")])
     monkeypatch.setattr(emergency, "_gh", fake)
 
     assert emergency._cmd_start(tmp_path, "event B", 4.0) == 0
 
-    assert not (tmp_path / emergency._CONSUME_LOCK).exists()
-    assert emergency.claim(tmp_path) == 0
+    assert not (tmp_path / emergency._CLAIM_LOCK).exists()
+    assert emergency.claim(tmp_path, "fix/x") == 0
 
 
 def test_main_dispatches_end_against_repo_root(
@@ -508,9 +518,10 @@ def test_main_dispatches_record_pr_against_repo_root(
     """`main(["record-pr", "17"])` reaches `_cmd_record_pr` via `repo_root()`."""
     monkeypatch.setattr(emergency, "repo_root", lambda: tmp_path)
     emergency.write_state(
-        tmp_path, emergency.EmergencyState(7, "dispatch", _iso_in(1), spent=True)
+        tmp_path,
+        emergency.EmergencyState(7, "dispatch", _iso_in(1), claimed_branch="fix/x"),
     )
-    fake, _calls = _fake_gh([FakeProc()])
+    fake, _calls = _fake_gh([_pr_view("fix/x"), FakeProc()])
     monkeypatch.setattr(emergency, "_gh", fake)
 
     assert emergency.main(["record-pr", "17"]) == 0
@@ -564,7 +575,7 @@ def test_cmd_status_reports_verdict_and_exit_code(
 def test_cmd_status_reports_claimed_with_recovery_and_exit_one(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """An unspent sentinel with a lock reads CLAIMED, exits 1 and prints recovery."""
+    """An unspent claimed sentinel reads CLAIMED, exits 1, and prints recovery."""
     _claimed(tmp_path)
 
     rc = emergency._cmd_status(tmp_path)
@@ -572,6 +583,8 @@ def test_cmd_status_reports_claimed_with_recovery_and_exit_one(
     assert rc == 1
     out = capsys.readouterr().out
     assert "CLAIMED" in out
+    assert "fix/x" in out
+    assert emergency.RECOVERY_HINT in out
     assert "record-pr" in out
     assert "end --abandon" in out
 
@@ -579,10 +592,10 @@ def test_cmd_status_reports_claimed_with_recovery_and_exit_one(
 # --- claim / commit / release ---------------------------------------------
 
 
-def test_claim_creates_lock_without_touching_state_or_gh(
+def test_claim_records_branch_in_sentinel_without_spending_or_gh(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Claiming reserves the bypass only: lock appears, sentinel and ledger untouched.
+    """Claiming reserves the bypass only: branch recorded, nothing spent, no ledger.
 
     Behavior: a failed publish must be able to hand the bypass back, which
     holds only if claim spends nothing.
@@ -592,25 +605,60 @@ def test_claim_creates_lock_without_touching_state_or_gh(
     fake, calls = _fake_gh([])
     monkeypatch.setattr(emergency, "_gh", fake)
 
-    rc = emergency.claim(tmp_path)
+    rc = emergency.claim(tmp_path, "fix/x")
 
     assert rc == 0
-    assert (tmp_path / emergency._CONSUME_LOCK).is_file()
-    assert emergency.read_state(tmp_path) == state
+    assert emergency.read_state(tmp_path) == replace(state, claimed_branch="fix/x")
     assert calls == []
 
 
-def test_claim_refuses_second_claim_while_lock_exists(
+def test_claim_refuses_second_claim_once_the_first_is_recorded(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The second of two publishes loses on the exclusive lock (one-shot pin)."""
+    """The second of two publishes reads the first one's claim and is refused."""
     _arm(tmp_path)
-    assert emergency.claim(tmp_path) == 0
+    assert emergency.claim(tmp_path, "fix/x") == 0
 
-    rc = emergency.claim(tmp_path)
+    rc = emergency.claim(tmp_path, "fix/y")
 
     assert rc == 1
-    assert "already claimed" in capsys.readouterr().out
+    assert "no armed bypass" in capsys.readouterr().out
+    state = emergency.read_state(tmp_path)
+    assert state is not None
+    assert state.claimed_branch == "fix/x"
+
+
+def test_deleting_the_lock_after_a_claim_does_not_rearm(tmp_path: Path) -> None:
+    """Removing a lock file cannot hand the one-shot bypass out twice.
+
+    Regression pin for the hole a lock-held claim had: the claim lives in
+    the sentinel, so there is nothing to delete that re-arms it.
+    """
+    _arm(tmp_path)
+    assert emergency.claim(tmp_path, "fix/x") == 0
+    (tmp_path / emergency._CLAIM_LOCK).unlink(missing_ok=True)
+
+    assert emergency.claim(tmp_path, "fix/y") == 1
+    assert armed_state(tmp_path) is None
+
+
+def test_claim_refuses_when_stale_lock_present_and_leaves_sentinel(
+    tmp_path: Path,
+) -> None:
+    """A lock left by a crashed or concurrent claimer refuses the claim."""
+    state = _arm(tmp_path)
+    (tmp_path / emergency._CLAIM_LOCK).write_text("")
+
+    assert emergency.claim(tmp_path, "fix/x") == 1
+    assert emergency.read_state(tmp_path) == state
+
+
+def test_claim_removes_its_lock_on_success(tmp_path: Path) -> None:
+    """A successful claim leaves no lock file behind."""
+    _arm(tmp_path)
+
+    assert emergency.claim(tmp_path, "fix/x") == 0
+    assert not (tmp_path / emergency._CLAIM_LOCK).exists()
 
 
 @pytest.mark.parametrize(
@@ -634,8 +682,8 @@ def test_claim_refuses_unarmed_and_leaves_no_lock(
     if state_factory is not None:
         emergency.write_state(tmp_path, state_factory())
 
-    assert emergency.claim(tmp_path) == 1
-    assert not (tmp_path / emergency._CONSUME_LOCK).exists()
+    assert emergency.claim(tmp_path, "fix/x") == 1
+    assert not (tmp_path / emergency._CLAIM_LOCK).exists()
 
 
 def test_commit_spends_records_pr_and_comments_head_sha_once(
@@ -670,7 +718,6 @@ def test_commit_spends_records_pr_and_comments_head_sha_once(
     assert calls[0][:3] == ("issue", "comment", "5")
     assert head in calls[0][-1]
     assert "#23" in calls[0][-1]
-    assert (tmp_path / emergency._CONSUME_LOCK).is_file()
 
 
 def test_commit_still_spends_and_warns_on_ledger_comment_failure(
@@ -715,16 +762,33 @@ def test_commit_without_claim_refuses_and_leaves_state(
     assert emergency.read_state(tmp_path) == state
 
 
-def test_release_unlinks_lock_and_is_idempotent(tmp_path: Path) -> None:
-    """Release hands the bypass back and tolerates being called with no lock."""
-    _arm(tmp_path)
-    assert emergency.claim(tmp_path) == 0
+def test_release_hands_claim_back_and_is_idempotent(tmp_path: Path) -> None:
+    """Release re-arms a claimed sentinel and tolerates being called again."""
+    state = _arm(tmp_path)
+    assert emergency.claim(tmp_path, "fix/x") == 0
 
     emergency.release(tmp_path)
-    assert not (tmp_path / emergency._CONSUME_LOCK).exists()
+    assert emergency.read_state(tmp_path) == state
     emergency.release(tmp_path)
 
-    assert emergency.claim(tmp_path) == 0
+    assert emergency.claim(tmp_path, "fix/x") == 0
+
+
+def test_release_on_spent_sentinel_is_a_noop(tmp_path: Path) -> None:
+    """A spent sentinel is never touched by release — the spend stands."""
+    state = emergency.EmergencyState(
+        ledger_issue=5,
+        reason="x",
+        expires_at=_iso_in(1),
+        spent=True,
+        pr_number=9,
+        claimed_branch="fix/x",
+    )
+    emergency.write_state(tmp_path, state)
+
+    emergency.release(tmp_path)
+
+    assert emergency.read_state(tmp_path) == state
 
 
 # --- _cmd_record_pr ----------------------------------------------------
@@ -743,17 +807,37 @@ def test_cmd_record_pr_refuses_when_no_sentinel(
     assert calls == []
 
 
-@pytest.mark.parametrize("with_lock", [True, False], ids=["claimed", "spent-no-pr"])
-def test_cmd_record_pr_persists_pr_number_and_comments_ledger(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, with_lock: bool
-) -> None:
-    """A used bypass (claimed, or spent without a PR) records the PR and comments.
+def _pr_view(head: str, state: str = "OPEN") -> FakeProc:
+    """Build the canned ``gh pr view --json headRefName,state`` reply.
 
     Args:
-        with_lock: ``True`` for an unspent claim (interrupted publish);
-            ``False`` for a spent sentinel that never got its PR number.
+        head: The PR's head branch.
+        state: The PR's state word (``OPEN``, ``CLOSED``, ``MERGED``).
+
+    Returns:
+        A successful ``FakeProc`` carrying the JSON.
     """
-    if with_lock:
+    return FakeProc(stdout=json.dumps({"headRefName": head, "state": state}))
+
+
+@pytest.mark.parametrize("claimed", [True, False], ids=["claimed", "spent-no-pr"])
+def test_cmd_record_pr_persists_pr_number_and_comments_ledger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, claimed: bool
+) -> None:
+    """A used bypass (claimed, or spent without a PR) records the open branch PR.
+
+    Args:
+        claimed: ``True`` for an unspent claim (interrupted publish);
+            ``False`` for a legacy spent sentinel that never got its PR
+            number and so is checked against the current branch.
+
+    SCENARIO: the PR to record is open on the branch the bypass was for.
+    MOCK SETUP: ``gh pr view`` reports that branch; the ledger comment
+        succeeds; the legacy case resolves its branch via a stub.
+    EXPECTED BEHAVIOR: the number is persisted, the sentinel is spent and
+        the ledger is commented once.
+    """
+    if claimed:
         _claimed(tmp_path)
     else:
         emergency.write_state(
@@ -762,7 +846,10 @@ def test_cmd_record_pr_persists_pr_number_and_comments_ledger(
                 ledger_issue=5, reason="x", expires_at=_iso_in(1), spent=True
             ),
         )
-    fake, calls = _fake_gh([FakeProc()])
+        monkeypatch.setattr(
+            emergency, "resolve_current_branch", lambda _root: ("fix/x", "ref")
+        )
+    fake, calls = _fake_gh([_pr_view("fix/x"), FakeProc()])
     monkeypatch.setattr(emergency, "_gh", fake)
 
     rc = emergency._cmd_record_pr(tmp_path, 17)
@@ -772,8 +859,77 @@ def test_cmd_record_pr_persists_pr_number_and_comments_ledger(
     assert state is not None
     assert state.pr_number == 17
     assert state.spent is True
-    assert calls[0][:3] == ("issue", "comment", "5")
-    assert "17" in calls[0][-1]
+    assert calls[0][:3] == ("pr", "view", "17")
+    assert calls[1][:3] == ("issue", "comment", "5")
+    assert "17" in calls[1][-1]
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        _pr_view("fix/other"),
+        _pr_view("fix/x", "CLOSED"),
+        _pr_view("fix/x", "MERGED"),
+        FakeProc(returncode=1),
+        FakeProc(stdout="not json"),
+        FakeProc(stdout=json.dumps({"headRefName": "fix/x"})),
+    ],
+    ids=[
+        "other-branch",
+        "closed",
+        "merged",
+        "gh-error",
+        "unparseable",
+        "missing-field",
+    ],
+)
+def test_cmd_record_pr_refuses_pr_that_is_not_open_on_claimed_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reply: FakeProc
+) -> None:
+    """Only an open PR on the claimed branch may be recorded; gh doubt fails closed.
+
+    Args:
+        reply: The canned ``gh pr view`` reply.
+
+    SCENARIO: someone offers a PR number that is not the emergency PR.
+    MOCK SETUP: ``gh pr view`` returns *reply*; any further gh call would
+        pop a default success, so the call list pins "no ledger comment".
+    EXPECTED BEHAVIOR: refused, sentinel unchanged, one gh call only.
+    """
+    _claimed(tmp_path)
+    before = emergency.read_state(tmp_path)
+    fake, calls = _fake_gh([reply])
+    monkeypatch.setattr(emergency, "_gh", fake)
+
+    rc = emergency._cmd_record_pr(tmp_path, 17)
+
+    assert rc == 1
+    assert emergency.read_state(tmp_path) == before
+    assert [c[:2] for c in calls] == [("pr", "view")]
+
+
+def test_cmd_record_pr_warns_when_ledger_comment_fails_but_still_records(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A failed ledger comment is loud but does not undo the recorded PR.
+
+    SCENARIO: the PR validates but the ledger comment cannot be posted.
+    MOCK SETUP: ``gh pr view`` succeeds, ``gh issue comment`` exits 1.
+    EXPECTED BEHAVIOR: PR recorded, exit 0, WARNING on stdout.
+    """
+    _claimed(tmp_path)
+    fake, _calls = _fake_gh([_pr_view("fix/x"), FakeProc(returncode=1)])
+    monkeypatch.setattr(emergency, "_gh", fake)
+
+    rc = emergency._cmd_record_pr(tmp_path, 17)
+
+    assert rc == 0
+    state = emergency.read_state(tmp_path)
+    assert state is not None
+    assert state.pr_number == 17
+    assert "WARNING" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
@@ -917,7 +1073,6 @@ def test_cmd_end_cancels_unspent_armed_sentinel(
     assert calls[0][:2] == ("issue", "comment")
     assert calls[1][:2] == ("issue", "close")
     assert not (tmp_path / emergency.SENTINEL_RELPATH).exists()
-    assert not (tmp_path / emergency._CONSUME_LOCK).exists()
 
 
 def test_cmd_end_refuses_claimed_unspent_and_names_recovery(
@@ -939,11 +1094,11 @@ def test_cmd_end_refuses_claimed_unspent_and_names_recovery(
 
     assert rc == 1
     out = capsys.readouterr().out
+    assert emergency.RECOVERY_HINT in out
     assert "record-pr" in out
     assert "end --abandon" in out
     assert calls == []
     assert emergency.read_state(tmp_path) == before
-    assert (tmp_path / emergency._CONSUME_LOCK).exists()
 
 
 def test_cmd_end_abandon_without_ack_refuses(
@@ -960,7 +1115,6 @@ def test_cmd_end_abandon_without_ack_refuses(
     assert rc == 1
     assert calls == []
     assert emergency.read_state(tmp_path) is not None
-    assert (tmp_path / emergency._CONSUME_LOCK).exists()
 
 
 def test_cmd_end_abandon_with_ack_comments_closes_and_clears(
@@ -978,7 +1132,6 @@ def test_cmd_end_abandon_with_ack_comments_closes_and_clears(
     assert calls[0][:3] == ("issue", "comment", "5")
     assert calls[1][:3] == ("issue", "close", "5")
     assert not (tmp_path / emergency.SENTINEL_RELPATH).exists()
-    assert not (tmp_path / emergency._CONSUME_LOCK).exists()
 
 
 @pytest.mark.parametrize("spent", [False, True], ids=["armed-only", "spent"])
@@ -1065,7 +1218,6 @@ def test_cmd_end_closes_ledger_and_removes_sentinel_when_repaid(
         ledger_issue=5, reason="x", expires_at=_iso_in(1), spent=True, pr_number=9
     )
     emergency.write_state(tmp_path, state)
-    (tmp_path / emergency._CONSUME_LOCK).write_text("")
     stub, _freshness_calls = _stub_wrapup_freshness(WrapupFreshness(fresh=True))
     monkeypatch.setattr(emergency, "wrapup_freshness", stub)
     fake, calls = _fake_gh([FakeProc(), FakeProc()])
@@ -1075,7 +1227,6 @@ def test_cmd_end_closes_ledger_and_removes_sentinel_when_repaid(
 
     assert rc == 0
     assert not (tmp_path / emergency.SENTINEL_RELPATH).exists()
-    assert not (tmp_path / emergency._CONSUME_LOCK).exists()
     assert calls[0][:2] == ("issue", "comment")
     assert calls[1][:2] == ("issue", "close")
 

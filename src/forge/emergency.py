@@ -27,13 +27,15 @@ The mode is impossible to use quietly:
    hand-written sentinel is the same trust boundary as editing the
    hooks themselves and is not defended against.
 2. ``forge-pr-create`` spends the sentinel on its single allowed
-   publication in two steps. It **claims** the bypass (an exclusive
-   lock, so two publishes cannot both use it) just before
-   ``gh pr create``, and **commits** the spend — sentinel marked spent,
-   PR number recorded, ledger commented with the head SHA — only once
-   the PR exists. A definite failure with no PR **releases** the claim,
-   so the bypass survives for a retry; an unclear outcome keeps it
-   claimed and names the recovery (``record-pr`` or ``end --abandon``).
+   publication in two steps. It **claims** the bypass just before
+   ``gh pr create`` — the branch is written into the sentinel under an
+   exclusive lock, so two publishes cannot both use it — and **commits**
+   the spend (sentinel marked spent, PR number recorded, ledger
+   commented with the head SHA) only once the PR exists. A definite
+   failure with no PR **releases** the claim, so the bypass survives for
+   a retry; an unclear outcome keeps it claimed and names the recovery
+   (``record-pr``, which accepts only an open PR on the claimed branch,
+   or ``end --abandon``).
    A second emergency needs a fresh ``start`` — fresh reason, fresh
    ledger.
 3. The TTL (default 4h, clamped to 24h) only backstops an armed-but-
@@ -63,10 +65,15 @@ from pathlib import Path
 from forge.emergency_state import (
     SENTINEL_RELPATH,
     EmergencyState,
-    armed_state,
+    lifecycle,
     read_state,
 )
-from forge.git_utils import configure_cli_logging, emit, repo_root
+from forge.git_utils import (
+    configure_cli_logging,
+    emit,
+    repo_root,
+    resolve_current_branch,
+)
 from forge.pr_plan import wrapup_freshness
 
 
@@ -74,11 +81,18 @@ configure_cli_logging()
 logger = logging.getLogger(__name__)
 
 
-# Claim mutex sibling — created O_EXCL so "exactly one" holds under
-# concurrent publishes. Present + unspent = a publish is in flight (or
-# was interrupted); present + spent = published. `end` removes it with
-# the sentinel.
-_CONSUME_LOCK = Path(".forge-emergency.lock")
+# Mutex for the claim's read-check-write, created O_EXCL so two concurrent
+# publishes cannot both claim. It holds no state of its own: the claim is
+# recorded in the sentinel, and the lock is removed once that write is done.
+_CLAIM_LOCK = Path(".forge-emergency.lock")
+
+# The one wording of how to settle a claimed publish that recorded no PR —
+# status, end and forge-pr-create all print it.
+RECOVERY_HINT = (
+    "If the PR exists, run `forge-emergency record-pr <N>` (it checks that "
+    "PR is open on the claimed branch); if not, a human runs "
+    "`FORGE_EMERGENCY_ACK=1 forge-emergency end --abandon`."
+)
 
 _DEFAULT_TTL_HOURS = 4.0
 _MAX_TTL_HOURS = 24.0
@@ -203,10 +217,10 @@ def _cmd_start(root: Path, reason: str, ttl_hours: float) -> int:
             "unauthenticated, or the label is absent) — no ledger, no mode."
         )
         return 1
-    # No sentinel exists here, so any lock is an orphan (its sentinel was
-    # removed by hand) — a fresh event must not inherit it, or it would
-    # falsely refuse this event's single legitimate claim.
-    (root / _CONSUME_LOCK).unlink(missing_ok=True)
+    # No sentinel exists here, so any lock is an orphan left by a crashed
+    # claim — a fresh event must not inherit it, or it would falsely
+    # refuse this event's single legitimate claim.
+    (root / _CLAIM_LOCK).unlink(missing_ok=True)
     write_state(
         root,
         EmergencyState(ledger_issue=ledger, reason=reason, expires_at=expires_at),
@@ -230,75 +244,75 @@ def _cmd_status(root: Path) -> int:
         expired).
     """
     state = read_state(root)
+    stage = lifecycle(state)
     if state is None:
         emit("emergency: not armed.")
         return 1
-    armed = armed_state(root) is not None
-    claimed = not state.spent and (root / _CONSUME_LOCK).exists()
-    if state.spent:
-        verdict = "SPENT"
-    elif claimed:
-        verdict = "CLAIMED"
-    else:
-        verdict = "ARMED" if armed else "EXPIRED"
     emit(
-        f"emergency: {verdict} — ledger #{state.ledger_issue}, "
+        f"emergency: {stage.upper()} — ledger #{state.ledger_issue}, "
         f"reason: {state.reason}, expires {state.expires_at}."
     )
-    if claimed:
+    if stage == "claimed":
         emit(
-            "emergency: a publish claimed the bypass but no PR was recorded. "
-            "If the PR exists, run `forge-emergency record-pr <N>`; if not, "
-            "a human runs `FORGE_EMERGENCY_ACK=1 forge-emergency end --abandon`."
+            f"emergency: a publish of '{state.claimed_branch}' claimed the "
+            f"bypass but recorded no PR. {RECOVERY_HINT}"
         )
-    return 0 if armed and not claimed else 1
+    return 0 if stage == "armed" else 1
 
 
-def claim(root: Path) -> int:
-    """Reserve the armed bypass for one publish, without spending it.
+def claim(root: Path, branch: str) -> int:
+    """Reserve the armed bypass for one publish of *branch*, without spending it.
 
-    Writes nothing to the sentinel and posts nothing: a publish that then
-    fails must be able to hand the bypass back with :func:`release`.
+    Records the claim in the sentinel and posts nothing: a publish that
+    then fails must be able to hand the bypass back with :func:`release`,
+    and a claim held only in a lock file could be handed out twice by
+    deleting that file.
 
     Args:
         root: Repo root.
+        branch: The branch being published.
 
     Returns:
         ``0`` claimed (the publish may proceed); ``1`` refused.
     """
-    if armed_state(root) is None:
-        emit("emergency: no armed bypass — gate stays closed.")
-        return 1
-    # O_CREAT|O_EXCL is the race-safe critical section: the second of two
-    # concurrent publishes loses on EEXIST and the gate stays closed for it.
+    # O_CREAT|O_EXCL serialises the read-check-write: the second of two
+    # concurrent publishes loses on EEXIST, or reads the first one's claim.
     try:
-        os.close(os.open(root / _CONSUME_LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+        os.close(os.open(root / _CLAIM_LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
     except FileExistsError:
         emit(
-            "emergency: the bypass is already claimed by another publish "
-            "(see `forge-emergency status`) — gate stays closed."
+            "emergency: another publish is claiming the bypass right now "
+            f"(or one crashed mid-claim and left {_CLAIM_LOCK}) — gate stays "
+            "closed. See `forge-emergency status`."
         )
         return 1
-    return 0
+    try:
+        state = read_state(root)
+        if lifecycle(state) != "armed" or state is None:
+            emit("emergency: no armed bypass — gate stays closed.")
+            return 1
+        write_state(root, replace(state, claimed_branch=branch))
+        return 0
+    finally:
+        (root / _CLAIM_LOCK).unlink(missing_ok=True)
 
 
 def commit(root: Path, pr_number: int) -> int:
     """Spend a claimed bypass now that its PR exists.
 
     Marks the sentinel spent with the PR number and records the spend on
-    the ledger with the head SHA. The lock stays: spent plus lock is the
-    published state, and ``end`` removes both.
+    the ledger with the head SHA.
 
     Args:
         root: Repo root.
         pr_number: The PR the claimed publish created.
 
     Returns:
-        ``0`` spent; ``1`` when there is no unspent claim to commit.
+        ``0`` spent; ``1`` when there is no claim to commit.
     """
     state = read_state(root)
-    if state is None or state.spent or not (root / _CONSUME_LOCK).exists():
-        emit("emergency: no claimed bypass to commit.")
+    if lifecycle(state) != "claimed" or state is None:
+        emit("emergency: no claimed bypass to commit — the spend is unrecorded.")
         return 1
     write_state(root, replace(state, spent=True, pr_number=pr_number))
     head = subprocess.run(
@@ -333,10 +347,15 @@ def commit(root: Path, pr_number: int) -> int:
 def release(root: Path) -> None:
     """Hand a claimed bypass back after a publish that created no PR.
 
+    Only the publish that took the claim calls this, and only once it
+    knows no PR exists; a spent or unclaimed sentinel is left untouched.
+
     Args:
         root: Repo root.
     """
-    (root / _CONSUME_LOCK).unlink(missing_ok=True)
+    state = read_state(root)
+    if lifecycle(state) == "claimed" and state is not None:
+        write_state(root, replace(state, claimed_branch=None))
 
 
 def _cmd_record_pr(root: Path, pr_number: int) -> int:
@@ -349,17 +368,21 @@ def _cmd_record_pr(root: Path, pr_number: int) -> int:
     spoofing); the ledger comment is the audit trail, not the source of
     truth. Only a bypass some publish actually used may be recorded, and
     only once: a merely-armed one was never spent, and re-recording would
-    silently re-point which PR owes the verification.
+    silently re-point which PR owes the verification. The number must
+    also name an open PR on the claimed branch: otherwise any freshly
+    verified PR could be recorded, and its wrap-up would repay a debt the
+    real emergency PR still owes.
 
     Args:
         root: Repo root.
         pr_number: The published emergency PR.
 
     Returns:
-        ``0`` recorded; ``1`` refused (no sentinel, never claimed, or a PR
-        already recorded).
+        ``0`` recorded; ``1`` refused (no sentinel, never claimed, a PR
+        already recorded, or *pr_number* not an open PR on the branch).
     """
     state = read_state(root)
+    stage = lifecycle(state)
     if state is None:
         emit("emergency: no sentinel — nothing to record the PR into.")
         return 1
@@ -369,14 +392,18 @@ def _cmd_record_pr(root: Path, pr_number: int) -> int:
             f"on ledger #{state.ledger_issue}; it cannot be re-pointed."
         )
         return 1
-    if not state.spent and not (root / _CONSUME_LOCK).exists():
+    if stage not in {"claimed", "spent"}:
         emit(
             "emergency: refused — the bypass was never claimed by a publish, "
             "so no emergency PR exists to record. Publish with forge-pr-create."
         )
         return 1
+    refusal = _pr_mismatch(root, state, pr_number)
+    if refusal is not None:
+        emit(f"emergency: refused — {refusal}")
+        return 1
     write_state(root, replace(state, spent=True, pr_number=pr_number))
-    _gh(
+    proc = _gh(
         "issue",
         "comment",
         str(state.ledger_issue),
@@ -384,8 +411,49 @@ def _cmd_record_pr(root: Path, pr_number: int) -> int:
         f"Emergency PR published: PR #{pr_number} (recorded in the "
         "sentinel; repayment closes this ledger).",
     )
+    if proc.returncode != 0:
+        emit(
+            f"emergency: WARNING — ledger comment on #{state.ledger_issue} "
+            f"FAILED; PR #{pr_number} is recorded but the ledger does not "
+            "say so. Comment it on the ledger manually."
+        )
     emit(f"emergency: PR #{pr_number} recorded (ledger #{state.ledger_issue}).")
     return 0
+
+
+def _pr_mismatch(root: Path, state: EmergencyState, pr_number: int) -> str | None:
+    """Say why *pr_number* is not the emergency PR, or ``None`` when it is.
+
+    Fails closed: a PR ``gh`` cannot describe is refused.
+
+    Args:
+        root: Repo root, for the branch when the sentinel names none.
+        state: The sentinel state.
+        pr_number: The PR offered for recording.
+
+    Returns:
+        A refusal reason, or ``None``.
+    """
+    branch = state.claimed_branch
+    if branch is None:
+        resolved = resolve_current_branch(root)
+        branch = resolved[0] if resolved else None
+    if branch is None:
+        return "no branch identifies which PR the bypass was spent on."
+    proc = _gh("pr", "view", str(pr_number), "--json", "headRefName,state")
+    if proc.returncode != 0:
+        return f"gh could not describe PR #{pr_number}, so it cannot be checked."
+    try:
+        view = json.loads(proc.stdout)
+        head, pr_state = str(view["headRefName"]), str(view["state"])
+    except (ValueError, TypeError, KeyError):
+        return f"gh could not describe PR #{pr_number}, so it cannot be checked."
+    if head != branch or pr_state != "OPEN":
+        return (
+            f"PR #{pr_number} is {pr_state.lower()} on '{head}', not open on "
+            f"'{branch}' — the branch the bypass was claimed for."
+        )
+    return None
 
 
 def _repayment_evidence(state: EmergencyState) -> tuple[int | None, bool]:
@@ -418,7 +486,7 @@ def _clear(root: Path) -> None:
         root: Repo root.
     """
     (root / SENTINEL_RELPATH).unlink(missing_ok=True)
-    (root / _CONSUME_LOCK).unlink(missing_ok=True)
+    (root / _CLAIM_LOCK).unlink(missing_ok=True)
 
 
 def _cmd_abandon(root: Path, state: EmergencyState, *, claimed: bool) -> int:
@@ -486,7 +554,7 @@ def _cmd_end(root: Path, *, abandon: bool = False) -> int:
     if state is None:
         emit("emergency: no sentinel — nothing to end.")
         return 0
-    claimed = not state.spent and (root / _CONSUME_LOCK).exists()
+    claimed = lifecycle(state) == "claimed"
     if abandon:
         return _cmd_abandon(root, state, claimed=claimed)
     if claimed:
@@ -494,9 +562,7 @@ def _cmd_end(root: Path, *, abandon: bool = False) -> int:
         # have created a PR — exactly the debt the ledger exists to hold.
         emit(
             f"emergency: refused — a publish claimed the bypass on ledger "
-            f"#{state.ledger_issue} but recorded no PR. If the PR exists, run "
-            "`forge-emergency record-pr <N>`; if not, a human runs "
-            "`FORGE_EMERGENCY_ACK=1 forge-emergency end --abandon`."
+            f"#{state.ledger_issue} but recorded no PR. {RECOVERY_HINT}"
         )
         return 1
     if not state.spent:

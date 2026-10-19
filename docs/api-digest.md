@@ -484,10 +484,11 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_create_ledger_issue(reason: str, expires_at: str) -> int | None` _(internal)_ — File the public ledger issue; return its number, or ``None`` on failure.
 - `_cmd_start(root: Path, reason: str, ttl_hours: float) -> int` _(internal)_ — Arm the one-shot bypass: ledger issue first, then the sentinel.
 - `_cmd_status(root: Path) -> int` _(internal)_ — Print the sentinel state.
-- `claim(root: Path) -> int` — Reserve the armed bypass for one publish, without spending it.
+- `claim(root: Path, branch: str) -> int` — Reserve the armed bypass for one publish of *branch*, without spending it.
 - `commit(root: Path, pr_number: int) -> int` — Spend a claimed bypass now that its PR exists.
 - `release(root: Path) -> None` — Hand a claimed bypass back after a publish that created no PR.
 - `_cmd_record_pr(root: Path, pr_number: int) -> int` _(internal)_ — Record the emergency PR number structurally in the sentinel.
+- `_pr_mismatch(root: Path, state: EmergencyState, pr_number: int) -> str | None` _(internal)_ — Say why *pr_number* is not the emergency PR, or ``None`` when it is.
 - `_repayment_evidence(state: EmergencyState) -> tuple[int | None, bool]` _(internal)_ — Return ``(pr_number, repaid)`` for the sentinel's recorded PR.
 - `_clear(root: Path) -> None` _(internal)_ — Remove the sentinel and its claim lock.
 - `_cmd_abandon(root: Path, state: EmergencyState, *, claimed: bool) -> int` _(internal)_ — Close the ledger of an interrupted publish that recorded no PR.
@@ -500,6 +501,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 > _Reading the ``forge-emergency`` sentinel — the half with no dependencies._
 
 - `class EmergencyState` — The armed (or spent) one-shot bypass recorded in the sentinel file.
+- `lifecycle(state: EmergencyState | None) -> str` — Name where an emergency stands; the one place the states are derived.
 - `read_state(root: Path) -> EmergencyState | None` — Return the sentinel state, or ``None`` when absent or unreadable.
 - `_unexpired(state: EmergencyState | None) -> EmergencyState | None` _(internal)_ — Return *state* while its expiry is still in the future.
 - `active_state(root: Path) -> EmergencyState | None` — Return the state while the emergency is still running, spent or not.
@@ -1049,9 +1051,9 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_disallowed_passthrough(extra: list[str]) -> str | None` _(internal)_ — Return the first passthrough flag that is not on the allowlist.
 - `_verified(wrapup_text: str, head_sha: str) -> bool` _(internal)_ — Whether the wrap-up's OWN header names *head_sha*.
 - `_earn_light(root: Path, base: str) -> str | None` _(internal)_ — Re-run the classifier so a light wrap-up is earned, not asserted.
-- `_claim_emergency(root: Path) -> str | None` _(internal)_ — Claim the armed emergency bypass for this publish, or refuse.
+- `_claim_emergency(root: Path, branch: str) -> str | None` _(internal)_ — Claim the armed emergency bypass for this publish, or refuse.
 - `_pr_number_from_url(stdout: str) -> int | None` _(internal)_ — Return the PR number from the URL ``gh pr create`` prints, if any.
-- `_existing_pr(branch: str) -> list[int] | None` _(internal)_ — List PRs (any state) whose head is *branch*.
+- `_existing_pr(branch: str) -> list[int] | None` _(internal)_ — List open PRs whose head is *branch*.
 - `_publish_emergency(root: Path, branch: str, cmd: list[str]) -> int` _(internal)_ — Run ``gh pr create`` under a claimed bypass, then commit or release it.
 - `_read_verified_wrapup(root: Path, branch: str) -> tuple[str | None, str | None]` _(internal)_ — Read the wrap-up and confirm it verifies this checkout's HEAD.
 - `_gate(root: Path, branch: str, base: str) -> tuple[str | None, bool]` _(internal)_ — Return why publication is refused, and whether it is an emergency.

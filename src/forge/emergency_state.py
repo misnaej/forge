@@ -42,6 +42,10 @@ class EmergencyState:
             the publish outcome was unclear) — repayment never trusts
             free-text ledger comments (anyone can comment on a public
             issue).
+        claimed_branch: The branch a publish claimed the bypass for, set
+            just before ``gh pr create`` and cleared again if the publish
+            created no PR. Held in the sentinel rather than only in a lock
+            file, so removing a lock cannot hand the bypass out twice.
     """
 
     ledger_issue: int
@@ -49,6 +53,27 @@ class EmergencyState:
     expires_at: str
     spent: bool = False
     pr_number: int | None = None
+    claimed_branch: str | None = None
+
+
+def lifecycle(state: EmergencyState | None) -> str:
+    """Name where an emergency stands; the one place the states are derived.
+
+    Args:
+        state: A read sentinel, or ``None``.
+
+    Returns:
+        ``"none"``, ``"spent"`` (published), ``"claimed"`` (a publish holds
+        the bypass and recorded no PR), ``"armed"`` (usable), or
+        ``"expired"`` (never claimed, past its expiry).
+    """
+    if state is None:
+        return "none"
+    if state.spent:
+        return "spent"
+    if state.claimed_branch is not None:
+        return "claimed"
+    return "armed" if _unexpired(state) is not None else "expired"
 
 
 def read_state(root: Path) -> EmergencyState | None:
@@ -73,6 +98,11 @@ def read_state(root: Path) -> EmergencyState | None:
             spent=bool(data.get("spent", False)),
             pr_number=(
                 int(data["pr_number"]) if data.get("pr_number") is not None else None
+            ),
+            claimed_branch=(
+                str(data["claimed_branch"])
+                if data.get("claimed_branch") is not None
+                else None
             ),
         )
     except (OSError, ValueError, KeyError, TypeError):
@@ -131,8 +161,8 @@ def active_state(root: Path) -> EmergencyState | None:
 def armed_state(root: Path) -> EmergencyState | None:
     """Return the state only when the bypass is currently usable.
 
-    Usable means: sentinel present and parseable, not yet spent, and not
-    expired.
+    Usable means: sentinel present and parseable, not yet spent, not
+    claimed by a publish in flight, and not expired.
 
     Args:
         root: Repo root.
@@ -141,4 +171,4 @@ def armed_state(root: Path) -> EmergencyState | None:
         The armed state, or ``None``.
     """
     state = read_state(root)
-    return None if state is None or state.spent else _unexpired(state)
+    return state if lifecycle(state) == "armed" else None
