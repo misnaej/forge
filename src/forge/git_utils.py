@@ -306,6 +306,7 @@ def fetch_tags_best_effort(repo_root: Path, *, timeout: int = 10) -> list[str]:
             capture_output=True,
             check=False,
             stdin=subprocess.DEVNULL,
+            env={**os.environ, **network_git_env(repo_root)},
             timeout=timeout,
         )
         failed = fetch.returncode != 0
@@ -687,6 +688,36 @@ def _run_git(*args: str, cwd: Path | None = None) -> str:
 # answer, or a stalled remote, must end instead of hanging the caller
 # (FOUNDATION §15).
 PUSH_TIMEOUT_S = 120
+_SSH_BATCH_MODE = "ssh -o BatchMode=yes"
+
+
+def network_git_env(cwd: Path | None) -> dict[str, str]:
+    """Return the variables a git call that reaches a remote runs with.
+
+    ``GIT_TERMINAL_PROMPT=0`` stops HTTPS credential prompts, but ssh asks
+    for a passphrase or host confirmation on its own terminal, which that
+    variable does not reach — so the call hung until its timeout. ssh runs
+    in batch mode (fail instead of ask) unless the user chose their own
+    ssh command through ``GIT_SSH_COMMAND``, ``GIT_SSH`` or
+    ``core.sshCommand``; overriding their choice would drop their keys or
+    jump hosts.
+
+    Args:
+        cwd: Repo whose config is consulted; ``None`` is the process's
+            working directory, as for :func:`run_git`.
+
+    Returns:
+        Variables to merge over the current environment.
+    """
+    env = {"GIT_TERMINAL_PROMPT": "0"}
+    if os.environ.get("GIT_SSH_COMMAND") or os.environ.get("GIT_SSH"):
+        return env
+    configured = run_git(
+        "config", "--get", "core.sshCommand", cwd=cwd, check=False, log_errors=False
+    )
+    if not configured:
+        env["GIT_SSH_COMMAND"] = _SSH_BATCH_MODE
+    return env
 
 
 def _log_git_timeout(args: tuple[str, ...], timeout: float | None) -> None:
@@ -1097,8 +1128,7 @@ def unmerged_paths(repo_root: Path) -> list[str]:
     Returns:
         Unmerged (conflicted) paths; empty when the index is clean.
     """
-    raw = run_git("diff", "--name-only", "--diff-filter=U", cwd=repo_root, check=False)
-    return [line for line in raw.splitlines() if line.strip()]
+    return diff_names_z(repo_root, "--diff-filter=U")
 
 
 def fetch_quietly(repo_root: Path, remote: str, refspec: str) -> bool:
@@ -1128,7 +1158,7 @@ def fetch_quietly(repo_root: Path, remote: str, refspec: str) -> bool:
             remote,
             refspec,
             cwd=repo_root,
-            env={"GIT_TERMINAL_PROMPT": "0"},
+            env=network_git_env(repo_root),
             log_errors=False,
             timeout=PUSH_TIMEOUT_S,
         )
@@ -1164,7 +1194,7 @@ def tag_on_remote(repo_root: Path, tag: str) -> bool | None:
             "origin",
             f"refs/tags/{tag}",
             cwd=repo_root,
-            env={"GIT_TERMINAL_PROMPT": "0"},
+            env=network_git_env(repo_root),
             log_errors=False,
             timeout=PUSH_TIMEOUT_S,
         )
@@ -1308,7 +1338,7 @@ def _push_refspec(
         for name, value in os.environ.items()
         if not _is_git_env_override(name)
     }
-    env["GIT_TERMINAL_PROMPT"] = "0"
+    env.update(network_git_env(repo_root))
     try:
         proc = subprocess.run(
             argv,
@@ -1893,7 +1923,11 @@ def _tree_without_logs(
         try:
             scratch_objects.mkdir()
             if source_index is not None and source_index.is_file():
-                shutil.copyfile(source_index, scratch_index)
+                # copy2, not copyfile: the copy keeps the index's mtime, so
+                # git still treats an entry modified in the same clock tick
+                # as racily clean and re-hashes it. A fresh mtime on the
+                # copy made such a same-size edit look unchanged.
+                shutil.copy2(source_index, scratch_index)
             run_git(*populate, cwd=repo_root, env=env, log_errors=False)
             run_git(
                 "rm",
@@ -2201,30 +2235,6 @@ def write_plugin_version(root: Path, version: str) -> None:
     )
 
 
-def _parse_files(
-    output: str,
-    *,
-    suffix: str,
-    prefix: str | tuple[str, ...] | None,
-) -> list[str]:
-    """Parse git diff output into a filtered file list.
-
-    Args:
-        output: Raw git diff output (newline-separated file paths).
-        suffix: File suffix to filter by (e.g., '.py').
-        prefix: Optional path prefix(es) to filter by. Either a single
-            string (e.g., ``"tests/"``) or a tuple of acceptable prefixes
-            (e.g., ``("test/", "tests/")`` to match either layout).
-
-    Returns:
-        List of file paths matching the filters.
-    """
-    if not output:
-        return []
-    files = [line.strip() for line in output.split("\n") if line.strip()]
-    return _filter_paths(files, suffix=suffix, prefix=prefix)
-
-
 def _filter_paths(
     files: list[str],
     *,
@@ -2247,9 +2257,11 @@ def _filter_paths(
     return files
 
 
-def _ls_files_z(cwd: Path | None, *args: str) -> list[str]:
-    r"""Return ``git ls-files -z [args]`` paths exactly as they are named on disk.
+def git_z_names(cwd: Path | None, *argv: str, check: bool = False) -> list[str]:
+    r"""Return the paths a NUL-separated (``-z``) git listing names, verbatim.
 
+    *argv* is the whole subcommand and must ask for ``-z`` output (an
+    ``ls-files``, ``diff --name-only`` or ``ls-tree --name-only`` call).
     Without ``-z`` git C-quotes any name holding a non-ASCII or control
     byte (``"caf\303\251.py"``), so such files dropped out of every
     file scope. NUL-separated output is never quoted. A name that is not
@@ -2261,24 +2273,58 @@ def _ls_files_z(cwd: Path | None, *args: str) -> list[str]:
     Args:
         cwd: Directory to run git in; ``None`` is the cached
             :func:`repo_root`.
-        *args: Extra ``ls-files`` arguments.
+        *argv: The git subcommand and its arguments, ``-z`` included.
+        check: Raise when git fails, as :func:`run_git` does, instead of
+            returning ``[]`` — for a caller where "git failed" must not
+            read as "nothing listed".
 
     Returns:
-        The listed paths, or ``[]`` when git fails.
+        The listed paths, or ``[]`` when git fails and *check* is off.
+
+    Raises:
+        subprocess.CalledProcessError: When git fails and *check* is set.
     """
+    cmd = ["git", *argv]
     result = subprocess.run(
-        ["git", "ls-files", "-z", *args],
+        cmd,
         capture_output=True,
         cwd=cwd if cwd is not None else repo_root(),
         check=False,
     )
     if result.returncode != 0:
+        if check:
+            raise subprocess.CalledProcessError(
+                result.returncode, cmd, result.stdout, result.stderr
+            )
         return []
     return [
         name.decode("utf-8", errors="backslashreplace")
         for name in result.stdout.split(b"\0")
         if name
     ]
+
+
+def diff_names_z(cwd: Path | None, *diff_args: str, check: bool = False) -> list[str]:
+    """Return the paths ``git diff --name-only`` reports, named exactly.
+
+    The one way forge lists changed files: newline-separated output
+    C-quotes unusual names and splits on the wrong character, so such
+    files vanished from every changed-file scope.
+
+    Args:
+        cwd: Directory to run git in; ``None`` is the cached
+            :func:`repo_root`.
+        *diff_args: Arguments after ``--name-only`` (refs, ``--cached``,
+            ``--diff-filter=…``, ``--`` and pathspecs).
+        check: Raise when git fails instead of returning ``[]``.
+
+    Returns:
+        The changed paths, or ``[]`` when git fails and *check* is off.
+
+    Raises:
+        subprocess.CalledProcessError: When git fails and *check* is set.
+    """
+    return git_z_names(cwd, "diff", "--name-only", "-z", *diff_args, check=check)
 
 
 def is_ancestor(
@@ -2345,8 +2391,8 @@ def added_or_moved_files(
     base = resolve_base_branch_ref(repo_root, base_branch)
     if base is None:
         return []
-    out = _run_git("diff", "--name-only", "--diff-filter=AR", base, cwd=repo_root)
-    return [line for line in (out or "").splitlines() if line.endswith(suffix)]
+    names = diff_names_z(repo_root, "--diff-filter=AR", base)
+    return [name for name in names if name.endswith(suffix)]
 
 
 def get_modified_files(
@@ -2414,20 +2460,20 @@ def get_modified_files(
             )
 
             # Branch commits + staged + unstaged
-            branch_files = _parse_files(
-                _run_git("diff", "--name-only", f"{base}...HEAD", cwd=repo_root),
+            branch_files = _filter_paths(
+                diff_names_z(repo_root, f"{base}...HEAD"),
                 suffix=suffix,
                 prefix=prefix,
             )
-            staged_files = _parse_files(
-                _run_git("diff", "--name-only", "--cached", cwd=repo_root),
+            staged_files = _filter_paths(
+                diff_names_z(repo_root, "--cached"),
                 suffix=suffix,
                 prefix=prefix,
             )
             if not include_unstaged:
                 return sorted(set(branch_files + staged_files))
-            unstaged_files = _parse_files(
-                _run_git("diff", "--name-only", cwd=repo_root),
+            unstaged_files = _filter_paths(
+                diff_names_z(repo_root),
                 suffix=suffix,
                 prefix=prefix,
             )
@@ -2439,13 +2485,13 @@ def get_modified_files(
     if not include_unstaged:
         # `git diff HEAD~1` alone compares against the working tree; the
         # commit view takes the last commit and the index separately.
-        last_commit = _parse_files(
-            _run_git("diff", "--name-only", "HEAD~1", "HEAD", cwd=repo_root),
+        last_commit = _filter_paths(
+            diff_names_z(repo_root, "HEAD~1", "HEAD"),
             suffix=suffix,
             prefix=prefix,
         )
-        staged = _parse_files(
-            _run_git("diff", "--name-only", "--cached", cwd=repo_root),
+        staged = _filter_paths(
+            diff_names_z(repo_root, "--cached"),
             suffix=suffix,
             prefix=prefix,
         )
@@ -2455,8 +2501,8 @@ def get_modified_files(
     logger.info("Checking files modified compared to previous commit...")
     return sorted(
         set(
-            _parse_files(
-                _run_git("diff", "--name-only", "HEAD~1", cwd=repo_root),
+            _filter_paths(
+                diff_names_z(repo_root, "HEAD~1"),
                 suffix=suffix,
                 prefix=prefix,
             ),
@@ -2499,7 +2545,7 @@ def get_tracked_files(
     Returns:
         Sorted, deduplicated list of tracked file paths matching the filters.
     """
-    files = _ls_files_z(repo_root)
+    files = git_z_names(repo_root, "ls-files", "-z")
     return sorted(set(_filter_paths(files, suffix=suffix, prefix=prefix)))
 
 
@@ -2534,7 +2580,7 @@ def get_untracked_files(
         Sorted, deduplicated list of untracked (non-ignored) file paths
         matching the filters.
     """
-    files = _ls_files_z(repo_root, "--others", "--exclude-standard")
+    files = git_z_names(repo_root, "ls-files", "-z", "--others", "--exclude-standard")
     return sorted(set(_filter_paths(files, suffix=suffix, prefix=prefix)))
 
 
@@ -2584,16 +2630,7 @@ def stage_modified_paths(repo_root: Path, pathspecs: list[str]) -> list[str]:
     """
     if not (repo_root / ".git").exists():
         return []
-    proc = subprocess.run(
-        ["git", "diff", "--name-only", "--", *pathspecs],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        return []
-    files = [line for line in proc.stdout.splitlines() if line.strip()]
+    files = diff_names_z(repo_root, "--", *pathspecs)
     if not files:
         return []
     subprocess.run(["git", "add", "--", *files], cwd=repo_root, check=False)

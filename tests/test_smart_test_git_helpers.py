@@ -15,6 +15,8 @@ from __future__ import annotations
 import subprocess
 from typing import TYPE_CHECKING
 
+import pytest
+
 from forge.config import ForgeConfig
 from forge.smart_test import git_helpers
 from tests.conftest import GIT_ENV as _GIT_ENV
@@ -23,8 +25,6 @@ from tests.conftest import init_git_repo, init_single_track_repo
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 def test_resolve_base_ref_override_resolves(
@@ -520,3 +520,42 @@ def test_clean_base_branch_last_commit_change_is_detected(tmp_path: Path) -> Non
     assert ref is not None
     changed = git_helpers.changed_python_files(tmp_path, ref)
     assert changed == {"other.py"}
+
+
+@pytest.mark.parametrize("kind", ["committed", "staged", "unstaged", "untracked"])
+@pytest.mark.parametrize("name", ["café.py", " lead space.py", "two words.py"])
+def test_changed_python_files_reports_awkward_names_for_every_change_kind(
+    tmp_path: Path, kind: str, name: str
+) -> None:
+    """Non-ASCII and whitespace-bearing names are never quoted or split away.
+
+    Args:
+        kind: How the file differs from the base (one git listing each).
+        name: A file name git C-quotes or whitespace handling mangles.
+    """
+    init_git_repo(tmp_path)
+    target = tmp_path / name
+    base = "HEAD"
+    if kind == "unstaged":
+        target.write_text("x = 0\n")
+        _git_in(tmp_path, "add", "-A")
+        _git_in(tmp_path, "commit", "-q", "-m", "seed")
+        target.write_text("x = 1\n")
+    else:
+        target.write_text("x = 1\n")
+        if kind in {"committed", "staged"}:
+            _git_in(tmp_path, "add", "-A")
+        if kind == "committed":
+            _git_in(tmp_path, "commit", "-q", "-m", "add")
+            base = "HEAD~1"
+    assert name in git_helpers.changed_python_files(tmp_path, base)
+
+
+def _git_in(repo: Path, *args: str) -> None:
+    """Run git in *repo*, failing the test on a non-zero exit.
+
+    Args:
+        repo: Working directory the git command runs in.
+        *args: Arguments passed to ``git`` after the program name.
+    """
+    subprocess.run(["git", *args], cwd=repo, env=_GIT_ENV, check=True)

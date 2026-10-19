@@ -886,6 +886,7 @@ options:
                         reinstall + re-sync managed artifacts. For human-run
                         setup scripts only — Claude Code agents are blocked
                         from this flag by block_install_deps (FOUNDATION §2).
+                        Refused for a repo that installs from a pixi lock.
   --pip-timeout SECONDS
                         Wall-clock cap on the pip subprocess during --apply.
                         Default: no timeout interactively, 600s in CI

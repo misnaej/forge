@@ -75,8 +75,10 @@ from forge.git_utils import (
     configure_cli_logging,
     create_annotated_tag,
     create_commit,
+    diff_names_z,
     emit,
     find_open_pr_by_head_prefix,
+    git_z_names,
     latest_v_tag,
     merge_base_with_head,
     next_version,
@@ -493,33 +495,28 @@ def branch_added_fragments(root: Path) -> list[str]:
     fork = run_git("merge-base", base_ref, "HEAD", cwd=root, check=False)
     if not fork:
         return []
-    raw = run_git(
-        "diff",
-        "--name-only",
-        "--diff-filter=A",
-        fork,
-        "--",
-        str(FRAGMENTS_DIR),
-        cwd=root,
-        check=False,
-    )
+    added = diff_names_z(root, "--diff-filter=A", fork, "--", str(FRAGMENTS_DIR))
     # ls-tree failure must degrade OPEN (skip the count), not to an
     # empty membership set — an empty set would silently reproduce the
     # very over-count this exclusion exists to prevent.
-    ls_tree = subprocess.run(
-        ["git", "ls-tree", "-r", "--name-only", base_ref, "--", str(FRAGMENTS_DIR)],
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=root,
-    )
-    if ls_tree.returncode != 0:
+    try:
+        in_base = set(
+            git_z_names(
+                root,
+                "ls-tree",
+                "-r",
+                "-z",
+                "--name-only",
+                base_ref,
+                "--",
+                str(FRAGMENTS_DIR),
+                check=True,
+            )
+        )
+    except subprocess.CalledProcessError:
         return []
-    in_base = set(ls_tree.stdout.splitlines())
     return sorted(
-        line
-        for line in raw.splitlines()
-        if line.endswith(".md") and line not in in_base
+        name for name in added if name.endswith(".md") and name not in in_base
     )
 
 
@@ -534,17 +531,11 @@ def _fragments_in_tag_tree(root: Path, tag: str) -> set[str]:
         Paths under ``changelog.d/`` as ``git ls-tree`` prints them;
         empty when the tag has none (or cannot be read).
     """
-    out = run_git(
-        "ls-tree",
-        "-r",
-        "--name-only",
-        tag,
-        "--",
-        str(FRAGMENTS_DIR),
-        cwd=root,
-        check=False,
+    return set(
+        git_z_names(
+            root, "ls-tree", "-r", "-z", "--name-only", tag, "--", str(FRAGMENTS_DIR)
+        )
     )
-    return {line for line in out.splitlines() if line}
 
 
 def _partition_by_release_tag(

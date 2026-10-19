@@ -1544,6 +1544,49 @@ def test_render_edits_reports_a_file_still_dirty_after_an_unrelated_commit(
     assert "`b.py` — forge:test-writer" in caplog.text
 
 
+@pytest.mark.parametrize("name", ["two words.py", "café.py", " lead space.py"])
+def test_render_edits_reports_awkward_names_modified_and_untracked(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, name: str
+) -> None:
+    """Names with spaces or non-ASCII bytes reach the receipt whole.
+
+    Behavior: the changed set used to be split on whitespace, so
+    `two words.py` became two paths that matched no ledger row, and git's
+    quoting hid `café.py` altogether. Each name is checked both as a
+    tracked edit and as an untracked file.
+
+    Args:
+        name: A file name that whitespace splitting or git quoting mangles.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / name).write_text("a = 1\n", encoding="utf-8")
+    commit_all(tmp_path, "seed")
+    (tmp_path / name).write_text("a = 2\n", encoding="utf-8")
+    untracked = f"new {name}"
+    (tmp_path / untracked).write_text("b = 1\n", encoding="utf-8")
+    _write_jsonl(
+        code_health_dir(tmp_path) / agent_profile.LEDGER_NAME,
+        [
+            _event(
+                event="PostToolUse",
+                ts_ms=BASE_MS,
+                agent_type="forge:test-writer",
+                tool_name="Edit",
+                file_path=str(tmp_path / path),
+            )
+            for path in (name, untracked)
+        ],
+    )
+
+    with caplog.at_level(logging.INFO, logger="forge.agent_profile"):
+        assert agent_profile._render_edits(tmp_path) == 0
+
+    # The match uses the real recorded name; only the displayed label is
+    # stripped of leading/trailing blanks by _safe_label.
+    assert f"`{name.strip()}` — forge:test-writer" in caplog.text
+    assert f"`{untracked.strip()}` — forge:test-writer" in caplog.text
+
+
 # ---------------------------------------------------------------------------
 # history
 # ---------------------------------------------------------------------------

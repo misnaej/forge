@@ -64,6 +64,7 @@ from forge.git_utils import (
     create_annotated_tag,
     fetch_tags_best_effort,
     latest_v_tag,
+    network_git_env,
     next_version,
     parse_semver,
     read_local_plugin_version,
@@ -445,7 +446,7 @@ def _cut_release(repo_root: Path, tag: str, *, race_tolerant: bool = False) -> i
             tag,
             cwd=repo_root,
             log_errors=not race_tolerant,
-            env={"GIT_TERMINAL_PROMPT": "0"},
+            env=network_git_env(repo_root),
             timeout=PUSH_TIMEOUT_S,
         )
     except subprocess.TimeoutExpired:

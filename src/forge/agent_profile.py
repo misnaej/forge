@@ -54,7 +54,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeGuard
 
-from forge.git_utils import code_health_dir, configure_cli_logging, repo_root, run_git
+from forge.git_utils import (
+    code_health_dir,
+    configure_cli_logging,
+    diff_names_z,
+    git_z_names,
+    repo_root,
+)
 from forge.ledger import append_ledger_line, parse_ledger
 
 
@@ -349,10 +355,13 @@ def subagent_edits(
             # would report "no subagent edits" for a tree full of them.
             pathless += 1
             continue
-        rel = _safe_label(_relative_to_root(raw, root))
+        rel = _relative_to_root(raw, root)
+        # Match on the path as recorded; only the displayed label is
+        # sanitized. Matching the label dropped any name the label
+        # changes (" lead space.py" strips to "lead space.py").
         if wanted is not None and rel not in wanted:
             continue
-        by_file[rel].add(agent)
+        by_file[_safe_label(rel)].add(agent)
     if not seen_any:
         return EditReceipt(known=False, reason="ledger is empty")
     if not by_file and pathless:
@@ -1308,11 +1317,10 @@ def _render_edits(root: Path, *, session_id: str | None = None) -> int:
     Returns:
         ``0`` always — a reporter never gates.
     """
-    changed = (
-        run_git("diff", "HEAD", "--name-only", cwd=root, check=False).split()
-        + run_git(
-            "ls-files", "--others", "--exclude-standard", cwd=root, check=False
-        ).split()
+    # NUL-separated listings: whitespace splitting cut "my file.py" in two
+    # and git quoting hid non-ASCII names from the receipt.
+    changed = diff_names_z(root, "HEAD") + git_z_names(
+        root, "ls-files", "-z", "--others", "--exclude-standard"
     )
     logger.info(
         "%s",

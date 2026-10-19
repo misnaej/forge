@@ -92,7 +92,9 @@ from typing import TYPE_CHECKING
 from forge.git_utils import (
     GH_TIMEOUT_S,
     configure_cli_logging,
+    diff_names_z,
     emit,
+    git_z_names,
     repo_root,
     run_git,
 )
@@ -200,15 +202,14 @@ def _changed_paths(
     Returns:
         One path per changed file, empty for an empty diff.
     """
-    args = ["diff", "--name-only", diff_range]
+    args = ["diff", "--name-only", "-z", diff_range]
     if pathspec:
         # `--literal-pathspecs`: these are known filenames, not
         # patterns. A real name carrying glob magic (`a[b].py`) is read
         # as a wildcard by default and drags unrelated paths (`ab.py`)
         # into a scope that must mean exactly the paths given.
         args = ["--literal-pathspecs", *args, "--", *pathspec]
-    out = run_git(*args, cwd=root)
-    return [line for line in out.splitlines() if line]
+    return git_z_names(root, *args, check=True)
 
 
 def added_paths(root: Path, diff_range: str) -> list[str]:
@@ -227,15 +228,9 @@ def added_paths(root: Path, diff_range: str) -> list[str]:
     Returns:
         One path per added file, empty when nothing was added.
     """
-    out = run_git(
-        "diff",
-        "--name-only",
-        "--diff-filter=ACR",
-        "--find-renames",
-        diff_range,
-        cwd=root,
+    return diff_names_z(
+        root, "--diff-filter=ACR", "--find-renames", diff_range, check=True
     )
-    return [line for line in out.splitlines() if line]
 
 
 def _line_count(root: Path, diff_range: str, pathspec: list[str] | None = None) -> int:
