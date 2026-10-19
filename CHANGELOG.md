@@ -20,6 +20,35 @@ change groups by changelog fragment type (**Features / Changes / Fixes
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v10.2.0 — 2026-10-19
+
+### Features
+- **The Backlog Index is now built by a command, and can no longer outgrow GitHub's limit or be written blank.** `forge-backlog-index` renders the pinned `📋 Backlog Index` from live GitHub data and writes it; the `issue-triage` agent calls it instead of hand-writing the page. Priority lines no longer repeat the labels the page already states (the tier, and the blocked / plan-ready / needs-recheck / needs-triage labels each lane exists to show), so the page grows more slowly. When even the compact page would exceed GitHub's 65,536-character limit, the lowest tiers shed their oldest entries into an "…and N more" link to the full list, and the run says how many. It writes nothing — leaving the old Index standing — when the issue listing is incomplete, when there is not exactly one open Index issue, when the body would be empty, or when tiers 1–2 alone do not fit. Issue titles are neutralised on the way in, so an `@name` or `#N` in a title no longer pings anyone or plants a cross-reference. `--lane LABEL=HEADING` gives a repo its own extra section, and `--dry-run` prints the page and its size without writing.
+
+### Fixes
+- `block_continuation_delete` sees `rm` or a wrapper launched by path (`/bin/rm .plan/CONTINUATION.md`, `/usr/bin/env rm …`).
+- `block_raw_git` no longer reads python's `-I` (isolated mode) as taking a value, so `python -I -c '…git…'` is refused; php's `-r` is read as the inline code it is.
+- `block_pr_merge` refuses a GraphQL merge through `gh api graphql` (`mergePullRequest`, `enablePullRequestAutoMerge`, `enqueuePullRequest`).
+- `block_git_destructive` no longer refuses a checkout that creates a branch after a `cd` (`cd x && git checkout -q -b feat`); a checkout or restore of paths there still fails closed.
+- `block_install_deps` now sees an install behind a `sudo`, `env` or `VAR=val` prefix, launched by path (`/usr/bin/pip`), or with dash flags before the verb (`pip -q install`, `uv -q add`), including pixi's allowlist check (`sudo pixi add`).
+- It blocks removals and syncs too (`pip uninstall`, `conda remove`, `conda env remove`, `uv pip uninstall`, `uv pip sync`, `uv tool uninstall`), covers mamba and micromamba under the `conda` opt-out name, and blocks `uv tool run` / `uvx`, which fetch and run any package.
+- The exact form `pixi lock --check`, which only verifies the lock, is now allowed; a plain `pixi lock`, or `--check` with anything beside it, still blocks.
+- `forge-precommit --verdict` no longer says PASS while untracked files went unchecked: it ends `verdict: FAIL — untracked files not checked by …`.
+- `forge-precommit --freshness` reports a log nothing still writes (a removed step's leftover) as `orphaned` instead of fresh.
+- A `--skip` run is a partial run, like `--only`: it writes `precommit_only_timing.log` and leaves the continuation note's last-commit-attempt panel alone, so it never replaces full-run evidence.
+- The `c4`, `api_digest_check` and `cli_reference_check` gates run their generator from the running forge install, not whichever copy is first on `PATH`.
+- Files with non-ASCII names (`café.py`) are no longer dropped from every pre-commit file scope.
+- New `[tool.forge.precommit].echo_ci_output` (default `true`): set `false` to stop CI echoing a failing step's output.
+- **A redirection among a command's arguments no longer hides it from the guards.** Each guard read a command's arguments only up to the next `&` or `|`, and the `&` of `2>&1`, `&>file` or `>&2` (or the `|` of `>|file`) counted, so `git push 2>&1 --force`, `git checkout 2>&1 -f`, `git restore 2>&1 .`, `git commit 2>&1 -n`, a protected-branch push such as `git push 2>&1 origin main`, `gh api >|x …/pulls/N/merge` and `git push origin >|x --delete main` all ran. The install guard and the inline-interpreter guard went further and stopped at any redirection after the command word, so `pip >/dev/null install x`, `uv run 2>&1 pip install x`, `uvx 2>&1 ruff check .` and `python <in -c '…git commit…'` passed too. The guards now read past redirections wherever they read arguments, including a target written as a command substitution (`>$(mktemp)`), and a command inside such a target (`echo >$(git clean -fd)`, `cat <(git push 2>&1 -f)`) is still checked. Three commands that were refused only because of the same flaw now run: `git stash 2>&1 list`, `git revert HEAD 2>&1 --no-commit`, and a `--help` placed after a redirection.
+- **A long command can no longer run a guard past its timeout.** A guard that runs longer than its 5-second limit is stopped without blocking, and several guards started processes for every command they inspected, so a few hundred harmless commands in front of a dangerous one let it run: about 300 `git checkout feature;` ahead of `git checkout -f`, 250 `git push origin feature;` ahead of a protected-branch deletion, or 3000 `git revert --abort;` ahead of `git revert HEAD`. The branch-deletion, protected-branch, install, inline-interpreter and destructive-git guards now judge a whole command in one pass, reading each directory's state once (at most 32 directories per command), and the shared help check does the same; thousands of commands take well under a second. A command longer than 128K characters is now refused by every guard with a message to run it yourself with `!`, and a guard still judging after 4 seconds — however it got slow, including a directory holding tens of thousands of files — stops and refuses the command instead of being timed out.
+- **The branch-deletion guard now reads a push the way git does.** It looked for the branch name directly after `--delete` and for `push` directly after `git`, so the usual form `git push --delete origin main` (and `-d origin main`), `+:main`, `:heads/main`, combined flags such as `-fd main`, abbreviations such as `--del`, `--mir` and `--pru`, `gh api -XDELETE …`, and a push behind git's global options (`git -C <dir> push …`, `--git-dir=`, `-c k=v`) all deleted the base branch unchecked.
+
+### Docs
+- FOUNDATION §6 now names the steps that pause for the user (merging, force operations, cutting a release or publishing a package); commit, push and opening the PR do not.
+- FOUNDATION §6: a PR monitor that sees `fresh: null` checks again on its next poll instead of treating the wrap-up staleness signal as off; the first poll after finalization is expected to be null.
+- `docs/consumer-release.md` says what one-fragment-per-PR means: several bullets in one file, the type names the whole PR, the strongest bump wins, the slug names the change, and requiring a fragment at all is the separate `changelog_updated` step.
+- Corrected stale docs: the audit pack's sub-audit list, the README's pip_audit row, the CHANGELOG preamble's group names, and the CI recipe's retired `dev` branch.
+
 ## v10.1.2 — 2026-10-13
 
 ### Fixes
