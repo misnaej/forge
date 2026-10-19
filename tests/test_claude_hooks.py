@@ -3419,6 +3419,224 @@ def test_destructive_branch_reset_abbreviated_force_create_is_judged(
     assert _restore_exit(restore_repo, f"git switch {flag} other main") == 2
 
 
+@pytest.fixture
+def abbrev_repo(restore_repo: Path) -> Path:
+    """`restore_repo` where `main` has one more commit than `old`.
+
+    Branch `merge` sits at `main`'s tip, so moving `main` to `merge` is a
+    no-op fast-forward and moving it to `old` drops a commit.
+
+    Returns:
+        The repo root, checked out on `main`.
+    """
+    (restore_repo / "m").write_text("main only\n")
+    _git(restore_repo, "add", "-A")
+    _git(restore_repo, "commit", "-q", "-m", "main moves on")
+    _git(restore_repo, "branch", "merge", "main")
+    _git(restore_repo, "branch", "old", "main~1")
+    return restore_repo
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("git checkout --confl merge -B main old", id="co-abbrev-value"),
+        pytest.param("git switch --confl merge -C main old", id="sw-abbrev-value"),
+        pytest.param("git checkout --conflict merge -B main old", id="co-full-value"),
+    ],
+)
+def test_destructive_branch_reset_abbreviated_value_option_does_not_hide_start(
+    command: str, abbrev_repo: Path
+) -> None:
+    """An abbreviated value-taking option consumes its value, not the start point.
+
+    Read as the start point, `merge` (main's tip) would make the rewind to
+    `old` look like a fast-forward.
+
+    Args:
+        command: A rewinding reset behind a value-taking long option.
+        abbrev_repo: Repo where `old` is behind `main`.
+    """
+    assert _restore_exit(abbrev_repo, command) == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("git checkout --conflict=merge -B main merge", id="equals"),
+        pytest.param("git checkout --confl merge -B main merge", id="abbrev"),
+        pytest.param("git switch --cr foo -C main merge", id="switch-cr"),
+        pytest.param("git checkout --no-track -B main merge", id="no-track"),
+    ],
+)
+def test_destructive_branch_reset_long_option_forms_that_lose_nothing(
+    command: str, abbrev_repo: Path
+) -> None:
+    """Long options are read as git reads them, so fast-forwards stay allowed.
+
+    Args:
+        command: A reset that moves nothing or creates a new name.
+        abbrev_repo: Repo where `merge` is at `main`'s tip.
+    """
+    assert _restore_exit(abbrev_repo, command) == 0
+
+
+def test_destructive_branch_reset_force_is_a_no_value_option(
+    abbrev_repo: Path,
+) -> None:
+    """`--force` takes no value, so `old` is still read as the reset's start.
+
+    The command is still refused, but as a forced switch (which discards
+    local changes), not as a reset the hook cannot read.
+
+    Args:
+        abbrev_repo: Repo where `old` is behind `main`.
+    """
+    proc = _run_hook_proc(
+        _DESTRUCTIVE,
+        "git checkout --force -B newb old",
+        options=HookOptions(cwd=abbrev_repo),
+    )
+    assert proc.returncode == 2
+    assert "long option the hook does not know" not in proc.stderr
+    assert "forced" in proc.stderr.lower()
+
+
+def test_destructive_branch_reset_unknown_long_option_blocks_and_says_so(
+    abbrev_repo: Path,
+) -> None:
+    """A long option outside git's lists may take the start point as its value.
+
+    Args:
+        abbrev_repo: Repo where `old` is behind `main`.
+    """
+    proc = _run_hook_proc(
+        _DESTRUCTIVE,
+        "git checkout --frobnicate -B main old",
+        options=HookOptions(cwd=abbrev_repo),
+    )
+    assert proc.returncode == 2
+    assert "long option the hook does not know" in proc.stderr
+
+
+@pytest.mark.parametrize(
+    ("command", "phrase"),
+    [
+        pytest.param("cd x && git checkout -B a b", "directory it runs in", id="cd"),
+        pytest.param(
+            "env -C/tmp git checkout -B a b", "directory it runs in", id="env-C"
+        ),
+        pytest.param(
+            "env --chdir=/tmp git checkout -B a b",
+            "directory it runs in",
+            id="env-chdir",
+        ),
+        pytest.param(
+            "sudo -D/tmp git checkout -B a b", "directory it runs in", id="sudo-D"
+        ),
+        pytest.param(
+            "GIT_NAMESPACE=x git checkout -B a b",
+            "directory it runs in",
+            id="git-namespace-var",
+        ),
+        pytest.param(
+            "git --namespace x checkout -B a b",
+            "directory it runs in",
+            id="namespace-option",
+        ),
+        pytest.param("git checkout -B a $X", "is not literal", id="opaque"),
+        pytest.param(
+            "git checkout --frobnicate -B a b",
+            "long option the hook does not know",
+            id="option",
+        ),
+        pytest.param('git switch -C "a b" c', "holds a blank", id="views"),
+        pytest.param(
+            " && ".join(f"git checkout -B n{i} main" for i in range(9)),
+            "more than 8 branch resets",
+            id="many",
+        ),
+    ],
+)
+def test_destructive_branch_reset_unknown_names_its_cause(
+    command: str, phrase: str, restore_repo: Path
+) -> None:
+    """Each unreadable-reset refusal names the one cause that applied.
+
+    Args:
+        command: A reset the hook cannot read for one specific reason.
+        phrase: Text only that cause's message carries.
+        restore_repo: Repo with `main` and a longer `other`.
+    """
+    proc = _run_hook_proc(_DESTRUCTIVE, command, options=HookOptions(cwd=restore_repo))
+    assert proc.returncode == 2
+    assert phrase in proc.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("env -C/tmp git checkout a.txt", id="env-C-checkout"),
+        pytest.param("sudo -D/tmp git restore a", id="sudo-D-restore"),
+    ],
+)
+def test_destructive_restore_behind_directory_changing_wrapper_blocks(
+    command: str, restore_repo: Path
+) -> None:
+    """A wrapper that changes directory makes the restore's target unknowable.
+
+    Args:
+        command: A path restore behind `env -C` / `sudo -D`.
+        restore_repo: Repo the hook runs in.
+    """
+    assert _restore_exit(restore_repo, command) == 2
+
+
+def test_destructive_branch_reset_sudo_dash_c_is_not_gits_dash_c(
+    restore_repo: Path,
+) -> None:
+    """`sudo -C3` closes descriptors; it is not `git -C 3`.
+
+    The reset of `other` onto `main` drops a commit, so it blocks, and the
+    refusal is about the rewind in the real directory, not about an
+    unknown or nonexistent directory `3`.
+
+    Args:
+        restore_repo: Repo with `main` and a longer `other`.
+    """
+    proc = _run_hook_proc(
+        _DESTRUCTIVE,
+        "sudo -C3 git checkout -B other main",
+        options=HookOptions(cwd=restore_repo),
+    )
+    assert proc.returncode == 2
+    assert "directory it runs in" not in proc.stderr
+    assert "/3" not in proc.stderr
+    ok = _restore_exit(restore_repo, "sudo -C3 git checkout -B fresh main")
+    assert ok == 0
+
+
+def test_destructive_branch_reset_unresolvable_start_says_to_fix_the_start(
+    restore_repo: Path,
+) -> None:
+    """A start point that does not resolve is told to be fixed, not re-used.
+
+    Suggesting `-b <new> <same bad start>` would send the reader into the
+    same git error.
+
+    Args:
+        restore_repo: Repo with `main` and a longer `other`.
+    """
+    proc = _run_hook_proc(
+        _DESTRUCTIVE,
+        "git checkout -B main nosuchref",
+        options=HookOptions(cwd=restore_repo),
+    )
+    assert proc.returncode == 2
+    assert "Fix the start point" in proc.stderr
+    assert "git checkout -b <new-name> nosuchref" not in proc.stderr
+
+
 @pytest.mark.parametrize(
     "command",
     [
@@ -4346,6 +4564,24 @@ _HOOK_HELPERS = [
         "git commit -m 'not conventional'",
         ("command_positions", "guard_help_only"),
         id="commit-format",
+    ),
+    *(
+        pytest.param(
+            _DESTRUCTIVE,
+            command,
+            (
+                "guard_begin",
+                "command_positions",
+                "guard_git_invocations",
+                "guard_help_only",
+            ),
+            id=f"destructive-{kind}",
+        )
+        for kind, command in (
+            ("reset", "git reset --hard"),
+            ("clean", "git clean -fd"),
+            ("restore", "git restore f"),
+        )
     ),
 ]
 

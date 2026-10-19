@@ -36,16 +36,18 @@ MSG=$(echo "$COMMAND" | awk "
     in_heredoc { gsub(/^[[:space:]]+/, \"\"); print; exit }
 " 2>/dev/null || true)
 
-# Fall back to -m "..." or -m '...' single-line extraction, with POSIX
-# tools only: BSD grep (macOS) has no `-P`, and a lookbehind there emptied
-# MSG for every single-quoted message, flipping the wip-sync pairing below
-# both ways. Both expressions read the FIRST `-m` of a line — the
-# subject, not a later body `-m`: MSG_PFX is any text holding no `-m`
-# that opens a quoted message (a `-m` inside a path, `/a-m/x`, is passed
-# over). The first expression takes a double-quoted message; `t` ends the
-# line there, so only a line it did not match tries the single-quoted
-# one. A sed failure is remembered: on a commit it blocks below rather
-# than reading as "no message".
+# Fall back to -m "..." or -m '...' single-line extraction. POSIX tools
+# only (no GNU `grep -P`), so the same extraction works on BSD/macOS.
+# Both expressions read the FIRST `-m` of a line — the subject, not a
+# later body `-m`: MSG_PFX is any text holding no `-m` that opens a quoted
+# message (a `-m` inside a path, `/a-m/x`, is passed over). The first
+# expression takes a double-quoted message; `t` ends the line there, so
+# only a line it did not match tries the single-quoted one. A sed failure
+# is remembered: on a commit it blocks below rather than reading as "no
+# message".
+# Known limit: "first `-m` of a line" is the first on the command line,
+# not necessarily the commit's own — in `git tag -m 'x' v1 && git commit
+# -m 'wip-sync: y'` the wip-sync pairing below reads the tag's message.
 MSG_EXTRACT_FAILED=false
 if [ -z "$MSG" ]; then
     MSG_PFX="([^-]|-[^m]|-m[[:space:]]*[^\"'[:space:]])*"

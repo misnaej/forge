@@ -57,6 +57,13 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
+# Fail CLOSED on a lib that predates a helper this hook calls: an
+# undefined function returns 127 inside an `if`, which reads as "not
+# found" and would allow the command.
+if ! declare -F guard_begin command_positions guard_git_invocations guard_help_only > /dev/null; then
+    echo "BLOCKED: the guard anchor lib at $ANCHOR_LIB lacks a helper this hook needs (older or damaged plugin copy) — refusing the command rather than running unguarded." >&2
+    exit 2
+fi
 guard_begin
 
 # Commands are found on the command-positions view (git_anchor.sh) — a
@@ -179,7 +186,8 @@ fi
 # `--conflict`) stays allowed for paths that are actually in conflict —
 # on any other path those flags overwrite it like a plain restore.
 # When the hook cannot tell what a path names or where the command runs — a glob, `$`, `~`, pathspec magic, a
-# quoted path with spaces, an earlier `cd`, `--git-dir`/`--work-tree` —
+# quoted path with spaces, an earlier `cd`, `env -C`/`sudo -D`,
+# `--git-dir`/`--work-tree`/`--namespace` or a `GIT_*` relocation —
 # it blocks: a false block costs a `!`, a wrong allow costs someone's
 # work.
 PAYLOAD_CWD=$(jq -r '.cwd // empty' <<< "$INPUT")
@@ -316,11 +324,33 @@ $0 == "" || $0 == "\n" { next }
 _INVOCATION_AWK='
 function abbrev(t, long, min) { return length(t) >= min && substr(long, 1, length(t)) == t }
 # The directory one invocation runs in, or "" when it cannot be known.
-function inv_dir(pre,   n, P, i, t, dir, next1, nextc) {
+# Words before the `git` word belong to wrappers: an `env` or `sudo` that
+# changes directory or root there (`env -C <d>` / `--chdir`, `sudo -D <d>`
+# / `--chdir` / `-R` / `--chroot`, in any cluster or abbreviation) makes
+# the directory unknowable, and their other flags are not git options —
+# `sudo -C3` closes descriptors, it names no directory. A repository-
+# relocating variable or `--namespace` anywhere before the verb is
+# unknowable too.
+function inv_dir(pre,   n, P, i, t, o, dir, next1, nextc, g, w) {
     if (CHDIR) return ""
     dir = ENVIRON["CWD"]; next1 = 0; nextc = 0
     n = split(pre, P, /[ \t]+/)
+    g = 0; w = ""
     for (i = 1; i <= n; i++) {
+        t = P[i]
+        if (t == "") continue
+        if (t ~ /^(--git-dir|--work-tree|--config-env|--namespace|GIT_DIR=|GIT_WORK_TREE=|GIT_INDEX_FILE=|GIT_CONFIG_|GIT_NAMESPACE=|GIT_COMMON_DIR=|GIT_OBJECT_DIRECTORY=|GIT_ALTERNATE_OBJECT_DIRECTORIES=|GIT_REPLACE_REF_BASE=)/) return ""
+        if (g) continue
+        if (t ~ /(^|\/)git$/ && t !~ /^[A-Za-z_][A-Za-z0-9_]*=/) { g = i; continue }
+        if (t ~ /(^|\/)(env|sudo)$/ && t !~ /^[A-Za-z_][A-Za-z0-9_]*=/) { w = t; sub(/.*\//, "", w); continue }
+        if (t !~ /^-/) continue
+        o = t; sub(/=.*/, "", o)
+        if (w == "env" && (t ~ /^-[^-]*C/ || (o ~ /^--/ && abbrev(o, "--chdir", 3)))) return ""
+        if (w == "sudo" && (t ~ /^-[^-]*[DR]/ || (o ~ /^--/ && (abbrev(o, "--chdir", 3) || abbrev(o, "--chroot", 3))))) return ""
+    }
+    # No `git` word: the words are not the shape the anchor matched.
+    if (!g) return ""
+    for (i = g + 1; i <= n; i++) {
         t = P[i]
         if (t == "") continue
         if (next1) {
@@ -340,7 +370,6 @@ function inv_dir(pre,   n, P, i, t, dir, next1, nextc) {
             dir = (t ~ /^\//) ? t : dir "/" t
             continue
         }
-        if (t ~ /^(--git-dir|--work-tree|--config-env|GIT_DIR=|GIT_WORK_TREE=|GIT_INDEX_FILE=|GIT_CONFIG_)/) return ""
     }
     return dir
 }
@@ -605,7 +634,11 @@ fi
 #
 # BRANCH_RESET_PARSE_AWK prints one `K<TAB>dir<TAB>name<TAB>start` record
 # per distinct reset (at most BR_MAX; more is unknowable, so no count of
-# invocations runs the probes past the hook timeout), or UNKNOWN. A short
+# invocations runs the probes past the hook timeout), or UNKNOWN with its
+# cause. Long options are read as git reads them, any prefix included, so
+# an abbreviated value-taking option (`--confl merge`) never leaves its
+# value to be read as the start point; a long option outside git's lists
+# for the verb makes a reset unknowable. A short
 # option cluster holding B (checkout) / C (switch) is read as that option,
 # its value attached or the next word; read wrongly (`-tB`, where `-t`
 # takes B as its value) it can only over-block. The first word before
@@ -613,26 +646,59 @@ fi
 # `--` are probed, whichever git reads it as.
 BR_MAX=8
 BRANCH_RESET_PARSE_AWK="${_INVOCATION_AWK}"'
-function unknown() { print "UNKNOWN"; bad = 1; exit }
+# UNKNOWN carries the cause, for the refusal: dir (where it runs), opaque
+# (a name or start point), option (an option it cannot classify), views
+# (a quoted word with blanks), many (more than MAX resets).
+function unknown(why) { print "UNKNOWN\t" why; bad = 1; exit }
 # A word whose value as git receives it is unknowable here: a variable or
 # command substitution, a glob or backslash bash may still expand, a
 # leading `~`, or a brace expansion.
 function opaque(t) { return t ~ /[$*?[\\]|@SUBST@/ || t ~ /^~/ || t ~ /[{][^}]*(,|[.][.])[^}]*[}]/ }
+# What a long option (without its `=value`) is to git, which accepts any
+# prefix of a long option: "reset" (`--force-create`, its value the
+# name), "val" (takes the next word unless `=` is given), "none", or "?"
+# for one this hook does not know, which it cannot check past. An exact
+# no-value name wins over a longer option it prefixes (`--force` beside
+# `--force-create`), as in git; a prefix git calls ambiguous is read as
+# the value-taking or resetting option — git refuses the command anyway,
+# so that reading can only over-block.
+function long_kind(o,   n, L, i) {
+    if (o ~ /^--no-./) return "none"
+    n = split(NOVAL, L, " ")
+    for (i = 1; i <= n; i++) if (o == L[i]) return "none"
+    if (VERB == "switch" && abbrev(o, "--force-create", 3)) return "reset"
+    n = split(VALOPT, L, " ")
+    for (i = 1; i <= n; i++) if (abbrev(o, L[i], 3)) return "val"
+    n = split(NOVAL, L, " ")
+    for (i = 1; i <= n; i++) if (abbrev(o, L[i], 3)) return "none"
+    return "?"
+}
 function record(dir, name, start) {
-    if (opaque(start)) unknown()
+    if (opaque(start)) unknown("opaque")
     if ((dir, name, start) in SEEN) return
     SEEN[dir, name, start] = 1
-    if (++NREC > MAX) unknown()
+    if (++NREC > MAX) unknown("many")
     print "K\t" dir "\t" name "\t" start
+}
+BEGIN {
+    # The long options of `git checkout -h` / `git switch -h`: those that
+    # take a separate value, and those that take none (or only `=value`).
+    if (VERB == "switch") {
+        VALOPT = "--create --orphan --conflict"
+        NOVAL = "--guess --discard-changes --quiet --recurse-submodules --progress --merge --detach --track --force --overwrite-ignore --ignore-other-worktrees"
+    } else {
+        VALOPT = "--orphan --conflict --pathspec-from-file"
+        NOVAL = "--guess --overlay --quiet --recurse-submodules --progress --merge --detach --track --force --overwrite-ignore --ignore-other-worktrees --ours --theirs --patch --ignore-skip-worktree-bits --pathspec-file-nul"
+    }
 }
 {
     if ($0 == "") next
     NWORDS++
-    if (!inv_read($0, FNR)) unknown()
+    if (!inv_read($0, FNR)) unknown("views")
     # FLAG resets a branch; VAL takes a value and creates one (git refuses
     # it beside FLAG, so its value only has to be skipped).
     FLAG = (VERB == "switch") ? "C" : "B"; VAL = (VERB == "switch") ? "c" : "b"
-    name = ""; have = 0; want = 0; skip = 0; dd = 0; np = 0; after = ""
+    name = ""; have = 0; want = 0; skip = 0; dd = 0; np = 0; after = ""; unk = 0
     split("", P)
     for (i = 1; i <= NW; i++) {
         t = W[i]
@@ -644,11 +710,12 @@ function record(dir, name, start) {
         if (t ~ /^--/) {
             k = index(t, "=")
             o = k ? substr(t, 1, k - 1) : t
-            if (VERB == "switch" && abbrev(o, "--force-create", 8)) {
+            kind = long_kind(o)
+            if (kind == "reset") {
                 if (k) { name = substr(t, k + 1); have = 1 } else want = 1
-                continue
-            }
-            if (!k && (o == "--orphan" || o == "--conflict" || o == "--pathspec-from-file" || (VERB == "switch" && abbrev(o, "--create", 4)))) skip = 1
+            } else if (kind == "val") {
+                if (!k) skip = 1
+            } else if (kind == "?") unk = 1
             continue
         }
         if (t ~ /^-./) {
@@ -665,16 +732,18 @@ function record(dir, name, start) {
         P[++np] = t
     }
     if (!have) next
-    if (opaque(name)) unknown()
+    # An unknown option may take the word read here as the start point.
+    if (unk) unknown("option")
+    if (opaque(name)) unknown("opaque")
     dir = inv_dir(PRE)
-    if (dir == "") unknown()
+    if (dir == "") unknown("dir")
     if (np) record(dir, name, P[1])
     else {
         record(dir, name, "HEAD")
         if (after != "") record(dir, name, after)
     }
 }
-END { if (!bad && NWORDS != NPOS) print "UNKNOWN" }
+END { if (!bad && NWORDS != NPOS) print "UNKNOWN\tviews" }
 '
 
 # _branch_reset_blocked <verb> <flag> — true when a <verb> branch reset
@@ -692,7 +761,17 @@ _branch_reset_blocked() {
     local instead="Name the directory and start point literally (\`git -C <path> $verb $flag <name> <start>\`, no \`cd\` or variables), or start a branch under a new name with \`git $verb $new <new-name> <start>\`."
     case "$records" in
         *UNKNOWN*)
-            BR_WHY="$cannot the directory it runs in, the branch name or the start point cannot be read from the command (an earlier \`cd\`, a variable or substitution, a glob, a quoted word with spaces, or more than $BR_MAX resets). $instead"
+            # The parse names the cause on its UNKNOWN line; the refusal
+            # names that one, not every cause there is.
+            case $'\n'"$records" in
+                *$'\n'UNKNOWN$'\t'dir*) BR_WHY="$cannot the directory it runs in cannot be known (an earlier \`cd\`/\`pushd\`, \`env -C\` or \`sudo -D\`, \`--git-dir\`/\`--work-tree\`/\`--namespace\`, a \`GIT_*\` relocation variable, or a \`-C\` value holding a variable)." ;;
+                *$'\n'UNKNOWN$'\t'opaque*) BR_WHY="$cannot the branch name or start point is not literal (a variable or substitution, a glob, a backslash, a leading \`~\` or a brace expansion)." ;;
+                *$'\n'UNKNOWN$'\t'option*) BR_WHY="$cannot it holds a long option the hook does not know for \`git $verb\`, which may take the word read as the start point." ;;
+                *$'\n'UNKNOWN$'\t'views*) BR_WHY="$cannot a quoted word holds a blank, so the words are not the ones git receives." ;;
+                *$'\n'UNKNOWN$'\t'many*) BR_WHY="$cannot the command holds more than $BR_MAX branch resets." ;;
+                *) BR_WHY="$cannot the command could not be read." ;;
+            esac
+            BR_WHY="$BR_WHY $instead"
             return 0
             ;;
     esac
@@ -713,7 +792,7 @@ _branch_reset_blocked() {
         # Exactly one object name and nothing else: an ambiguity warning on
         # stderr fails this too.
         if [ "$rc" != 0 ] || ! [[ $base =~ $BR_OID_RE ]]; then
-            BR_WHY="$cannot the start point '$start' does not resolve to exactly one commit (it is missing, or the name is ambiguous). $instead"
+            BR_WHY="$cannot the start point '$start' does not resolve to exactly one commit (it is missing, or the name is ambiguous). Fix the start point: name it as a full ref (\`refs/heads/<branch>\`, \`refs/tags/<tag>\`) or a commit SHA, and run the command again."
             return 0
         fi
         rc=0
