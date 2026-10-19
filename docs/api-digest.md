@@ -402,6 +402,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `declared_layout_dirs(repo_root: Path, *, include_tests: bool = True) -> list[str] | None` — Return the explicitly declared layout dirs, or ``None`` if undeclared.
 - `resolve_test_naming_roots(repo_root: Path) -> list[str]` — Resolve the *test-only* roots the test-naming check scans.
 - `filter_under_roots(files: list[str], roots: list[str]) -> list[str]` — Keep only *files* that live under one of *roots* (source-tree scoping).
+- `path_under_roots(path: str, roots: Sequence[str], *, empty: bool, repo_root: Path | None = None) -> bool` — Return whether *path* lies under one of the declared *roots*.
 - `filter_excluded(files: list[str], globs: list[str]) -> list[str]` — Drop *files* matching any exclude *glob* (the ``[tool.forge].exclude`` half).
 - `select_diff_files(repo_root: Path, *, roots: list[str] | None = None, apply_exclude: bool = False, drop_deleted: bool = True, suffix: str = '.py') -> list[str]` — Select the modified files a diff-scoped step should check.
 - `tracked_files_under_roots(repo_root: Path, roots: list[str], *, suffix: str = '.py') -> list[str]` — Select the git-tracked files under *roots*, minus repo-wide excludes.
@@ -1230,7 +1231,9 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `step_cli_reference_check(repo_root: Path) -> StepResult` — Run ``forge-gen-cli-reference --check`` — cli-reference drift guard (opt-in).
 - `step_foundation_md_check(repo_root: Path) -> StepResult` — Verify ``FOUNDATION.md`` reproduces the installed foundation (opt-in).
 - `_count_pip_audit_advisories(output: str) -> int` _(internal)_ — Count advisory ID occurrences in a ``pip-audit`` text-mode output.
-- `_pip_audit_scan_age_hours(repo_root: Path) -> float | None` _(internal)_ — Return how long ago the last CVE scan wrote its sidecar.
+- `_payload_scanned_at(repo_root: Path) -> float | None` _(internal)_ — Return the scan time recorded inside the sidecar, if it holds a usable one.
+- `_sidecar_scanned_at(repo_root: Path) -> float | None` _(internal)_ — Return when the last CVE scan ran, the one reader every age check uses.
+- `_pip_audit_scan_age_hours(repo_root: Path) -> float | None` _(internal)_ — Return how long ago the last CVE scan ran.
 - `_reuse_reason_hours(cfg: dict, age: float) -> str | None` _(internal)_ — Return why an hours-cadence scan may be reused, or ``None`` to scan.
 - `_reuse_reason_branch(repo_root: Path) -> str | None` _(internal)_ — Return why a branch-cadence scan may be reused, or ``None`` to scan.
 - `_pip_audit_reuse_reason(repo_root: Path) -> str | None` _(internal)_ — Decide whether this commit can reuse the previous CVE scan.
@@ -1251,6 +1254,9 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `step_typecheck(repo_root: Path) -> StepResult` — Run pyrefly over the resolved scope (opt-in).
 - `step_doc_consistency(repo_root: Path) -> StepResult` — Run ``verify-forge-doc-consistency`` — doc claims vs repo state (opt-in).
 - `step_regen_docs(repo_root: Path) -> StepResult` — Regenerate the otherwise-unwired generated docs and re-stage them.
+- `_cli_reference_lost_sections(repo_root: Path) -> list[str]` _(internal)_ — Return the CLI sections ``HEAD`` documents that the worktree doc lacks.
+- `_held_cli_reference(repo_root: Path, *, stale: bool, built: list[str]) -> str` _(internal)_ — Decide whether a stale-install cli-reference must be held back.
+- `_install_refresh_hint(repo_root: Path) -> str` _(internal)_ — Name the command that refreshes this repo's install.
 - `_vendored_documented_hashes(repo_root: Path) -> dict[str, str]` _(internal)_ — Parse ``VENDORED.md`` into a ``{filename: sha256}`` map.
 - `_sha256_file(path: Path) -> str` _(internal)_ — Return *path*'s SHA-256 hex digest, read in 64 KiB chunks.
 - `step_vendored_integrity(repo_root: Path) -> StepResult` — Verify each vendored ``data/*.js`` blob matches its ``VENDORED.md`` hash.
@@ -1394,6 +1400,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 > _forge-slow-tests-report — surface the slowest tests from a pytest run._
 
 - `class Duration` — One test-phase timing parsed from a pytest durations section.
+- `class CoverageScope` — Which source roots a coverage export is scoped to, and its repo root.
 - `parse_durations(text: str) -> list[Duration]` — Extract and rank every durations entry in a pytest log.
 - `format_report(durations: list[Duration], top: int) -> str` — Render a ranked durations table as plain text.
 - `_baseline_key(duration: Duration) -> str` _(internal)_ — Return *duration*'s flat JSON key (``nodeid::phase``).
@@ -1402,12 +1409,11 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `format_baseline_delta(durations: list[Duration], baseline: dict[str, float]) -> str` — Render the regression block comparing *durations* to *baseline*.
 - `nodeid_base(nodeid: str) -> str` — Collapse a node id to the test function that owns it.
 - `seconds_by_base(durations: list[Duration]) -> dict[str, float]` — Sum every phase and every parametrized variant per test function.
-- `_in_source_roots(filename: str, source_roots: list[str]) -> bool` _(internal)_ — Return whether a coverage file entry lies under a source root.
-- `unique_statements(data: dict[str, object], source_roots: list[str]) -> tuple[dict[str, int], set[str]]` — Count statements covered by exactly one test function.
+- `unique_statements(data: dict[str, object], source_roots: list[str], *, repo_root: Path | None = None) -> tuple[dict[str, int], set[str]]` — Count statements covered by exactly one test function.
 - `_worth_row(base: str, seconds: float, unique: int | None) -> tuple[tuple[int, float], str]` _(internal)_ — Render one ranking row and the key it sorts on.
-- `format_coverage_ranking(durations: list[Duration], data: dict[str, object], source_roots: list[str], *, top: int, truncated: bool) -> str` — Rank test functions by unique covered statements per second.
+- `format_coverage_ranking(durations: list[Duration], data: dict[str, object], scope: CoverageScope, *, top: int, truncated: bool) -> str` — Rank test functions by unique covered statements per second.
 - `durations_truncated(text: str) -> bool` — Return whether pytest actually hid durations entries in *text*.
-- `_source_roots() -> list[str]` _(internal)_ — Return the roots to scope counted statements to.
+- `_coverage_scope() -> tuple[list[str], Path | None]` _(internal)_ — Return the roots to scope counted statements to, and the repo they are in.
 - `_default_log() -> Path` _(internal)_ — Return the pytest log read when ``--log`` is not given.
 - `_read_source(log: str) -> str` _(internal)_ — Read the pytest log from a file path or stdin.
 - `main() -> int` — Entry point for ``forge-slow-tests-report``.
@@ -1430,6 +1436,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_run_tiers(repo_root: Path, depth: int, plan: SelectionPlan, config: _RunConfig, log: RunLog) -> tuple[int, str]` _(internal)_ — Run depth batches 0..*depth* with fail-fast between them.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Construct the ``forge-smart-test`` argument parser.
 - `_escalate_to_full(repo_root: Path, base_ref: str, changed: set[str], cfg: dict[str, object]) -> bool` _(internal)_ — Return whether the change set must run the full suite.
+- `_safe_fallback_mode(cfg: dict[str, object]) -> str` _(internal)_ — Resolve ``[tool.forge.smart_test].safe_fallback``.
 - `_resolve_run_inputs(args: argparse.Namespace, repo_root: Path, cfg: dict[str, object]) -> tuple[str | int, str, set[str]]` _(internal)_ — Resolve what a run needs: its depth, the ref it diffs against, the changes.
 - `_coverage_additions(args: argparse.Namespace, cfg: dict[str, object], changed: set[str]) -> tuple[set[str], bool]` _(internal)_ — Resolve coverage-validation settings and collect coverage additions.
 - `main() -> int` — Select and run change-affected tests by depth; write the log.

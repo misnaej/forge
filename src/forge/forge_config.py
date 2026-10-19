@@ -419,6 +419,14 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "(the safe-fallback guarantee).",
     ),
     ConfigKey(
+        ("tool", "forge", "smart_test", "safe_fallback"),
+        "escalate",
+        "What an unmappable non-Python change does: 'escalate' (run the "
+        "full suite), 'warn' (log the paths, keep the selected depth) or "
+        "'off' (ignore them). A conftest outside the test roots always "
+        "escalates; unknown values escalate with a warning.",
+    ),
+    ConfigKey(
         ("tool", "forge", "continuation", "judgment_max_lines"),
         default=60,
         description="Line budget for CONTINUATION.md's written section (the "

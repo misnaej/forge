@@ -72,6 +72,7 @@ import hashlib
 import importlib.metadata
 import json
 import logging
+import math
 import os
 import re
 import shlex
@@ -130,6 +131,7 @@ from forge.pr_delta import REGEN_COMMANDS
 from forge.regen_docs import (
     API_DIGEST_DOC,
     CLI_REFERENCE_DOC,
+    is_forge_repo,
     record_regenerated,
     regen_decisions,
 )
@@ -1346,28 +1348,73 @@ _PIP_AUDIT_FORCE_ENV = "FORGE_PIP_AUDIT_FORCE"
 #: A stamp dated further ahead than this is treated as invalid rather
 #: than allowed to suppress scans indefinitely (mirrors smart_test).
 _PIP_AUDIT_FUTURE_TOLERANCE_S = 300.0
+#: Sidecar field recording when the scan ran (epoch seconds, UTC).
+_PIP_AUDIT_SCANNED_AT_KEY = "scanned_at"
 
 
-def _pip_audit_scan_age_hours(repo_root: Path) -> float | None:
-    """Return how long ago the last CVE scan wrote its sidecar.
+def _payload_scanned_at(repo_root: Path) -> float | None:
+    """Return the scan time recorded inside the sidecar, if it holds a usable one.
 
     Args:
         repo_root: Git repo root.
 
     Returns:
-        Age in hours, or ``None`` when there is no readable stamp or it
-        is dated in the future — both mean scan, which is the safe
-        direction.
+        The recorded epoch seconds, or ``None`` when the sidecar is not a
+        trustworthy report (:func:`_read_audit_sidecar`), predates the
+        field, or carries a non-numeric or non-finite value.
     """
-    sidecar = code_health_dir(repo_root) / PIP_AUDIT_SIDECAR_NAME
-    try:
-        mtime = sidecar.stat().st_mtime
-    except OSError:
+    data = _read_audit_sidecar(repo_root)
+    value = data.get(_PIP_AUDIT_SCANNED_AT_KEY) if data is not None else None
+    # bool is an int subclass: `true` must not read as 1970-01-01T00:00:01.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    delta_s = datetime.now(tz=UTC).timestamp() - mtime
-    if delta_s < -_PIP_AUDIT_FUTURE_TOLERANCE_S:
+    return float(value) if math.isfinite(value) else None
+
+
+def _sidecar_scanned_at(repo_root: Path) -> float | None:
+    """Return when the last CVE scan ran, the one reader every age check uses.
+
+    The time recorded in the payload wins because a file's modification
+    time does not survive a copy or a CI cache restore — both reset it to
+    the moment of the copy and manufacture a fresh-looking scan that never
+    ran. The modification time is the fallback for a sidecar written
+    before the field existed.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        Epoch seconds, or ``None`` when there is no readable time or it is
+        dated further ahead than :data:`_PIP_AUDIT_FUTURE_TOLERANCE_S` —
+        both mean scan, which is the safe direction (a future stamp would
+        otherwise suppress scans indefinitely).
+    """
+    scanned_at = _payload_scanned_at(repo_root)
+    if scanned_at is None:
+        sidecar = code_health_dir(repo_root) / PIP_AUDIT_SIDECAR_NAME
+        try:
+            scanned_at = sidecar.stat().st_mtime
+        except OSError:
+            return None
+    if scanned_at - datetime.now(tz=UTC).timestamp() > _PIP_AUDIT_FUTURE_TOLERANCE_S:
         return None
-    return max(0.0, delta_s / 3600.0)
+    return scanned_at
+
+
+def _pip_audit_scan_age_hours(repo_root: Path) -> float | None:
+    """Return how long ago the last CVE scan ran.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        Age in hours, or ``None`` when :func:`_sidecar_scanned_at` has no
+        trustworthy time.
+    """
+    scanned_at = _sidecar_scanned_at(repo_root)
+    if scanned_at is None:
+        return None
+    return max(0.0, (datetime.now(tz=UTC).timestamp() - scanned_at) / 3600.0)
 
 
 def _reuse_reason_hours(cfg: dict, age: float) -> str | None:
@@ -1396,12 +1443,11 @@ def _reuse_reason_branch(repo_root: Path) -> str | None:
     "Once per branch" means the sidecar was written after this branch
     left its base. An unresolvable fork point scans.
 
-    The two timestamps come from different clocks — the sidecar's from
-    this filesystem, the fork's from whoever authored that commit — so a
-    local clock running ahead could date a scan after a fork it actually
-    preceded. ``_pip_audit_reuse_reason`` rejects a future-dated sidecar before
-    calling this, which bounds that window; a refactor that drops the
-    check there drops it here too.
+    The two timestamps come from different clocks — the scan's from the
+    machine that ran it, the fork's from whoever authored that commit — so
+    a clock running ahead could date a scan after a fork it actually
+    preceded. :func:`_sidecar_scanned_at` rejects a future-dated scan,
+    which bounds that window.
 
     Args:
         repo_root: Git repo root.
@@ -1415,9 +1461,8 @@ def _reuse_reason_branch(repo_root: Path) -> str | None:
     forked_at = run_git("show", "-s", "--format=%ct", fork, cwd=repo_root, check=False)
     if not forked_at.strip().isdigit():
         return None
-    sidecar = code_health_dir(repo_root) / PIP_AUDIT_SIDECAR_NAME
-    sidecar_mtime = sidecar.stat().st_mtime
-    if sidecar_mtime <= float(forked_at.strip()):
+    scanned_at = _sidecar_scanned_at(repo_root)
+    if scanned_at is None or scanned_at <= float(forked_at.strip()):
         return None
     return "already scanned on this branch"
 
@@ -1642,14 +1687,20 @@ def _write_audit_sidecar(repo_root: Path, data: dict) -> None:
     pip-audit run when it is absent — a non-blocking step must not crash the
     whole pre-commit run over an unwritable ``code_health/``.
 
+    The scan time is written into the payload (``scanned_at``) so the
+    reuse cadence reads when the scan ran, not when the file was last
+    copied (:func:`_sidecar_scanned_at`). Every reader of the report looks
+    only at its ``dependencies`` list, so the extra key is invisible to them.
+
     Args:
         repo_root: Git repo root.
         data: Parsed pip-audit JSON (``AuditRun.data``).
     """
     path = code_health_dir(repo_root) / PIP_AUDIT_SIDECAR_NAME
+    payload = {**data, _PIP_AUDIT_SCANNED_AT_KEY: datetime.now(tz=UTC).timestamp()}
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data), encoding="utf-8")
+        path.write_text(json.dumps(payload), encoding="utf-8")
     except OSError as exc:
         emit(f"pip_audit: sidecar write failed ({exc}); cve_usage runs standalone")
 
@@ -2135,13 +2186,16 @@ def step_regen_docs(repo_root: Path) -> StepResult:
         repo_root: Git repo root.
 
     Returns:
-        ``StepResult`` (``non_blocking=True``); skipped when neither doc
-        exists or when unstaged changes are present (partial commit — the
-        generators read the worktree, which then differs from what the
-        commit records). ``passed`` is False when a present generator
-        errored, or when the editable install is stale (declared console
-        scripts absent from the install the cli-reference generator reads
-        — the regenerated doc silently omits them; renders WARN).
+        ``StepResult``, ``non_blocking=True`` except in the one held case
+        below; skipped when neither doc exists or when unstaged changes are
+        present (partial commit — the generators read the worktree, which
+        then differs from what the commit records). ``passed`` is False
+        when a present generator errored, or when the editable install is
+        stale (declared console scripts absent from the install the
+        cli-reference generator reads — the regenerated doc silently omits
+        them; renders WARN). When the stale regeneration would also drop
+        CLI sections ``HEAD`` documents, the doc is not staged and the
+        result blocks (:func:`_held_cli_reference`).
 
     Raises:
         SystemExit: If the running forge does not declare a needed
@@ -2185,23 +2239,26 @@ def step_regen_docs(repo_root: Path) -> StepResult:
             output="\n".join(sections),
             skipped=True,
         )
-    passed = True
     # Stale-install advisory: forge-gen-cli-reference discovers CLIs from
     # INSTALLED entry points, and the healing steps (auto_rebuild,
     # env_sync) self-skip non-interactively — so a commit adding a
     # [project.scripts] entry can regenerate the doc from stale metadata,
-    # silently omitting the new CLI. Detect and WARN; never block
-    # (detection only, no auto-install — FOUNDATION §2).
-    if any(rel == "docs/cli-reference.md" for _, rel in targets):
-        stale = missing_console_scripts(repo_root)
-        if stale:
-            passed = False
-            sections.append(
-                "⚠️ install is stale — declared console script(s) absent "
-                "from the install that docs/cli-reference.md is regenerated "
-                f"from: {', '.join(stale)}. Re-run ./dev/setup.sh (or your "
-                "editable install refresh) and re-commit to include them."
-            )
+    # silently omitting the new CLI. Detect and WARN (detection only, no
+    # auto-install — FOUNDATION §2); _held_cli_reference blocks only when
+    # that stale regeneration would drop sections the branch documents.
+    stale = (
+        missing_console_scripts(repo_root)
+        if any(rel == CLI_REFERENCE_DOC for _, rel in targets)
+        else []
+    )
+    passed = not stale
+    if stale:
+        sections.append(
+            "⚠️ install is stale — declared console script(s) absent "
+            "from the install that docs/cli-reference.md is regenerated "
+            f"from: {', '.join(stale)}. Refresh the install "
+            f"({_install_refresh_hint(repo_root)}) and re-commit to include them."
+        )
     # Launched from the running install, never by PATH name: on a machine
     # with several forge checkouts the bare name can resolve to another
     # checkout's older generator, which rewrites the doc from stale
@@ -2213,18 +2270,107 @@ def step_regen_docs(repo_root: Path) -> StepResult:
         if ok:
             built.append(rel)
         sections.append(f"$ {cli}\n{output.strip() or '(no output)'}")
-    restaged = stage_modified_paths(repo_root, [rel for _, rel in targets])
+    held = _held_cli_reference(repo_root, stale=bool(stale), built=built)
+    withheld = {CLI_REFERENCE_DOC} if held else set()
+    restaged = stage_modified_paths(
+        repo_root, [rel for _, rel in targets if rel not in withheld]
+    )
     if restaged:
         sections.append("Re-staged: " + ", ".join(restaged))
-    # Recorded only after a successful generate + re-stage: a failed or
-    # skipped doc keeps its old entry, so the next commit retries it.
-    record_regenerated(repo_root, built, currents)
+    if held:
+        sections.append(held)
+    # Recorded only after a successful generate + re-stage: a failed,
+    # skipped or held doc keeps its old entry, so the next commit retries it.
+    record_regenerated(
+        repo_root, [rel for rel in built if rel not in withheld], currents
+    )
     return StepResult(
         name="regen_docs",
         passed=passed,
         output="\n\n".join(sections),
-        non_blocking=True,
+        non_blocking=not held,
     )
+
+
+_CLI_REFERENCE_HEADING_RE = re.compile(r"^## (\S+)\s*$", re.MULTILINE)
+
+
+def _cli_reference_lost_sections(repo_root: Path) -> list[str]:
+    """Return the CLI sections ``HEAD`` documents that the worktree doc lacks.
+
+    Each documented CLI is one ``## <name>`` heading, so a heading present
+    at ``HEAD`` and absent now is a CLI the regenerated doc stopped
+    describing.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        Sorted lost CLI names; empty when ``HEAD`` has no such doc (a new
+        file loses nothing) or the worktree copy cannot be read.
+    """
+    before = run_git("show", f"HEAD:{CLI_REFERENCE_DOC}", cwd=repo_root, check=False)
+    try:
+        after = (repo_root / CLI_REFERENCE_DOC).read_text(encoding="utf-8")
+    except OSError:
+        return []
+    lost = set(_CLI_REFERENCE_HEADING_RE.findall(before)) - set(
+        _CLI_REFERENCE_HEADING_RE.findall(after)
+    )
+    return sorted(lost)
+
+
+def _held_cli_reference(repo_root: Path, *, stale: bool, built: list[str]) -> str:
+    """Decide whether a stale-install cli-reference must be held back.
+
+    A stale install regenerates the doc from whatever entry points it
+    still has, so it can silently delete the sections of CLIs it lacks.
+    Staging that would commit the deletion, so the doc is held out of the
+    commit and the step blocks. The file itself is left exactly as the
+    generator wrote it — restoring it would destroy what the author may
+    want to inspect, and choosing between regenerating and restoring is
+    theirs.
+
+    Args:
+        repo_root: Git repo root.
+        stale: Whether the install is missing declared console scripts.
+        built: Docs whose generator succeeded this run.
+
+    Returns:
+        The blocking message to append, or ``""`` when nothing is held.
+    """
+    if not stale or CLI_REFERENCE_DOC not in built:
+        return ""
+    lost = _cli_reference_lost_sections(repo_root)
+    if not lost:
+        return ""
+    return (
+        f"⛔ {CLI_REFERENCE_DOC} NOT staged — regenerated from a stale "
+        f"install, it would drop {len(lost)} section(s) HEAD documents: "
+        f"{', '.join(lost)}. The regenerated file is left modified in your "
+        "worktree, unstaged; this step did not restore it. Refresh the "
+        f"install ({_install_refresh_hint(repo_root)}), regenerate the doc "
+        "(`forge-gen-cli-reference`), and commit again — this step then "
+        "stages it."
+    )
+
+
+def _install_refresh_hint(repo_root: Path) -> str:
+    """Name the command that refreshes this repo's install.
+
+    Forge's own repo has one sanctioned bootstrap; a consumer installs
+    forge however its own environment tooling does, so naming forge's
+    script there would send the reader to a file that does not exist.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        A short command phrase for the remediation sentence.
+    """
+    if is_forge_repo(repo_root):
+        return "`./dev/setup.sh`"
+    return "reinstall forge-scripts the way this repo installs it"
 
 
 _VENDORED_DATA_DIR = "src/forge/data"

@@ -24,6 +24,7 @@ import fnmatch
 import logging
 import tomllib
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from forge.git_utils import (
@@ -37,7 +38,7 @@ from forge.run_context import is_non_interactive
 
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from collections.abc import Sequence
 
 
 logger = logging.getLogger(__name__)
@@ -484,9 +485,53 @@ def filter_under_roots(files: list[str], roots: list[str]) -> list[str]:
         (``root/…``); a bare root name never partial-matches a sibling
         (``src`` does not admit ``src_extra/x.py``).
     """
-    prefixes = tuple(f"{r.rstrip('/')}/" for r in roots)
-    bare = {r.rstrip("/") for r in roots}
-    return [f for f in files if f in bare or f.startswith(prefixes)]
+    return [f for f in files if path_under_roots(f, roots, empty=False)]
+
+
+def path_under_roots(
+    path: str,
+    roots: Sequence[str],
+    *,
+    empty: bool,
+    repo_root: Path | None = None,
+) -> bool:
+    """Return whether *path* lies under one of the declared *roots*.
+
+    The single definition of root membership, so every caller agrees on
+    what "under ``src``" means: the path equals the root or sits beneath it
+    (``root/…``), and a root never partial-matches a sibling (``src`` does
+    not admit ``src_extra/x.py``) or a same-named directory deeper down
+    (``vendor/src/x.py`` is not under ``src``).
+
+    Args:
+        path: The path to test — repo-relative, or absolute.
+        roots: Repo-relative directory roots; a trailing ``/`` is ignored.
+        empty: The answer when *roots* is empty. Callers disagree on
+            purpose — a scan scoped to nothing should keep nothing, while
+            a report that cannot resolve a layout should keep everything —
+            so each states its policy rather than inheriting one.
+        repo_root: Repo root that absolute paths are made relative to.
+
+    Returns:
+        ``True`` when *path* is under some root. An absolute path is
+        ``False`` when it lies outside *repo_root* or no *repo_root* is
+        given — which part of it is repo-relative is then unknowable.
+    """
+    if not roots:
+        return empty
+    candidate = Path(path)
+    if candidate.is_absolute():
+        if repo_root is None:
+            return False
+        try:
+            candidate = candidate.relative_to(repo_root)
+        except ValueError:
+            return False
+    posix = candidate.as_posix()
+    return any(
+        posix == bare or posix.startswith(f"{bare}/")
+        for bare in (root.rstrip("/") for root in roots)
+    )
 
 
 def filter_excluded(files: list[str], globs: list[str]) -> list[str]:

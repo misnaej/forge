@@ -791,7 +791,9 @@ unobserved. Deletion is deliberately not part of the policy.
 
 **Selection guarantees** (spec: [`forge-docs/smart-test.md`](forge-docs/smart-test.md)):
 depth-tier selection is safe by contract — any changed non-Python path
-the selector cannot map escalates the run to `full`; the tracked
+the selector cannot map escalates the run to `full` (the default
+`safe_fallback = "escalate"`; a repo that turns it down gives up exactly
+this guarantee); the tracked
 `.forge-full-run` stamp guarantees a truly-all run at least every 48
 hours (`full_run_max_age_hours`), staged into the commit that earned
 it — that committed-stamp escalation is `cadence_mode = "commit"`, for

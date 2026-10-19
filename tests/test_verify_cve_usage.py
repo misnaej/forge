@@ -111,6 +111,26 @@ def test_active_cve_ids_none_when_pip_audit_missing(
     assert cve.active_cve_ids(tmp_path) is None
 
 
+def test_active_cve_ids_reads_sidecar_carrying_scanned_at(tmp_path: Path) -> None:
+    """The ``scanned_at`` field the pip_audit step adds does not disturb this reader."""
+    sidecar = tmp_path / "audit.json"
+    sidecar.write_text(
+        json.dumps(
+            {
+                "scanned_at": 1_700_000_000.0,
+                "dependencies": [
+                    {
+                        "name": "lxml",
+                        "vulns": [{"id": "PYSEC-1", "aliases": ["CVE-2024-0001"]}],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert cve.active_cve_ids(tmp_path, sidecar) == {"PYSEC-1", "CVE-2024-0001"}
+
+
 def test_main_skips_without_pattern_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

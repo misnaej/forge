@@ -1298,6 +1298,192 @@ def test_pip_audit_scan_age_hours_fresh_stamp_computes_hours(tmp_path: Path) -> 
     assert age == pytest.approx(2.0, abs=0.01)
 
 
+def _write_scan_sidecar(repo: Path, text: str) -> Path:
+    """Write raw text as the pip-audit sidecar and return its path.
+
+    Args:
+        repo: Repo root whose ``code_health/`` receives the sidecar.
+        text: Exact file content (so corrupt and non-finite JSON can be written).
+
+    Returns:
+        The sidecar path.
+    """
+    sidecar = git_utils.code_health_dir(repo) / precommit.PIP_AUDIT_SIDECAR_NAME
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
+    sidecar.write_text(text, encoding="utf-8")
+    return sidecar
+
+
+def _scan_payload(**extra: object) -> str:
+    """Return a minimal valid pip-audit report carrying *extra* keys, as JSON.
+
+    Args:
+        **extra: Extra top-level keys such as ``scanned_at``.
+
+    Returns:
+        The JSON text.
+    """
+    return json.dumps({"dependencies": [], **extra})
+
+
+def test_sidecar_scanned_at_payload_wins_over_mtime(tmp_path: Path) -> None:
+    """The recorded scan time is used even when the file's mtime says otherwise."""
+    scanned = time.time() - 5 * 3600
+    sidecar = _write_scan_sidecar(tmp_path, _scan_payload(scanned_at=scanned))
+    os.utime(sidecar, (time.time(), time.time()))
+    assert precommit._sidecar_scanned_at(tmp_path) == pytest.approx(scanned)
+
+
+def test_sidecar_scanned_at_falls_back_to_mtime_without_field(tmp_path: Path) -> None:
+    """A sidecar written before ``scanned_at`` existed is dated by its mtime."""
+    sidecar = _write_scan_sidecar(tmp_path, _scan_payload())
+    mtime = time.time() - 3600
+    os.utime(sidecar, (mtime, mtime))
+    assert precommit._sidecar_scanned_at(tmp_path) == pytest.approx(mtime, abs=1)
+
+
+def test_sidecar_scanned_at_missing_sidecar_is_none(tmp_path: Path) -> None:
+    """No sidecar at all is unknown, which callers treat as "scan"."""
+    assert precommit._sidecar_scanned_at(tmp_path) is None
+
+
+@pytest.mark.parametrize(
+    ("mtime_offset_s", "usable"),
+    [(-600, True), (3600, False)],
+    ids=["past-mtime-stands-in", "future-mtime-rejected"],
+)
+def test_sidecar_scanned_at_corrupt_payload_depends_on_mtime(
+    tmp_path: Path, mtime_offset_s: int, *, usable: bool
+) -> None:
+    """A corrupt payload carries no time, so a sane mtime stands in for it.
+
+    A future mtime is rejected like any future-dated stamp, leaving nothing
+    trustworthy.
+
+    Args:
+        mtime_offset_s: Seconds the sidecar's mtime sits from now.
+        usable: Whether the mtime should be returned as the scan time.
+    """
+    sidecar = _write_scan_sidecar(tmp_path, "{not json")
+    mtime = time.time() + mtime_offset_s
+    os.utime(sidecar, (mtime, mtime))
+    expected = pytest.approx(mtime, abs=1) if usable else None
+    assert precommit._sidecar_scanned_at(tmp_path) == expected
+
+
+def test_sidecar_scanned_at_future_dated_payload_is_none(tmp_path: Path) -> None:
+    """A payload time beyond the tolerance is rejected, not clamped or mtime-rescued.
+
+    A future stamp would otherwise suppress scans indefinitely.
+    """
+    future = time.time() + precommit._PIP_AUDIT_FUTURE_TOLERANCE_S + 600
+    _write_scan_sidecar(tmp_path, _scan_payload(scanned_at=future))
+    assert precommit._sidecar_scanned_at(tmp_path) is None
+
+
+def test_sidecar_scanned_at_slightly_ahead_within_tolerance_is_kept(
+    tmp_path: Path,
+) -> None:
+    """Ordinary clock skew inside the tolerance does not discard a real scan."""
+    ahead = time.time() + precommit._PIP_AUDIT_FUTURE_TOLERANCE_S / 2
+    _write_scan_sidecar(tmp_path, _scan_payload(scanned_at=ahead))
+    assert precommit._sidecar_scanned_at(tmp_path) == pytest.approx(ahead)
+
+
+@pytest.mark.parametrize(
+    "raw_value",
+    ["true", '"yesterday"', "null", "NaN", "Infinity", "-Infinity"],
+    ids=["bool", "string", "null", "nan", "inf", "neg-inf"],
+)
+def test_sidecar_scanned_at_ignores_non_numeric_or_non_finite_value(
+    tmp_path: Path, raw_value: str
+) -> None:
+    """A junk ``scanned_at`` is ignored and the mtime is used instead.
+
+    ``true`` in particular must not read as 1970-01-01T00:00:01, which
+    would make the scan look ancient (or, for NaN, compare as never stale).
+
+    Args:
+        tmp_path: Pytest temporary directory holding the sidecar.
+        raw_value: Raw JSON literal written as the ``scanned_at`` value.
+    """
+    sidecar = _write_scan_sidecar(
+        tmp_path, '{"dependencies": [], "scanned_at": ' + raw_value + "}"
+    )
+    mtime = time.time() - 1800
+    os.utime(sidecar, (mtime, mtime))
+    assert precommit._sidecar_scanned_at(tmp_path) == pytest.approx(mtime, abs=1)
+
+
+def test_pip_audit_scan_age_hours_uses_payload_time_after_mtime_reset(
+    tmp_path: Path,
+) -> None:
+    """A copied or cache-restored sidecar keeps its real age.
+
+    SCENARIO: the scan ran 48h ago; the file is then copied, which resets
+    its mtime to now.
+    EXPECTED BEHAVIOR: the reported age is still ~48h, not ~0 — the
+    manufactured-fresh-scan bug.
+    """
+    sidecar = _write_scan_sidecar(
+        tmp_path, _scan_payload(scanned_at=time.time() - 48 * 3600)
+    )
+    os.utime(sidecar, (time.time(), time.time()))
+    assert precommit._pip_audit_scan_age_hours(tmp_path) == pytest.approx(
+        48.0, abs=0.01
+    )
+
+
+def test_pip_audit_reuse_reason_hours_old_payload_with_fresh_mtime_scans(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End to end: a copied sidecar (fresh mtime) of an old scan is not reused.
+
+    SCENARIO: ``cadence = "hours"`` (24h); the payload says the scan ran 48h
+    ago, but a copy gave the file an mtime of now.
+    EXPECTED BEHAVIOR: ``None`` (scan), where the mtime alone would have reused.
+    """
+    monkeypatch.delenv(precommit._PIP_AUDIT_FORCE_ENV, raising=False)
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.pip_audit]\ncadence = "hours"\nmax_age_hours = 24\n'
+    )
+    sidecar = _write_scan_sidecar(
+        tmp_path, _scan_payload(scanned_at=time.time() - 48 * 3600)
+    )
+    os.utime(sidecar, (time.time(), time.time()))
+    assert precommit._pip_audit_reuse_reason(tmp_path) is None
+
+
+def test_reuse_reason_branch_without_sidecar_scans(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With a resolvable fork point but no sidecar, branch cadence scans, no crash.
+
+    SCENARIO: the fork commit resolves; nothing was ever scanned.
+    MOCK SETUP: precommit.merge_base_with_head → a fixed SHA;
+    precommit.run_git → a fixed commit timestamp.
+    EXPECTED BEHAVIOR: ``None`` (scan) rather than a FileNotFoundError.
+    """
+    monkeypatch.setattr(precommit, "merge_base_with_head", lambda _r, _b: "deadbeef")
+    monkeypatch.setattr(precommit, "run_git", lambda *_a, **_k: "1700000000")
+    assert precommit._reuse_reason_branch(tmp_path) is None
+
+
+def test_reuse_reason_branch_uses_payload_time_not_mtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A scan older than the fork still scans though a copy gave the file a new mtime.
+
+    MOCK SETUP: as ``test_reuse_reason_branch_without_sidecar_scans``.
+    """
+    fork = 1_700_000_000
+    monkeypatch.setattr(precommit, "merge_base_with_head", lambda _r, _b: "deadbeef")
+    monkeypatch.setattr(precommit, "run_git", lambda *_a, **_k: str(fork))
+    sidecar = _write_scan_sidecar(tmp_path, _scan_payload(scanned_at=fork - 3600))
+    os.utime(sidecar, (time.time(), time.time()))
+    assert precommit._reuse_reason_branch(tmp_path) is None
+
+
 def test_pip_audit_reuse_reason_cadence_always_never_skips(tmp_path: Path) -> None:
     """`cadence = "always"` bypasses the reuse gate even with a fresh sidecar."""
     (tmp_path / "pyproject.toml").write_text(
@@ -3005,15 +3191,19 @@ def test_step_pip_audit_writes_sidecar_when_data_parseable(
 
     SCENARIO: pip-audit returns 1 finding (parseable data).
     MOCK SETUP: precommit.pip_audit_json.run_json → _audit_run(1).
-    EXPECTED BEHAVIOR: code_health/pip_audit.json created and its contents
-        round-trip to the same data dict.
+    EXPECTED BEHAVIOR: code_health/pip_audit.json created; its contents are
+        the same data dict plus a ``scanned_at`` stamp of the current time.
     """
     run = _audit_run(1)
     monkeypatch.setattr(precommit.pip_audit_json, "run_json", lambda _root: run)
+    before = time.time()
     precommit.step_pip_audit(tmp_path)
     sidecar = git_utils.code_health_dir(tmp_path) / "pip_audit.json"
     assert sidecar.exists()
-    assert json.loads(sidecar.read_text()) == run.data
+    written = json.loads(sidecar.read_text())
+    scanned_at = written.pop("scanned_at")
+    assert written == run.data
+    assert before <= scanned_at <= time.time()
 
 
 def test_step_pip_audit_does_not_write_sidecar_on_parse_error(
@@ -4814,6 +5004,152 @@ def test_load_regen_record_corrupt_or_wrong_schema_is_empty(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
     assert regen_docs.load_record(repo) == {}
+
+
+_CLI_AT_HEAD = "# CLI\n\n## forge-foo\nfoo\n\n## forge-bar\nbar\n"
+
+
+def _rg_stale_cli_repo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    regenerated: str,
+    *,
+    missing: tuple[str, ...] = ("forge-new",),
+    documented_at_head: bool = True,
+) -> Path:
+    """Build a repo whose generator rewrites the cli-reference.
+
+    Args:
+        tmp_path: Directory to create the repo under.
+        monkeypatch: Used to stub the generators and the stale-install probe.
+        regenerated: What the cli-reference generator writes to the worktree.
+        missing: Console scripts the install probe reports absent (empty =
+            a fresh install).
+        documented_at_head: Whether ``_CLI_AT_HEAD`` is committed as the doc;
+            otherwise the doc does not exist at ``HEAD``.
+
+    Returns:
+        The repo root.
+    """
+    repo = _rg_repo(tmp_path)
+    if documented_at_head:
+        (repo / _CLI_DOC).write_text(_CLI_AT_HEAD)
+    else:
+        (repo / _CLI_DOC).unlink()
+    _rg_git(repo, "add", "-A")
+    _rg_git(repo, "commit", "-q", "-m", "document clis")
+
+    def _fake_run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        if cmd[-1] == _CLI_MODULE:
+            (repo / _CLI_DOC).write_text(regenerated)
+        return True, ""
+
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/x")
+    monkeypatch.setattr(precommit, "_run", _fake_run)
+    monkeypatch.setattr(precommit, "missing_console_scripts", lambda _r: list(missing))
+    return repo
+
+
+def test_step_regen_docs_stale_install_dropping_sections_blocks_and_holds_doc(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stale install that would delete documented CLIs blocks and is not staged.
+
+    SCENARIO: HEAD documents forge-foo and forge-bar; the install is stale
+    and the regenerated doc keeps only forge-foo.
+    MOCK SETUP: a real git repo; precommit._run → writes the shortened doc
+    for the cli-reference generator; missing_console_scripts → one script.
+    EXPECTED BEHAVIOR: result blocks (not non_blocking); the index is
+    unchanged; the worktree file stays modified; the message names the lost
+    section, the generator and the refresh hint.
+    """
+    repo = _rg_stale_cli_repo(tmp_path, monkeypatch, "# CLI\n\n## forge-foo\nfoo\n")
+    result = precommit.step_regen_docs(repo)
+    assert not result.non_blocking
+    assert not result.passed
+    assert _rg_git(repo, "diff", "--cached", "--name-only") == ""
+    assert _CLI_DOC in _rg_git(repo, "diff", "--name-only")
+    assert (repo / _CLI_DOC).read_text() == "# CLI\n\n## forge-foo\nfoo\n"
+    assert "forge-bar" in result.output
+    assert "forge-gen-cli-reference" in result.output
+    assert "Refresh the install" in result.output
+    # Held docs keep no record entry, so the next commit retries them.
+    assert _CLI_DOC not in regen_docs.load_record(repo)
+
+
+def test_step_regen_docs_fresh_install_dropping_a_section_is_not_held(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A current install may legitimately remove a CLI, so nothing is held.
+
+    MOCK SETUP: as the blocking case, but missing_console_scripts → [].
+    EXPECTED BEHAVIOR: non_blocking, and the shortened doc is staged.
+    """
+    repo = _rg_stale_cli_repo(
+        tmp_path, monkeypatch, "# CLI\n\n## forge-foo\nfoo\n", missing=()
+    )
+    result = precommit.step_regen_docs(repo)
+    assert result.non_blocking
+    assert "NOT staged" not in result.output
+    assert _CLI_DOC in _rg_git(repo, "diff", "--cached", "--name-only")
+
+
+def test_step_regen_docs_stale_install_without_doc_at_head_is_not_held(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A doc that does not exist at HEAD cannot lose sections, so it is staged.
+
+    MOCK SETUP: as the blocking case, with the doc deleted at HEAD.
+    """
+    repo = _rg_stale_cli_repo(
+        tmp_path,
+        monkeypatch,
+        "# CLI\n\n## forge-foo\nfoo\n",
+        documented_at_head=False,
+    )
+    result = precommit.step_regen_docs(repo)
+    assert result.non_blocking
+    assert "NOT staged" not in result.output
+
+
+def test_step_regen_docs_stale_install_without_lost_section_only_warns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stale install that drops nothing stays the non-blocking WARN it was.
+
+    MOCK SETUP: as the blocking case, but the regenerated doc keeps both
+    sections and adds a third.
+    EXPECTED BEHAVIOR: non_blocking, not passed, the stale warning present,
+    and the doc re-staged as usual.
+    """
+    repo = _rg_stale_cli_repo(
+        tmp_path, monkeypatch, _CLI_AT_HEAD + "\n## forge-baz\nbaz\n"
+    )
+    result = precommit.step_regen_docs(repo)
+    assert result.non_blocking
+    assert not result.passed
+    assert "install is stale" in result.output
+    assert _CLI_DOC in _rg_git(repo, "diff", "--cached", "--name-only")
+
+
+def test_install_refresh_hint_names_dev_setup_only_in_forge_repo(
+    tmp_path: Path,
+) -> None:
+    """Forge's repo is told its one bootstrap; any other repo a generic phrase.
+
+    A consumer has no ``dev/setup.sh``, and neither answer may recommend a
+    raw ``pip install`` (FOUNDATION §2).
+    """
+    forge_repo = tmp_path / "forge"
+    consumer = tmp_path / "consumer"
+    for repo, name in ((forge_repo, regen_docs.FORGE_DIST_NAME), (consumer, "other")):
+        repo.mkdir()
+        (repo / "pyproject.toml").write_text(f'[project]\nname = "{name}"\n')
+    assert "./dev/setup.sh" in precommit._install_refresh_hint(forge_repo)
+    other = precommit._install_refresh_hint(consumer)
+    assert "./dev/setup.sh" not in other
+    assert "pip install" not in other
+    assert "pip install" not in precommit._install_refresh_hint(forge_repo)
 
 
 def test_step_regen_docs_first_run_regenerates_both_and_records(

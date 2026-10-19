@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from forge import config, git_utils
@@ -16,6 +17,7 @@ from forge.config import (
     filter_under_roots,
     installed_console_scripts,
     load_config,
+    path_under_roots,
     read_pyproject_raw,
     read_tool_forge_section,
     resolve_tool_roots,
@@ -27,8 +29,6 @@ from tests.conftest import init_git_repo as _init_git_repo
 
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     import pytest
 
 
@@ -365,6 +365,63 @@ def test_filter_under_roots_empty_files_empty_result() -> None:
 def test_filter_under_roots_nested_subdir_included() -> None:
     """A deeply nested file under a declared root is included."""
     assert filter_under_roots(["src/a/b/c/deep.py"], ["src"]) == ["src/a/b/c/deep.py"]
+
+
+# ---------------------------------------------------------------------------
+# path_under_roots — the single definition of root membership
+# ---------------------------------------------------------------------------
+
+_ABS_REPO = Path("/abs/repo")
+
+
+def test_path_under_roots_relative_path_under_root() -> None:
+    """A repo-relative path beneath a root is under it; the bare root is too."""
+    assert path_under_roots("src/a/b.py", ["src"], empty=False)
+    assert path_under_roots("src", ["src"], empty=False)
+
+
+def test_path_under_roots_deep_same_named_directory_is_not_under_root() -> None:
+    """``/x/y/src/z.py`` is not under repo ``src`` — the substring over-match bug."""
+    assert not path_under_roots(
+        "/x/y/src/z.py", ["src"], empty=False, repo_root=_ABS_REPO
+    )
+    assert not path_under_roots("vendor/src/z.py", ["src"], empty=False)
+
+
+def test_path_under_roots_absolute_path_inside_repo_root_is_under_root() -> None:
+    """An absolute path is judged by its place relative to the repo root."""
+    assert path_under_roots(
+        "/abs/repo/src/z.py", ["src"], empty=False, repo_root=_ABS_REPO
+    )
+
+
+def test_path_under_roots_absolute_path_outside_repo_is_not_under_root() -> None:
+    """An absolute path outside the repo root cannot be under any of its roots."""
+    assert not path_under_roots(
+        "/other/repo/src/z.py", ["src"], empty=False, repo_root=_ABS_REPO
+    )
+
+
+def test_path_under_roots_absolute_path_without_repo_root_is_not_under_root() -> None:
+    """With no repo root an absolute path cannot be anchored, so it is out."""
+    assert not path_under_roots("/abs/repo/src/z.py", ["src"], empty=False)
+
+
+def test_path_under_roots_trailing_slash_root_is_normalised() -> None:
+    """A root written ``src/`` means the same as ``src``."""
+    assert path_under_roots("src/a.py", ["src/"], empty=False)
+    assert not path_under_roots("src_extra/a.py", ["src/"], empty=False)
+
+
+def test_filter_under_roots_admits_dot_slash_prefixed_path() -> None:
+    """The shared predicate normalises ``./src/a.py`` before matching."""
+    assert filter_under_roots(["./src/a.py"], ["src"]) == ["./src/a.py"]
+
+
+def test_path_under_roots_empty_roots_returns_the_callers_policy() -> None:
+    """No roots at all answers exactly what the caller declared via ``empty``."""
+    assert path_under_roots("src/a.py", [], empty=True) is True
+    assert path_under_roots("src/a.py", [], empty=False) is False
 
 
 # ---------------------------------------------------------------------------

@@ -389,7 +389,12 @@ def _escalate_to_full(
 
     Two triggers: a changed conftest outside the test roots (it applies to
     tests the graph cannot see) and a non-Python change the selector
-    cannot map.
+    cannot map. ``safe_fallback`` (:func:`_safe_fallback_mode`) governs
+    only the second. The conftest trigger always escalates: a conftest is
+    Python that rewires fixtures for tests the graph cannot reach, so there
+    is no narrower run that is still honest, and a repo turning the
+    non-Python fallback down is saying "these files cannot affect tests" —
+    never true of a conftest.
 
     Args:
         repo_root: Git repo root.
@@ -408,6 +413,13 @@ def _escalate_to_full(
         )
         return True
 
+    mode = _safe_fallback_mode(cfg)
+    if mode == "off":
+        logger.info(
+            "Safe fallback off ([tool.forge.smart_test].safe_fallback) — "
+            "non-Python changes never escalate this run."
+        )
+        return False
     ignore_cfg = cfg.get("nonpython_ignore")
     ignore = (
         tuple(str(g) for g in ignore_cfg)
@@ -415,15 +427,51 @@ def _escalate_to_full(
         else lifecycle.DEFAULT_NONPYTHON_IGNORE
     )
     unmappable = changed_non_python_files(repo_root, base_ref, ignore_globs=ignore)
-    if unmappable:
-        logger.info(
-            "Safe fallback: %d non-Python change(s) the selector cannot "
-            "map (e.g. %s) — escalating to depth=full.",
+    if not unmappable:
+        return False
+    if mode == "warn":
+        logger.warning(
+            "Safe fallback (warn): %d non-Python change(s) the selector cannot "
+            "map were NOT escalated — tests they affect may go unselected: %s",
             len(unmappable),
-            min(unmappable),
+            ", ".join(sorted(unmappable)),
         )
-        return True
-    return False
+        return False
+    logger.info(
+        "Safe fallback: %d non-Python change(s) the selector cannot "
+        "map (e.g. %s) — escalating to depth=full.",
+        len(unmappable),
+        min(unmappable),
+    )
+    return True
+
+
+_SAFE_FALLBACK_MODES = ("escalate", "warn", "off")
+
+
+def _safe_fallback_mode(cfg: dict[str, object]) -> str:
+    """Resolve ``[tool.forge.smart_test].safe_fallback``.
+
+    An unrecognised value escalates — the mode that can only over-test —
+    and says so, because a typo silently weakening the fallback is the
+    failure this setting must never introduce.
+
+    Args:
+        cfg: Smart-test configuration dict.
+
+    Returns:
+        ``"escalate"`` (default), ``"warn"`` or ``"off"``.
+    """
+    raw = cfg.get("safe_fallback", "escalate")
+    if isinstance(raw, str) and raw in _SAFE_FALLBACK_MODES:
+        return raw
+    logger.warning(
+        "[tool.forge.smart_test].safe_fallback = %r is not one of %s — "
+        "using 'escalate'.",
+        raw,
+        ", ".join(_SAFE_FALLBACK_MODES),
+    )
+    return "escalate"
 
 
 def _resolve_run_inputs(
