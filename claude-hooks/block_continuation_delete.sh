@@ -19,6 +19,11 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
+# Fail CLOSED on a lib that predates a helper this hook calls.
+if ! declare -F guard_begin command_positions guard_unredir guard_chunks > /dev/null; then
+    echo "BLOCKED: the guard anchor lib at $ANCHOR_LIB lacks a helper this hook needs (older or damaged plugin copy) — refusing the command rather than running unguarded." >&2
+    exit 2
+fi
 guard_begin
 
 # Command-position anchor, adapted from the family idiom in
@@ -71,7 +76,9 @@ PLAN_DIR_RE="(^|[[:space:]\"'=(/\`])\.plan(/+([[:space:];&|)\"'\`*?{.]|$)|[[:spa
 # would be refused — a delete of a named sibling the header above calls
 # deletable, stopped because a read-only `ls` supplied the shape.
 #
-# Chunks split on `;`, `&` and newline only. `)` and `#` are deliberately
+# Chunks split on `;`, `&` and newline only (the charset passed to
+# guard_chunks is `;&`; a newline always ends a chunk there). A splitter
+# failure counts as a delete chunk, which blocks. `)` and `#` are deliberately
 # NOT separators: a command substitution or trailing comment would then
 # split a target away from its verb, which is the bypass described above.
 # Nor is `|`: a pipeline is one unit of work, and `find .plan | xargs rm`
@@ -90,12 +97,13 @@ PLAN_DIR_RE="(^|[[:space:]\"'=(/\`])\.plan(/+([[:space:];&|)\"'\`*?{.]|$)|[[:spa
 # `.plan` terminator. Telling that apart needs shell parsing, which this
 # hook family has declined.
 plan_dir_in_delete_chunk() {
-    local chunk
+    local chunk chunks
+    chunks=$(guard_chunks ';&' "$(guard_unredir "$(command_positions --words "$COMMAND")")") || return 0
     while IFS= read -r chunk; do
         [ -n "$chunk" ] || continue
         echo "$chunk" | grep -qE "$RM_ANCHOR" || continue
         echo "$chunk" | grep -qE "$PLAN_DIR_RE" && return 0
-    done <<< "$(guard_unredir "$(command_positions --words "$COMMAND")" | tr ';&\n' '\n\n\n')"
+    done <<< "$chunks"
     return 1
 }
 if echo "$COMMAND" | grep -qE "$CONTINUATION_RE" || plan_dir_in_delete_chunk; then

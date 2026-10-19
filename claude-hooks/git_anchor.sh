@@ -44,9 +44,6 @@
 # and never spells the letters `git`, for the same reasons GUARD_REDIR
 # doesn't (below).
 #
-# SEG_ANCHOR is the same shape anchored to segment start, for hooks that
-# split a compound command at separators and evaluate each segment.
-#
 # The anchors are never run against the raw command text alone — a raw
 # text cannot tell a command from a quoted mention of one. Guards run
 # them against the views `command_positions` builds (below), which know
@@ -109,8 +106,6 @@ GUARD_BINPATH='([^[:space:];&|()<>]*[/])?'
 _GUARD_PREFIX='(([[:alnum:]_]+=[^[:space:]]+|'"${GUARD_BINPATH}"'(command|env|exec|builtin|sudo|nohup|nice|time)|then|do|else|elif|[{!]|-[^[:space:]]+|'"${GUARD_REDIR}"')[[:space:]]+)*'
 _GUARD_GIT_OPTS='((-c|-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][^[:space:]]*[[:space:]]+|'"${GUARD_REDIR}"'[[:space:]]+)*'
 GIT_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"'git[[:space:]]+'"${_GUARD_GIT_OPTS}"
-# shellcheck disable=SC2034  # consumed by sourcing hooks
-SEG_ANCHOR='^[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"'git[[:space:]]+'"${_GUARD_GIT_OPTS}"
 
 # GH_ANCHOR is the same shape for `gh`: a real invocation at line-start
 # (leading whitespace included — the hand-rolled `^gh` patterns this
@@ -837,4 +832,41 @@ guard_help_only() {
 }
 END { if (!found) print "none" }') || return 1
     [ -z "$out" ]
+}
+
+# invoked <regex>
+# True when the hook's command-positions view holds a real invocation
+# matching <regex> that is not only a help request (guard_help_only). It
+# reads the caller's $CMDPOS at call time, so a hook sets CMDPOS (its
+# `command_positions` view, redirections blanked or not as it needs)
+# before the first call; an empty CMDPOS matches nothing.
+invoked() {
+    echo "$CMDPOS" | grep -qE "$1" && ! guard_help_only "$CMDPOS" "$1"
+}
+
+# guard_chunks <charset> <text>
+# Prints <text> with every character of <charset> turned into a newline,
+# so each chunk between two separators is one line. A newline already in
+# <text> always ends a chunk too; <charset> does not list it. Which
+# characters separate is a safety decision each hook makes for itself —
+# splitting at `|` is right for one guard and drops the upstream half of
+# `find .plan | xargs rm` for another — so the charset is always the
+# caller's own literal, never a shared default.
+#
+# <charset> may hold only the shell separator characters `;&|(){}!<>`: a
+# literal list, never a `tr` range, class or escape, so what a call site
+# spells is exactly what splits. Anything else is refused with status 2
+# and no output. Callers capture the output first and treat a non-zero
+# status as "cannot judge" (block): read through a pipe or `<<<"$(…)"`,
+# the status is lost and an empty result would allow.
+guard_chunks() {
+    local set="$1" nls="" i
+    case "$set" in
+        "" | *[!';&|(){}!<>']*)
+            echo "guard_chunks: invalid separator charset '$set'" >&2
+            return 2
+            ;;
+    esac
+    for ((i = 0; i < ${#set}; i++)); do nls+=$'\n'; done
+    printf '%s\n' "$2" | LC_ALL=C tr "$set" "$nls"
 }

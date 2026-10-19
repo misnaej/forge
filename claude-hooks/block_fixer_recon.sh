@@ -69,6 +69,11 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
+# Fail CLOSED on a lib that predates a helper this hook calls.
+if ! declare -F guard_begin command_positions guard_chunks > /dev/null; then
+    echo "BLOCKED: the guard anchor lib at $ANCHOR_LIB lacks a helper this hook needs (older or damaged plugin copy) — refusing the command rather than running unguarded." >&2
+    exit 2
+fi
 guard_begin
 
 _block() {
@@ -145,6 +150,9 @@ _segment_ok() {
 # --words view (git_anchor.sh): a separator inside a quoted node id never
 # splits it, `$(…)` inside double quotes is its own segment, and a
 # `bash -c` / `eval` payload is split out and judged like any command.
+# This hook's own separator charset (guard_chunks); a splitter failure
+# blocks, since an empty segment list would pass every check.
+SEGMENTS=$(guard_chunks ';&|(' "$(command_positions --words "$COMMAND")") || _block "$COMMAND"
 FULL_RUN=0
 while IFS= read -r segment; do
     if ! _segment_ok "$segment"; then
@@ -153,7 +161,7 @@ while IFS= read -r segment; do
     if _is_full_precommit "$segment"; then
         FULL_RUN=1
     fi
-done <<< "$(command_positions --words "$COMMAND" | tr ';&|(' '\n\n\n\n')"
+done <<< "$SEGMENTS"
 
 # ---- The three-run cap, made mechanical (agents/precommit-fixer.md) ----
 # The fixer's contract allows three full `forge-precommit` runs per

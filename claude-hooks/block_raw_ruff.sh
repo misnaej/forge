@@ -18,6 +18,13 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
+# Fail CLOSED on a lib that predates a helper this hook calls: an
+# undefined function returns 127 inside an `if`, which reads as "not
+# found" and would allow the command.
+if ! declare -F guard_begin command_positions guard_help_only invoked > /dev/null; then
+    echo "BLOCKED: the guard anchor lib at $ANCHOR_LIB lacks a helper this hook needs (older or damaged plugin copy) — refusing the command rather than running unguarded." >&2
+    exit 2
+fi
 guard_begin
 
 # Anchor: a real `ruff check` / `ruff format` invocation, matched on the
@@ -75,11 +82,7 @@ fi
 RUFF_VERB='ruff[[:space:]]+((--config)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][^[:space:]]*[[:space:]]+|'"${GUARD_REDIR}"'[[:space:]]+)*(check|format)'
 RUFF_ANCHOR="${RUFF_PREFIX}(([^[:space:];&|()]*/)?python[0-9.]*[[:space:]]+-m[[:space:]]+)?([^[:space:];&|()]*/)?${RUFF_VERB}"
 RUFF_RUNNER="${RUFF_PREFIX}(uvx|pipx[[:space:]]+run|(uv|pixi|poetry|pipenv|conda)[[:space:]]+run)[[:space:]]([^;&|]*[[:space:]/])?${RUFF_VERB}"
-# invoked <regex> — a real invocation matching <regex> that is not only a
-# help request.
-invoked() {
-    echo "$CMDPOS" | grep -qE "$1" && ! guard_help_only "$CMDPOS" "$1"
-}
+# `invoked <regex>` (git_anchor.sh) reads CMDPOS above.
 if invoked "$RUFF_ANCHOR" || invoked "$RUFF_RUNNER"; then
     echo "BLOCKED: raw 'ruff' from Bash is forbidden (FOUNDATION §2). Use forge-precommit — it verifies and self-heals (ruff format + ruff check --fix --unsafe-fixes on failure). Agents delegate to the forge:precommit-fixer agent." >&2
     exit 2

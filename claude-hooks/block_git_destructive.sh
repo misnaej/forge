@@ -28,6 +28,11 @@
 #   paths actually in conflict stay allowed.
 # - Forced switches: `git checkout -f` and `git switch -f` /
 #   `--discard-changes`.
+# - Branch resets that drop commits: `git checkout -B <name> [<start>]` /
+#   `git switch -C <name> [<start>]` when <name> already exists and its
+#   tip is not contained in <start> — checked against live refs, failing
+#   closed when the hook cannot check. A new name or a fast-forward stays
+#   allowed.
 # - `git stash` in every form except `list` / `show`.
 #
 # No agent bypass — not even forge:git-commit-push. A human who truly
@@ -297,10 +302,19 @@ $0 == "" || $0 == "\n" { next }
 # A path is unknowable — blocked — when it holds a glob, `$`, `~`, `{`, a
 # backslash, pathspec magic (`:`) or a command substitution, or climbs out
 # of the repository; conflict-only paths are exempt under a conflict flag.
-RESTORE_PARSE_AWK='
+#
+# _INVOCATION_AWK — the part every invocation parser here shares, prepended
+# to each program: option abbreviations, the directory an invocation runs
+# in, and the two-view reader. Each program reads two files: the
+# command-positions view first, then the --words view; they must yield
+# the same invocations, each with the same word count, or a quoted word
+# held a blank and the words are not what git receives (fail closed).
+# The directory comes from ENVIRON["CWD"] (the payload cwd) and each
+# `-C`; CHDIR (any `cd` / `pushd` / `popd` in the command) makes it
+# unknowable. A user's `-c` options never reach a probe: probes run plain
+# `git -C <dir>`, and a `-c` naming a worktree setting is unknowable.
+_INVOCATION_AWK='
 function abbrev(t, long, min) { return length(t) >= min && substr(long, 1, length(t)) == t }
-function emit_dir(d) { if (!(d in SEEN)) { SEEN[d] = 1; print "D\t" d } }
-function unknown() { print "UNKNOWN"; bad = 1; exit }
 # The directory one invocation runs in, or "" when it cannot be known.
 function inv_dir(pre,   n, P, i, t, dir, next1, nextc) {
     if (CHDIR) return ""
@@ -330,25 +344,36 @@ function inv_dir(pre,   n, P, i, t, dir, next1, nextc) {
     }
     return dir
 }
-# First file: the command-positions view; second: the --words view. They
-# must yield the same invocations (END), each with the same word count.
+# One --words invocation line, paired by line number with its
+# command-positions line: sets PRE (the text before the verb), NW and
+# W[1..NW] (the arguments, empty entries skipped by callers). Returns 0
+# when the two views count different words.
+function inv_read(line, fnr,   k, p, np, Q, cw, cq, i) {
+    k = index(line, "\t")
+    PRE = substr(line, 1, k - 1)
+    p = POSN[fnr]; p = substr(p, index(p, "\t") + 1)
+    NW = split(substr(line, k + 1), W, /[ \t]+/); np = split(p, Q, /[ \t]+/)
+    cw = 0; for (i = 1; i <= NW; i++) if (W[i] != "") cw++
+    cq = 0; for (i = 1; i <= np; i++) if (Q[i] != "") cq++
+    return cw == cq
+}
 FILENAME == ARGV[1] { if ($0 != "") NPOS++; POSN[FNR] = $0; next }
+'
+
+# Pass 1 of the restore rules described above.
+RESTORE_PARSE_AWK="${_INVOCATION_AWK}"'
+function emit_dir(d) { if (!(d in SEEN)) { SEEN[d] = 1; print "D\t" d } }
+function unknown() { print "UNKNOWN"; bad = 1; exit }
 {
     line = $0
     if (line == "") next
     NWORDS++
-    k = index(line, "\t")
-    pre = substr(line, 1, k - 1); tail = substr(line, k + 1)
-    p = POSN[FNR]; p = substr(p, index(p, "\t") + 1)
-    nw = split(tail, W, /[ \t]+/); np = split(p, Q, /[ \t]+/)
-    cw = 0; for (i = 1; i <= nw; i++) if (W[i] != "") cw++
-    cq = 0; for (i = 1; i <= np; i++) if (Q[i] != "") cq++
-    if (cw != cq) unknown()
-    dir = inv_dir(pre)
+    if (!inv_read(line, FNR)) unknown()
+    dir = inv_dir(PRE)
     dd = 0; conflict = 0; branchop = 0; staged = 0; worktree = 0; src = 0
     nb = 0; na = 0
     split("", B); split("", A)
-    for (i = 1; i <= nw; i++) {
+    for (i = 1; i <= NW; i++) {
         t = W[i]
         if (t == "") continue
         if (dd) { A[++na] = t; continue }
@@ -565,6 +590,155 @@ if _guarded 'checkout\b' && _restore_blocked checkout; then
 fi
 if _guarded 'restore\b' && _restore_blocked restore; then
     _block "git restore <paths>" "A path it would overwrite holds uncommitted work (a modified or staged file, or an untracked file in the way) — possibly another session's — or the hook cannot tell which paths it names. To unstage only, use \`git restore --staged <path>\`; otherwise report the state."
+fi
+
+# Branch resets: `git checkout -B <name> [<start>]` and `git switch -C |
+# --force-create <name> [<start>]` move an EXISTING branch <name> to
+# <start> (default HEAD). When <name>'s tip is not contained in <start>,
+# its commits drop off the branch — a rewind like `git reset`. So they
+# are blocked exactly then; a new name, or a move that only fast-forwards
+# <name>, loses nothing and stays allowed. When the hook cannot check —
+# the directory is unknowable (as for the restores above), a name or
+# start point is a variable, substitution or glob, the start point does
+# not resolve to one commit (missing, or an ambiguous name), or a probe
+# fails — it blocks: it allows only what it can show loses nothing.
+#
+# BRANCH_RESET_PARSE_AWK prints one `K<TAB>dir<TAB>name<TAB>start` record
+# per distinct reset (at most BR_MAX; more is unknowable, so no count of
+# invocations runs the probes past the hook timeout), or UNKNOWN. A short
+# option cluster holding B (checkout) / C (switch) is read as that option,
+# its value attached or the next word; read wrongly (`-tB`, where `-t`
+# takes B as its value) it can only over-block. The first word before
+# `--` is the start point; with none, both HEAD and the first word after
+# `--` are probed, whichever git reads it as.
+BR_MAX=8
+BRANCH_RESET_PARSE_AWK="${_INVOCATION_AWK}"'
+function unknown() { print "UNKNOWN"; bad = 1; exit }
+# A word whose value as git receives it is unknowable here: a variable or
+# command substitution, a glob or backslash bash may still expand, a
+# leading `~`, or a brace expansion.
+function opaque(t) { return t ~ /[$*?[\\]|@SUBST@/ || t ~ /^~/ || t ~ /[{][^}]*(,|[.][.])[^}]*[}]/ }
+function record(dir, name, start) {
+    if (opaque(start)) unknown()
+    if ((dir, name, start) in SEEN) return
+    SEEN[dir, name, start] = 1
+    if (++NREC > MAX) unknown()
+    print "K\t" dir "\t" name "\t" start
+}
+{
+    if ($0 == "") next
+    NWORDS++
+    if (!inv_read($0, FNR)) unknown()
+    # FLAG resets a branch; VAL takes a value and creates one (git refuses
+    # it beside FLAG, so its value only has to be skipped).
+    FLAG = (VERB == "switch") ? "C" : "B"; VAL = (VERB == "switch") ? "c" : "b"
+    name = ""; have = 0; want = 0; skip = 0; dd = 0; np = 0; after = ""
+    split("", P)
+    for (i = 1; i <= NW; i++) {
+        t = W[i]
+        if (t == "") continue
+        if (want) { name = t; have = 1; want = 0; continue }
+        if (skip) { skip = 0; continue }
+        if (dd) { if (after == "") after = t; continue }
+        if (t == "--") { dd = 1; continue }
+        if (t ~ /^--/) {
+            k = index(t, "=")
+            o = k ? substr(t, 1, k - 1) : t
+            if (VERB == "switch" && abbrev(o, "--force-create", 8)) {
+                if (k) { name = substr(t, k + 1); have = 1 } else want = 1
+                continue
+            }
+            if (!k && (o == "--orphan" || o == "--conflict" || o == "--pathspec-from-file" || (VERB == "switch" && abbrev(o, "--create", 4)))) skip = 1
+            continue
+        }
+        if (t ~ /^-./) {
+            for (j = 2; j <= length(t); j++) {
+                c = substr(t, j, 1)
+                if (c == FLAG) {
+                    if (j < length(t)) { name = substr(t, j + 1); have = 1 } else want = 1
+                    break
+                }
+                if (c == VAL) { if (j == length(t)) skip = 1; break }
+            }
+            continue
+        }
+        P[++np] = t
+    }
+    if (!have) next
+    if (opaque(name)) unknown()
+    dir = inv_dir(PRE)
+    if (dir == "") unknown()
+    if (np) record(dir, name, P[1])
+    else {
+        record(dir, name, "HEAD")
+        if (after != "") record(dir, name, after)
+    }
+}
+END { if (!bad && NWORDS != NPOS) print "UNKNOWN" }
+'
+
+# _branch_reset_blocked <verb> <flag> — true when a <verb> branch reset
+# would drop commits or cannot be checked. Sets BR_LABEL (the command) and
+# BR_WHY (the reason) for the refusal.
+_branch_reset_blocked() {
+    local verb="$1" flag="$2" new records kind dir name start tip base rc
+    new=$([ "$verb" = switch ] && echo -c || echo -b)
+    BR_LABEL="git $verb $flag"
+    records=$(CWD="$PAYLOAD_CWD" LC_ALL=C awk -v VERB="$verb" -v CHDIR="$CMDPOS_CHDIR" -v MAX="$BR_MAX" \
+        "$BRANCH_RESET_PARSE_AWK" \
+        <(guard_git_invocations "$CMDPOS" "$verb") \
+        <(guard_git_invocations "$WORDS" "$verb")) || records=UNKNOWN
+    local cannot="The hook blocks a branch reset unless it can show the reset drops no commits, and here it cannot check:"
+    local instead="Name the directory and start point literally (\`git -C <path> $verb $flag <name> <start>\`, no \`cd\` or variables), or start a branch under a new name with \`git $verb $new <new-name> <start>\`."
+    case "$records" in
+        *UNKNOWN*)
+            BR_WHY="$cannot the directory it runs in, the branch name or the start point cannot be read from the command (an earlier \`cd\`, a variable or substitution, a glob, a quoted word with spaces, or more than $BR_MAX resets). $instead"
+            return 0
+            ;;
+    esac
+    while IFS=$'\t' read -r kind dir name start; do
+        [ "$kind" = K ] || continue
+        BR_LABEL="git $verb $flag $name $start"
+        rc=0
+        tip=$(git -C "$dir" rev-parse --verify --quiet "refs/heads/$name^{commit}" 2> /dev/null) || rc=$?
+        # Status 1 with no output: no such branch, so a new one is created
+        # and nothing is lost. Any other failure is a probe error.
+        if [ "$rc" = 1 ] && [ -z "$tip" ]; then continue; fi
+        if [ "$rc" != 0 ]; then
+            BR_WHY="$cannot git could not look up the branch '$name'. $instead"
+            return 0
+        fi
+        rc=0
+        base=$(git -C "$dir" rev-parse --verify "$start^{commit}" 2>&1) || rc=$?
+        # Exactly one object name and nothing else: an ambiguity warning on
+        # stderr fails this too.
+        if [ "$rc" != 0 ] || ! [[ $base =~ $BR_OID_RE ]]; then
+            BR_WHY="$cannot the start point '$start' does not resolve to exactly one commit (it is missing, or the name is ambiguous). $instead"
+            return 0
+        fi
+        rc=0
+        git -C "$dir" merge-base --is-ancestor "$tip" "$base" > /dev/null 2>&1 || rc=$?
+        [ "$rc" = 0 ] && continue
+        if [ "$rc" = 1 ]; then
+            BR_WHY="Branch '$name' already exists and has commits that '$start' does not contain; resetting it there drops them off the branch, a rewind like \`git reset\`. To start a branch at '$start', give it a new name (\`git $verb $new <new-name> $start\`); to keep the old branch but free its name, rename it first with \`git branch -m $name <backup-name>\`."
+        else
+            BR_WHY="$cannot git could not compare '$name' with '$start'. $instead"
+        fi
+        return 0
+    done <<< "$records"
+    return 1
+}
+# A cheap first look on the --words view, so a plain checkout or switch
+# skips the pass: any word that could be the option the parser reads as
+# a reset (a superset of it — `git -C <dir>` matches too).
+BR_OID_RE='^[0-9a-f]{40}([0-9a-f]{24})?$'
+BR_CHECKOUT_RE='(^|[[:space:]])-[^-[:space:]]*B'
+BR_SWITCH_RE='(^|[[:space:]])(-[^-[:space:]]*C|--force-)'
+if _guarded 'checkout\b' && [[ $WORDS =~ $BR_CHECKOUT_RE ]] && _branch_reset_blocked checkout -B; then
+    _block "$BR_LABEL" "$BR_WHY"
+fi
+if _guarded 'switch\b' && [[ $WORDS =~ $BR_SWITCH_RE ]] && _branch_reset_blocked switch -C; then
+    _block "$BR_LABEL" "$BR_WHY"
 fi
 
 # Forced branch switches discard local modifications instead of refusing:
