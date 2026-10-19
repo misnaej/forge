@@ -160,6 +160,27 @@ def test_check_bullets_reports_one_problem_per_empty_bullet() -> None:
     assert not any("requires 3-5" in p for p in problems)
 
 
+@pytest.mark.parametrize("line_break", ["\n", "\r", "\r\n"], ids=["lf", "cr", "crlf"])
+def test_check_bullets_rejects_embedded_line_break(line_break: str) -> None:
+    """A bullet spanning lines is refused, whatever the line-break flavour.
+
+    Behavior test: the body renders inside a fixed code fence, so a line
+    break in a bullet could close it early; this is the contract that the
+    refusal names the bullet.
+
+    Args:
+        line_break: The line-break sequence placed inside the bullet.
+    """
+    problems = mod._check_bullets([f"x{line_break}y", "b", "c"])
+    assert problems == ["bullet 1 must be a single line"]
+
+
+def test_check_bullets_names_only_the_multiline_bullet() -> None:
+    """Behavior test: the problem carries the offending bullet's 1-based index."""
+    problems = mod._check_bullets(["ok", "x\ny", "ok"])
+    assert problems == ["bullet 2 must be a single line"]
+
+
 def test_check_bullets_reports_count_and_empty_bullet_problems_together() -> None:
     """An out-of-range count with empty entries reports both kinds together.
 

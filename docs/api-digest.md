@@ -686,6 +686,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_phrase_hit(blob: str) -> str | None` _(internal)_ — Return the attribution phrase found in lowercased *blob*, if any.
 - `_outside_closed_fences(blob: str) -> str` _(internal)_ — Return *blob* without its CLOSED fenced blocks.
 - `_vendor_hit(blob: str) -> tuple[str, str] | None` _(internal)_ — Return ``(vendor, token)`` for the first bare vendor mention in *blob*.
+- `attribution_phrase(text: str) -> str | None` — Return the AI-credit phrase in *text*, ignoring bare vendor names.
 - `validate_no_ai_attribution(text: str, *, exempt_fenced_vendor_tokens: bool = False) -> None` — Reject Claude / AI attribution per FOUNDATION §2.
 - `parse_paged_json(raw: str, *, strict: bool = False) -> list[Any]` — Flatten ``gh api --paginate --jq '[...]'`` output into one list.
 - `list_marker_comments(pr_number: int, marker: str, *, anchored: bool = False) -> list[dict[str, object]] | None` — Return this identity's comments on *pr_number* carrying *marker*, oldest first.
@@ -1120,7 +1121,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 > _forge-pr-squash-comment — post the squash-merge message and keep it last._
 
 - `_check_title(title: str) -> list[str]` _(internal)_ — Return the conventional-commit problems with *title*.
-- `_check_bullets(bullets: list[str]) -> list[str]` _(internal)_ — Return the bullet-count problem and one problem per empty bullet.
+- `_check_bullets(bullets: list[str]) -> list[str]` _(internal)_ — Return the bullet-count problem and one problem per bad bullet.
 - `_word_total(title: str, bullets: list[str]) -> int` _(internal)_ — Count whitespace-split words across the title and every bullet.
 - `_preview(text: str) -> str` _(internal)_ — Shorten one message part to a printable first line for the breakdown.
 - `_word_breakdown(title: str, bullets: list[str]) -> list[str]` _(internal)_ — Render one indented line per message part: label, word count, preview.
@@ -1191,7 +1192,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_skipped(entry: Mapping[str, object]) -> bool` _(internal)_ — Return whether a rollup entry concluded without executing.
 - `rollup_not_run(rollup: Sequence[Mapping[str, object]]) -> bool` — Return whether checks were reported but none of them executed.
 - `summarize_rollup(rollup: Sequence[Mapping[str, object]], *, is_draft: bool = False) -> str` — Summarize ``gh pr view --json statusCheckRollup`` as one status line.
-- `render_issue_management(closing_refs: Sequence[int], *, pr_body_checked: bool, also_closed: Sequence[int] = ()) -> str` — Render the Issue Management line from the closing keywords found.
+- `render_issue_management(closing_refs: Sequence[int], *, pr_body_checked: bool, pr_named: bool = False, also_closed: Sequence[int] = ()) -> str` — Render the Issue Management line from the closing keywords found.
 - `unfilled_slots(text: str) -> list[str]` — Return the names of every fill-in slot still in *text*.
 - `evidence_fence(block: str) -> str` — Return only the fenced part of a ``run_gate_evidence`` block.
 

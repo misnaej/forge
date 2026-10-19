@@ -54,6 +54,7 @@ from forge.continuation import refresh_state
 from forge.emergency_state import armed_state, read_state
 from forge.gh_comments import (
     ValidationError,
+    attribution_phrase,
     list_marker_comments,
     patch_comment,
     post_new_comment,
@@ -139,6 +140,8 @@ FINDING_ALLOWANCE: Final[int] = 40
 _CLEAN_PREFIXES: Final[tuple[str, ...]] = ("pass", "skipped", "n/a")
 
 _HEADING_RE: Final[re.Pattern[str]] = re.compile(r"^##\s+(?P<title>.+?)\s*$")
+# One inline code span: a backtick run, its content, the same-length run.
+_CODE_SPAN_RE: Final[re.Pattern[str]] = re.compile(r"(`+)(?!`).+?(?<!`)\1(?!`)")
 _MODE_RE: Final[re.Pattern[str]] = re.compile(r"^wrapup-mode:\s*\S+", re.IGNORECASE)
 _PRIOR_ART_RE: Final[re.Pattern[str]] = re.compile(r"^prior-art-searched:")
 
@@ -358,14 +361,34 @@ def _check_attribution(text: str) -> list[str]:
     quote exact bytes (diffs, tool output) that may name the product
     without crediting it. Credit phrases are still refused inside them.
 
+    The CI Status line is vetted on its own. Its code spans are CI job
+    names that forge copies from GitHub, so a vendor word there (a job
+    named ``claude-review``) is reported, not authored — only those spans
+    skip the backstop; the rest of the line gets the full check, and a
+    credit phrase is refused anywhere in it.
+
     Args:
         text: The wrap-up markdown to validate.
 
     Returns:
         Violations if AI attribution is detected, empty list otherwise.
     """
+    lines = text.split("\n")
+    bounds = _section_bounds(lines, "CI Status")
+    ci_body = ""
+    if bounds is not None:
+        start, end = bounds
+        ci_body = "\n".join(lines[start + 1 : end])
+        lines[start + 1 : end] = [""]
     try:
-        validate_no_ai_attribution(text, exempt_fenced_vendor_tokens=True)
+        validate_no_ai_attribution("\n".join(lines), exempt_fenced_vendor_tokens=True)
+    except ValidationError as exc:
+        return [str(exc)]
+    phrase = attribution_phrase(ci_body)
+    if phrase is not None:
+        return [f"AI attribution pattern detected in CI Status: {phrase!r}"]
+    try:
+        validate_no_ai_attribution(_CODE_SPAN_RE.sub("``", ci_body))
     except ValidationError as exc:
         return [str(exc)]
     return []
@@ -794,7 +817,12 @@ def _gather_inputs(root: Path, args: argparse.Namespace) -> ComposeInputs:
     }
     view = gh_pr_view(args.pr, "body,statusCheckRollup,isDraft") if args.pr else None
     body = str(view.get("body") or "") if view else ""
-    refs = find_closing_refs(f"{body}\n{_branch_messages(root, args.base)}")
+    # Forge squash-merges, so only the PR body's keywords ever close an
+    # issue; commit messages are searched only before the PR exists, as
+    # the best guess at what its body will say.
+    refs = find_closing_refs(
+        body if view is not None else _branch_messages(root, args.base)
+    )
     emergency = armed_state(root)
     evidence = None
     if mode == "light-regen":
@@ -824,6 +852,7 @@ def _gather_inputs(root: Path, args: argparse.Namespace) -> ComposeInputs:
         issue_management=render_issue_management(
             refs,
             pr_body_checked=view is not None,
+            pr_named=args.pr is not None,
             also_closed=_also_closed(body, refs),
         ),
         code_quality=_code_quality(root),
@@ -853,7 +882,8 @@ def _cmd_compose(args: argparse.Namespace) -> int:
         return 2
     root = repo_root()
     try:
-        text = render_wrapup(_gather_inputs(root, args))
+        inputs = _gather_inputs(root, args)
+        text = render_wrapup(inputs)
     except ComposeError as exc:
         emit(f"pr-wrapup: {exc}")
         return 2
@@ -867,6 +897,10 @@ def _cmd_compose(args: argparse.Namespace) -> int:
         else "no slots to fill"
     )
     emit(f"pr-wrapup: wrote {path}; {todo}")
+    if inputs.mode == "light-code" and inputs.reasons:
+        # The wrap-up carries a one-line Recommendation; the full trail is
+        # still owed to whoever ran compose.
+        emit(f"pr-wrapup: light-code because: {'; '.join(inputs.reasons)}")
     return 0
 
 
@@ -932,7 +966,7 @@ def _cmd_post(args: argparse.Namespace, text: str, path: Path) -> int:
             emit(f"pr-wrapup: refused: {refusal}")
         return EXIT_REFUSED
     body = str(view.get("body") or "")
-    refs = find_closing_refs(f"{body}\n{_branch_messages(root, f'origin/{base}')}")
+    refs = find_closing_refs(body)
     refreshed = refresh_sections(
         text,
         ci_status=_ci_status(args.pr, view),

@@ -257,6 +257,22 @@ def test_longer_fence_quoting_shorter_is_closed() -> None:
     )
 
 
+def test_attribution_phrase_returns_the_credit_phrase() -> None:
+    """Behavior test: an explicit credit is returned, fenced or not."""
+    assert mod.attribution_phrase("Generated with Claude Code") is not None
+    assert mod.attribution_phrase("```\nCo-authored-by: Claude\n```") is not None
+
+
+@pytest.mark.parametrize("text", ["Thanks Claude.", "`claude-review`", "all good"])
+def test_attribution_phrase_ignores_a_bare_vendor_name(text: str) -> None:
+    """Behavior test: only the phrase layer runs, so a bare vendor name is None.
+
+    Args:
+        text: Text with no credit phrase.
+    """
+    assert mod.attribution_phrase(text) is None
+
+
 # ---------------------------------------------------------------------------
 # Comment listing
 # ---------------------------------------------------------------------------
