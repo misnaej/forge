@@ -696,7 +696,7 @@ def network_git_env(cwd: Path | None) -> dict[str, str]:
 
     ``GIT_TERMINAL_PROMPT=0`` stops HTTPS credential prompts, but ssh asks
     for a passphrase or host confirmation on its own terminal, which that
-    variable does not reach — so the call hung until its timeout. ssh runs
+    variable does not reach, so the call would wait out its timeout. ssh runs
     in batch mode (fail instead of ask) unless the user chose their own
     ssh command through ``GIT_SSH_COMMAND``, ``GIT_SSH`` or
     ``core.sshCommand``; overriding their choice would drop their keys or
@@ -1136,7 +1136,7 @@ def fetch_quietly(repo_root: Path, remote: str, refspec: str) -> bool:
 
     A caller that only compares against a remote branch must not hang on a
     credential prompt nobody can answer (FOUNDATION §15): the fetch runs
-    with ``GIT_TERMINAL_PROMPT=0`` and is bounded by :data:`PUSH_TIMEOUT_S`
+    with :func:`network_git_env` and is bounded by :data:`PUSH_TIMEOUT_S`
     so a stalled remote cannot hang it either, and any failure — a timeout
     included — is returned, not raised.
 
@@ -1173,7 +1173,7 @@ def tag_on_remote(repo_root: Path, tag: str) -> bool | None:
     The one remote tag probe for forge's tag-cutting CLIs. It consults the
     remote only: a caller that has just created *tag* locally learns
     nothing from the local ref about whether a push landed. Bounded by
-    :data:`PUSH_TIMEOUT_S` with ``GIT_TERMINAL_PROMPT=0``, because it
+    :data:`PUSH_TIMEOUT_S` with :func:`network_git_env`, because it
     typically runs right after a push to the same remote has stalled.
 
     Args:
@@ -1315,7 +1315,7 @@ def _push_refspec(
 
     The single push execution path behind :func:`push_branch` and
     :func:`push_tag`: one set of guards, so a ref kind added later cannot
-    acquire a weaker one. It runs with ``GIT_TERMINAL_PROMPT=0`` and a
+    acquire a weaker one. It runs with :func:`network_git_env` and a
     bounded timeout, and returns failure instead of raising so each caller
     decides what a failed push means. Git's per-process config and
     repository overrides are dropped from the push's environment (see
@@ -1368,7 +1368,7 @@ def push_branch(
     """Push *branch* to *remote* without ever prompting or hanging.
 
     The one push seam for forge CLIs that publish a branch. It runs with
-    ``GIT_TERMINAL_PROMPT=0`` and a bounded timeout, returns failure
+    :func:`network_git_env` and a bounded timeout, returns failure
     instead of raising so each caller decides what a failed push means,
     and has no force option: a forge CLI never rewrites a remote branch.
 
@@ -1408,7 +1408,7 @@ def push_tag(repo_root: Path, tag: str, *, remote: str = "origin") -> PushResult
     The one push seam for forge CLIs that publish a tag — release
     tag-cutting runs unattended in CI, where a credential prompt nobody
     can answer would hang the job forever. It shares every guard
-    :func:`push_branch` has: ``GIT_TERMINAL_PROMPT=0``, a bounded timeout,
+    :func:`push_branch` has: :func:`network_git_env`, a bounded timeout,
     a scrubbed environment, and failure returned rather than raised.
 
     The tag is pushed as the fully qualified same-name refspec
@@ -1925,8 +1925,8 @@ def _tree_without_logs(
             if source_index is not None and source_index.is_file():
                 # copy2, not copyfile: the copy keeps the index's mtime, so
                 # git still treats an entry modified in the same clock tick
-                # as racily clean and re-hashes it. A fresh mtime on the
-                # copy made such a same-size edit look unchanged.
+                # as racily clean and re-hashes it; a fresh mtime would let
+                # a same-size edit read as unchanged.
                 shutil.copy2(source_index, scratch_index)
             run_git(*populate, cwd=repo_root, env=env, log_errors=False)
             run_git(
@@ -2307,9 +2307,9 @@ def git_z_names(cwd: Path | None, *argv: str, check: bool = False) -> list[str]:
 def diff_names_z(cwd: Path | None, *diff_args: str, check: bool = False) -> list[str]:
     """Return the paths ``git diff --name-only`` reports, named exactly.
 
-    The one way forge lists changed files: newline-separated output
-    C-quotes unusual names and splits on the wrong character, so such
-    files vanished from every changed-file scope.
+    The one way forge lists changed files: NUL-separated output keeps
+    non-ASCII and space-edged names intact, where newline-separated
+    output C-quotes them and would drop them from a changed-file scope.
 
     Args:
         cwd: Directory to run git in; ``None`` is the cached

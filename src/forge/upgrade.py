@@ -438,11 +438,11 @@ def _write_atomic(path: Path, content: str) -> None:
 
 
 def _run_phase1(args: argparse.Namespace, root: Path) -> tuple[int, str | None]:
-    """Phase 1 — detect the pin, rewrite it, print the pip command.
+    """Phase 1 — detect the pin, rewrite it, print the install command.
 
     ``--check`` short-circuits the rewrite even when no pin exists:
-    reports the current state + the pip command the user would need to
-    run manually.
+    reports the current state + the install command (pip, or the pixi
+    steps in a pixi-locked repo) the user would need to run manually.
 
     Args:
         args: Parsed CLI args.
@@ -520,13 +520,20 @@ def _run_phase1(args: argparse.Namespace, root: Path) -> tuple[int, str | None]:
     logger.info("  %s", install_command(root, target_ref))
     installed = _installed_revision()
     if installed is not None and installed != target_ref:
+        # The wrapper caveat is about pip refresh scripts; a pixi lock has none.
+        wrappers = (
+            ""
+            if uses_pixi_lock(root)
+            else ", and refresh wrappers that only force-reinstall branch "
+            "pins will skip a tag pin"
+        )
         logger.warning(
             "installed build is from '%s', pin now says '%s' — the "
-            "environment does not update itself, and refresh wrappers "
-            "that only force-reinstall branch pins will skip a tag pin. "
+            "environment does not update itself%s. "
             "The install command above is what makes them match.",
             installed,
             target_ref,
+            wrappers,
         )
     return 0, target_ref
 
@@ -830,7 +837,7 @@ def _run_phase2(root: Path) -> int:
 
     Returns:
         Exit code from ``install-forge-bootstrap``; ``1`` when the
-        installed revision mismatches the pin (with the exact pip
+        installed revision mismatches the pin (with the exact install
         command to fix it); ``2`` when the pin names an undocumented
         release. ``0`` plus a plugin-update reminder when bootstrap
         succeeds.
@@ -1061,9 +1068,10 @@ def main() -> int:
         prog="forge-upgrade",
         description=(
             "Two-phase forge upgrade. Phase 1 (default): rewrite the "
-            "forge-scripts pin in pyproject.toml + print the exact pip "
-            "command. Phase 2 (--continue): after running pip, re-sync "
-            "managed artifacts via install-forge-bootstrap."
+            "forge-scripts pin in pyproject.toml + print the exact install "
+            "command (pip, or `pixi lock && pixi install --locked` in a "
+            "pixi-locked repo). Phase 2 (--continue): after running it, "
+            "re-sync managed artifacts via install-forge-bootstrap."
         ),
     )
     group = parser.add_mutually_exclusive_group()
@@ -1084,7 +1092,7 @@ def main() -> int:
         action="store_true",
         help=(
             "Phase 2: run install-forge-bootstrap to re-sync managed "
-            "artifacts. Use after the phase-1 pip command has been run."
+            "artifacts. Use after the phase-1 install command has been run."
         ),
     )
     parser.add_argument(

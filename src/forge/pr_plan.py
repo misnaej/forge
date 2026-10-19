@@ -192,7 +192,7 @@ def _changed_paths(
 
     Args:
         root: Repository root directory.
-        diff_range: A git range spec (e.g. ``origin/dev...HEAD`` or
+        diff_range: A git range spec (e.g. ``origin/main...HEAD`` or
             ``<sha>..HEAD``).
         pathspec: Optional non-empty path list limiting the diff to those
             paths. ``None`` (the default) diffs the whole tree; an empty
@@ -223,7 +223,7 @@ def added_paths(root: Path, diff_range: str) -> list[str]:
 
     Args:
         root: Repository root directory.
-        diff_range: A git range spec (e.g. ``origin/dev...HEAD``).
+        diff_range: A git range spec (e.g. ``origin/main...HEAD``).
 
     Returns:
         One path per added file, empty when nothing was added.
@@ -497,7 +497,7 @@ def classify(root: Path, base: str, pr_number: int | None) -> PrPlan:
 
     Args:
         root: Repository root directory.
-        base: Base ref the PR targets (e.g. ``origin/dev``).
+        base: Base ref the PR targets (e.g. ``origin/main``).
         pr_number: Existing PR number for the delta path, or ``None``.
 
     Returns:

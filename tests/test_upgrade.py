@@ -1678,6 +1678,7 @@ def test_phase1_next_step_and_mismatch_warning_name_the_relock_for_pixi(
     msgs = " ".join(r.getMessage() for r in caplog.records)
     assert upgrade.PIXI_INSTALL_STEPS in msgs
     assert "pip install" not in msgs
+    assert "force-reinstall" not in msgs
     assert "The install command above is what makes them match" in msgs
 
 

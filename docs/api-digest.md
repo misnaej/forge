@@ -1559,7 +1559,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_resolve_target_ref_or_none(args: argparse.Namespace, current_ref: str | None) -> str | None` _(internal)_ — Resolve the target ref from CLI flags, falling back to current.
 - `_resolve_target_ref(args: argparse.Namespace, current_ref: str | None) -> str` _(internal)_ — Resolve the target ref or exit when undetermined.
 - `_write_atomic(path: Path, content: str) -> None` _(internal)_ — Replace *path*'s contents with *content*, atomically.
-- `_run_phase1(args: argparse.Namespace, root: Path) -> tuple[int, str | None]` _(internal)_ — Phase 1 — detect the pin, rewrite it, print the pip command.
+- `_run_phase1(args: argparse.Namespace, root: Path) -> tuple[int, str | None]` _(internal)_ — Phase 1 — detect the pin, rewrite it, print the install command.
 - `_read_changelog() -> str | None` _(internal)_ — Return forge's packaged ``CHANGELOG.md`` text, or ``None`` if unavailable.
 - `_consumer_upgrade_notes(changelog_text: str, *, max_versions: int = 3) -> str | None` _(internal)_ — Extract the most recent ``⚠️ Upgrade notes`` lanes from the changelog.
 - `_recent_action_items(changelog_text: str, *, max_versions: int = _ACTIONS_MAX_VERSIONS) -> list[tuple[str, str]]` _(internal)_ — Return ``**Action:**`` items from the newest marker-bearing versions.
