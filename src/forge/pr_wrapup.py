@@ -365,7 +365,10 @@ def _check_attribution(text: str) -> list[str]:
     names that forge copies from GitHub, so a vendor word there (a job
     named ``claude-review``) is reported, not authored — only those spans
     skip the backstop; the rest of the line gets the full check, and a
-    credit phrase is refused anywhere in it.
+    credit phrase is refused anywhere in it. The exemption is final only
+    on ``post``, which rewrites that section from GitHub before this check
+    runs, so authored text in it never ships. A job name containing a
+    backtick is wrapped in a longer backtick run, so it stays one span.
 
     Args:
         text: The wrap-up markdown to validate.
@@ -870,6 +873,9 @@ def _gather_inputs(root: Path, args: argparse.Namespace) -> ComposeInputs:
 def _cmd_compose(args: argparse.Namespace) -> int:
     """Write ``code_health/pr_wrapup.md`` with slots for the author to fill.
 
+    For a light-code wrap-up it also prints the classifier's reasons,
+    which the wrap-up itself replaces with a one-line Recommendation.
+
     Args:
         args: Parsed ``compose`` arguments.
 
@@ -971,7 +977,10 @@ def _cmd_post(args: argparse.Namespace, text: str, path: Path) -> int:
         text,
         ci_status=_ci_status(args.pr, view),
         issue_management=render_issue_management(
-            refs, pr_body_checked=True, also_closed=_also_closed(body, refs)
+            refs,
+            pr_body_checked=True,
+            pr_named=True,
+            also_closed=_also_closed(body, refs),
         ),
     )
     problems = validate_wrapup(refreshed)

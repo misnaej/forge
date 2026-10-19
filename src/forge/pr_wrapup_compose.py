@@ -414,9 +414,9 @@ def _entry_name(entry: Mapping[str, object]) -> str:
     as unfilled. Unicode format characters (bidi overrides, zero-width
     spaces and joiners) are dropped first, so they can neither disguise
     the name nor hide a comment marker from the loop. Whitespace runs
-    collapse to one space so a newline cannot
-    start a line of its own in the one-line CI Status, and the length cap
-    keeps a verbose name from blowing the wrap-up's word budget.
+    collapse to one space so a newline cannot start a line of its own in
+    the one-line CI Status, and the length cap keeps a verbose name from
+    blowing the wrap-up's word budget.
 
     Args:
         entry: One ``statusCheckRollup`` entry.
@@ -535,7 +535,7 @@ def render_issue_management(
     closing_refs: Sequence[int],
     *,
     pr_body_checked: bool,
-    pr_named: bool = False,
+    pr_named: bool,
     also_closed: Sequence[int] = (),
 ) -> str:
     """Render the Issue Management line from the closing keywords found.

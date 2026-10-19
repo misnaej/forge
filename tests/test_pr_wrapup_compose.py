@@ -744,12 +744,15 @@ def test_rollup_not_run_is_false_for_an_empty_rollup() -> None:
 
 def test_render_issue_management_lists_closing_refs() -> None:
     """Multiple refs are comma-joined, each with its own ``#``."""
-    assert render_issue_management([1, 2], pr_body_checked=True) == "Closes #1, #2"
+    assert (
+        render_issue_management([1, 2], pr_body_checked=True, pr_named=True)
+        == "Closes #1, #2"
+    )
 
 
 def test_render_issue_management_warns_when_none_found() -> None:
     """No closing keyword found → the warning line, naming the accepted forms."""
-    text = render_issue_management([], pr_body_checked=True)
+    text = render_issue_management([], pr_body_checked=True, pr_named=True)
     assert text.startswith("⚠️ no closing keyword found")
 
 
@@ -759,7 +762,7 @@ def test_render_issue_management_notes_an_unsearched_pr_body() -> None:
     Behavior test: the suffix is prose a human acts on, so it must say that
     only the PR body's keywords close issues.
     """
-    text = render_issue_management([7], pr_body_checked=False)
+    text = render_issue_management([7], pr_body_checked=False, pr_named=False)
     assert text == (
         "Closes #7 — provisional: read from the branch's commit messages because "
         "no PR exists yet; only the PR body's keywords close issues"
@@ -775,7 +778,7 @@ def test_render_issue_management_names_an_unreadable_named_pr_as_the_reason() ->
 
 def test_render_issue_management_names_a_missing_pr_as_the_reason() -> None:
     """Behavior test: with no PR named, the reason is that none exists yet."""
-    text = render_issue_management([7], pr_body_checked=False)
+    text = render_issue_management([7], pr_body_checked=False, pr_named=False)
     assert "because no PR exists yet;" in text
     assert "could not be read" not in text
 
@@ -784,7 +787,7 @@ def test_render_issue_management_notes_absence_when_the_pr_body_was_not_searched
     None
 ):
     """The provisional note appends even when nothing was found either."""
-    text = render_issue_management([], pr_body_checked=False)
+    text = render_issue_management([], pr_body_checked=False, pr_named=False)
     assert text.startswith("⚠️ no closing keyword found")
     assert text.endswith("only the PR body's keywords close issues")
     assert "provisional: read from the branch's commit messages" in text
@@ -792,7 +795,9 @@ def test_render_issue_management_notes_absence_when_the_pr_body_was_not_searched
 
 def test_render_issue_management_names_what_github_also_closes() -> None:
     """Issues closed from prose are appended after the listed ones."""
-    text = render_issue_management([1], pr_body_checked=True, also_closed=[4, 5])
+    text = render_issue_management(
+        [1], pr_body_checked=True, pr_named=True, also_closed=[4, 5]
+    )
     assert text == (
         "Closes #1 — GitHub would also close (on merge into the default branch): #4, #5"
     )
@@ -801,18 +806,22 @@ def test_render_issue_management_names_what_github_also_closes() -> None:
 def test_render_issue_management_without_extras_renders_the_plain_forms() -> None:
     """An empty ``also_closed`` adds nothing to either plain form."""
     assert (
-        render_issue_management([1, 2], pr_body_checked=True, also_closed=())
+        render_issue_management(
+            [1, 2], pr_body_checked=True, pr_named=True, also_closed=()
+        )
         == "Closes #1, #2"
     )
     assert (
-        render_issue_management([], pr_body_checked=True, also_closed=())
+        render_issue_management([], pr_body_checked=True, pr_named=True, also_closed=())
         == "⚠️ no closing keyword found (Closes/Fixes/Resolves #N on its own line)"
     )
 
 
 def test_render_issue_management_no_closing_line_still_names_github_closes() -> None:
     """With no bare closing line, the warning never claims nothing closes."""
-    text = render_issue_management([], pr_body_checked=True, also_closed=[4])
+    text = render_issue_management(
+        [], pr_body_checked=True, pr_named=True, also_closed=[4]
+    )
     assert "no closing keyword found" not in text
     assert text == (
         "⚠️ no closing keyword on its own line (Closes/Fixes/Resolves #N); "

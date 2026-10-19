@@ -107,7 +107,7 @@ from forge.pr_delta import (
     touches_high_blast_radius,
     touches_rule_surface,
 )
-from forge.pr_evidence import write_pack
+from forge.pr_evidence import PackInputs, write_pack
 
 
 if TYPE_CHECKING:
@@ -604,10 +604,13 @@ def _write_evidence(root: Path, base: str, plan: PrPlan, pr_number: int | None) 
         view = gh_pr_view(pr_number, "body") if pr_number is not None else None
         path = write_pack(
             root,
-            base=base,
-            plan=asdict(plan),
-            added=added_paths(root, f"{base}...HEAD"),
-            pr_body=str(view.get("body") or "") if view is not None else None,
+            PackInputs(
+                base=base,
+                plan=asdict(plan),
+                added=added_paths(root, f"{base}...HEAD"),
+                pr_body=str(view.get("body") or "") if view is not None else None,
+                pr_named=pr_number is not None,
+            ),
         )
     except Exception:
         logger.exception("pr-plan: the evidence pack was not written")

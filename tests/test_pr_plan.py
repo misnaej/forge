@@ -1177,7 +1177,7 @@ def test_main_evidence_flag_leaves_plan_json_and_exit_unchanged(
 
     stdout_at_pack_time: dict[str, str] = {}
 
-    def _fake_write_pack(root: Path, **_kwargs: object) -> Path:
+    def _fake_write_pack(root: Path, _inputs: pr_plan.PackInputs) -> Path:
         stdout_at_pack_time["out"] = capsys.readouterr().out
         return code_health_dir(root) / "pr_evidence.log"
 
@@ -1276,8 +1276,8 @@ def test_write_evidence_forwards_pr_body_only_with_a_pr_number(
         gh_calls.append((number, fields))
         return gh_view
 
-    def _fake_write_pack(root: Path, **kwargs: object) -> Path:
-        write_pack_calls["pr_body"] = kwargs["pr_body"]
+    def _fake_write_pack(root: Path, inputs: pr_plan.PackInputs) -> Path:
+        write_pack_calls["pr_body"] = inputs.pr_body
         return code_health_dir(root) / "pr_evidence.log"
 
     monkeypatch.setattr(pr_plan, "gh_pr_view", _fake_gh_pr_view)

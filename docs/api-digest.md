@@ -1094,9 +1094,10 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_gate_lines(root: Path) -> tuple[list[str], bool]` _(internal)_ — Run the generated-artifact checks through ``forge-precommit --only``.
 - `_surface_lines(root: Path, base: str, *, digest_checked: bool) -> list[str]` _(internal)_ — Render the committed api-digest's changed lines over ``base...HEAD``.
 - `_fragment_line(root: Path, base: str) -> str` _(internal)_ — Describe the branch's changelog fragments, naming the base compared with.
-- `_wiring_lines(root: Path, base: str, pr_body: str | None) -> list[str]` _(internal)_ — Render closing keywords and changelog-fragment presence.
-- `build_pack(root: Path, *, base: str, plan: Mapping[str, object], added: Sequence[str], pr_body: str | None) -> str` — Gather the evidence and render the pack.
-- `write_pack(root: Path, *, base: str, plan: Mapping[str, object], added: Sequence[str], pr_body: str | None) -> Path` — Build the pack and write it to ``code_health/pr_evidence.log``.
+- `_wiring_lines(root: Path, base: str, pr_body: str | None, *, pr_named: bool) -> list[str]` _(internal)_ — Render closing keywords and changelog-fragment presence.
+- `class PackInputs` — The PR-specific inputs an evidence pack is rendered from.
+- `build_pack(root: Path, inputs: PackInputs) -> str` — Gather the evidence and render the pack.
+- `write_pack(root: Path, inputs: PackInputs) -> Path` — Build the pack and write it to ``code_health/pr_evidence.log``.
 
 ## `forge.pr_plan`
 
@@ -1192,7 +1193,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_skipped(entry: Mapping[str, object]) -> bool` _(internal)_ — Return whether a rollup entry concluded without executing.
 - `rollup_not_run(rollup: Sequence[Mapping[str, object]]) -> bool` — Return whether checks were reported but none of them executed.
 - `summarize_rollup(rollup: Sequence[Mapping[str, object]], *, is_draft: bool = False) -> str` — Summarize ``gh pr view --json statusCheckRollup`` as one status line.
-- `render_issue_management(closing_refs: Sequence[int], *, pr_body_checked: bool, pr_named: bool = False, also_closed: Sequence[int] = ()) -> str` — Render the Issue Management line from the closing keywords found.
+- `render_issue_management(closing_refs: Sequence[int], *, pr_body_checked: bool, pr_named: bool, also_closed: Sequence[int] = ()) -> str` — Render the Issue Management line from the closing keywords found.
 - `unfilled_slots(text: str) -> list[str]` — Return the names of every fill-in slot still in *text*.
 - `evidence_fence(block: str) -> str` — Return only the fenced part of a ``run_gate_evidence`` block.
 
