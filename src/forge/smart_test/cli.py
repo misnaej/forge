@@ -415,7 +415,9 @@ def _escalate_to_full(
 
     mode = _safe_fallback_mode(cfg)
     if mode == "off":
-        logger.info(
+        # WARNING, not INFO: this is the most permissive mode, and a run
+        # that silently under-selects must still say so in CI logs.
+        logger.warning(
             "Safe fallback off ([tool.forge.smart_test].safe_fallback) — "
             "non-Python changes never escalate this run."
         )

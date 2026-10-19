@@ -1222,12 +1222,12 @@ def test_safe_fallback_warn_logs_paths_and_does_not_escalate(
     assert "b.cfg" in caplog.text
 
 
-def test_safe_fallback_off_logs_one_info_line_and_does_not_escalate(
+def test_safe_fallback_off_logs_one_warning_line_and_does_not_escalate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """``off`` ignores non-Python changes but leaves a trace that it did so."""
+    """``off`` ignores non-Python changes but warns, so CI logs show it did so."""
     with caplog.at_level(logging.INFO, logger="forge.smart_test.cli"):
         result = _escalation(
             tmp_path, monkeypatch, {"safe_fallback": "off"}, non_python={"a.rst"}
@@ -1235,7 +1235,7 @@ def test_safe_fallback_off_logs_one_info_line_and_does_not_escalate(
     assert result is False
     records = [r for r in caplog.records if "Safe fallback off" in r.getMessage()]
     assert len(records) == 1
-    assert records[0].levelno == logging.INFO
+    assert records[0].levelno == logging.WARNING
 
 
 def test_safe_fallback_invalid_value_escalates_with_warning(

@@ -503,6 +503,11 @@ def path_under_roots(
     not admit ``src_extra/x.py``) or a same-named directory deeper down
     (``vendor/src/x.py`` is not under ``src``).
 
+    Matching is lexical: ``..`` segments are not resolved and symlinks are
+    not followed, so inputs must already be normalised (git listings and
+    coverage keys are). It scopes reports and scans; it is not an access
+    check.
+
     Args:
         path: The path to test — repo-relative, or absolute.
         roots: Repo-relative directory roots; a trailing ``/`` is ignored.

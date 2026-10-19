@@ -42,8 +42,9 @@ full pass. Config reference:
   The guarantee holds under the default `safe_fallback = "escalate"`; a
   repo can trade it away knowingly. `"warn"` keeps the selected depth and
   logs every unmappable path, so the under-selection is visible but not
-  prevented; `"off"` ignores them, with one info line saying the fallback
-  is off. The narrower hatch is `nonpython_ignore`, which exempts named
+  prevented; `"off"` ignores them, with one warning saying the fallback
+  is off. Both apply wherever the selector runs, CI included; the 48-hour
+  truly-all run still happens. The narrower hatch is `nonpython_ignore`, which exempts named
   globs; `nonpython_ignore = ["*"]` exempts every non-Python path, the
   same effect as `"off"` but silent. Neither setting reaches a
   changed conftest outside the test roots, which always escalates: it is

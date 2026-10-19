@@ -526,8 +526,8 @@ def _check_clone_identity(repo_root: Path) -> StepResult | None:
         output=(
             f"⛔ The active forge-scripts install is editable from {shown[0]}, not "
             f"this clone ({shown[1]}). Every gate would run the other "
-            "checkout's code. Activate this clone's env or re-run `./dev/setup.sh` "
-            "here."
+            "checkout's code. Activate this clone's env or refresh the install "
+            f"here ({_install_refresh_hint(repo_root)})."
         ),
     )
 
@@ -715,9 +715,9 @@ def step_env_sync(repo_root: Path) -> StepResult:
                     f"⛔ Stale install of '{name}': {len(missing)} declared "
                     f"console script(s) not registered — {', '.join(missing)}.\n\n"
                     "A [project.scripts] entry was added since you last installed, so "
-                    "the gate may run old code. Re-run `./dev/setup.sh` (or "
-                    "`pip install -e .`, or your repo's equivalent) to "
-                    "register the new entry point(s)."
+                    "the gate may run old code. Refresh the install "
+                    f"({_install_refresh_hint(repo_root)}) to register the new "
+                    "entry point(s)."
                 ),
                 non_blocking=not blocking,
             )
@@ -730,8 +730,9 @@ def step_env_sync(repo_root: Path) -> StepResult:
             passed=False,
             output=(
                 f"⚠️  Installed forge-scripts {have} is behind the pin "
-                f"forge-scripts=={pinned}. Re-run `./dev/setup.sh` (or your "
-                "repo's equivalent) to install the pinned version."
+                f"forge-scripts=={pinned}. Refresh the install "
+                f"({_install_refresh_hint(repo_root)}) to install the pinned "
+                "version."
             ),
             non_blocking=True,
         )
@@ -1352,23 +1353,24 @@ _PIP_AUDIT_FUTURE_TOLERANCE_S = 300.0
 _PIP_AUDIT_SCANNED_AT_KEY = "scanned_at"
 
 
-def _payload_scanned_at(repo_root: Path) -> float | None:
-    """Return the scan time recorded inside the sidecar, if it holds a usable one.
+def _scan_time_value(value: object) -> float | None:
+    """Return *value* as epoch seconds, or ``None`` when it is not a usable time.
 
     Args:
-        repo_root: Git repo root.
+        value: The sidecar's recorded ``scanned_at`` field.
 
     Returns:
-        The recorded epoch seconds, or ``None`` when the sidecar is not a
-        trustworthy report (:func:`_read_audit_sidecar`), predates the
-        field, or carries a non-numeric or non-finite value.
+        A finite float, or ``None`` for a bool, a non-number, a non-finite
+        number, or an integer too large to be a float.
     """
-    data = _read_audit_sidecar(repo_root)
-    value = data.get(_PIP_AUDIT_SCANNED_AT_KEY) if data is not None else None
     # bool is an int subclass: `true` must not read as 1970-01-01T00:00:01.
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    return float(value) if math.isfinite(value) else None
+    try:
+        seconds = float(value)
+    except OverflowError:
+        return None
+    return seconds if math.isfinite(seconds) else None
 
 
 def _sidecar_scanned_at(repo_root: Path) -> float | None:
@@ -1377,20 +1379,28 @@ def _sidecar_scanned_at(repo_root: Path) -> float | None:
     The time recorded in the payload wins because a file's modification
     time does not survive a copy or a CI cache restore — both reset it to
     the moment of the copy and manufacture a fresh-looking scan that never
-    ran. The modification time is the fallback for a sidecar written
-    before the field existed.
+    ran. The modification time is used only for a sidecar written before
+    the field existed; a field that is present but unusable is not a
+    reason to trust the file's timestamp instead.
 
     Args:
         repo_root: Git repo root.
 
     Returns:
-        Epoch seconds, or ``None`` when there is no readable time or it is
-        dated further ahead than :data:`_PIP_AUDIT_FUTURE_TOLERANCE_S` —
-        both mean scan, which is the safe direction (a future stamp would
-        otherwise suppress scans indefinitely).
+        Epoch seconds, or ``None`` when the sidecar is unreadable, its
+        recorded time is unusable, or the time is dated further ahead than
+        :data:`_PIP_AUDIT_FUTURE_TOLERANCE_S` — each means scan, which is
+        the safe direction (a future stamp would otherwise suppress scans
+        indefinitely).
     """
-    scanned_at = _payload_scanned_at(repo_root)
-    if scanned_at is None:
+    data = _read_audit_sidecar(repo_root)
+    if data is None:
+        return None
+    if _PIP_AUDIT_SCANNED_AT_KEY in data:
+        scanned_at = _scan_time_value(data[_PIP_AUDIT_SCANNED_AT_KEY])
+        if scanned_at is None:
+            return None
+    else:
         sidecar = code_health_dir(repo_root) / PIP_AUDIT_SIDECAR_NAME
         try:
             scanned_at = sidecar.stat().st_mtime
@@ -2292,6 +2302,9 @@ def step_regen_docs(repo_root: Path) -> StepResult:
     )
 
 
+# The generator (forge-gen-cli-reference) owns this format: one `## <cli>`
+# heading per console script, nothing after the name. A heading shape it
+# does not emit would make the hold silently blind, so tests pin it.
 _CLI_REFERENCE_HEADING_RE = re.compile(r"^## (\S+)\s*$", re.MULTILINE)
 
 
@@ -2350,8 +2363,9 @@ def _held_cli_reference(repo_root: Path, *, stale: bool, built: list[str]) -> st
         f"{', '.join(lost)}. The regenerated file is left modified in your "
         "worktree, unstaged; this step did not restore it. Refresh the "
         f"install ({_install_refresh_hint(repo_root)}), regenerate the doc "
-        "(`forge-gen-cli-reference`), and commit again — this step then "
-        "stages it."
+        f"(`forge-gen-cli-reference`), stage it (`git add {CLI_REFERENCE_DOC}`) "
+        "and commit again; with the doc left unstaged this step treats the "
+        "commit as partial and skips."
     )
 
 

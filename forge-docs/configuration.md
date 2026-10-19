@@ -258,7 +258,7 @@ or a cadence value forge does not recognise. Naming the step
 | `max_age_hours` | `24` | Age at which a previous scan stops counting, under `cadence = "hours"`. | Your tolerance for an older answer differs. |
 | `blocking` | `false` | Fail the commit on a CVE finding (else non-blocking WARN). | A vulnerable dependency should refuse a commit. |
 
-The reuse stamp is the scan time recorded inside `code_health/pip_audit.json` (its `scanned_at` field), so copying or restoring the file does not make an old scan look fresh. A sidecar written before that field existed falls back to the file's modification time, which a copy or cache restore resets to the moment of the copy. Either way, do not cache that directory in CI: a restored scan describes the environment it was taken in, not the one the job built.
+The reuse stamp is the scan time recorded inside `code_health/pip_audit.json` (its `scanned_at` field), so copying or restoring the file does not make an old scan look fresh. A sidecar written before that field existed falls back to the file's modification time, which a copy or cache restore resets to the moment of the copy; a field that is present but unusable, or a sidecar that cannot be read, means scan. Either way, do not cache that directory in CI: a restored scan describes the environment it was taken in, not the one the job built.
 
 ## `[tool.forge.doctest]` — opt-in doctest step
 
@@ -371,7 +371,7 @@ speed/coverage trade-off: [`forge-docs/smart-test.md`](smart-test.md).
 | `full_run_max_age_hours` | `48` | Max age of the tracked `.forge-full-run` stamp before the cadence acts (per `cadence_mode`). | Your truly-all cadence should run more or less often. |
 | `cadence_mode` | `commit` | Who carries the truly-all cadence: `commit` (stale stamp escalates the commit), `advisory` (warn only; run keeps its own `blocking` semantics), `external` (a scheduled CI job owns it; warn at 2x the window). | CI is your testing fleet — see the smart-test doc's "Who carries the cadence". |
 | `nonpython_ignore` | built-in list | fnmatch globs for changed non-Python paths that cannot affect tests; anything else escalates the run to full (safe fallback). | You have non-Python paths the default list doesn't cover. |
-| `safe_fallback` | `escalate` | What a changed non-Python path outside `nonpython_ignore` does: `escalate` (run the full suite), `warn` (log every such path and keep the selected depth), `off` (ignore them; one info line says so). A changed conftest outside the test roots always escalates. An unknown value escalates with a warning. | Full-suite escalations cost more than the under-selection risk you accept — see the smart-test doc's "Safe fallback". |
+| `safe_fallback` | `escalate` | What a changed non-Python path outside `nonpython_ignore` does: `escalate` (run the full suite), `warn` (log every such path and keep the selected depth), `off` (ignore them; one warning says so). A changed conftest outside the test roots always escalates. An unknown value escalates with a warning. | Full-suite escalations cost more than the under-selection risk you accept — see the smart-test doc's "Safe fallback". |
 | `commit_directive_re` | `\[(?:depth-(?P<n>[0-2])\|(?P<full>full))\]` | Regex for `--from-commit-message` to read a depth directive from `HEAD`'s message (named groups `n` / `full`). | Your CI tags commits with a different directive syntax. |
 
 ## `[tool.forge.telemetry]` — resource profiling

@@ -1231,7 +1231,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `step_cli_reference_check(repo_root: Path) -> StepResult` — Run ``forge-gen-cli-reference --check`` — cli-reference drift guard (opt-in).
 - `step_foundation_md_check(repo_root: Path) -> StepResult` — Verify ``FOUNDATION.md`` reproduces the installed foundation (opt-in).
 - `_count_pip_audit_advisories(output: str) -> int` _(internal)_ — Count advisory ID occurrences in a ``pip-audit`` text-mode output.
-- `_payload_scanned_at(repo_root: Path) -> float | None` _(internal)_ — Return the scan time recorded inside the sidecar, if it holds a usable one.
+- `_scan_time_value(value: object) -> float | None` _(internal)_ — Return *value* as epoch seconds, or ``None`` when it is not a usable time.
 - `_sidecar_scanned_at(repo_root: Path) -> float | None` _(internal)_ — Return when the last CVE scan ran, the one reader every age check uses.
 - `_pip_audit_scan_age_hours(repo_root: Path) -> float | None` _(internal)_ — Return how long ago the last CVE scan ran.
 - `_reuse_reason_hours(cfg: dict, age: float) -> str | None` _(internal)_ — Return why an hours-cadence scan may be reused, or ``None`` to scan.

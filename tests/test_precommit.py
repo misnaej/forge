@@ -1291,7 +1291,7 @@ def test_pip_audit_scan_age_hours_fresh_stamp_computes_hours(tmp_path: Path) -> 
     """A stamp N hours old reports age_hours ≈ N — the reuse decision's input."""
     sidecar = git_utils.code_health_dir(tmp_path) / precommit.PIP_AUDIT_SIDECAR_NAME
     sidecar.parent.mkdir(parents=True, exist_ok=True)
-    sidecar.write_text("{}", encoding="utf-8")
+    sidecar.write_text(_scan_payload(), encoding="utf-8")
     mtime = time.time() - 2 * 3600
     os.utime(sidecar, (mtime, mtime))
     age = precommit._pip_audit_scan_age_hours(tmp_path)
@@ -1347,28 +1347,29 @@ def test_sidecar_scanned_at_missing_sidecar_is_none(tmp_path: Path) -> None:
     assert precommit._sidecar_scanned_at(tmp_path) is None
 
 
-@pytest.mark.parametrize(
-    ("mtime_offset_s", "usable"),
-    [(-600, True), (3600, False)],
-    ids=["past-mtime-stands-in", "future-mtime-rejected"],
-)
-def test_sidecar_scanned_at_corrupt_payload_depends_on_mtime(
-    tmp_path: Path, mtime_offset_s: int, *, usable: bool
+@pytest.mark.parametrize("mtime_offset_s", [-600, 3600], ids=["past-mtime", "future"])
+def test_sidecar_scanned_at_corrupt_payload_is_none_whatever_the_mtime(
+    tmp_path: Path, mtime_offset_s: int
 ) -> None:
-    """A corrupt payload carries no time, so a sane mtime stands in for it.
-
-    A future mtime is rejected like any future-dated stamp, leaving nothing
-    trustworthy.
+    """A corrupt payload is untrustworthy, so scan — the mtime never stands in.
 
     Args:
         mtime_offset_s: Seconds the sidecar's mtime sits from now.
-        usable: Whether the mtime should be returned as the scan time.
     """
     sidecar = _write_scan_sidecar(tmp_path, "{not json")
     mtime = time.time() + mtime_offset_s
     os.utime(sidecar, (mtime, mtime))
-    expected = pytest.approx(mtime, abs=1) if usable else None
-    assert precommit._sidecar_scanned_at(tmp_path) == expected
+    assert precommit._sidecar_scanned_at(tmp_path) is None
+
+
+def test_sidecar_scanned_at_future_mtime_without_field_is_none(
+    tmp_path: Path,
+) -> None:
+    """An old-format sidecar whose mtime is future-dated is rejected too."""
+    sidecar = _write_scan_sidecar(tmp_path, _scan_payload())
+    future = time.time() + precommit._PIP_AUDIT_FUTURE_TOLERANCE_S + 600
+    os.utime(sidecar, (future, future))
+    assert precommit._sidecar_scanned_at(tmp_path) is None
 
 
 def test_sidecar_scanned_at_future_dated_payload_is_none(tmp_path: Path) -> None:
@@ -1392,16 +1393,24 @@ def test_sidecar_scanned_at_slightly_ahead_within_tolerance_is_kept(
 
 @pytest.mark.parametrize(
     "raw_value",
-    ["true", '"yesterday"', "null", "NaN", "Infinity", "-Infinity"],
-    ids=["bool", "string", "null", "nan", "inf", "neg-inf"],
+    [
+        "true",
+        '"yesterday"',
+        "null",
+        "NaN",
+        "Infinity",
+        "-Infinity",
+        "1" + "0" * 400,
+    ],
+    ids=["bool", "string", "null", "nan", "inf", "neg-inf", "huge-int"],
 )
-def test_sidecar_scanned_at_ignores_non_numeric_or_non_finite_value(
+def test_sidecar_scanned_at_unusable_present_value_is_none_not_mtime(
     tmp_path: Path, raw_value: str
 ) -> None:
-    """A junk ``scanned_at`` is ignored and the mtime is used instead.
+    """A present-but-junk ``scanned_at`` means scan; a fresh mtime must not rescue it.
 
-    ``true`` in particular must not read as 1970-01-01T00:00:01, which
-    would make the scan look ancient (or, for NaN, compare as never stale).
+    ``true`` must not read as 1970-01-01T00:00:01, and an integer too large
+    for a float must not crash with OverflowError.
 
     Args:
         tmp_path: Pytest temporary directory holding the sidecar.
@@ -1412,7 +1421,7 @@ def test_sidecar_scanned_at_ignores_non_numeric_or_non_finite_value(
     )
     mtime = time.time() - 1800
     os.utime(sidecar, (mtime, mtime))
-    assert precommit._sidecar_scanned_at(tmp_path) == pytest.approx(mtime, abs=1)
+    assert precommit._sidecar_scanned_at(tmp_path) is None
 
 
 def test_pip_audit_scan_age_hours_uses_payload_time_after_mtime_reset(
@@ -1535,7 +1544,7 @@ def test_pip_audit_reuse_reason_cadence_hours(
     )
     sidecar = git_utils.code_health_dir(tmp_path) / precommit.PIP_AUDIT_SIDECAR_NAME
     sidecar.parent.mkdir(parents=True, exist_ok=True)
-    sidecar.write_text("{}", encoding="utf-8")
+    sidecar.write_text(_scan_payload(), encoding="utf-8")
     mtime = time.time() - sidecar_age_hours * 3600
     os.utime(sidecar, (mtime, mtime))
 
@@ -1590,7 +1599,7 @@ def test_pip_audit_reuse_reason_cadence_branch(
 
     sidecar = git_utils.code_health_dir(tmp_path) / precommit.PIP_AUDIT_SIDECAR_NAME
     sidecar.parent.mkdir(parents=True, exist_ok=True)
-    sidecar.write_text("{}", encoding="utf-8")
+    sidecar.write_text(_scan_payload(), encoding="utf-8")
     sidecar_mtime = fork_committed_at + sidecar_offset_s
     os.utime(sidecar, (sidecar_mtime, sidecar_mtime))
 
@@ -3461,7 +3470,8 @@ def test_step_env_sync_blocks_by_default_when_script_missing(
     MOCK SETUP: is_ci→False; pyproject written without env_sync config;
     distribution→FakeDist([FakeEP("mycli","console_scripts")]).
     EXPECTED BEHAVIOR: passed False, skipped False, non_blocking False,
-    "new-cli" in output, "setup.sh" in output.
+    "new-cli" in output, the consumer refresh phrase (not setup.sh, as the
+    repo is not forge's own) in output.
     """
     monkeypatch.setattr(precommit, "is_ci", lambda: False)
     _write_project_scripts_pyproject(tmp_path, "mypkg", {"mycli": "", "new-cli": ""})
@@ -3474,7 +3484,8 @@ def test_step_env_sync_blocks_by_default_when_script_missing(
     assert not result.skipped
     assert not result.non_blocking
     assert "new-cli" in result.output
-    assert "setup.sh" in result.output
+    assert "reinstall forge-scripts the way this repo installs it" in result.output
+    assert "setup.sh" not in result.output
 
 
 def test_step_env_sync_warns_not_blocks_when_blocking_false(
@@ -5073,6 +5084,7 @@ def test_step_regen_docs_stale_install_dropping_sections_blocks_and_holds_doc(
     assert "forge-bar" in result.output
     assert "forge-gen-cli-reference" in result.output
     assert "Refresh the install" in result.output
+    assert f"git add {_CLI_DOC}" in result.output
     # Held docs keep no record entry, so the next commit retries them.
     assert _CLI_DOC not in regen_docs.load_record(repo)
 
@@ -5150,6 +5162,90 @@ def test_install_refresh_hint_names_dev_setup_only_in_forge_repo(
     assert "./dev/setup.sh" not in other
     assert "pip install" not in other
     assert "pip install" not in precommit._install_refresh_hint(forge_repo)
+
+
+def _stale_install_message(
+    kind: str, repo: Path, monkeypatch: pytest.MonkeyPatch, *, forge_own: bool
+) -> str:
+    """Produce one of the three stale-install remediation messages.
+
+    Args:
+        kind: ``clone``, ``scripts`` or ``pin``.
+        repo: Directory to write the repo's pyproject into.
+        monkeypatch: Used to stub the install probes.
+        forge_own: Whether the repo is forge's own distribution.
+
+    Returns:
+        The message the step emitted.
+    """
+    name = regen_docs.FORGE_DIST_NAME if forge_own else "consumer"
+    monkeypatch.setattr(precommit, "is_ci", lambda: False)
+    if kind == "clone":
+        (repo / "pyproject.toml").write_text(f'[project]\nname = "{name}"\n')
+        monkeypatch.setattr(
+            precommit, "_declared_scripts", lambda _r: (precommit.DIST_NAME, {"x"})
+        )
+        monkeypatch.setattr(
+            precommit, "editable_install_origin", lambda: repo.parent / "other-clone"
+        )
+        result = precommit._check_clone_identity(repo)
+        assert result is not None
+        return result.output
+    if kind == "scripts":
+        _write_project_scripts_pyproject(repo, name, {"mycli": "", "new-cli": ""})
+        monkeypatch.setattr(
+            precommit, "installed_console_scripts", lambda _n: {"mycli"}
+        )
+    else:
+        (repo / "pyproject.toml").write_text(
+            f'[project]\nname = "{name}"\ndependencies = ["forge-scripts==2.9.0"]\n'
+        )
+        monkeypatch.setattr(precommit.importlib.metadata, "version", lambda _n: "2.8.0")
+    return precommit.step_env_sync(repo).output
+
+
+@pytest.mark.parametrize("kind", ["clone", "scripts", "pin"])
+@pytest.mark.parametrize("forge_own", [True, False], ids=["forge-repo", "consumer"])
+def test_stale_install_messages_name_refresh_command_by_repo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    *,
+    forge_own: bool,
+) -> None:
+    """Each stale-install message names forge's bootstrap only in forge's own repo.
+
+    A consumer has no ``dev/setup.sh``, and no message may recommend a raw
+    ``pip install`` (FOUNDATION §2).
+
+    Args:
+        kind: Which of the three messages is produced.
+        forge_own: Whether the repo is forge's own distribution.
+    """
+    output = _stale_install_message(kind, tmp_path, monkeypatch, forge_own=forge_own)
+    assert "pip install" not in output
+    if forge_own:
+        assert "./dev/setup.sh" in output
+    else:
+        assert "./dev/setup.sh" not in output
+        assert "reinstall forge-scripts the way this repo installs it" in output
+
+
+def test_cli_reference_heading_regex_matches_generator_shape() -> None:
+    """The hold's heading regex matches the ``## <cli>`` lines the generator emits.
+
+    A heading shape the generator emits but the regex misses would make the
+    held-doc check silently blind, so the committed doc must yield headings.
+    """
+    pattern = precommit._CLI_REFERENCE_HEADING_RE
+    assert pattern.findall("# CLI\n\n## forge-foo\nbody\n\n## fix-bar \n") == [
+        "forge-foo",
+        "fix-bar",
+    ]
+    committed = (Path(__file__).parent.parent / _CLI_DOC).read_text(encoding="utf-8")
+    headings = pattern.findall(committed)
+    assert headings
+    assert "forge-precommit" in headings
 
 
 def test_step_regen_docs_first_run_regenerates_both_and_records(
