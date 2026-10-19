@@ -289,7 +289,7 @@ def claim(root: Path, branch: str) -> int:
         emit(
             "emergency: another publish is claiming the bypass right now "
             f"(or one crashed mid-claim and left {_CLAIM_LOCK}) — gate stays "
-            "closed. See `forge-emergency status`."
+            f"closed. If no publish is running, delete {_CLAIM_LOCK} and retry."
         )
         return 1
     try:

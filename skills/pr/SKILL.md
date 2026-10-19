@@ -422,7 +422,7 @@ Verification is done, fixes are committed, and the wrap-up is authored
     `forge-pr-wrapup post` validates the wrap-up and **refuses (exit 3)**
     when it cannot read the PR, its `verified-at:` is not the PR head, or
     the branch conflicts with or is behind its base (only the emergency PR
-    `forge-emergency record-pr` recorded may be behind) — it
+    recorded in the emergency sentinel may be behind) — it
     names the fix (merge the base, re-verify with `/pr <PR#>`) and never
     merges. Otherwise it refreshes CI Status (never waiting for CI) and
     Issue Management from GitHub, posts, collapses superseded wrap-ups,
