@@ -501,8 +501,10 @@ advisories with the suggested pin; they never edit pins.
   something inferred from command text, and it refuses unless that
   checkout's wrap-up names that checkout's `HEAD`. A `wrapup-mode:
   light` wrap-up additionally re-runs the `forge-pr-plan` classifier
-  fail-closed, refusing unless it agrees the diff is light-code
-  (`FORGE_SKIP_WRAPUP_GATE=1` on explicit user request only). A **draft PR** is
+  fail-closed, refusing unless it agrees the diff is light-code; a
+  `wrapup-mode: light-release` wrap-up is re-earned the same way
+  against a light-release verdict (`FORGE_SKIP_WRAPUP_GATE=1` on
+  explicit user request only). A **draft PR** is
   the escape hatch when the PR should be visible earlier. A genuine
   emergency uses **`forge-emergency`** — one human-armed, ledger-backed
   `wrapup-mode: emergency` publication that defers only the verification

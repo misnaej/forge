@@ -15,9 +15,9 @@ This command removes the inference instead of improving it. It runs in the
 checkout it publishes, so the branch is not a guess — it is where the
 process is standing. It verifies that checkout's own wrap-up against that
 checkout's own HEAD, earns the light, light-release and emergency escapes
-in the same place, and only then creates the pull request. The guard's job shrinks to
-refusing the raw command, which is a question about the command's *name*
-and needs no understanding of its arguments.
+in the same place, and only then creates the pull request. The guard's
+job shrinks to refusing the raw command, which is a question about the
+command's *name* and needs no understanding of its arguments.
 
 That shape is not new here: ``forge-pr-wrapup post`` and
 ``block_raw_wrapup_post`` already moved wrap-up posting behind a command

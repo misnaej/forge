@@ -457,6 +457,97 @@ def test_classify_light_release_refuses_source_renamed_onto_changelog(
     assert "rename-free listing" in _not_light_release_reason(plan)
 
 
+@pytest.mark.parametrize(
+    ("new_version", "expected_reason"),
+    [
+        ("../../x", "not a plain X.Y.Z"),
+        ("1.2.3-rc1", "not a plain X.Y.Z"),
+        ("v1.2.4", "not a plain X.Y.Z"),
+        ("0.9.9", "does not move above"),
+        ("1.00.0", "does not move above"),
+    ],
+)
+def test_classify_light_release_refuses_non_release_version_value(
+    tmp_path: Path, new_version: str, expected_reason: str
+) -> None:
+    """A version-only manifest change must still be a higher plain ``X.Y.Z``.
+
+    Args:
+        new_version: The value written over the base ``1.0.0``.
+        expected_reason: Fragment the refusal reason must contain.
+    """
+    repo = _release_base_repo(tmp_path)
+    _assemble_release(repo, manifest=_MANIFEST.replace("1.0.0", new_version))
+
+    plan = pr_plan.classify(repo, "main", None)
+
+    assert plan.mode == "full"
+    assert expected_reason in _not_light_release_reason(plan)
+
+
+def _make_changelog_irregular(repo: Path, kind: str) -> None:
+    """Commit CHANGELOG.md as a symlink or an executable file.
+
+    Args:
+        repo: Repo holding an already-committed assembly.
+        kind: ``"symlink"`` or ``"executable"``.
+    """
+    changelog = repo / "CHANGELOG.md"
+    if kind == "symlink":
+        changelog.unlink()
+        try:
+            changelog.symlink_to(".claude-plugin/plugin.json")
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks cannot be created on this platform")
+    else:
+        changelog.chmod(0o755)
+    subprocess.run(["git", "add", "-A"], cwd=repo, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "irregular changelog"],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+
+
+@pytest.mark.parametrize("kind", ["symlink", "executable"])
+def test_classify_light_release_refuses_irregular_changelog_file(
+    tmp_path: Path, kind: str
+) -> None:
+    """A symlinked or executable CHANGELOG.md is not prose, so no light-release.
+
+    Args:
+        kind: How CHANGELOG.md is made irregular.
+    """
+    repo = _release_base_repo(tmp_path)
+    _assemble_release(repo)
+    _make_changelog_irregular(repo, kind)
+
+    plan = pr_plan.classify(repo, "main", None)
+
+    assert plan.mode != "light-release"
+    assert _not_light_release_reason(plan).startswith("not a regular file")
+
+
+def test_classify_light_release_refuses_non_text_manifest(tmp_path: Path) -> None:
+    """A manifest with invalid UTF-8 on HEAD refuses instead of crashing."""
+    repo = _release_base_repo(tmp_path)
+    _assemble_release(repo)
+    (repo / ".claude-plugin/plugin.json").write_bytes(b'{"version": "\xff\xfe"}')
+    subprocess.run(["git", "add", "-A"], cwd=repo, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "binary manifest"],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+
+    plan = pr_plan.classify(repo, "main", None)
+
+    assert plan.mode != "light-release"
+    assert "not text" in _not_light_release_reason(plan)
+
+
 @pytest.mark.parametrize("missing_side", ["base", "head"])
 def test_classify_light_release_refuses_manifest_missing_on_a_side(
     tmp_path: Path, missing_side: str

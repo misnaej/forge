@@ -123,8 +123,8 @@ PROVENANCE_GATE_STEPS: Final[tuple[str, ...]] = (
 # source-under-src change, and no high-blast-radius path qualifies for
 # the LIGHT wrap-up (`wrapup-mode: light`): reporters
 # skipped, short-form wrap-up, strict pre-commit still in full. The
-# escape is never agent discretion — `block_unverified_pr_create`
-# re-runs the classifier at publish time and blocks on disagreement.
+# escape is never agent discretion — `forge-pr-create` re-runs the
+# classifier at publish time and refuses on disagreement.
 LIGHT_WRAPUP_LINE_THRESHOLD: Final[int] = 50
 
 

@@ -828,6 +828,26 @@ def test_main_from_changelog_ci_refuses_non_tip(
 # ---------------------------------------------------------------------------
 
 
+def _failing_push_git(*args: str, **_kw: object) -> str:
+    """Fake ``run_git``: ``push`` fails, ``remote`` answers, all else is empty.
+
+    Args:
+        *args: The git argv; only the first element (the subcommand) is inspected.
+        **_kw: Ignored keyword options accepted for ``run_git`` compatibility.
+
+    Returns:
+        The origin URL for ``remote``, otherwise an empty string.
+
+    Raises:
+        subprocess.CalledProcessError: When the subcommand is ``push``.
+    """
+    if args[0] == "push":
+        raise subprocess.CalledProcessError(1, ["git", "push"])
+    if args[0] == "remote":
+        return "https://example.invalid/origin.git"
+    return ""
+
+
 def test_cut_release_race_tolerant_push_failure_with_unanswered_remote(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -840,15 +860,7 @@ def test_cut_release_race_tolerant_push_failure_with_unanswered_remote(
     EXPECTED BEHAVIOR: race_tolerant=True → return 1, and no concurrency
         success message — an unanswered query is not evidence of a race.
     """
-
-    def _fake_git(*args: str, **_kw: object) -> str:
-        if args[0] == "push":
-            raise subprocess.CalledProcessError(1, ["git", "push"])
-        if args[0] == "remote":
-            return "https://example.invalid/origin.git"
-        return ""
-
-    monkeypatch.setattr(release, "run_git", _fake_git)
+    monkeypatch.setattr(release, "run_git", _failing_push_git)
 
     def _unanswered(*_a: object, **_k: object) -> None:
         return None
@@ -867,15 +879,7 @@ def test_cut_release_push_failure_without_tolerance_returns_one(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Push failure on the strict (--bump) path → error + exit 1."""
-
-    def _fake_git(*args: str, **_kw: object) -> str:
-        if args[0] == "push":
-            raise subprocess.CalledProcessError(1, ["git", "push"])
-        if args[0] == "remote":
-            return "https://example.invalid/origin.git"
-        return ""
-
-    monkeypatch.setattr(release, "run_git", _fake_git)
+    monkeypatch.setattr(release, "run_git", _failing_push_git)
     monkeypatch.setattr(release, "create_annotated_tag", lambda *_a, **_kw: None)
     with caplog.at_level(logging.ERROR, logger="forge.release"):
         result = release._cut_release(tmp_path, "v1.0.0", race_tolerant=False)
@@ -887,15 +891,7 @@ def test_cut_release_race_tolerant_push_failure_without_remote_tag(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Push fails and no concurrent tag exists → still exit 1."""
-
-    def _fake_git(*args: str, **_kw: object) -> str:
-        if args[0] == "push":
-            raise subprocess.CalledProcessError(1, ["git", "push"])
-        if args[0] == "remote":
-            return "https://example.invalid/origin.git"
-        return ""  # tag --list and ls-remote report nothing
-
-    monkeypatch.setattr(release, "run_git", _fake_git)
+    monkeypatch.setattr(release, "run_git", _failing_push_git)
     monkeypatch.setattr(release, "create_annotated_tag", lambda *_a, **_kw: None)
     assert release._cut_release(tmp_path, "v1.0.0", race_tolerant=True) == 1
 

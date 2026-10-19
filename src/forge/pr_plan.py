@@ -76,8 +76,8 @@ writes ``wrapup-mode: light-release``, which ``forge-pr-create`` re-earns
 by re-running this classifier fail-closed. ``light-code`` (small, no added
 files bar changelog fragments, no ``src/`` or high-blast-radius path)
 skips the reporters and authorizes the short-form ``wrapup-mode: light``
-wrap-up — enforced fail-closed by ``block_unverified_pr_create``, which
-re-runs this classifier at ``gh pr create`` time; the strict pre-commit
+wrap-up — enforced fail-closed by ``forge-pr-create``, which re-runs
+this classifier before it publishes; the strict pre-commit
 battery still runs in full. The delta path degrades, never crashes: no
 ``--pr``, a missing/unauthenticated ``gh``, or no ``verified-at:``
 comment each add a reason and classification continues to ``full``.
@@ -95,10 +95,11 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from forge.git_utils import (
     GH_TIMEOUT_S,
@@ -516,29 +517,46 @@ def _try_delta(
     return use_delta
 
 
-def _name_status(root: Path, diff_range: str) -> list[tuple[str, str]]:
-    """Return ``(status, path)`` per changed file across *diff_range*.
+class _RawEntry(NamedTuple):
+    """One changed path as ``git diff --raw`` reports it."""
+
+    status: str
+    path: str
+    old_mode: str
+    new_mode: str
+
+
+# A regular, non-executable file — the only kind a release assembly writes.
+_REGULAR_FILE_MODE = "100644"
+# `--raw` metadata: old mode, new mode, old sha, new sha, status.
+_RAW_FIELDS = 5
+
+
+def _raw_entries(root: Path, diff_range: str) -> list[_RawEntry]:
+    """Return status, path and modes per changed file across *diff_range*.
 
     ``--no-renames`` on purpose: with rename detection a moved file
     reports only its destination, so ``src/x.py`` renamed onto
     ``CHANGELOG.md`` would read as a changelog edit and hide that a
     source file left. Without it the move is a delete plus an add, and
-    both paths are judged.
+    both paths are judged. The modes let a symlink, gitlink or
+    executable bit on an allowed path be refused rather than read as
+    prose.
 
     Args:
         root: Repository root directory.
         diff_range: A git range spec (e.g. ``origin/main...HEAD``).
 
     Returns:
-        One entry per changed path, status letter first (``D`` for a
-        deletion).
+        One entry per changed path (status ``D`` for a deletion).
     """
-    out = run_git("diff", "--name-status", "--no-renames", diff_range, cwd=root)
-    entries: list[tuple[str, str]] = []
+    out = run_git("diff", "--raw", "--no-renames", diff_range, cwd=root)
+    entries: list[_RawEntry] = []
     for line in out.splitlines():
-        status, _, path = line.partition("\t")
-        if path:
-            entries.append((status, path))
+        meta, _, path = line.partition("\t")
+        fields = meta.lstrip(":").split()
+        if path and len(fields) >= _RAW_FIELDS:
+            entries.append(_RawEntry(fields[4], path, fields[0], fields[1]))
     return entries
 
 
@@ -558,25 +576,57 @@ def _manifest_refusal(root: Path, base: str) -> str | None:
         base: Base ref the PR targets.
 
     Returns:
-        A one-line reason when the change is not version-only (missing on
-        either side, unparseable, or other content changed), else ``None``.
+        A one-line reason when the change is not a version bump (missing
+        on either side, unparseable, other content changed, or the new
+        value is not a higher ``X.Y.Z``), else ``None``.
     """
     fork = run_git("merge-base", base, "HEAD", cwd=root)
-    before = run_git(
-        "show", f"{fork}:{PLUGIN_PATH}", cwd=root, check=False, log_errors=False
-    )
-    after = run_git(
-        "show", f"HEAD:{PLUGIN_PATH}", cwd=root, check=False, log_errors=False
-    )
+    try:
+        before = run_git(
+            "show", f"{fork}:{PLUGIN_PATH}", cwd=root, check=False, log_errors=False
+        )
+        after = run_git(
+            "show", f"HEAD:{PLUGIN_PATH}", cwd=root, check=False, log_errors=False
+        )
+    except UnicodeDecodeError:
+        return f"{PLUGIN_PATH} is not text, so it cannot be a version bump"
     if not before or not after:
         return f"{PLUGIN_PATH} is added or removed, not version-bumped"
     try:
-        version = json.loads(after)["version"]
-        expected = render_plugin_version(before, str(version))
+        version = str(json.loads(after)["version"])
+        base_version = str(json.loads(before)["version"])
+        expected = render_plugin_version(before, version)
     except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
         return f"{PLUGIN_PATH} cannot be compared as a version bump ({exc})"
     if expected != after:
         return f"{PLUGIN_PATH} changes more than its version value"
+    return _version_bump_refusal(base_version, version)
+
+
+_RELEASE_VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+
+
+def _version_bump_refusal(old: str, new: str) -> str | None:
+    """Return why *new* is not a release version above *old*, or ``None``.
+
+    The rest of the manifest is proved unchanged by the byte comparison;
+    this proves the one changed value is what an assembly writes. Any
+    other string — a path-shaped value names the plugin cache directory
+    — would otherwise be a "version-only" change that skips review.
+
+    Args:
+        old: The base side's version value.
+        new: HEAD's version value.
+
+    Returns:
+        A one-line reason, or ``None`` for a higher ``X.Y.Z``.
+    """
+    old_match = _RELEASE_VERSION_RE.fullmatch(old)
+    new_match = _RELEASE_VERSION_RE.fullmatch(new)
+    if new_match is None or old_match is None:
+        return f"{PLUGIN_PATH} version {new!r} is not a plain X.Y.Z release version"
+    if tuple(map(int, new_match.groups())) <= tuple(map(int, old_match.groups())):
+        return f"{PLUGIN_PATH} version {new} does not move above {old}"
     return None
 
 
@@ -603,19 +653,29 @@ def _light_release_refusal(root: Path, base: str, paths: list[str]) -> str | Non
             if paths
             else "empty diff; nothing to classify"
         )
-    entries = _name_status(root, f"{base}...HEAD")
-    if not release_assembly_diff([path for _, path in entries]):
+    entries = _raw_entries(root, f"{base}...HEAD")
+    if not release_assembly_diff([entry.path for entry in entries]):
         return "rename-free listing shows paths outside the release-assembly outputs"
+    irregular = [
+        entry.path
+        for entry in entries
+        if (entry.old_mode if entry.status == "D" else entry.new_mode)
+        != _REGULAR_FILE_MODE
+    ]
+    if irregular:
+        return "not a regular file (symlink, submodule or executable): " + ", ".join(
+            irregular
+        )
     written = [
-        path
-        for status, path in entries
-        if path.startswith(FRAGMENT_PATH_PREFIX) and status != "D"
+        entry.path
+        for entry in entries
+        if entry.path.startswith(FRAGMENT_PATH_PREFIX) and entry.status != "D"
     ]
     if written:
         return "diff adds or edits fragment(s) instead of consuming them: " + ", ".join(
             written
         )
-    if any(path == PLUGIN_PATH for _, path in entries):
+    if any(entry.path == PLUGIN_PATH for entry in entries):
         return _manifest_refusal(root, base)
     return None
 
@@ -678,8 +738,8 @@ def classify(root: Path, base: str, pr_number: int | None) -> PrPlan:
     release_refusal = _light_release_refusal(root, base, paths)
     if release_refusal is None:
         reasons.append(
-            "light-release: the diff is a release assembly (manifest version "
-            "bump, CHANGELOG.md, consumed fragments); only the changelog prose "
+            "light-release: the diff is a release assembly (any of: manifest "
+            "version bump, CHANGELOG.md, consumed fragments); only the changelog prose "
             "needs reading, so docs-types-checker runs and design/security are "
             "skipped — the publish gate re-runs this classifier fail-closed "
             "(wrapup-mode: light-release)"

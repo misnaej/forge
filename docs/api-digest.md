@@ -1112,8 +1112,10 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_latest_verified_sha(pr_number: int) -> str | None` _(internal)_ — Return the newest ``verified-at:`` SHA among the PR's comments.
 - `wrapup_freshness(pr_number: int) -> WrapupFreshness` — Compare the PR's newest ``verified-at:`` SHA against its current head.
 - `_try_delta(root: Path, pr_number: int | None, reasons: list[str], branch_paths: list[str]) -> bool` _(internal)_ — Evaluate delta-mode eligibility, appending the trail to *reasons*.
-- `_name_status(root: Path, diff_range: str) -> list[tuple[str, str]]` _(internal)_ — Return ``(status, path)`` per changed file across *diff_range*.
+- `class _RawEntry` _(internal)_ — One changed path as ``git diff --raw`` reports it.
+- `_raw_entries(root: Path, diff_range: str) -> list[_RawEntry]` _(internal)_ — Return status, path and modes per changed file across *diff_range*.
 - `_manifest_refusal(root: Path, base: str) -> str | None` _(internal)_ — Return why the manifest change is more than a version bump, or ``None``.
+- `_version_bump_refusal(old: str, new: str) -> str | None` _(internal)_ — Return why *new* is not a release version above *old*, or ``None``.
 - `_light_release_refusal(root: Path, base: str, paths: list[str]) -> str | None` _(internal)_ — Return why the diff is not a release assembly, or ``None`` when it is.
 - `classify(root: Path, base: str, pr_number: int | None) -> PrPlan` — Classify the current branch's finalization path.
 - `_write_evidence(root: Path, base: str, plan: PrPlan, pr_number: int | None) -> None` _(internal)_ — Write the review evidence pack; a failure is logged, never raised.

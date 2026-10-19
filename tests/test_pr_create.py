@@ -265,47 +265,32 @@ def test_pr_create_refuses_light_wrapup_when_classifier_disagrees(
     assert calls == []
 
 
+@pytest.mark.parametrize(
+    ("declared", "classified"),
+    [("light", "light-code"), ("light-release", "light-release")],
+)
 def test_pr_create_publishes_light_wrapup_when_classifier_agrees(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, declared: str, classified: str
 ) -> None:
-    """A `wrapup-mode: light` wrap-up publishes when the classifier still agrees.
+    """A reporter-skipping wrap-up publishes when the classifier still agrees.
 
-    Complement of the disagreement case above — proves the re-check is a
-    real gate (can say yes) rather than one that only ever refuses light
-    wrap-ups.
-    """
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    init_git_repo(repo)
-    _write_wrapup(repo, _head_sha(repo), mode_line="wrapup-mode: light")
-    monkeypatch.setattr(
-        pr_create,
-        "classify",
-        lambda _root, _base, _pr: SimpleNamespace(mode="light-code"),
-    )
-    calls = _stub_gh(monkeypatch)
-
-    assert _run_main(monkeypatch, repo) == 0
-    assert len(calls) == 1
-
-
-def test_pr_create_publishes_light_release_wrapup_when_classifier_agrees(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """A `wrapup-mode: light-release` wrap-up publishes when the classifier agrees.
-
-    SCENARIO: complement of the disagreement case — the re-check can say yes.
-    MOCK SETUP: `pr_create.classify` returns mode `light-release`.
+    SCENARIO: complement of the disagreement cases — the re-check can say
+        yes, so it is a real gate rather than one that only ever refuses.
+    MOCK SETUP: `pr_create.classify` returns *classified*.
     EXPECTED BEHAVIOR: exit 0 and exactly one `gh` call.
+
+    Args:
+        declared: The `wrapup-mode:` the wrap-up carries.
+        classified: The mode the classifier reports.
     """
     repo = tmp_path / "repo"
     repo.mkdir()
     init_git_repo(repo)
-    _write_wrapup(repo, _head_sha(repo), mode_line="wrapup-mode: light-release")
+    _write_wrapup(repo, _head_sha(repo), mode_line=f"wrapup-mode: {declared}")
     monkeypatch.setattr(
         pr_create,
         "classify",
-        lambda _root, _base, _pr: SimpleNamespace(mode="light-release"),
+        lambda _root, _base, _pr: SimpleNamespace(mode=classified),
     )
     calls = _stub_gh(monkeypatch)
 
