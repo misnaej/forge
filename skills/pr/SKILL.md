@@ -108,10 +108,14 @@ auditable authorization; an agent never arms it on its own judgment),
 skip Steps 1–3.9 entirely: run `forge-pr-wrapup compose --base
 origin/<base>` — with emergency armed it renders `wrapup-mode: emergency`
 and the ledger issue in place of the reporter sections — fill its summary
-slot with what ships, then push, `forge-pr-create` (it consumes
-the one-shot sentinel), run `forge-emergency record-pr <N>` (the
-structural record repayment trusts — never a free-text ledger
-comment), post the wrap-up (`forge-pr-wrapup post --pr <N>`) and a
+slot with what ships, then push and run `forge-pr-create`. It claims
+the one-shot bypass, publishes, and spends it only once the PR exists,
+recording the PR number repayment trusts (never a free-text ledger
+comment); a failed publish with no PR hands the bypass back for a
+retry. When it reports the outcome unclear, follow what it names —
+`forge-emergency record-pr <N>` if the PR exists, otherwise ask the
+human to run `FORGE_EMERGENCY_ACK=1 forge-emergency end --abandon`.
+Then post the wrap-up (`forge-pr-wrapup post --pr <N>`) and a
 title-only squash comment, and spawn
 the monitor as normal. **Repayment after delivery**:
 when the emergency PR merges, run the full verification retroactively

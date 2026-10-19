@@ -484,10 +484,15 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_create_ledger_issue(reason: str, expires_at: str) -> int | None` _(internal)_ — File the public ledger issue; return its number, or ``None`` on failure.
 - `_cmd_start(root: Path, reason: str, ttl_hours: float) -> int` _(internal)_ — Arm the one-shot bypass: ledger issue first, then the sentinel.
 - `_cmd_status(root: Path) -> int` _(internal)_ — Print the sentinel state.
-- `consume(root: Path) -> int` — Spend the armed bypass (called by forge-pr-create).
+- `claim(root: Path) -> int` — Reserve the armed bypass for one publish, without spending it.
+- `commit(root: Path, pr_number: int) -> int` — Spend a claimed bypass now that its PR exists.
+- `release(root: Path) -> None` — Hand a claimed bypass back after a publish that created no PR.
 - `_cmd_record_pr(root: Path, pr_number: int) -> int` _(internal)_ — Record the emergency PR number structurally in the sentinel.
 - `_repayment_evidence(state: EmergencyState) -> tuple[int | None, bool]` _(internal)_ — Return ``(pr_number, repaid)`` for the sentinel's recorded PR.
-- `_cmd_end(root: Path) -> int` _(internal)_ — Close the ledger when the emergency PR's verification debt is repaid.
+- `_clear(root: Path) -> None` _(internal)_ — Remove the sentinel and its claim lock.
+- `_cmd_abandon(root: Path, state: EmergencyState, *, claimed: bool) -> int` _(internal)_ — Close the ledger of an interrupted publish that recorded no PR.
+- `_cmd_end(root: Path, *, abandon: bool = False) -> int` _(internal)_ — Close the ledger when the emergency PR's verification debt is repaid.
+- `_close_repaid(root: Path, state: EmergencyState, pr_number: int | None) -> int` _(internal)_ — Comment on and close the ledger once its verification debt is repaid.
 - `main(argv: list[str] | None = None) -> int` — Run the ``forge-emergency`` CLI.
 
 ## `forge.emergency_state`
@@ -1044,12 +1049,16 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_disallowed_passthrough(extra: list[str]) -> str | None` _(internal)_ — Return the first passthrough flag that is not on the allowlist.
 - `_verified(wrapup_text: str, head_sha: str) -> bool` _(internal)_ — Whether the wrap-up's OWN header names *head_sha*.
 - `_earn_light(root: Path, base: str) -> str | None` _(internal)_ — Re-run the classifier so a light wrap-up is earned, not asserted.
-- `_spend_emergency(root: Path) -> str | None` _(internal)_ — Consume the armed emergency sentinel, or refuse.
+- `_claim_emergency(root: Path) -> str | None` _(internal)_ — Claim the armed emergency bypass for this publish, or refuse.
+- `_pr_number_from_url(stdout: str) -> int | None` _(internal)_ — Return the PR number from the URL ``gh pr create`` prints, if any.
+- `_existing_pr(branch: str) -> list[int] | None` _(internal)_ — List PRs (any state) whose head is *branch*.
+- `_publish_emergency(root: Path, branch: str, cmd: list[str]) -> int` _(internal)_ — Run ``gh pr create`` under a claimed bypass, then commit or release it.
 - `_read_verified_wrapup(root: Path, branch: str) -> tuple[str | None, str | None]` _(internal)_ — Read the wrap-up and confirm it verifies this checkout's HEAD.
-- `_gate(root: Path, branch: str, base: str) -> str | None` _(internal)_ — Return why publication is refused, or ``None`` to allow it.
+- `_gate(root: Path, branch: str, base: str) -> tuple[str | None, bool]` _(internal)_ — Return why publication is refused, and whether it is an emergency.
 - `_warn_unlisted_closes(body_file: str) -> None` _(internal)_ — Warn when the body would close an issue forge's summary does not list.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Build the argument parser.
 - `main() -> int` — Entry point for ``forge-pr-create``.
+- `_run_create(cmd: list[str]) -> int` _(internal)_ — Run the ``gh pr create`` command and map its outcome to an exit code.
 
 ## `forge.pr_delta`
 

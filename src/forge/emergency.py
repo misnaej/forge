@@ -26,10 +26,16 @@ The mode is impossible to use quietly:
    no-ledger-no-mode guarantee holds for CLI-managed sentinels — a
    hand-written sentinel is the same trust boundary as editing the
    hooks themselves and is not defended against.
-2. The wrap-up gate consumes the sentinel on its single allowed
-   ``gh pr create`` (``forge-emergency consume``) and the consumption is
-   ledger-commented with the head SHA. A second emergency needs a fresh
-   ``start`` — fresh reason, fresh ledger.
+2. ``forge-pr-create`` spends the sentinel on its single allowed
+   publication in two steps. It **claims** the bypass (an exclusive
+   lock, so two publishes cannot both use it) just before
+   ``gh pr create``, and **commits** the spend — sentinel marked spent,
+   PR number recorded, ledger commented with the head SHA — only once
+   the PR exists. A definite failure with no PR **releases** the claim,
+   so the bypass survives for a retry; an unclear outcome keeps it
+   claimed and names the recovery (``record-pr`` or ``end --abandon``).
+   A second emergency needs a fresh ``start`` — fresh reason, fresh
+   ledger.
 3. The TTL (default 4h, clamped to 24h) only backstops an armed-but-
    unused sentinel; expiry disarms automatically.
 4. Repayment happens after the fix is delivered: the emergency PR gets
@@ -68,8 +74,10 @@ configure_cli_logging()
 logger = logging.getLogger(__name__)
 
 
-# Consume-time mutex sibling — created O_EXCL so "exactly one" holds
-# under concurrent gate invocations; removed together with the sentinel.
+# Claim mutex sibling — created O_EXCL so "exactly one" holds under
+# concurrent publishes. Present + unspent = a publish is in flight (or
+# was interrupted); present + spent = published. `end` removes it with
+# the sentinel.
 _CONSUME_LOCK = Path(".forge-emergency.lock")
 
 _DEFAULT_TTL_HOURS = 4.0
@@ -177,8 +185,14 @@ def _cmd_start(root: Path, reason: str, ttl_hours: float) -> int:
             "start --reason ... (agents: only on explicit user instruction)."
         )
         return 1
-    if armed_state(root) is not None:
-        emit("emergency: already armed — one event at a time (see status).")
+    if read_state(root) is not None:
+        # Armed, claimed, spent-but-unrepaid or expired: each is a recorded
+        # event whose ledger would be orphaned by overwriting its sentinel.
+        emit(
+            "emergency: refused — an emergency is already recorded here "
+            "(see `forge-emergency status`). One event at a time: settle it "
+            "with `forge-emergency end` first."
+        )
         return 1
     ttl = min(max(ttl_hours, 0.1), _MAX_TTL_HOURS)
     expires_at = (datetime.now(UTC) + timedelta(hours=ttl)).isoformat()
@@ -189,9 +203,9 @@ def _cmd_start(root: Path, reason: str, ttl_hours: float) -> int:
             "unauthenticated, or the label is absent) — no ledger, no mode."
         )
         return 1
-    # A fresh, disjoint event must never inherit mutex state from a
-    # settled-but-unrepaid (or crash-interrupted) previous one — a stale
-    # lock would falsely refuse this event's single legitimate consume.
+    # No sentinel exists here, so any lock is an orphan (its sentinel was
+    # removed by hand) — a fresh event must not inherit it, or it would
+    # falsely refuse this event's single legitimate claim.
     (root / _CONSUME_LOCK).unlink(missing_ok=True)
     write_state(
         root,
@@ -212,47 +226,81 @@ def _cmd_status(root: Path) -> int:
         root: Repo root.
 
     Returns:
-        ``0`` when armed, ``1`` otherwise (absent, spent, or expired).
+        ``0`` when armed, ``1`` otherwise (absent, claimed, spent, or
+        expired).
     """
     state = read_state(root)
     if state is None:
         emit("emergency: not armed.")
         return 1
     armed = armed_state(root) is not None
-    verdict = "ARMED" if armed else ("SPENT" if state.spent else "EXPIRED")
+    claimed = not state.spent and (root / _CONSUME_LOCK).exists()
+    if state.spent:
+        verdict = "SPENT"
+    elif claimed:
+        verdict = "CLAIMED"
+    else:
+        verdict = "ARMED" if armed else "EXPIRED"
     emit(
         f"emergency: {verdict} — ledger #{state.ledger_issue}, "
         f"reason: {state.reason}, expires {state.expires_at}."
     )
-    return 0 if armed else 1
+    if claimed:
+        emit(
+            "emergency: a publish claimed the bypass but no PR was recorded. "
+            "If the PR exists, run `forge-emergency record-pr <N>`; if not, "
+            "a human runs `FORGE_EMERGENCY_ACK=1 forge-emergency end --abandon`."
+        )
+    return 0 if armed and not claimed else 1
 
 
-def consume(root: Path) -> int:
-    """Spend the armed bypass (called by forge-pr-create).
+def claim(root: Path) -> int:
+    """Reserve the armed bypass for one publish, without spending it.
 
-    Marks the sentinel spent and records the consumption on the ledger
-    issue with the current head SHA. Refuses when nothing is armed.
+    Writes nothing to the sentinel and posts nothing: a publish that then
+    fails must be able to hand the bypass back with :func:`release`.
 
     Args:
         root: Repo root.
 
     Returns:
-        ``0`` consumed (gate may allow); ``1`` refused (gate must block).
+        ``0`` claimed (the publish may proceed); ``1`` refused.
     """
-    state = armed_state(root)
-    if state is None:
+    if armed_state(root) is None:
         emit("emergency: no armed bypass — gate stays closed.")
         return 1
-    # One-shot under concurrency: O_CREAT|O_EXCL makes the armed→spent
-    # transition a race-safe critical section — the second of two
-    # concurrent consumers loses on EEXIST and the gate stays closed for
-    # it. The lock lives until `end` removes it with the sentinel.
+    # O_CREAT|O_EXCL is the race-safe critical section: the second of two
+    # concurrent publishes loses on EEXIST and the gate stays closed for it.
     try:
         os.close(os.open(root / _CONSUME_LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
     except FileExistsError:
-        emit("emergency: bypass already being consumed — gate stays closed.")
+        emit(
+            "emergency: the bypass is already claimed by another publish "
+            "(see `forge-emergency status`) — gate stays closed."
+        )
         return 1
-    write_state(root, replace(state, spent=True))
+    return 0
+
+
+def commit(root: Path, pr_number: int) -> int:
+    """Spend a claimed bypass now that its PR exists.
+
+    Marks the sentinel spent with the PR number and records the spend on
+    the ledger with the head SHA. The lock stays: spent plus lock is the
+    published state, and ``end`` removes both.
+
+    Args:
+        root: Repo root.
+        pr_number: The PR the claimed publish created.
+
+    Returns:
+        ``0`` spent; ``1`` when there is no unspent claim to commit.
+    """
+    state = read_state(root)
+    if state is None or state.spent or not (root / _CONSUME_LOCK).exists():
+        emit("emergency: no claimed bypass to commit.")
+        return 1
+    write_state(root, replace(state, spent=True, pr_number=pr_number))
     head = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=root,
@@ -265,43 +313,69 @@ def consume(root: Path) -> int:
         "comment",
         str(state.ledger_issue),
         "--body",
-        f"Bypass consumed at `{head or 'unknown'}` — one PR publishes "
-        "without verification. Retro-verification owed.",
+        f"Bypass consumed at `{head or 'unknown'}` — PR #{pr_number} "
+        "published without verification. Retro-verification owed.",
     )
     if proc.returncode != 0:
-        # The one-shot spend already happened (never double-spend on a
-        # transient gh failure) — but the missing ledger line must be
-        # LOUD, not silent: the hook forwards this stderr verbatim.
+        # The spend already happened (never double-spend on a transient gh
+        # failure) — but the missing ledger line must be LOUD, not silent.
         emit(
             f"emergency: WARNING — ledger comment on #{state.ledger_issue} "
             "FAILED; the bypass is spent but unrecorded. Comment the head "
             "SHA on the ledger manually."
         )
-    emit(f"emergency: bypass consumed (ledger #{state.ledger_issue}).")
+    emit(
+        f"emergency: bypass consumed by PR #{pr_number} (ledger #{state.ledger_issue})."
+    )
     return 0
+
+
+def release(root: Path) -> None:
+    """Hand a claimed bypass back after a publish that created no PR.
+
+    Args:
+        root: Repo root.
+    """
+    (root / _CONSUME_LOCK).unlink(missing_ok=True)
 
 
 def _cmd_record_pr(root: Path, pr_number: int) -> int:
     """Record the emergency PR number structurally in the sentinel.
 
-    Called by the ``/pr`` flow right after ``gh pr create``. Repayment
-    reads this field — never free-text ledger comments, which anyone can
-    post on a public issue (PR-number spoofing). A human-readable ledger
-    comment is still posted as the audit trail, but it is not the source
-    of truth.
+    The recovery path: ``forge-pr-create`` records the number itself when
+    it can tell the PR exists, and leaves the bypass claimed — naming this
+    command — when it cannot. Repayment reads this field, never free-text
+    ledger comments, which anyone can post on a public issue (PR-number
+    spoofing); the ledger comment is the audit trail, not the source of
+    truth. Only a bypass some publish actually used may be recorded, and
+    only once: a merely-armed one was never spent, and re-recording would
+    silently re-point which PR owes the verification.
 
     Args:
         root: Repo root.
         pr_number: The published emergency PR.
 
     Returns:
-        ``0`` recorded; ``1`` when no sentinel exists to record into.
+        ``0`` recorded; ``1`` refused (no sentinel, never claimed, or a PR
+        already recorded).
     """
     state = read_state(root)
     if state is None:
         emit("emergency: no sentinel — nothing to record the PR into.")
         return 1
-    write_state(root, replace(state, pr_number=pr_number))
+    if state.pr_number is not None:
+        emit(
+            f"emergency: refused — PR #{state.pr_number} is already recorded "
+            f"on ledger #{state.ledger_issue}; it cannot be re-pointed."
+        )
+        return 1
+    if not state.spent and not (root / _CONSUME_LOCK).exists():
+        emit(
+            "emergency: refused — the bypass was never claimed by a publish, "
+            "so no emergency PR exists to record. Publish with forge-pr-create."
+        )
+        return 1
+    write_state(root, replace(state, spent=True, pr_number=pr_number))
     _gh(
         "issue",
         "comment",
@@ -337,19 +411,94 @@ def _repayment_evidence(state: EmergencyState) -> tuple[int | None, bool]:
     return state.pr_number, wrapup_freshness(state.pr_number).fresh is True
 
 
-def _cmd_end(root: Path) -> int:
+def _clear(root: Path) -> None:
+    """Remove the sentinel and its claim lock.
+
+    Args:
+        root: Repo root.
+    """
+    (root / SENTINEL_RELPATH).unlink(missing_ok=True)
+    (root / _CONSUME_LOCK).unlink(missing_ok=True)
+
+
+def _cmd_abandon(root: Path, state: EmergencyState, *, claimed: bool) -> int:
+    """Close the ledger of an interrupted publish that recorded no PR.
+
+    Gated on the human marker because it is the one path that closes a
+    ledger with neither a repaid PR nor an unused arm behind it — the
+    claim may have published a PR nobody recorded.
+
+    Args:
+        root: Repo root.
+        state: The sentinel state.
+        claimed: Whether a publish holds an unspent claim.
+
+    Returns:
+        ``0`` abandoned and closed; ``1`` refused or the close failed.
+    """
+    if not claimed:
+        emit(
+            "emergency: refused — --abandon settles only a claimed publish "
+            "with no PR recorded; this one is not. Run `forge-emergency end`."
+        )
+        return 1
+    if os.environ.get("FORGE_EMERGENCY_ACK") != "1":
+        emit(
+            "emergency: refused — abandoning requires the explicit human "
+            "authorization marker: FORGE_EMERGENCY_ACK=1 forge-emergency end "
+            "--abandon (agents: only on explicit user instruction)."
+        )
+        return 1
+    _gh(
+        "issue",
+        "comment",
+        str(state.ledger_issue),
+        "--body",
+        "Emergency abandoned by a human — a publish claimed the bypass but "
+        "no PR was recorded. Closing the ledger.",
+    )
+    close = _gh("issue", "close", str(state.ledger_issue))
+    _clear(root)
+    if close.returncode != 0:
+        emit(
+            f"emergency: WARNING — closing ledger #{state.ledger_issue} "
+            "FAILED; the emergency is abandoned but the issue is still open. "
+            "Close it manually."
+        )
+        return 1
+    emit(f"emergency: abandoned; ledger #{state.ledger_issue} closed.")
+    return 0
+
+
+def _cmd_end(root: Path, *, abandon: bool = False) -> int:
     """Close the ledger when the emergency PR's verification debt is repaid.
 
     Args:
         root: Repo root.
+        abandon: Settle an interrupted publish (claimed, no PR recorded)
+            instead of refusing it.
 
     Returns:
-        ``0`` ledger closed (or nothing to do); ``1`` debt outstanding.
+        ``0`` ledger closed (or nothing to do); ``1`` debt outstanding or
+        refused.
     """
     state = read_state(root)
     if state is None:
         emit("emergency: no sentinel — nothing to end.")
         return 0
+    claimed = not state.spent and (root / _CONSUME_LOCK).exists()
+    if abandon:
+        return _cmd_abandon(root, state, claimed=claimed)
+    if claimed:
+        # Cancelling here would close the ledger of a publish that may
+        # have created a PR — exactly the debt the ledger exists to hold.
+        emit(
+            f"emergency: refused — a publish claimed the bypass on ledger "
+            f"#{state.ledger_issue} but recorded no PR. If the PR exists, run "
+            "`forge-emergency record-pr <N>`; if not, a human runs "
+            "`FORGE_EMERGENCY_ACK=1 forge-emergency end --abandon`."
+        )
+        return 1
     if not state.spent:
         # Armed but never consumed (or expired unused): cancel cleanly.
         _gh(
@@ -361,8 +510,7 @@ def _cmd_end(root: Path) -> int:
             "Closing the ledger; no verification debt exists.",
         )
         _gh("issue", "close", str(state.ledger_issue))
-        (root / SENTINEL_RELPATH).unlink(missing_ok=True)
-        (root / _CONSUME_LOCK).unlink(missing_ok=True)
+        _clear(root)
         emit(f"emergency: unused arm cancelled; ledger #{state.ledger_issue} closed.")
         return 0
     pr_number, repaid = _repayment_evidence(state)
@@ -377,6 +525,21 @@ def _cmd_end(root: Path) -> int:
             )
         )
         return 1
+    return _close_repaid(root, state, pr_number)
+
+
+def _close_repaid(root: Path, state: EmergencyState, pr_number: int | None) -> int:
+    """Comment on and close the ledger once its verification debt is repaid.
+
+    Args:
+        root: Repo root.
+        state: The sentinel whose ledger is being closed.
+        pr_number: The emergency PR that carries the posted wrap-up.
+
+    Returns:
+        ``0`` ledger closed; ``1`` the close call failed and the issue is
+        still open.
+    """
     _gh(
         "issue",
         "comment",
@@ -386,8 +549,7 @@ def _cmd_end(root: Path) -> int:
         "head. Closing the ledger.",
     )
     close = _gh("issue", "close", str(state.ledger_issue))
-    (root / SENTINEL_RELPATH).unlink(missing_ok=True)
-    (root / _CONSUME_LOCK).unlink(missing_ok=True)
+    _clear(root)
     if close.returncode != 0:
         emit(
             f"emergency: WARNING — closing ledger #{state.ledger_issue} "
@@ -426,28 +588,33 @@ def main(argv: list[str] | None = None) -> int:
         default=_DEFAULT_TTL_HOURS,
         help="arm lifetime in hours (default 4, max 24)",
     )
-    sub.add_parser("status", help="print armed/spent/expired state")
-    sub.add_parser(
-        "consume",
-        help="spend the armed bypass (called by forge-pr-create)",
-    )
+    sub.add_parser("status", help="print armed/claimed/spent/expired state")
     record = sub.add_parser(
         "record-pr",
-        help="record the published emergency PR number in the sentinel",
+        help=(
+            "record the emergency PR number when forge-pr-create could not "
+            "tell whether its publish created one"
+        ),
     )
     record.add_argument("pr_number", type=int, help="the emergency PR number")
-    sub.add_parser("end", help="close the ledger once the debt is repaid")
+    end = sub.add_parser("end", help="close the ledger once the debt is repaid")
+    end.add_argument(
+        "--abandon",
+        action="store_true",
+        help=(
+            "close the ledger of a claimed publish that recorded no PR "
+            "(needs FORGE_EMERGENCY_ACK=1)"
+        ),
+    )
     args = parser.parse_args(argv)
     root = repo_root()
     if args.command == "start":
         return _cmd_start(root, args.reason, args.ttl)
     if args.command == "status":
         return _cmd_status(root)
-    if args.command == "consume":
-        return consume(root)
     if args.command == "record-pr":
         return _cmd_record_pr(root, args.pr_number)
-    return _cmd_end(root)
+    return _cmd_end(root, abandon=args.abandon)
 
 
 if __name__ == "__main__":

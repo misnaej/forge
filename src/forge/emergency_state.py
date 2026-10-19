@@ -38,7 +38,8 @@ class EmergencyState:
         expires_at: ISO-8601 UTC instant after which the arm is void.
         spent: ``True`` once the single allowed bypass was consumed.
         pr_number: The emergency PR, recorded structurally by
-            ``record-pr`` after publication — repayment never trusts
+            ``forge-pr-create`` once it exists (or by ``record-pr`` when
+            the publish outcome was unclear) — repayment never trusts
             free-text ledger comments (anyone can comment on a public
             issue).
     """
