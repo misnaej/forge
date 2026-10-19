@@ -176,6 +176,12 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "value is 'all' or 'diff'; wins over the global 'scope' key.",
     ),
     ConfigKey(
+        ("tool", "forge", "precommit", "echo_ci_output"),
+        default=True,
+        description="In CI, print each blocking step's own output after its "
+        "log pointer; false keeps only the pointer.",
+    ),
+    ConfigKey(
         ("tool", "forge", "doctest", "paths"),
         "source_dirs (smart-detect)",
         "Per-tool override of doctest's scan roots; otherwise inherits the "

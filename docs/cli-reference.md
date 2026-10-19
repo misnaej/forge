@@ -695,16 +695,17 @@ options:
                         the append-only *_history.log files) as fresh, stale,
                         unstamped or unknown against the current working tree,
                         or n/a for a step that checks the environment rather
-                        than files. A log named in --only reports missing when
+                        than files, or orphaned when nothing forge runs still
+                        writes it. A log named in --only reports missing when
                         absent and history when it is an append-only log.
                         Always exits 0.
   --verdict             Run no steps: print each enabled step's result from
                         the last full run and exit 1 unless every one passed
                         (PASS/WARN/SKIP) and that run and the step logs
-                        describe the current tree. A NOTE line names untracked
-                        files some step never checked (it does not change the
-                        exit code). Paste its output instead of summarising
-                        pre-commit results.
+                        describe the current tree and no untracked file went
+                        unchecked. A NOTE line names those files and the steps
+                        that skipped them. Paste its output instead of
+                        summarising pre-commit results.
 ```
 
 ## forge-rebump

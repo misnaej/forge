@@ -768,6 +768,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `render_plugin_version(source_text: str, version: str) -> str` — Return *source_text* with its ``"version"`` field rewritten to *version*.
 - `write_plugin_version(root: Path, version: str) -> None` — Rewrite ``.claude-plugin/plugin.json``'s version field on disk.
 - `_parse_files(output: str, *, suffix: str, prefix: str | tuple[str, ...] | None) -> list[str]` _(internal)_ — Parse git diff output into a filtered file list.
+- `_filter_paths(files: list[str], *, suffix: str, prefix: str | tuple[str, ...] | None) -> list[str]` _(internal)_ — Keep the paths ending in *suffix* and, when given, starting with *prefix*.
+- `_ls_files_z(cwd: Path | None, *args: str) -> list[str]` _(internal)_ — Return ``git ls-files -z [args]`` paths exactly as they are named on disk.
 - `is_ancestor(root: Path | None, ancestor_ref: str, descendant_ref: str) -> bool` — Return whether *ancestor_ref* is an ancestor of *descendant_ref*.
 - `added_or_moved_files(*, repo_root: Path | None = None, base_branch: str = 'main', suffix: str = '.py') -> list[str]` — Return files ADDED or RENAMED vs the base branch (``--diff-filter=AR``).
 - `get_modified_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None, repo_root: Path | None = None, base_branch: str = 'main', include_unstaged: bool = True) -> list[str]` — Get list of modified files from git.
@@ -1220,6 +1222,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `step_repo_structure(repo_root: Path) -> StepResult` — Run ``verify-forge-repo-structure``; hard-fail if missing (FOUNDATION §2).
 - `step_manifest_json(repo_root: Path) -> StepResult` — Run ``verify-forge-manifest`` — owns the manifest-JSON validation phase.
 - `step_commit_types_parity(repo_root: Path) -> StepResult` — Run ``forge-gen-commit-types --check`` — managed-block parity guard.
+- `_run_gen_check(repo_root: Path, doc: str) -> tuple[bool, str]` _(internal)_ — Run *doc*'s generator with ``--check`` from the running forge install.
 - `step_c4(repo_root: Path) -> StepResult` — Run ``forge-gen-c4 --check`` — C4 model + README-block drift guard.
 - `_layering_configured(repo_root: Path) -> bool` _(internal)_ — Return whether ``[tool.forge.layering]`` gives the layering step work.
 - `step_layering(repo_root: Path) -> StepResult` — Run ``forge-audit-layering`` — layer-composition gate.
@@ -1275,11 +1278,13 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `run_all(repo_root: Path | None = None, *, print_progress: bool = True, skip: Sequence[str] = (), only: Sequence[str] = (), untracked: Sequence[tuple[str, tuple[str, ...]]] | None = None) -> list[StepResult]` — Run the resolved step sequence in order and return their results.
 - `_split_csv(values: Sequence[str]) -> list[str]` _(internal)_ — Flatten repeatable / comma-separated CLI values into a clean name list.
 - `_capped(output: str) -> str` _(internal)_ — Return *output* trimmed to the shared evidence cap.
-- `_emit_human_summary(results: list[StepResult], blocking_failures: list[StepResult], non_blocking_warnings: list[StepResult], *, untracked: Sequence[tuple[str, tuple[str, ...]]] = ()) -> None` _(internal)_ — Print the human-readable pre-commit summary (non-JSON mode).
+- `_echo_ci_output_enabled(repo_root: Path) -> bool` _(internal)_ — Return ``[tool.forge.precommit].echo_ci_output``, defaulting to ``True``.
+- `_emit_human_summary(results: list[StepResult], blocking_failures: list[StepResult], non_blocking_warnings: list[StepResult], *, untracked: Sequence[tuple[str, tuple[str, ...]]] = (), echo_ci_output: bool = True) -> None` _(internal)_ — Print the human-readable pre-commit summary (non-JSON mode).
 - `_forced_steps(only: list[str]) -> Iterator[None]` _(internal)_ — Force explicitly named steps to run, then restore the environment.
+- `_log_has_producer(stem: str, step_names: frozenset[str]) -> bool` _(internal)_ — Return whether something forge runs still writes ``<stem>.log``.
 - `freshness_verdicts(root: Path) -> dict[str, str]` — Return each ``code_health/`` log's freshness verdict against the working tree.
 - `verdict(root: Path) -> tuple[bool, list[str]]` — Return whether every enabled step passed on the current tree.
-- `_verdict_closing_line(*, stale: bool, failing: list[str], missing: list[str]) -> str` _(internal)_ — Return the verdict's closing line, naming the cause of a FAIL.
+- `_verdict_closing_line(*, stale: bool, failing: list[str], missing: list[str], unchecked: list[str]) -> str` _(internal)_ — Return the verdict's closing line, naming the cause of a FAIL.
 - `_report_freshness(only: list[str], *, as_json: bool) -> int` _(internal)_ — Report each ``code_health/`` log's freshness against the working tree.
 - `_attempt_outcome(results: Sequence[StepResult]) -> str` _(internal)_ — Name a finished run's result for the continuation status panel.
 - `_write_continuation_panel(outcome: str) -> None` _(internal)_ — Record this commit attempt in ``.plan/CONTINUATION.md``'s status panel.

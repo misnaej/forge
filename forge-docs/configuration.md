@@ -176,6 +176,7 @@ available as `forge-precommit --only <names>` / `--skip <names>`.
 | `enable` | `[]` | Opt into normally-off steps by name: `doctest`, `typecheck`, `doc_consistency`, `api_digest_check`, `cli_reference_check`, `foundation_md_check`. | You want one of the opt-in steps below to run. |
 | `scope` | `"all"` | Default file scope for the scope-aware steps — `"all"` (whole tracked source tree) or `"diff"` (only files modified vs main). | You want a faster, diff-only gate repo-wide (trades completeness for speed). |
 | `scope_overrides` | `{}` | Per-step scope, overriding `scope`. Keys are step names; values are `"all"` / `"diff"`. | You want most steps full-repo but one (or vice-versa) on the diff. |
+| `echo_ci_output` | `true` | In CI, print each blocking step's own output under its log pointer, since the log is gone once the runner is. `false` keeps only the pointer; any non-boolean value keeps the default. | A step's output is too large or too sensitive for a public CI log. |
 
 ### Changing a step's scope
 

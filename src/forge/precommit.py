@@ -44,8 +44,8 @@ Step outputs are written to ``code_health/<step>.log`` per FOUNDATION §13
 so downstream tooling can read the latest results without re-running.
 Every run also times each step (monotonic clock) and writes the per-step
 report to ``code_health/precommit_timing.log`` — newest full run overwrites;
-a ``--only`` run writes ``code_health/precommit_only_timing.log`` instead, so
-a partial run never replaces the full-run evidence a wrap-up reads.
+a ``--only`` or ``--skip`` run writes ``code_health/precommit_only_timing.log``
+instead, so a partial run never replaces the full-run evidence a wrap-up reads.
 
 A step that selects its files from git never sees an untracked file. The
 run does not add such files and does not pass over them in silence either:
@@ -1046,6 +1046,25 @@ def step_commit_types_parity(repo_root: Path) -> StepResult:
     return StepResult(name="commit_types_parity", passed=passed, output=output)
 
 
+def _run_gen_check(repo_root: Path, doc: str) -> tuple[bool, str]:
+    """Run *doc*'s generator with ``--check`` from the running forge install.
+
+    Launched through :func:`forge_cli_argv`, never by bare name: on a
+    machine with several forge checkouts ``PATH`` can resolve another
+    install's generator, which would judge the committed doc against the
+    wrong forge's output.
+
+    Args:
+        repo_root: Git repo root.
+        doc: Repo-relative generated doc, a key of ``REGEN_COMMANDS``.
+
+    Returns:
+        ``(passed, output)`` from the generator's ``--check`` run.
+    """
+    argv = forge_cli_argv(REGEN_COMMANDS[doc][0], caller="forge-precommit")
+    return _run([*argv, "--check"], cwd=repo_root)
+
+
 def step_c4(repo_root: Path) -> StepResult:
     """Run ``forge-gen-c4 --check`` — C4 model + README-block drift guard.
 
@@ -1062,7 +1081,8 @@ def step_c4(repo_root: Path) -> StepResult:
         no C4 model is configured.
 
     Raises:
-        SystemExit: If ``forge-gen-c4`` is not on PATH.
+        SystemExit: If the running forge-scripts does not declare
+            ``forge-gen-c4``.
     """
     if resolve_model_section(repo_root) is None:
         return StepResult(
@@ -1071,10 +1091,7 @@ def step_c4(repo_root: Path) -> StepResult:
             output="(no [tool.forge.c4] model — skipped)",
             skipped=True,
         )
-    require_cli("forge-gen-c4", caller="forge-precommit")
-    passed, output = _run(
-        [*REGEN_COMMANDS["docs/architecture.dsl"], "--check"], cwd=repo_root
-    )
+    passed, output = _run_gen_check(repo_root, "docs/architecture.dsl")
     return StepResult(name="c4", passed=passed, output=output)
 
 
@@ -1154,7 +1171,8 @@ def step_api_digest_check(repo_root: Path) -> StepResult:
         no api-digest doc is present.
 
     Raises:
-        SystemExit: If ``forge-gen-api-digest`` is not on PATH.
+        SystemExit: If the running forge-scripts does not declare
+            ``forge-gen-api-digest``.
     """
     if not (repo_root / API_DIGEST_DOC).exists():
         return StepResult(
@@ -1163,10 +1181,7 @@ def step_api_digest_check(repo_root: Path) -> StepResult:
             output=f"(no {API_DIGEST_DOC} — skipped)",
             skipped=True,
         )
-    require_cli("forge-gen-api-digest", caller="forge-precommit")
-    passed, output = _run(
-        [*REGEN_COMMANDS["docs/api-digest.md"], "--check"], cwd=repo_root
-    )
+    passed, output = _run_gen_check(repo_root, "docs/api-digest.md")
     return StepResult(name="api_digest_check", passed=passed, output=output)
 
 
@@ -1190,7 +1205,8 @@ def step_cli_reference_check(repo_root: Path) -> StepResult:
         when no cli-reference doc is present.
 
     Raises:
-        SystemExit: If ``forge-gen-cli-reference`` is not on PATH.
+        SystemExit: If the running forge-scripts does not declare
+            ``forge-gen-cli-reference``.
     """
     if not (repo_root / CLI_REFERENCE_DOC).exists():
         return StepResult(
@@ -1199,10 +1215,7 @@ def step_cli_reference_check(repo_root: Path) -> StepResult:
             output=f"(no {CLI_REFERENCE_DOC} — skipped)",
             skipped=True,
         )
-    require_cli("forge-gen-cli-reference", caller="forge-precommit")
-    passed, output = _run(
-        [*REGEN_COMMANDS["docs/cli-reference.md"], "--check"], cwd=repo_root
-    )
+    passed, output = _run_gen_check(repo_root, "docs/cli-reference.md")
     return StepResult(name="cli_reference_check", passed=passed, output=output)
 
 
@@ -3321,9 +3334,9 @@ def run_all(
     Each invoked step is wall-clocked (monotonic) into its result's
     ``elapsed_s``, and the run's per-step timing report is (re)written to
     ``code_health/precommit_timing.log`` before returning — or, for an
-    ``only`` run, to ``code_health/precommit_only_timing.log``: a partial
-    run must never replace the full-run record that readers treat as the
-    whole battery's result.
+    ``only`` or ``skip`` run, to ``code_health/precommit_only_timing.log``:
+    a partial run must never replace the full-run record that readers treat
+    as the whole battery's result.
 
     A step that passed over untracked files says so in its own log: one
     ``NOTE:`` line naming them, appended after the step's output.
@@ -3365,7 +3378,7 @@ def run_all(
             _print_step_line(result)
         _write_log(root, result)
         results.append(result)
-    timing_log = "precommit_only_timing" if only else "precommit_timing"
+    timing_log = "precommit_only_timing" if (only or skip) else "precommit_timing"
     write_step_log(root, timing_log, _format_timing_log(results))
     return results
 
@@ -3407,12 +3420,32 @@ def _capped(output: str) -> str:
     return f"{text[:EVIDENCE_OUTPUT_CAP]}\n… (truncated; full output in the log)"
 
 
+def _echo_ci_output_enabled(repo_root: Path) -> bool:
+    """Return ``[tool.forge.precommit].echo_ci_output``, defaulting to ``True``.
+
+    Echoing a failing step's output is what makes a CI failure readable
+    where the log is gone, so only an explicit ``false`` turns it off —
+    a repo whose step output is too large or too sensitive for a public
+    CI log. Any non-boolean value keeps the default rather than reading
+    a string such as ``"false"`` as truthy.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``False`` only when the key is the boolean ``false``.
+    """
+    value = _forge_step_config(repo_root, "precommit").get("echo_ci_output", True)
+    return value is not False
+
+
 def _emit_human_summary(
     results: list[StepResult],
     blocking_failures: list[StepResult],
     non_blocking_warnings: list[StepResult],
     *,
     untracked: Sequence[tuple[str, tuple[str, ...]]] = (),
+    echo_ci_output: bool = True,
 ) -> None:
     """Print the human-readable pre-commit summary (non-JSON mode).
 
@@ -3423,6 +3456,8 @@ def _emit_human_summary(
         untracked: :func:`relevant_untracked_files` for the run; when
             non-empty, one line names them so a pass is never read as
             covering them.
+        echo_ci_output: In CI, print each blocking failure's own output
+            after its log pointer (:func:`_echo_ci_output_enabled`).
     """
     emit("")
     if blocking_failures:
@@ -3436,7 +3471,7 @@ def _emit_human_summary(
             # `is_ci()`, never `is_non_interactive()`: the latter is
             # true in any non-tty local shell and would dump logs
             # into every commit.
-            if is_ci() and r.output.strip():
+            if echo_ci_output and is_ci() and r.output.strip():
                 emit(_capped(r.output))
         if non_blocking_warnings:
             emit(
@@ -3500,31 +3535,64 @@ def _forced_steps(only: list[str]) -> Iterator[None]:
 # describe them.
 _HISTORY_LOG_SUFFIX = "_history.log"
 
+# Logs written by something other than a registered step. A log matching
+# neither these nor a step name has no producer left — typically a step
+# that was removed — and its stamp is evidence of nothing.
+_NON_STEP_LOGS = frozenset(
+    {"precommit_timing", "precommit_only_timing", "pr_evidence", "pytest", "smart_test"}
+)
+_NON_STEP_LOG_PREFIXES = ("audit_", "telemetry")
+
+
+def _log_has_producer(stem: str, step_names: frozenset[str]) -> bool:
+    """Return whether something forge runs still writes ``<stem>.log``.
+
+    Args:
+        stem: Log name without ``.log``.
+        step_names: Every registered step's name.
+
+    Returns:
+        ``True`` for a step's log, a known non-step log, or one under a
+        non-step prefix (the audits, telemetry).
+    """
+    return (
+        stem in step_names
+        or stem in _NON_STEP_LOGS
+        or stem.startswith(_NON_STEP_LOG_PREFIXES)
+    )
+
 
 def freshness_verdicts(root: Path) -> dict[str, str]:
     """Return each ``code_health/`` log's freshness verdict against the working tree.
 
     A log of a step that checks the environment rather than files reports
-    ``n/a`` — its stamp says nothing about its result. Append-only history
-    logs are left out: they describe no single tree.
+    ``n/a`` — its stamp says nothing about its result. A log nothing forge
+    runs still writes reports ``orphaned``: a fresh stamp on it would read
+    as current evidence for a check that no longer exists. Append-only
+    history logs are left out: they describe no single tree.
 
     Args:
         root: Repo root.
 
     Returns:
         Log name (without ``.log``) → ``fresh``, ``stale``, ``unstamped``,
-        ``unknown`` or ``n/a``, in name order.
+        ``unknown``, ``n/a`` or ``orphaned``, in name order.
     """
     log_dir = code_health_dir(root)
     current = working_tree_sha(root)
+    step_names = frozenset(step.name for step in _STEP_REGISTRY)
     environment_steps = {step.name for step in _STEP_REGISTRY if not step.checks_files}
-    return {
-        path.stem: (
-            "n/a" if path.stem in environment_steps else log_freshness(path, current)
-        )
-        for path in sorted(log_dir.glob("*.log"))
-        if not path.name.endswith(_HISTORY_LOG_SUFFIX)
-    }
+    verdicts: dict[str, str] = {}
+    for path in sorted(log_dir.glob("*.log")):
+        if path.name.endswith(_HISTORY_LOG_SUFFIX):
+            continue
+        if path.stem in environment_steps:
+            verdicts[path.stem] = "n/a"
+        elif not _log_has_producer(path.stem, step_names):
+            verdicts[path.stem] = "orphaned"
+        else:
+            verdicts[path.stem] = log_freshness(path, current)
+    return verdicts
 
 
 _PASSING_MARKERS = frozenset({"PASS", "WARN", "SKIP"})
@@ -3542,6 +3610,8 @@ def verdict(root: Path) -> tuple[bool, list[str]]:
     summary of them. A step passes only when the last full run recorded
     PASS, WARN or SKIP for it and neither that run nor the step's own log
     describes another tree; an enabled step the run never reached fails.
+    An untracked file some step never looked at fails it too: what was not
+    checked is unknown, and unknown is never a pass (FOUNDATION §13).
 
     Args:
         root: Repo root.
@@ -3550,7 +3620,8 @@ def verdict(root: Path) -> tuple[bool, list[str]]:
         ``(passed, lines)`` — one line per finding (``STALE``/``MISSING``/
         ``FAIL``/the step's marker), then a ``NOTE`` line when untracked
         files went unchecked, ending ``verdict: PASS`` or
-        ``verdict: FAIL — <cause>``.
+        ``verdict: FAIL — <cause>``. The cause stays behind the literal
+        ``verdict: FAIL`` the ``require_fixer_verdict`` hook matches.
     """
     verdicts = freshness_verdicts(root)
     timing = code_health_dir(root) / "precommit_timing.log"
@@ -3579,19 +3650,24 @@ def verdict(root: Path) -> tuple[bool, list[str]]:
         if marker != "SKIP" and verdicts.get(step.name) in NOT_VERIFIED:
             stale = True
             lines.append(f"STALE {step.name}")
-    ok = not (stale or failing or missing)
     # Computed now, not read from the run: the question is what the current
-    # tree holds that no step looked at. Informational — it never changes
-    # ``ok``, and it sits above the closing line, which stays last.
-    note = _untracked_note(relevant_untracked_files(root))
+    # tree holds that no step looked at. It sits above the closing line,
+    # which stays last.
+    untracked = relevant_untracked_files(root)
+    note = _untracked_note(untracked)
     if note:
         lines.append(f"NOTE {note}")
-    lines.append(_verdict_closing_line(stale=stale, failing=failing, missing=missing))
-    return ok, lines
+    unchecked = list(dict.fromkeys(s for _, names in untracked for s in names))
+    lines.append(
+        _verdict_closing_line(
+            stale=stale, failing=failing, missing=missing, unchecked=unchecked
+        )
+    )
+    return not (stale or failing or missing or unchecked), lines
 
 
 def _verdict_closing_line(
-    *, stale: bool, failing: list[str], missing: list[str]
+    *, stale: bool, failing: list[str], missing: list[str], unchecked: list[str]
 ) -> str:
     """Return the verdict's closing line, naming the cause of a FAIL.
 
@@ -3600,12 +3676,14 @@ def _verdict_closing_line(
     FAIL row is easy to miss and a harmless WARN easy to blame. Stale
     evidence outranks failing steps — markers from a run that describes
     another tree say nothing about this one, so the only useful advice is
-    the full re-run that replaces them.
+    the full re-run that replaces them. Untracked files come last: they
+    matter only once the run itself is current and complete.
 
     Args:
         stale: The full-run timing log, or any step log, describes another tree.
         failing: Enabled steps the last full run recorded as FAIL.
         missing: Enabled steps the last full run never reached.
+        unchecked: Steps that passed over untracked files on this tree.
 
     Returns:
         ``verdict: PASS``, or ``verdict: FAIL — <cause>``.
@@ -3622,6 +3700,12 @@ def _verdict_closing_line(
         causes.append(f"missing: {', '.join(missing)}")
     if causes:
         return f"verdict: FAIL — {'; '.join(causes)}"
+    if unchecked:
+        return (
+            "verdict: FAIL — untracked files not checked by "
+            f"{', '.join(unchecked)}; add them if they belong to this work, "
+            "gitignore them if not"
+        )
     return "verdict: PASS"
 
 
@@ -3752,7 +3836,8 @@ def main() -> int:
             "Run no steps: report each code_health/*.log (except the "
             "append-only *_history.log files) as fresh, stale, unstamped or "
             "unknown against the current working tree, or n/a for a step that "
-            "checks the environment rather than files. A log named in --only "
+            "checks the environment rather than files, or orphaned when "
+            "nothing forge runs still writes it. A log named in --only "
             "reports missing when absent and history when it is an append-only "
             "log. Always exits 0."
         ),
@@ -3763,9 +3848,9 @@ def main() -> int:
         help=(
             "Run no steps: print each enabled step's result from the last "
             "full run and exit 1 unless every one passed (PASS/WARN/SKIP) "
-            "and that run and the step logs describe the current tree. "
-            "A NOTE line names untracked files some step never checked "
-            "(it does not change the exit code). "
+            "and that run and the step logs describe the current tree "
+            "and no untracked file went unchecked. A NOTE line names "
+            "those files and the steps that skipped them. "
             "Paste its output instead of summarising pre-commit results."
         ),
     )
@@ -3815,8 +3900,8 @@ def main() -> int:
         emit(f"{RED}forge-precommit: {exc}{NC}")
         return 1
     finally:
-        # A partial (--only) run is not a commit attempt.
-        if not only:
+        # A partial (--only or --skip) run is not a commit attempt.
+        if not (only or skip):
             _write_continuation_panel(outcome or "interrupted")
 
     blocking_failures = [r for r in results if not r.passed and not r.non_blocking]
@@ -3825,7 +3910,11 @@ def main() -> int:
         emit(json.dumps([asdict(r) for r in results], indent=2))
     else:
         _emit_human_summary(
-            results, blocking_failures, non_blocking_warnings, untracked=untracked
+            results,
+            blocking_failures,
+            non_blocking_warnings,
+            untracked=untracked,
+            echo_ci_output=_echo_ci_output_enabled(root),
         )
 
     return 1 if blocking_failures else 0
