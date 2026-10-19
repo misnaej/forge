@@ -463,6 +463,10 @@ def test_classify_light_release_refuses_source_renamed_onto_changelog(
         ("../../x", "not a plain X.Y.Z"),
         ("1.2.3-rc1", "not a plain X.Y.Z"),
         ("v1.2.4", "not a plain X.Y.Z"),
+        (
+            "\N{ARABIC-INDIC DIGIT ONE}\N{ARABIC-INDIC DIGIT ZERO}.0.0",
+            "not a plain X.Y.Z",
+        ),
         ("0.9.9", "does not move above"),
         ("1.00.0", "does not move above"),
     ],

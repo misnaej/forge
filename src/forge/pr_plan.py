@@ -603,7 +603,9 @@ def _manifest_refusal(root: Path, base: str) -> str | None:
     return _version_bump_refusal(base_version, version)
 
 
-_RELEASE_VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+# ASCII digits only: `\d` also matches other scripts' digits, which int()
+# accepts but no release tooling writes.
+_RELEASE_VERSION_RE = re.compile(r"([0-9]+)\.([0-9]+)\.([0-9]+)")
 
 
 def _version_bump_refusal(old: str, new: str) -> str | None:
