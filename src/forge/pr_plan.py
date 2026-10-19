@@ -1,7 +1,8 @@
 """forge-pr-plan — deterministic finalization-path decision for the ``/pr`` skill.
 
 The ``/pr`` skill used to carry the finalization-path decision (docs-only
-light path vs regen-verified light path vs delta mode vs full round) as a
+light path vs regen-verified light path vs release-assembly light path vs
+delta mode vs full round) as a
 prose decision tree the agent re-derived every run. This CLI makes that
 decision executable: it composes the :mod:`forge.pr_delta` primitives —
 which own every threshold, glob, and classifier — over the actual diff and
@@ -15,7 +16,12 @@ prior wrap-up comments on the delta path) and the mode→plan mapping.
 Output contract (single JSON object on stdout; diagnostics go to stderr)::
 
     {
-        "mode": "full" | "light-docs" | "light-regen" | "light-code" | "delta",
+        "mode": "full"
+        | "light-docs"
+        | "light-regen"
+        | "light-release"
+        | "light-code"
+        | "delta",
         "reporters": [...],
         "precommit_scope": [...],
         "reasons": [...],
@@ -62,7 +68,12 @@ pack failure is only logged. ``--freshness`` ignores ``--evidence``.
 
 ``light-regen`` is *eligibility only*: the skill still earns the escape by
 running the provenance gates (``precommit_scope`` lists them); any gate
-failure falls back to the full round. ``light-code`` (small, no added
+failure falls back to the full round. ``light-release`` (the diff is a
+``forge-changelog release-pr`` assembly: a version-only manifest bump,
+``CHANGELOG.md`` and deleted fragments — checked against the diff
+content, not the path names alone) runs ``docs-types-checker`` only and
+writes ``wrapup-mode: light-release``, which ``forge-pr-create`` re-earns
+by re-running this classifier fail-closed. ``light-code`` (small, no added
 files bar changelog fragments, no ``src/`` or high-blast-radius path)
 skips the reporters and authorizes the short-form ``wrapup-mode: light``
 wrap-up — enforced fail-closed by ``block_unverified_pr_create``, which
@@ -93,10 +104,12 @@ from forge.git_utils import (
     GH_TIMEOUT_S,
     configure_cli_logging,
     emit,
+    render_plugin_version,
     repo_root,
     run_git,
 )
 from forge.pr_delta import (
+    FRAGMENT_PATH_PREFIX,
     PROVENANCE_GATE_STEPS,
     configured_docs_only_globs,
     delta_decision,
@@ -104,10 +117,12 @@ from forge.pr_delta import (
     extract_verified_shas,
     light_wrapup_decision,
     regen_only_diff,
+    release_assembly_diff,
     touches_high_blast_radius,
     touches_rule_surface,
 )
 from forge.pr_evidence import write_pack
+from forge.rebump import PLUGIN_PATH
 
 
 if TYPE_CHECKING:
@@ -129,6 +144,15 @@ DOCS_ONLY_PRECOMMIT_STEPS = (
     "doc_consistency",
 )
 
+# Pre-commit steps for the light-release path: the docs-only gates (the
+# changelog prose is what changed) plus the two that judge the manifest
+# the assembly rewrote — its version against the latest tag, and its JSON.
+RELEASE_PRECOMMIT_STEPS = (
+    *DOCS_ONLY_PRECOMMIT_STEPS,
+    "plugin_version",
+    "manifest_json",
+)
+
 # Minimum number of parts in a numstat line (insertions and deletions counts).
 _NUMSTAT_MIN_PARTS = 2
 
@@ -139,7 +163,7 @@ class PrPlan:
 
     Attributes:
         mode: One of ``full`` / ``light-docs`` / ``light-regen`` /
-            ``light-code`` / ``delta``.
+            ``light-release`` / ``light-code`` / ``delta``.
         reporters: Verification agents the skill must invoke for this mode.
         precommit_scope: Step names for ``forge-precommit --only``; empty
             means the full strict battery in ``full`` and ``light-code``
@@ -492,13 +516,119 @@ def _try_delta(
     return use_delta
 
 
+def _name_status(root: Path, diff_range: str) -> list[tuple[str, str]]:
+    """Return ``(status, path)`` per changed file across *diff_range*.
+
+    ``--no-renames`` on purpose: with rename detection a moved file
+    reports only its destination, so ``src/x.py`` renamed onto
+    ``CHANGELOG.md`` would read as a changelog edit and hide that a
+    source file left. Without it the move is a delete plus an add, and
+    both paths are judged.
+
+    Args:
+        root: Repository root directory.
+        diff_range: A git range spec (e.g. ``origin/main...HEAD``).
+
+    Returns:
+        One entry per changed path, status letter first (``D`` for a
+        deletion).
+    """
+    out = run_git("diff", "--name-status", "--no-renames", diff_range, cwd=root)
+    entries: list[tuple[str, str]] = []
+    for line in out.splitlines():
+        status, _, path = line.partition("\t")
+        if path:
+            entries.append((status, path))
+    return entries
+
+
+def _manifest_refusal(root: Path, base: str) -> str | None:
+    """Return why the manifest change is more than a version bump, or ``None``.
+
+    The check reuses the assembly's own writer: rewriting the base
+    manifest to HEAD's version with :func:`render_plugin_version` must
+    reproduce HEAD's manifest byte for byte. Anything else in the file
+    — hooks, agents, a description — differs and refuses, so the mode
+    can never hide a wiring change behind a version bump. The base side
+    is read at the merge-base, matching the ``<base>...HEAD`` diff the
+    paths came from, so a base that moved since the fork adds nothing.
+
+    Args:
+        root: Repository root directory.
+        base: Base ref the PR targets.
+
+    Returns:
+        A one-line reason when the change is not version-only (missing on
+        either side, unparseable, or other content changed), else ``None``.
+    """
+    fork = run_git("merge-base", base, "HEAD", cwd=root)
+    before = run_git(
+        "show", f"{fork}:{PLUGIN_PATH}", cwd=root, check=False, log_errors=False
+    )
+    after = run_git(
+        "show", f"HEAD:{PLUGIN_PATH}", cwd=root, check=False, log_errors=False
+    )
+    if not before or not after:
+        return f"{PLUGIN_PATH} is added or removed, not version-bumped"
+    try:
+        version = json.loads(after)["version"]
+        expected = render_plugin_version(before, str(version))
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        return f"{PLUGIN_PATH} cannot be compared as a version bump ({exc})"
+    if expected != after:
+        return f"{PLUGIN_PATH} changes more than its version value"
+    return None
+
+
+def _light_release_refusal(root: Path, base: str, paths: list[str]) -> str | None:
+    """Return why the diff is not a release assembly, or ``None`` when it is.
+
+    Three checks, cheapest first: every path is a release-assembly output
+    (:func:`forge.pr_delta.release_assembly_diff`, re-checked on the
+    rename-free listing); every fragment path is a deletion, since an
+    assembly consumes fragments and never writes one; and the manifest,
+    when it changed, changed only its version (:func:`_manifest_refusal`).
+
+    Args:
+        root: Repository root directory.
+        base: Base ref the PR targets.
+        paths: Changed paths across ``<base>...HEAD``.
+
+    Returns:
+        The first failing check's reason, or ``None`` when all pass.
+    """
+    if not release_assembly_diff(paths):
+        return (
+            "diff touches paths outside the release-assembly outputs"
+            if paths
+            else "empty diff; nothing to classify"
+        )
+    entries = _name_status(root, f"{base}...HEAD")
+    if not release_assembly_diff([path for _, path in entries]):
+        return "rename-free listing shows paths outside the release-assembly outputs"
+    written = [
+        path
+        for status, path in entries
+        if path.startswith(FRAGMENT_PATH_PREFIX) and status != "D"
+    ]
+    if written:
+        return "diff adds or edits fragment(s) instead of consuming them: " + ", ".join(
+            written
+        )
+    if any(path == PLUGIN_PATH for _, path in entries):
+        return _manifest_refusal(root, base)
+    return None
+
+
 def classify(root: Path, base: str, pr_number: int | None) -> PrPlan:
     """Classify the current branch's finalization path.
 
     Reproduces the ``/pr`` skill's decision order exactly: docs-only
-    first, then regen-only eligibility, then delta (only with an existing
-    PR — the cheapest path for an already-verified PR's follow-up), then
-    light-code, else the full round.
+    first, then regen-only eligibility, then release assembly, then delta
+    (only with an existing PR — the cheapest path for an already-verified
+    PR's follow-up), then light-code, else the full round. Release
+    assembly precedes delta so a follow-up commit on a release PR is
+    re-judged on content rather than waved through on size.
 
     Args:
         root: Repository root directory.
@@ -544,6 +674,25 @@ def classify(root: Path, base: str, pr_number: int | None) -> PrPlan:
             rule_surface=rule_surface,
         )
     reasons.append("not regen-only: diff touches non-managed paths")
+
+    release_refusal = _light_release_refusal(root, base, paths)
+    if release_refusal is None:
+        reasons.append(
+            "light-release: the diff is a release assembly (manifest version "
+            "bump, CHANGELOG.md, consumed fragments); only the changelog prose "
+            "needs reading, so docs-types-checker runs and design/security are "
+            "skipped — the publish gate re-runs this classifier fail-closed "
+            "(wrapup-mode: light-release)"
+        )
+        return PrPlan(
+            mode="light-release",
+            reporters=list(DOCS_ONLY_REPORTERS),
+            precommit_scope=list(RELEASE_PRECOMMIT_STEPS),
+            reasons=reasons,
+            classified_at=head,
+            rule_surface=rule_surface,
+        )
+    reasons.append(f"not light-release: {release_refusal}")
 
     if _try_delta(root, pr_number, reasons, paths):
         return PrPlan(

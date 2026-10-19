@@ -454,7 +454,10 @@ def _cut_release(repo_root: Path, tag: str, *, race_tolerant: bool = False) -> i
         if race_tolerant:
             for note in fetch_tags_best_effort(repo_root):
                 logger.warning("%s", note)
-            if _tag_exists(repo_root, tag):
+            # Ask origin, not _tag_exists: this run created the tag locally
+            # just before pushing, so a local hit would read every failed
+            # push (auth, protected tag, network) as a concurrent release.
+            if tag_on_remote(repo_root, tag) is True:
                 logger.info("%s appeared concurrently — already released.", tag)
                 return 0
         # In race_tolerant mode run_git's own failure log was suppressed,

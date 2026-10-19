@@ -25,6 +25,7 @@ from forge.pr_delta import (
     non_fragment_adds,
     regen_commands,
     regen_only_diff,
+    release_assembly_diff,
     strip_fences,
     touches_high_blast_radius,
     touches_rule_surface,
@@ -295,6 +296,44 @@ def test_regen_only_diff_case_varied_path_not_eligible() -> None:
     """
     assert not regen_only_diff(["FOUNDATION.MD"])
     assert not regen_only_diff(["Docs/Cli-Reference.md"])
+
+
+def test_release_assembly_diff_accepts_assembly_outputs() -> None:
+    """The manifest, CHANGELOG.md and fragment files together qualify."""
+    assert release_assembly_diff(
+        [
+            ".claude-plugin/plugin.json",
+            "CHANGELOG.md",
+            "changelog.d/fix-thing.fixed.md",
+            "changelog.d/new-cli.added.md",
+        ]
+    )
+    assert release_assembly_diff(["CHANGELOG.md"])
+
+
+def test_release_assembly_diff_rejects_non_fragment_under_fragments_dir() -> None:
+    """A fragments-directory path qualifies only when it is fragment-shaped."""
+    assert not release_assembly_diff(["CHANGELOG.md", "changelog.d/evil.py"])
+    assert not release_assembly_diff(["changelog.d/nested/x.fixed.md"])
+    # The directory entry itself is not a file the diff can name.
+    assert not release_assembly_diff(["changelog.d/"])
+
+
+def test_release_assembly_diff_is_exact_case() -> None:
+    """Case-varied paths are different files; casefolding would excuse them."""
+    assert not release_assembly_diff([".Claude-Plugin/plugin.json"])
+    assert not release_assembly_diff(["changelog.md"])
+    assert not release_assembly_diff(["Changelog.d/fix-thing.fix.md"])
+
+
+def test_release_assembly_diff_empty_is_false() -> None:
+    """No changed paths → nothing to classify; not eligible."""
+    assert not release_assembly_diff([])
+
+
+def test_release_assembly_diff_source_path_disqualifies() -> None:
+    """Any path outside the assembly outputs disqualifies the whole diff."""
+    assert not release_assembly_diff(["CHANGELOG.md", "src/forge/pr_delta.py"])
 
 
 def test_regen_commands_pins_literal_contents() -> None:
