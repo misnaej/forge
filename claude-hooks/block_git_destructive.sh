@@ -345,7 +345,6 @@ FILENAME == ARGV[1] { if ($0 != "") NPOS++; POSN[FNR] = $0; next }
     cq = 0; for (i = 1; i <= np; i++) if (Q[i] != "") cq++
     if (cw != cq) unknown()
     dir = inv_dir(pre)
-    if (dir == "") unknown()
     dd = 0; conflict = 0; branchop = 0; staged = 0; worktree = 0; src = 0
     nb = 0; na = 0
     split("", B); split("", A)
@@ -386,6 +385,13 @@ FILENAME == ARGV[1] { if ($0 != "") NPOS++; POSN[FNR] = $0; next }
             A[++na] = t
         }
     }
+    # A checkout that creates a branch (`-b` / `-B` / `--orphan`) with no
+    # `--` restores no path: git refuses to "update paths and switch to
+    # branch at the same time", so its directory never matters. Deciding
+    # that first lets `cd x && git checkout -q -b feat` through; every
+    # other form whose directory is unknowable still fails closed.
+    if (VERB == "checkout" && branchop && !dd) next
+    if (dir == "") unknown()
     if (VERB == "restore") {
         if (staged && !worktree) next
         out = ""; for (i = 1; i <= na; i++) out = out "\t" A[i]

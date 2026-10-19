@@ -1097,16 +1097,38 @@ _PR_MERGE = "block_pr_merge.sh"
         "VAR=x gh pr merge 5 --squash",
         "cd /x && gh pr merge 5 --squash",
         "(gh pr merge 5 --squash)",
+        "gh api graphql -f query='mutation{mergePullRequest(input:{}){x}}'",
+        "gh -R o/r api graphql -f query='mutation{mergePullRequest(input:{}){x}}'",
+        "gh api graphql -f query='mutation{enablePullRequestAutoMerge(input:{}){x}}'",
+        "gh api graphql -f query='mutation{enqueuePullRequest(input:{}){x}}'",
+        "gh api graphql -f query='mutation{\n  mergePullRequest(input:{}){x}}'",
     ],
 )
 def test_pr_merge_blocks_gh_bypass_forms(command: str) -> None:
-    """`gh pr merge` still blocks under every `GH_ANCHOR` bypass form.
+    """`gh pr merge` and the GraphQL merge mutations block under every bypass form.
 
     Args:
         command: A `gh pr merge ...` invocation wrapped in one of the four
-            bypass forms.
+            bypass forms, or a `gh api graphql` merge/auto-merge/enqueue
+            mutation (one with a newline inside the query).
     """
     assert _run_hook(_PR_MERGE, command) == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "gh api graphql -f query='{ viewer { login } }'",
+        "echo 'gh api graphql mergePullRequest'",
+    ],
+)
+def test_pr_merge_allows_graphql_reads_and_mentions(command: str) -> None:
+    """A read-only GraphQL query and a quoted mention are not a merge.
+
+    Args:
+        command: A GraphQL read, or prose naming the mutation.
+    """
+    assert _run_hook(_PR_MERGE, command) == 0
 
 
 def test_gh_anchor_leading_space_blocks_and_echo_mention_allowed() -> None:
@@ -1793,6 +1815,31 @@ _BINPATH_BLOCKED = [
     pytest.param(
         "block_git_destructive.sh", "X=clean-n git clean -fd", id="clean_in_prefix"
     ),
+    pytest.param(
+        "block_continuation_delete.sh",
+        "/bin/rm .plan/CONTINUATION.md",
+        id="continuation_absolute_rm",
+    ),
+    pytest.param(
+        "block_continuation_delete.sh",
+        "sudo /bin/rm .plan/CONTINUATION.md",
+        id="continuation_sudo_absolute_rm",
+    ),
+    pytest.param(
+        "block_continuation_delete.sh",
+        "/usr/bin/sudo rm .plan/CONTINUATION.md",
+        id="continuation_absolute_sudo",
+    ),
+    pytest.param(
+        "block_continuation_delete.sh",
+        "/usr/bin/env rm .plan/CONTINUATION.md",
+        id="continuation_absolute_env",
+    ),
+    pytest.param(
+        "block_continuation_delete.sh",
+        "sudo /bin/rm -rf .plan",
+        id="continuation_sudo_absolute_rm_dir",
+    ),
 ]
 
 
@@ -1818,6 +1865,16 @@ _BINPATH_ALLOWED = [
     pytest.param("block_raw_git.sh", "/usr/bin/git push --help", id="help_request"),
     pytest.param(_PR_MERGE, "/usr/bin/gh pr view 9", id="gh_read_only"),
     pytest.param(_FORCE_PUSH, ">/tmp/git push -f", id="path_is_redirect_target"),
+    pytest.param(
+        "block_continuation_delete.sh",
+        "echo /bin/rm .plan/CONTINUATION.md",
+        id="continuation_path_is_an_argument",
+    ),
+    pytest.param(
+        "block_continuation_delete.sh",
+        "/bin/rm .plan/weekly.md",
+        id="continuation_sibling_file",
+    ),
 ]
 
 
@@ -2111,6 +2168,15 @@ def test_raw_git_blocks_ref_plumbing_for_everyone(
         "python3 <<< \"import os; os.system('git push')\"",
         "xargs python3 -c \"import os; os.system('git commit')\"",
         "/usr/bin/python3 -c \"import os; os.system('git commit')\"",
+        "python -I -c 'import os; os.system(\"git commit\")'",
+        'python3 -I -c \'import subprocess; subprocess.run(["git","push"])\'',
+        "perl -I lib -e 'system(\"git commit\")'",
+        "php -r 'system(\"git commit\");'",
+        "ruby -r json -e 'system(\"git push\")'",
+        "deno -r -e 'git push'",
+        'bun --preload x -e \'require("child_process").execSync("git push")\'',
+        "php -d x=1 -r 'system(\"git push\");'",
+        "python -d -c 'import os; os.system(\"git commit\")'",
     ],
 )
 def test_raw_git_blocks_inline_interpreter_git(command: str) -> None:
@@ -2148,6 +2214,15 @@ def test_raw_git_interpreter_rule_has_no_commit_agent_bypass(command: str) -> No
         "git update-ref --help",
         "python3 -m pytest -p xdist -k git",
         "python3 tool.py -p git",
+        "python -I script.py",
+        "python -I -c 'print(1)'",
+        "python3 -I -m pytest -k git",
+        "php -r 'echo 1;'",
+        "ruby -r json script.rb",
+        "bun --preload x script.ts",
+        "php -d x=1 script.php",
+        "deno -r run x.ts",
+        "python -d script.py",
     ],
 )
 def test_raw_git_allows_interpreter_lookalikes(command: str) -> None:
@@ -2365,6 +2440,18 @@ _DESTRUCTIVE_CLEAN_CASES = [
         id="allows_clean_dry_run_and_force_as_separate_flags",
     ),
     pytest.param("git clean", 0, id="allows_bare_clean"),
+    pytest.param(
+        "git clean <(true) -f", 2, id="blocks_clean_after_process_substitution"
+    ),
+    pytest.param(
+        "git clean >(cat) -fd", 2, id="blocks_clean_after_output_substitution"
+    ),
+    pytest.param(
+        "git clean >$(echo a b) -f", 2, id="blocks_clean_after_spaced_redirect_target"
+    ),
+    pytest.param(
+        "git clean <(true) -n", 0, id="allows_clean_dry_run_after_process_substitution"
+    ),
 ]
 
 
@@ -2890,6 +2977,50 @@ def test_destructive_restore_allowed_forms(command: str, tmp_path: Path) -> None
         command: An allowed checkout/switch form.
     """
     assert _run_hook(_DESTRUCTIVE, command, options=HookOptions(cwd=tmp_path)) == 0
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd x && git checkout -q -b feat",
+        "cd x && git checkout -b feat",
+        "cd x && git checkout -B feat main",
+        "cd x && git checkout --orphan new",
+        "(cd x && git checkout -b feat)",
+    ],
+)
+def test_destructive_allows_branch_creating_checkout_after_cd(
+    command: str, tmp_path: Path
+) -> None:
+    """A checkout that creates a branch restores no path, whatever directory `cd` picks.
+
+    Args:
+        command: A `-b` / `-B` / `--orphan` checkout behind a `cd`.
+    """
+    assert _run_hook(_DESTRUCTIVE, command, options=HookOptions(cwd=tmp_path)) == 0
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd x && git checkout -b feat -- p",
+        "cd x && git checkout feat",
+        "cd x && git checkout .",
+        "cd x && git checkout -q -b feat && git checkout -- f",
+        "cd x && git checkout -b x -p",
+        "cd x && git checkout -f -b x",
+    ],
+)
+def test_destructive_blocks_non_creating_or_pathful_checkout_after_cd(
+    command: str, tmp_path: Path
+) -> None:
+    """Behind a `cd` the directory is unknown: only a pure branch creation passes.
+
+    Args:
+        command: A checkout that restores a path, discards, or is not a
+            branch creation, behind a `cd`.
+    """
+    assert _run_hook(_DESTRUCTIVE, command, options=HookOptions(cwd=tmp_path)) == 2
 
 
 @pytest.mark.parametrize(
