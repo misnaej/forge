@@ -55,3 +55,4 @@ docs/mermaid-layout-elk.iife.min.js
 # forge-gen-c4 on-demand vector PDF (regenerate: forge-gen-c4 --format pdf)
 docs/architecture.pdf
 .forge-emergency
+.forge-emergency.*

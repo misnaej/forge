@@ -107,10 +107,16 @@ def write_state(root: Path, state: EmergencyState) -> None:
         root: Repo root.
         state: State to record.
     """
-    (root / SENTINEL_RELPATH).write_text(
-        json.dumps(asdict(state), indent=2) + "\n", encoding="utf-8"
-    )
+    # Write-then-rename, so a crash mid-write never leaves a truncated
+    # sentinel — which would read as "no emergency" and drop the debt.
+    path = root / SENTINEL_RELPATH
     _ensure_gitignored(root, str(SENTINEL_RELPATH))
+    # Its siblings — the claim lock and this temp file — are transient, but
+    # a crash can leave either behind, and neither belongs in a commit.
+    _ensure_gitignored(root, f"{SENTINEL_RELPATH}.*")
+    tmp = path.with_name(f"{path.name}.tmp")
+    tmp.write_text(json.dumps(asdict(state), indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
 
 
 def _ensure_gitignored(root: Path, name: str) -> None:
@@ -440,14 +446,21 @@ def _pr_mismatch(root: Path, state: EmergencyState, pr_number: int) -> str | Non
         branch = resolved[0] if resolved else None
     if branch is None:
         return "no branch identifies which PR the bypass was spent on."
-    proc = _gh("pr", "view", str(pr_number), "--json", "headRefName,state")
+    proc = _gh(
+        "pr", "view", str(pr_number), "--json", "headRefName,state,isCrossRepository"
+    )
     if proc.returncode != 0:
         return f"gh could not describe PR #{pr_number}, so it cannot be checked."
     try:
         view = json.loads(proc.stdout)
         head, pr_state = str(view["headRefName"]), str(view["state"])
+        cross = view["isCrossRepository"]
     except (ValueError, TypeError, KeyError):
         return f"gh could not describe PR #{pr_number}, so it cannot be checked."
+    if cross is not False:
+        # A fork can open a PR from a branch of the same name; only a PR
+        # from this repository can be the one this checkout published.
+        return f"PR #{pr_number} comes from a fork, not from this repository."
     if head != branch or pr_state != "OPEN":
         return (
             f"PR #{pr_number} is {pr_state.lower()} on '{head}', not open on "

@@ -303,6 +303,22 @@ def test_write_state_gitignore_entry_is_idempotent(tmp_path: Path) -> None:
 
     lines = (tmp_path / ".gitignore").read_text().splitlines()
     assert lines.count(str(emergency.SENTINEL_RELPATH)) == 1
+    assert lines.count(f"{emergency.SENTINEL_RELPATH}.*") == 1
+
+
+def test_write_state_leaves_no_temp_file_and_ignores_siblings(tmp_path: Path) -> None:
+    """The atomic write leaves no temp file, and the lock/temp siblings are ignored.
+
+    Behavior: a crash can strand either sibling, and neither may be committed.
+    """
+    state = emergency.EmergencyState(ledger_issue=7, reason="x", expires_at=_iso_in(1))
+
+    emergency.write_state(tmp_path, state)
+
+    assert not (tmp_path / ".forge-emergency.tmp").exists()
+    assert f"{emergency.SENTINEL_RELPATH}.*" in (
+        (tmp_path / ".gitignore").read_text().splitlines()
+    )
 
 
 # --- _cmd_start -------------------------------------------------------------
@@ -807,17 +823,22 @@ def test_cmd_record_pr_refuses_when_no_sentinel(
     assert calls == []
 
 
-def _pr_view(head: str, state: str = "OPEN") -> FakeProc:
-    """Build the canned ``gh pr view --json headRefName,state`` reply.
+def _pr_view(head: str, state: str = "OPEN", *, fork: bool = False) -> FakeProc:
+    """Build the canned ``gh pr view --json headRefName,state,isCrossRepository``.
 
     Args:
         head: The PR's head branch.
         state: The PR's state word (``OPEN``, ``CLOSED``, ``MERGED``).
+        fork: Whether the PR comes from a fork.
 
     Returns:
         A successful ``FakeProc`` carrying the JSON.
     """
-    return FakeProc(stdout=json.dumps({"headRefName": head, "state": state}))
+    return FakeProc(
+        stdout=json.dumps(
+            {"headRefName": head, "state": state, "isCrossRepository": fork}
+        )
+    )
 
 
 @pytest.mark.parametrize("claimed", [True, False], ids=["claimed", "spent-no-pr"])
@@ -870,14 +891,16 @@ def test_cmd_record_pr_persists_pr_number_and_comments_ledger(
         _pr_view("fix/other"),
         _pr_view("fix/x", "CLOSED"),
         _pr_view("fix/x", "MERGED"),
+        _pr_view("fix/x", fork=True),
         FakeProc(returncode=1),
         FakeProc(stdout="not json"),
-        FakeProc(stdout=json.dumps({"headRefName": "fix/x"})),
+        FakeProc(stdout=json.dumps({"headRefName": "fix/x", "state": "OPEN"})),
     ],
     ids=[
         "other-branch",
         "closed",
         "merged",
+        "fork-same-branch-name",
         "gh-error",
         "unparseable",
         "missing-field",
