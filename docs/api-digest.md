@@ -20,6 +20,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _forge-agent-profile — where the agents' time goes, and what they wrote._
 
+- `_subagent_transcript_name(agent_id: str) -> str` _(internal)_ — Return the transcript file name for *agent_id*.
+- `_agent_id_from_transcript(path: Path) -> str | None` _(internal)_ — Return the agent id a subagent transcript path names, if it is one.
 - `_resolve_subagent_transcript(path: str | None, *, session_id: str | None, agent_id: str) -> Path | None` _(internal)_ — The transcript belonging to *agent_id*, or ``None`` when none is readable.
 - `_is_path_component(value: str | None) -> TypeGuard[str]` _(internal)_ — Whether *value* is safe to splice into a path as one segment.
 - `class TranscriptStats` — What a subagent transcript adds to a run's ledger record.

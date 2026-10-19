@@ -107,7 +107,10 @@ FRAGMENTS_DIR = Path("changelog.d")
 
 # Fragment type token → release-entry group heading, in assembly order.
 # dict order IS the rendered group order — deliberate and stable.
+# `upgrade` renders first: it is the lane consumers are told to read
+# before anything else, and the heading `forge-upgrade` extracts.
 FRAGMENT_TYPES: dict[str, str] = {
+    "upgrade": "⚠️ Upgrade notes",
     "added": "Features",
     "changed": "Changes",
     "fixed": "Fixes",

@@ -81,7 +81,46 @@ PRECOMMIT_FIXER_AGENT = "forge:precommit-fixer"
 MAIN_SESSION_TYPE = "(main session)"
 
 _PRECOMMIT_FULL_RUN_RE = re.compile(r"\bforge-precommit\b(?![^\n]*--only)")
-_SUBAGENT_GLOB = "*/subagents/agent-*.jsonl"
+# Claude Code's subagent transcript shape: <session>/subagents/agent-<id>.jsonl.
+# Every glob, parse and construction goes through the helpers below, so a
+# change to that shape is a change in one place.
+_SUBAGENT_DIR = "subagents"
+_TRANSCRIPT_PREFIX = "agent-"
+_TRANSCRIPT_SUFFIX = ".jsonl"
+
+
+def _subagent_transcript_name(agent_id: str) -> str:
+    """Return the transcript file name for *agent_id*.
+
+    Args:
+        agent_id: The subagent's id (``*`` builds the glob).
+
+    Returns:
+        ``agent-<id>.jsonl``.
+    """
+    return f"{_TRANSCRIPT_PREFIX}{agent_id}{_TRANSCRIPT_SUFFIX}"
+
+
+def _agent_id_from_transcript(path: Path) -> str | None:
+    """Return the agent id a subagent transcript path names, if it is one.
+
+    Args:
+        path: A candidate transcript path.
+
+    Returns:
+        The id, or ``None`` when the name or its directory is not the
+        subagent transcript shape.
+    """
+    name = path.name
+    if path.parent.name != _SUBAGENT_DIR or not (
+        name.startswith(_TRANSCRIPT_PREFIX) and name.endswith(_TRANSCRIPT_SUFFIX)
+    ):
+        return None
+    agent_id = name[len(_TRANSCRIPT_PREFIX) : -len(_TRANSCRIPT_SUFFIX)]
+    return agent_id or None
+
+
+_SUBAGENT_GLOB = f"*/{_SUBAGENT_DIR}/{_subagent_transcript_name('*')}"
 
 
 def _resolve_subagent_transcript(
@@ -112,11 +151,13 @@ def _resolve_subagent_transcript(
     if not path or not _is_path_component(agent_id):
         return None
     given = Path(path)
-    if given.name == f"agent-{agent_id}.jsonl" and given.parent.name == "subagents":
+    if _agent_id_from_transcript(given) == agent_id:
         return given if given.is_file() else None
     if not _is_path_component(session_id):
         return None
-    derived = given.parent / session_id / "subagents" / f"agent-{agent_id}.jsonl"
+    derived = (
+        given.parent / session_id / _SUBAGENT_DIR / _subagent_transcript_name(agent_id)
+    )
     return derived if derived.is_file() else None
 
 
@@ -280,7 +321,9 @@ class EditReceipt:
     Attributes:
         known: Whether the ledger could be read at all.
         reason: Why it could not, when ``known`` is false.
-        by_file: Repo-relative path → the agent types that wrote it.
+        by_file: Repo-relative path → the agent types that wrote it, or
+            ``None`` exactly when ``known`` is false — so an unknown
+            receipt cannot be read as an empty, clean one.
         pathless: Subagent writes seen with no recorded path. Rows
             written by a hook older than path recording all look like
             this, so a zero ``by_file`` beside a non-zero count means
@@ -289,8 +332,19 @@ class EditReceipt:
 
     known: bool
     reason: str = ""
-    by_file: dict[str, set[str]] = field(default_factory=dict)
+    by_file: dict[str, set[str]] | None = None
     pathless: int = 0
+
+    def __post_init__(self) -> None:
+        """Refuse a receipt whose ``by_file`` disagrees with ``known``.
+
+        Raises:
+            ValueError: When ``by_file`` is ``None`` for a known receipt,
+                or set for an unknown one.
+        """
+        if self.known != (self.by_file is not None):
+            msg = "EditReceipt.by_file must be None exactly when known is false"
+            raise ValueError(msg)
 
 
 def subagent_edits(
@@ -427,13 +481,14 @@ def render_edit_receipt(receipt: EditReceipt) -> str:
         One line when the evidence is missing, one when nothing
         qualifies, else a header and a line per file.
     """
-    if not receipt.known:
+    by_file = receipt.by_file
+    if by_file is None:
         return (
             f"subagent edits: UNKNOWN ({receipt.reason}) — "
             "absent evidence is not evidence of absence; "
             "check by hand before committing."
         )
-    if not receipt.by_file:
+    if not by_file:
         return "subagent edits: none recorded (tool-based writes only)."
     head = "subagent edits (tool-based writes only — shell writes are invisible):"
     if receipt.pathless:
@@ -447,7 +502,7 @@ def render_edit_receipt(receipt: EditReceipt) -> str:
     # letting it style, link, or pose as structure around it.
     lines.extend(
         f"  `{path}` — {', '.join(sorted(agents))}"
-        for path, agents in sorted(receipt.by_file.items())
+        for path, agents in sorted(by_file.items())
     )
     return "\n".join(lines)
 
@@ -825,7 +880,9 @@ def runs_from_transcripts(root: Path) -> dict[str, AgentRun]:
     types = _agent_types_from_sessions(root)
     runs: dict[str, AgentRun] = {}
     for path in root.glob(_SUBAGENT_GLOB):
-        agent_id = path.stem.removeprefix("agent-")
+        agent_id = _agent_id_from_transcript(path)
+        if agent_id is None:
+            continue
         stats = parse_transcript(path)
         if stats is None:
             continue

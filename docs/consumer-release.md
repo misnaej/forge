@@ -194,7 +194,7 @@ branch adds no changelog bullets for its stranded-entry check to flag.
 convention entirely. Each PR adds one unique file:
 
 ```
-changelog.d/<slug>.<type>.md     # type: added|changed|fixed|removed|docs
+changelog.d/<slug>.<type>.md     # type: upgrade|added|changed|fixed|removed|docs
 ```
 
 whose first line is `bump: patch|minor|major` — the semver LEVEL only.

@@ -1492,6 +1492,111 @@ def test_render_edit_receipt_marks_partial_attribution_incomplete() -> None:
     assert len(lines) == 3
 
 
+def test_unknown_receipt_has_no_by_file_so_it_cannot_read_as_clean(
+    tmp_path: Path,
+) -> None:
+    """The no-ledger path yields ``by_file is None``, never an empty dict."""
+    receipt = subagent_edits(tmp_path)
+
+    assert receipt.known is False
+    assert receipt.by_file is None
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"known": True},
+        {"known": False, "reason": "x", "by_file": {}},
+    ],
+    ids=["known-without-by_file", "unknown-with-by_file"],
+)
+def test_edit_receipt_refuses_by_file_that_disagrees_with_known(
+    kwargs: dict[str, object],
+) -> None:
+    """``by_file`` is None exactly when ``known`` is false; anything else raises.
+
+    Args:
+        kwargs: Constructor arguments violating the invariant.
+    """
+    with pytest.raises(ValueError, match="by_file must be None"):
+        EditReceipt(**kwargs)  # type: ignore[arg-type]
+
+
+def test_render_unknown_receipt_prints_the_unknown_line() -> None:
+    """An unknown receipt (``by_file`` None) still renders the UNKNOWN warning."""
+    line = render_edit_receipt(EditReceipt(known=False, reason="no ledger"))
+
+    assert line.startswith("subagent edits: UNKNOWN (no ledger)")
+
+
+def test_subagent_transcript_name_and_parse_round_trip(tmp_path: Path) -> None:
+    """Building a transcript name and parsing it back returns the id."""
+    name = agent_profile._subagent_transcript_name("abc123")
+    path = tmp_path / "subagents" / name
+
+    assert name == "agent-abc123.jsonl"
+    assert agent_profile._agent_id_from_transcript(path) == "abc123"
+
+
+@pytest.mark.parametrize(
+    ("directory", "name"),
+    [
+        ("elsewhere", "agent-abc.jsonl"),
+        ("subagents", "worker-abc.jsonl"),
+        ("subagents", "agent-abc.json"),
+        ("subagents", "agent-.jsonl"),
+    ],
+    ids=["wrong-dir", "wrong-prefix", "wrong-suffix", "empty-id"],
+)
+def test_agent_id_from_transcript_refuses_non_transcript_shapes(
+    tmp_path: Path, directory: str, name: str
+) -> None:
+    """Anything off the ``subagents/agent-<id>.jsonl`` shape parses to None.
+
+    Args:
+        directory: Parent directory name.
+        name: File name.
+    """
+    assert agent_profile._agent_id_from_transcript(tmp_path / directory / name) is None
+
+
+def test_runs_from_transcripts_skips_a_globbed_file_with_an_empty_agent_id(
+    tmp_path: Path,
+) -> None:
+    """`agent-.jsonl` matches the glob but names no agent, so it is skipped."""
+    subagents = tmp_path / "s" / "subagents"
+    _write_jsonl(
+        subagents / "agent-.jsonl",
+        [_assistant(BASE_DT, [_tool_use("t1", "Bash", {"command": "ls"})])],
+    )
+    _write_jsonl(
+        subagents / "agent-a1.jsonl",
+        [_assistant(BASE_DT, [_tool_use("t1", "Bash", {"command": "ls"})])],
+    )
+
+    runs = runs_from_transcripts(tmp_path)
+
+    assert set(runs) == {"a1"}
+
+
+def test_resolve_subagent_transcript_falls_through_when_given_names_another_agent(
+    tmp_path: Path,
+) -> None:
+    """A given path naming a different agent is not trusted; the derived one is."""
+    given = tmp_path / "s" / "subagents" / "agent-other.jsonl"
+    given.parent.mkdir(parents=True)
+    given.write_text("{}\n", encoding="utf-8")
+    derived = given.parent / "sess" / "subagents" / "agent-a1.jsonl"
+    derived.parent.mkdir(parents=True)
+    derived.write_text("{}\n", encoding="utf-8")
+
+    resolved = agent_profile._resolve_subagent_transcript(
+        str(given), session_id="sess", agent_id="a1"
+    )
+
+    assert resolved == derived
+
+
 def test_render_edits_reports_a_file_still_dirty_after_an_unrelated_commit(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

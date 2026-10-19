@@ -14,9 +14,9 @@ repo may need (breaking changes, config, new mandatory behavior).
 Releases without that lane are additive or internal and need nothing
 from you.
 
-**Format.** Per release: an optional **⚠️ Upgrade notes** lane, then
-change groups by changelog fragment type (**Features / Changes / Fixes
-/ Removed / Docs**).
+**Format.** Per release: an optional **⚠️ Upgrade notes** lane
+(assembled from `upgrade` fragments), then change groups by changelog
+fragment type (**Features / Changes / Fixes / Removed / Docs**).
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
