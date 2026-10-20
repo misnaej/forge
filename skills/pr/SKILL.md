@@ -455,27 +455,36 @@ The squash-merge message becomes the permanent commit message on `main`.
 
 The issues this PR filed are cheapest to place now, while the session
 that found them still holds the context; a later sweep has to
-rediscover it. The posted wrap-up's `Follow-ups filed:` line (Issue
-Management) names them — read it from the posted comment, never
-re-derive it from prose. No line → nothing to place; skip.
+rediscover it. Which issues, and whether there is anything to place,
+is a CLI call, never read off prose:
 
-Otherwise delegate **in the background** and continue to Step 5:
+```bash
+forge-plan-check tracks --from-pr <number>
+```
+
+It reads the posted wrap-up's `Follow-ups:` line itself.
+`placement: none` → nothing to place; skip. Exit 2 → report it and
+skip. Otherwise delegate **in the background**, for exactly the issues
+its lines name — the numbers come only from that output — and continue
+to Step 5:
 
 ```
-Agent(subagent_type="forge:issue-triage", prompt="Run placement mode for issues <#A #B …>, filed by PR #<number>.")
+Agent(subagent_type="forge:issue-triage", prompt="Run placement mode for PR #<number> (forge-plan-check tracks --from-pr <number>).")
 ```
 
 Placement writes only on the issues — labels and `[issue-triage]`
 comments — **never on the PR**, so the squash comment stays newest
 without a re-post. Conflicting decisions come back to the user as
-questions (the mode's own rule). Skip when `forge.run_context.is_ci()`
-— nobody is there to answer them (FOUNDATION §15).
+questions; the mode's limits are in
+[`forge-docs/backlog-tracks.md`](../../forge-docs/backlog-tracks.md#placement-after-a-pr).
+Skip when `forge.run_context.is_ci()` — nobody is there to answer them
+(FOUNDATION §15).
 
 ## Step 5: Post-PR backlog update
 
 17. **`issue-triage`** — Run `post-pr` mode after merge:
     ```
-    Agent(subagent_type="forge:issue-triage", prompt="Run post-pr mode. PR #<number> was just merged. Detect issues closed by this PR, remove their tier labels, run the overlap sweep (forge-plan-check overlap <number>), re-check the placement of the issues its wrap-up's Follow-ups filed line names, and regenerate the 📋 Backlog Index issue.")
+    Agent(subagent_type="forge:issue-triage", prompt="Run post-pr mode. PR #<number> was just merged. Detect issues closed by this PR, remove their tier labels, run the overlap sweep (forge-plan-check overlap <number>), re-check the placement of its follow-ups (forge-plan-check tracks --from-pr <number>), and regenerate the 📋 Backlog Index issue.")
     ```
 
 ## Step 6: Update CONTINUATION state

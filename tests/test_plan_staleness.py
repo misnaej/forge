@@ -30,13 +30,8 @@ from forge.plan_staleness_gh import (
     OpenPR,
     RefStatus,
 )
-from tests.conftest import (
-    GIT_ENV,
-    FakeGitHub,
-    LogRecorder,
-    init_git_repo,
-    report_lines,
-)
+from tests._plan_fakes import FakeGitHub, LogRecorder, report_lines
+from tests.conftest import GIT_ENV, init_git_repo
 
 
 if TYPE_CHECKING:
@@ -972,7 +967,11 @@ def test_gh_source_maps_issue_status(
 
 
 def _open_pr_entry(
-    number: int, files: list[str], *, total: int | None = None
+    number: int,
+    files: list[str],
+    *,
+    total: int | None = None,
+    closes_total: int = 1,
 ) -> dict[str, object]:
     """Return one projected open-PR listing entry.
 
@@ -980,6 +979,7 @@ def _open_pr_entry(
         number: PR number.
         files: Paths the listing carries.
         total: The file total GitHub reports; defaults to ``len(files)``.
+        closes_total: The closing-issue total GitHub reports (one listed).
 
     Returns:
         The entry as the listing's ``--jq`` projection prints it.
@@ -990,9 +990,58 @@ def _open_pr_entry(
         "base_ref": "main",
         "draft": False,
         "closes": [number + 100],
+        "closes_total": closes_total,
         "total": len(files) if total is None else total,
         "files": files,
     }
+
+
+def test_gh_source_open_pull_requests_truncated_closing_refs_is_unknown() -> None:
+    """Behavior: a PR closing more issues than listed fails the whole listing.
+
+    A delivery hidden past the page would read as a collision in `tracks`.
+    """
+    listing = _page(_open_pr_entry(7, ["a.py"], closes_total=51))
+    gh = RecordedGh({"graphql": listing})
+    assert GhSource(run=gh).open_pull_requests() is None
+    assert "closingIssuesReferences(first:50){totalCount" in gh.calls[0]
+
+
+@pytest.mark.parametrize(("total", "readable"), [(1, True), (2, False)])
+def test_gh_source_pull_request_truncated_closing_refs_is_unknown(
+    total: int, *, readable: bool
+) -> None:
+    """Behavior: a merged PR closing more issues than fetched is None, not partial.
+
+    Args:
+        total: The closing-issue total GitHub reports (one node listed).
+        readable: Whether the record is returned.
+    """
+    reply = json.dumps(
+        {
+            "merged": True,
+            "mergeCommit": {"oid": "a" * 40},
+            "closingIssuesReferences": {"totalCount": total, "nodes": [{"number": 5}]},
+        }
+    )
+    gh = RecordedGh({"pulls/3/files": _page("a.py"), "graphql": reply})
+    record = GhSource(run=gh).pull_request(3)
+    assert (record is not None) is readable
+
+
+def test_gh_source_issue_author_maps_from_listing_and_rest() -> None:
+    """Behavior: the opener's login reaches `Issue.author`; a ghost is empty."""
+    entry = {**_listed(1, 1), "author": "alice"}
+    ghost = {**_listed(2, 1), "author": None}
+    issues = GhSource(run=RecordedGh({"graphql": _page(entry, ghost)})).open_issues()
+    assert issues is not None
+    assert [i.author for i in issues] == ["alice", ""]
+    rest = json.dumps(
+        {"number": 3, "body": "", "labels": [], "created_at": PLAN_TIME, "author": "b"}
+    )
+    issue = GhSource(run=RecordedGh({"issues/3": rest})).issue(3)
+    assert issue is not None
+    assert issue.author == "b"
 
 
 def test_gh_source_open_pull_requests_flattens_pages() -> None:

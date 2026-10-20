@@ -1010,7 +1010,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `capped_echo(text: str) -> str` — Return *text* fenced and capped at :data:`ECHO_CAP` characters.
 - `is_safe_path(path: str) -> bool` — Return whether *path* may be handed to git as a repo-relative pathspec.
 - `named_paths(text: str) -> list[str]` — Return the repo-relative file paths *text* names, outside code fences.
-- `authenticated_plan(comments: Iterable[Comment], is_writer: Callable[[str], bool | None]) -> PlanLookup` — Find the newest plan comment whose author has write access.
+- `authenticated_comment(comments: Iterable[Comment], is_writer: Callable[[str], bool | None], marker: str) -> PlanLookup` — Find the newest comment opening with *marker* whose author has write access.
+- `authenticated_plan(comments: Iterable[Comment], is_writer: Callable[[str], bool | None]) -> PlanLookup` — Find the newest :data:`PLAN_MARKER` comment whose author has write access.
 - `plan_paths(plan: Comment | None, body: str) -> tuple[list[str], bool]` — Return the files the plan names, falling back to the issue body's.
 - `parse_timestamp(value: str) -> datetime` — Parse an ISO-8601 timestamp, reading a naive one as UTC.
 - `parse_merge_log(raw: str) -> list[Merge]` — Parse ``git log --name-only -z --format=%x1e%H%x1f%cI%x1f%s`` output.
@@ -1033,7 +1034,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 > _GitHub reads for ``forge-plan-check``: the records and the ``gh api`` adapter._
 
 - `class Comment` — One issue comment as the checks need it.
-- `class Issue` — One issue; the fields after ``created_at`` come only from the open listing.
+- `class Issue` — One issue; comments, title and update time come only from the open listing.
 - `class RefStatus` — What GitHub reports about one ``Requires:`` reference.
 - `class MergedPR` — A PR's merge state, changed files and the issues it closes.
 - `class OpenPR` — An open PR as the set checks need it: where it points and what it touches.
@@ -1064,7 +1065,17 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_report_pairs(files: Sequence[IssueFiles], report: Report, focus: frozenset[int]) -> None` _(internal)_ — Record every pair of issues naming a common file.
 - `_report_prs(files: Sequence[IssueFiles], prs: Sequence[OpenPR], report: Report, focus: frozenset[int]) -> None` _(internal)_ — Record every open PR changing a file an issue names.
 - `_report_shared_files(files: Sequence[IssueFiles], report: Report, focus: frozenset[int]) -> None` _(internal)_ — Record each file more than one issue names, most-named first.
-- `check_tracks(source: GitHubSource, numbers: Sequence[int] = (), *, focus: Sequence[int] = ()) -> Report` — Report which open issues share files with each other and with open PRs.
+- `_open_focus(issues: Sequence[Issue], focus: Sequence[int], report: Report) -> list[int]` _(internal)_ — Return the focus issues still open, noting each one that is not.
+- `_report_placement_none(files: Sequence[IssueFiles], report: Report, focus: frozenset[int]) -> None` _(internal)_ — Say ``placement: none`` when nothing places the focus issues.
+- `check_tracks(source: GitHubSource, numbers: Sequence[int] = (), *, focus: Sequence[int] = (), skip_closed_focus: bool = False) -> Report` — Report which open issues share files with each other and with open PRs.
+- `_follow_ups(text: str) -> list[int]` _(internal)_ — Return the issues the wrap-up's ``Follow-ups:`` line names.
+- `wrapup_follow_ups(source: GitHubSource, pr_number: int, report: Report) -> list[int] | None` — Return the follow-ups PR *pr_number*'s newest trusted wrap-up names.
+- `check_tracks_from_pr(source: GitHubSource, pr_number: int, numbers: Sequence[int] = ()) -> Report` — Run :func:`check_tracks` focused on the follow-ups PR *pr_number* names.
+- `plan_track_names(plan_body: str) -> set[str]` — Return every name a plan's ``track: <name>`` lines give, outside fences.
+- `_plan_reason(names: set[str], track: str) -> str | None` _(internal)_ — Return why a plan naming *names* does not place its issue in *track*.
+- `_exclusions(issue: Issue, track: str, is_writer: WriterCheck, report: Report) -> list[str] | None` _(internal)_ — Return every reason *issue* is not a member of *track*.
+- `_names_track_in_text(issue: Issue, track: str) -> bool` _(internal)_ — Return whether any plan-marker comment on *issue* has *track*'s line.
+- `check_track_members(source: GitHubSource, track: str) -> Report` — Report which open issues belong to track *track*, and why others do not.
 - `_restricted(merges: list[Merge] | None) -> Callable[[list[str]], list[Merge] | None]` _(internal)_ — Return a ``log_merges`` callable answering from one listing.
 - `_verdict_line(number: int, part: Report) -> str` _(internal)_ — Return the one-line per-issue verdict of the ``current`` check.
 - `check_current(source: GitHubSource, numbers: Sequence[int], *, log_merges: Callable[[list[str]], list[Merge] | None]) -> Report` — Run the drift check of each issue since it was filed, listing history once.
@@ -1802,6 +1813,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _verify-forge-test-naming — verify test naming standards compliance._
 
+- `is_helper_module(filepath: Path) -> bool` — Return whether *filepath* is a shared test-helper module, not a test file.
 - `class Issue` — Represents a test naming issue found during verification.
 - `class TestNamingVerifier` — AST visitor to verify test naming standards.
   - `visit_FunctionDef(self, node: ast.FunctionDef) -> None` — Check function definition for naming issues.

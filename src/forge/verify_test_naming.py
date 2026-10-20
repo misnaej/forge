@@ -5,7 +5,8 @@ Analyses test files to ensure they follow the forge testing standards
 ``code_health/test_naming_check.log``. Checks for:
 - Test file `test_*` prefix
 - Consistent error test naming patterns
-- Helper functions with proper _ prefix or in conftest.py
+- Helper functions with proper _ prefix, or in conftest.py or a
+  ``_``-prefixed helper module (``tests/_fakes.py``)
 - No duplicate/ambiguous file names
 - Parametrization IDs using snake_case
 - Module-level constants using UPPERCASE
@@ -61,6 +62,23 @@ configure_cli_logging()
 logger = logging.getLogger(__name__)
 
 
+def is_helper_module(filepath: Path) -> bool:
+    """Return whether *filepath* is a shared test-helper module, not a test file.
+
+    ``conftest.py`` is pytest's own; a ``_``-prefixed module (e.g.
+    ``tests/_fakes.py``) is one tests import explicitly. pytest collects
+    neither, so neither needs the ``test_`` prefix nor ``_``-prefixed
+    helpers. ``__init__.py`` falls under the same rule.
+
+    Args:
+        filepath: Path to a file under a test root.
+
+    Returns:
+        ``True`` for a helper module.
+    """
+    return filepath.name == "conftest.py" or filepath.name.startswith("_")
+
+
 @dataclass
 class Issue:
     """Represents a test naming issue found during verification.
@@ -91,7 +109,9 @@ class TestNamingVerifier(ast.NodeVisitor):
         filepath: Path to the file being verified.
         issues: List of issues found during verification.
         source_content: Source code content for context.
-        is_conftest: Whether this is a conftest.py file.
+        is_conftest: Whether this is a shared helper module — a
+            ``conftest.py`` or a ``_``-prefixed module (see
+            :func:`is_helper_module`).
     """
 
     def __init__(self, filepath: str, source_content: str) -> None:
@@ -104,7 +124,7 @@ class TestNamingVerifier(ast.NodeVisitor):
         self.filepath = filepath
         self.issues: list[Issue] = []
         self.source_content = source_content
-        self.is_conftest = Path(filepath).name == "conftest.py"
+        self.is_conftest = is_helper_module(Path(filepath))
         self.current_class_stack: list[str] = []  # Track nested classes
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
@@ -144,7 +164,8 @@ class TestNamingVerifier(ast.NodeVisitor):
                     description=(
                         f"Helper function '{func_name}' should"
                         " start with '_' prefix or be moved"
-                        " to conftest.py (Rule 4)"
+                        " to conftest.py or a '_'-prefixed helper"
+                        " module (Rule 4)"
                     ),
                 ),
             )
@@ -464,8 +485,7 @@ def _check_file_name_alignment(filepath: Path) -> list[Issue]:
     """
     issues = []
 
-    # Skip conftest.py and __init__.py
-    if filepath.name in ("conftest.py", "__init__.py"):
+    if is_helper_module(filepath):
         return issues
 
     # Test file should be named test_<module>.py

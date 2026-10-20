@@ -556,7 +556,7 @@ def follow_up_refs(text: str) -> list[int]:
 
     Only the reporter sections count — that is where a finding's
     disposition is written — and only the exact forms ``deferred to #N``
-    and ``filed as #N`` outside fences: a quoted report naming an issue is
+    and ``filed as #N`` (in any case) outside fences: a quoted report naming an issue is
     not this PR's disposition.
 
     Args:
@@ -1007,6 +1007,7 @@ def _cmd_post(args: argparse.Namespace, text: str, path: Path) -> int:
         return EXIT_REFUSED
     body = str(view.get("body") or "")
     refs = find_closing_refs(body)
+    follow_ups = follow_up_refs(text)
     refreshed = refresh_sections(
         text,
         ci_status=_ci_status(args.pr, view),
@@ -1015,7 +1016,7 @@ def _cmd_post(args: argparse.Namespace, text: str, path: Path) -> int:
             pr_body_checked=True,
             pr_named=True,
             also_closed=_also_closed(body, refs),
-            follow_ups=follow_up_refs(text),
+            follow_ups=follow_ups,
         ),
     )
     problems = validate_wrapup(refreshed)
@@ -1027,6 +1028,9 @@ def _cmd_post(args: argparse.Namespace, text: str, path: Path) -> int:
     rc = post_wrapup(args.pr, refreshed)
     if rc != 0:
         return rc
+    if follow_ups:
+        # Informational: the issues placement will consider, as posted.
+        emit("follow-ups: " + " ".join(f"#{ref}" for ref in follow_ups))
     if not args.no_continuation:
         refresh_state(root, with_pr=True)
     return 0

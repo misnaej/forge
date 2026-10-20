@@ -898,15 +898,15 @@ def test_evidence_fence_empty_when_no_fence_present() -> None:
 @pytest.mark.parametrize(
     ("follow_ups", "expected_tail"),
     [
-        ([9], "\nFollow-up filed: #9"),
-        ([9, 12], "\nFollow-ups filed: #9, #12"),
+        ([9], "\nFollow-ups: #9"),
+        ([9, 12], "\nFollow-ups: #9, #12"),
     ],
     ids=["one", "many"],
 )
 def test_render_issue_management_names_follow_ups_after_the_closing_line(
     follow_ups: list[int], expected_tail: str
 ) -> None:
-    """Behavior: filed follow-ups follow the closing line, singular for one.
+    """Behavior: follow-ups follow the closing line under one label for any count.
 
     Args:
         follow_ups: Issues the findings name.

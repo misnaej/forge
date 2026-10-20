@@ -652,6 +652,7 @@ Topic-specific docs (read what you need, skip what you don't):
 | [`docs/customizing-precommit.md`](docs/customizing-precommit.md) | You want to add a repo-specific step (mypy, secret scan, etc.) to the pre-commit hook. |
 | [`docs/claude-code-plugin.md`](docs/claude-code-plugin.md) | You use Claude Code and want the agents / skills / hooks. |
 | [`forge-docs/ci-recipe.md`](forge-docs/ci-recipe.md) | You want a pasteable GitHub Actions workflow for running forge in CI. |
+| [`forge-docs/backlog-tracks.md`](forge-docs/backlog-tracks.md) | You group backlog issues into tracks that ship as one PR (`/plan-batch`, `/sentinel`, placement after `/pr`). |
 | [`docs/ci-access.md`](docs/ci-access.md) | Your CI runner can't clone forge with implicit SSH. |
 | [`docs/audit-pack.md`](docs/audit-pack.md) | You want to use the `forge-audit-*` CLIs for codebase health checks. |
 | [`docs/consumer-release.md`](docs/consumer-release.md) | Your repo's version derives from `v*` git tags (setuptools-scm) and you want `forge-release` (or its public primitives) instead of hand-rolling the tag/push flow. |

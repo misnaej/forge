@@ -530,7 +530,27 @@ options:
 ## forge-plan-check
 
 ```text
-(--help unavailable for forge-plan-check)
+usage: forge-plan-check [-h]
+                        {prerequisites,drift,overlap,tracks,track-members,current,merge-order} ...
+
+Mechanical premise and prerequisite checks for a plan, or a set of issues or
+PRs (exit 0 clean, 1 finding, 2 unknown or refused).
+
+positional arguments:
+  {prerequisites,drift,overlap,tracks,track-members,current,merge-order}
+    prerequisites       Have all Requires: entries landed?
+    drift               Merges touching the plan's files since.
+    overlap             Open issues naming a merged PR's files.
+    tracks              Open issues sharing files with each other and with
+                        open PRs.
+    track-members       Open issues whose authenticated plan places them in a
+                        track.
+    current             Merges touching each issue's files since it was filed.
+    merge-order         Probe open PRs for conflicts and suggest a merge
+                        order.
+
+options:
+  -h, --help            show this help message and exit
 ```
 
 ## forge-post-checkout

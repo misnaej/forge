@@ -105,21 +105,17 @@ forms no groups — grouping is judgment, and these are the signals:
 - the issues change the same files or subsystem;
 - one is meaningless without the other;
 - a small fix sits inside a bigger issue's area — fold it in;
-- a file nearly every change touches (FOUNDATION.md, a manifest, a
-  generated reference) is **weak evidence** on its own;
+- a shared hub file alone is **weak evidence** (definition:
+  [`forge-docs/backlog-tracks.md`](../../forge-docs/backlog-tracks.md#hub-files-are-weak-evidence));
 - the consumer `CLAUDE.md`'s PR-bundling rule, where it has one, is
   the tie-breaker.
 
 Propose each track with its member issues and the reason in one
 sentence; an issue that groups with nothing is a track of one. A
 `pr-overlap:` line means the work may already be underway — surface
-it, do not plan around it.
-
-**The first run in a repo is the bootstrap** — the whole screened
-backlog, so expect it to be long. **Later runs re-align** the tracks
-that already exist: split one grown too large for one PR, merge two
-that turned out to be the same work, and flag members Step 1.5 found
-already fixed.
+it, do not plan around it. A first run bootstraps the whole backlog;
+later runs re-align existing tracks
+([`forge-docs/backlog-tracks.md` "First run, then re-align"](../../forge-docs/backlog-tracks.md#first-run-then-re-align)).
 
 ## Step 1.7: One decision round
 
@@ -182,11 +178,13 @@ which owns issue-state mutation (FOUNDATION §3) and posts the payload
 with no attribution line (FOUNDATION §14 "Decision trail").
 
 A track plan is recorded on **every member issue**: the same plan, the
-same `track:<name>` label (created on demand, with an `[issue-triage]`
-comment), and a line naming the track and saying whether the PR
-closes that member or is only `Part of` it. That is what `/sentinel`'s
-track mode reads, and it is why a validated track is never silently
-extended later.
+same `track:<name>` label, the exact line `track: <name>`, and whether
+the PR closes that member or is only `Part of` it — tell
+`issue-triage` the track name and each member's close-or-part verdict
+when delegating. The `track:` line, not the label, is what makes an
+issue a member (`forge-plan-check track-members`, which `/sentinel`'s
+track mode reads); format and rules:
+[`forge-docs/backlog-tracks.md` "What a member's plan carries"](../../forge-docs/backlog-tracks.md#what-a-members-plan-carries).
 
 A draft the user declines, defers, or answers with a question is not
 recorded and not retried — report it and move on.
@@ -217,11 +215,8 @@ letting PRs that share files keep invalidating each other:
 forge-plan-check merge-order [<PR> …]
 ```
 
-It probes every open PR against the base and against each other
-without checking anything out, and prints an `order:` line per PR —
-PRs entangled with nothing first, the most entangled last, each noting
-which earlier PRs it must be refreshed after. Relay that order with
-its `conflict:` lines. After **each** merge the user makes, the PRs
-still open get a plain base merge (FOUNDATION §6 — never a rebase) and
-a `/pr <N>` delta re-verification before the next one merges. Merging
-stays the user's.
+Relay its `order:` and `conflict:` lines
+([`forge-docs/backlog-tracks.md` "Merge order"](../../forge-docs/backlog-tracks.md#merge-order)).
+After **each** merge the user makes, the PRs still open get a plain
+base merge (FOUNDATION §6 — never a rebase) and a `/pr <N>` delta
+re-verification before the next one merges. Merging stays the user's.

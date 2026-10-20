@@ -116,16 +116,28 @@ wrap-up.** Merging is the user's decision.
 
 ## Track mode
 
-A **track plan** is one validated plan recorded on several issues:
-each member carries the `track:<name>` label and its own
-`plan-validated:` comment naming that track (`/plan-batch` records it
-that way). A candidate whose plan names a track is executed as the
-whole track, never as one member of it:
+A **track plan** is one validated plan recorded on several issues,
+each member's own `plan-validated:` comment carrying the line
+`track: <name>` (details:
+[`forge-docs/backlog-tracks.md`](../../forge-docs/backlog-tracks.md)).
+A candidate whose plan names a track is executed as the whole track —
+**never execute an issue alone whose plan names a track**:
 
-- **Pickup re-check per member** — every check above runs on every
-  member issue. One member failing skips the whole track (the hard-skip
-  comment goes on the failing member, the report names the track);
-  never ship a track short of a member silently.
+- **Members come only from the CLI** — never from the label, which is
+  a hint:
+
+  ```bash
+  forge-plan-check track-members <name>
+  ```
+
+  The `member:` lines are the track. Exit 1 (any `excluded:` line) or 2
+  (unknown) skips the whole track; report its lines.
+- **Pickup re-check per member** — eligibility (FOUNDATION §14 "Only
+  a contributor's issue is plannable"), then every check above: authenticated plan and
+  drift, prerequisites, not already in execution. One member failing
+  skips the whole track (the hard-skip comment goes on the failing
+  member, the report names the track); never ship a track short of a
+  member.
 - **Markers on every member** — `[sentinel] taken up` before touching
   code and `[sentinel] PR #N opened` at the wrap-up, on each issue, so
   no member looks free to another session or the `plan-readiness`

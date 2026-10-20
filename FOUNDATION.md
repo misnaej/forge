@@ -1097,7 +1097,10 @@ Consumer repos may add domain-specific labels (e.g. `frontend`, `data-pipeline`)
 without conflict. **Grouping labels are `track:<name>`** — a set of issues
 planned and shipped as one PR. They are created per batch, on demand, each
 with an `[issue-triage]` comment, and never join the canonical set above:
-a track lives as long as its work.
+a track lives as long as its work. The label is a hint; a track's members
+are the issues whose authenticated validated plan names it, and nothing
+else. Working details:
+[`forge-docs/backlog-tracks.md`](forge-docs/backlog-tracks.md).
 
 ### Backlog Index, overrides, templates
 
@@ -1178,7 +1181,7 @@ rule `/sentinel` sets, untouched. It also groups issues into tracks, so
 one validated plan and one PR deliver several issues; the issues a PR
 files are placed into tracks as it finishes, by `issue-triage`'s
 `placement` mode, which asks rather than guesses when placements
-conflict.
+conflict and never acts beyond labelling the issues that PR filed.
 
 ### Decision trail
 

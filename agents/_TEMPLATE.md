@@ -164,11 +164,12 @@ paragraph; breaks only for lists, headings, fences, tables.
 what was examined or a per-recipe breakdown of zero findings. Prose is
 reserved for findings: what, where, and (in wrap-ups) the disposition —
 fixed in `<sha>` / `deferred to #N` / `filed as #N` / accepted with
-reason. The two issue forms are machine-read, so write them exactly —
-lower case, one space, `#` then the number: the posted wrap-up's
-Issue Management section lists every issue so named on its
-`Follow-ups filed:` line, and per-PR placement reads that line; any
-other wording ("deferred to a later PR", "see #N") goes unlisted. A wrap-up
+reason. The two issue forms are machine-read (case-insensitively, so
+`Deferred to #N` counts too), so write them as shown — one space, `#`
+then the number: the posted wrap-up's Issue Management section lists
+every issue so named on its `Follow-ups:` line, and per-PR placement
+reads that line; any other wording ("deferred to a later PR", "see #N")
+goes unlisted. A wrap-up
 quotes the reporters' PASS lines; verbosity scales with findings, never
 with the number of checks run. `forge-pr-wrapup validate` is the
 enforcer: it refuses a wrap-up that narrates a clean check, carries more

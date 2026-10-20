@@ -22,7 +22,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
-from forge.pr_delta import VERIFIED_AT_RE
+from forge.pr_delta import FOLLOW_UPS_LABEL, VERIFIED_AT_RE
 from forge.precommit import NOT_VERIFIED, timing_markers
 
 
@@ -553,7 +553,8 @@ def render_issue_management(
     them: what is missing is a closing line, not a closing effect.
 
     *follow_ups* are the issues the PR's findings were deferred to or
-    filed as — what placement reads after posting. No follow-ups adds
+    filed as — what ``forge-plan-check tracks --from-pr`` reads after
+    posting. No follow-ups adds
     nothing: a "none filed" line would read as a claim that was checked.
 
     Args:
@@ -572,8 +573,9 @@ def render_issue_management(
         GitHub would still close (on merge into the default branch): #…``.
         Each is marked provisional when no PR body existed to search, so
         the refs came from the branch's commit messages instead. A second
-        line, ``Follow-up filed: #N`` or ``Follow-ups filed: #…``, follows
-        when *follow_ups* is not empty.
+        line, ``Follow-ups: #…`` (one label for any count, since a
+        finding may be deferred to an issue that already existed),
+        follows when *follow_ups* is not empty.
     """
     also = ", ".join(f"#{ref}" for ref in also_closed)
     if closing_refs:
@@ -596,8 +598,7 @@ def render_issue_management(
             f"{why}; only the PR body's keywords close issues"
         )
     if follow_ups:
-        label = "Follow-up filed" if len(follow_ups) == 1 else "Follow-ups filed"
-        text += f"\n{label}: " + ", ".join(f"#{ref}" for ref in follow_ups)
+        text += f"\n{FOLLOW_UPS_LABEL} " + ", ".join(f"#{ref}" for ref in follow_ups)
     return text
 
 

@@ -5,13 +5,22 @@ a backlog asks the same questions of a set, plus two only a set has:
 which issues touch the same files and so belong in one track, and in
 which order open PRs should merge so one does not invalidate another.
 
-``tracks [issue ...]``
+``tracks [issue ...] [--focus ISSUE ... | --from-pr N]``
     For the open issues (all, or the ones named): each issue's files by
     the shared rule (:func:`~forge.plan_staleness.plan_paths`), every pair
     of issues naming a common file, every open PR changing a file an
     issue names, the ``track:<name>`` labels already applied, and each
     file more than one issue names with its issues — the evidence a
-    track proposal is judged from.
+    track proposal is judged from. ``--focus`` reports only the lines
+    involving the named issues; ``--from-pr`` takes them from the
+    ``Follow-ups:`` line of PR *N*'s newest wrap-up by a write-access
+    author. Either prints ``placement: none`` when no line involves them.
+``track-members <name>``
+    Who belongs to track *name*: an open issue whose authenticated plan
+    carries the line ``track: <name>`` and whose author has write access.
+    The ``track:<name>`` label only nominates candidates; every labelled
+    issue failing either test is reported excluded with its reason, and
+    a plan naming the track on an unlabelled issue is reported too.
 ``current <issue> [issue ...]``
     The drift check of each issue since it was *filed*: merges on the base
     branch that touched its files, so a fix that already landed shows up
@@ -35,20 +44,30 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field, replace
+from functools import partial
 from itertools import combinations
 from typing import TYPE_CHECKING, Final
 
 from forge.git_utils import fetch_quietly, merge_tree_clean
 from forge.plan_staleness import (
+    PLAN_MARKER,
     PLAN_READY,
     Report,
     WriterCheck,
+    authenticated_comment,
     authenticated_plan,
     drift_from,
     issue_and_plan,
     parse_timestamp,
     plan_paths,
     record_lookup,
+)
+from forge.pr_delta import (
+    FOLLOW_UPS_LABEL,
+    ISSUE_REF_RE,
+    REGEN_COMMANDS,
+    fenced_line_indexes,
+    strip_fences,
 )
 
 
@@ -63,13 +82,27 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 TRACK_PREFIX: Final[str] = "track:"
+# The one shape a track name takes — in a ``track:<name>`` label and in
+# a plan's ``track: <name>`` line. Anything else is never echoed.
+TRACK_NAME_PATTERN: Final[str] = r"[a-z0-9][a-z0-9._-]{0,49}"
+# A wrap-up comment opens with its reporter-contract header.
+WRAPUP_HEADER: Final[str] = "verified-at:"
 # Pairwise probes grow with the square of the PR count: 20 PRs is 190
 # pair probes plus 20 against the base.
 MERGE_ORDER_CAP: Final[int] = 20
 
-# A track label echoed back must look like one; anything else is counted.
-_TRACK_LABEL_RE: Final[re.Pattern[str]] = re.compile(r"track:[A-Za-z0-9._-]{1,50}")
+_TRACK_NAME_RE: Final[re.Pattern[str]] = re.compile(TRACK_NAME_PATTERN)
+_TRACK_LABEL_RE: Final[re.Pattern[str]] = re.compile(
+    re.escape(TRACK_PREFIX) + TRACK_NAME_PATTERN
+)
+# A plan's track line, read before the name is validated.
+_PLAN_TRACK_LINE_RE: Final[re.Pattern[str]] = re.compile(r"track: (?P<name>\S+)")
 _SHA_RE: Final[re.Pattern[str]] = re.compile(r"[0-9a-f]{40}")
+# The lines that place an issue next to another issue or an open PR.
+_PLACEMENT_PREFIXES: Final[tuple[str, ...]] = ("overlap:", "pr-overlap:", "shared:")
+# Generated artifacts are a pure function of the merged tree (regenerated,
+# never hand-merged), so two PRs both touching one do not entangle.
+_GENERATED_PATHS: Final[frozenset[str]] = frozenset(REGEN_COMMANDS)
 
 
 @dataclass(frozen=True)
@@ -251,22 +284,70 @@ def _report_shared_files(
         report.note(line)
 
 
+def _open_focus(
+    issues: Sequence[Issue], focus: Sequence[int], report: Report
+) -> list[int]:
+    """Return the focus issues still open, noting each one that is not.
+
+    Args:
+        issues: Every open issue.
+        focus: Issue numbers to keep.
+        report: Report that receives a note per issue skipped.
+
+    Returns:
+        The open focus issues, in *focus* order.
+    """
+    listed = {issue.number for issue in issues}
+    for number in focus:
+        if number not in listed:
+            report.note(f"note: #{number} is not an open issue; skipped")
+    return [number for number in focus if number in listed]
+
+
+def _report_placement_none(
+    files: Sequence[IssueFiles], report: Report, focus: frozenset[int]
+) -> None:
+    """Say ``placement: none`` when nothing places the focus issues.
+
+    Only when the answer is established: no unknown in the run, every
+    focus issue reduced, and each naming at least one file — an issue
+    naming none was already handed to judgment by its own note.
+
+    Args:
+        files: The reduced issues.
+        report: Report to write into, placement lines already recorded.
+        focus: The focus issues.
+    """
+    if report.unknowns:
+        return
+    reduced = {issue.number: issue for issue in files if issue.number in focus}
+    if set(reduced) != focus or not all(issue.paths for issue in reduced.values()):
+        return
+    if not any(line.startswith(_PLACEMENT_PREFIXES) for line in report.lines):
+        report.note("placement: none")
+
+
 def check_tracks(
     source: GitHubSource,
     numbers: Sequence[int] = (),
     *,
     focus: Sequence[int] = (),
+    skip_closed_focus: bool = False,
 ) -> Report:
     """Report which open issues share files with each other and with open PRs.
 
     *focus* answers the per-PR placement question — where do these newly
     filed issues fit? — by comparing them against every considered issue
-    while reporting only the lines that involve them.
+    while reporting only the lines that involve them, and ends in
+    ``placement: none`` when no line does.
 
     Args:
         source: GitHub reads.
         numbers: Issues to consider; empty for every open issue.
         focus: Issues whose overlaps alone are reported; empty for all.
+        skip_closed_focus: Skip a focus issue that is not open with a
+            note (a follow-up closed since it was filed) instead of
+            refusing it.
 
     Returns:
         The report; a finding per overlapping pair and per PR collision.
@@ -277,10 +358,19 @@ def check_tracks(
     if issues is None or prs is None:
         report.unknown("unknown: could not list open issues and PRs from GitHub")
         return report
+    if skip_closed_focus and focus:
+        focus = _open_focus(issues, focus, report)
+        if not focus:
+            report.note("placement: none")
+            return report
     selected = _select(issues, numbers, report)
     focused = frozenset(issue.number for issue in _select(issues, focus, report))
     if focus and not focused:
         return report
+    if focused:
+        # A focus issue is compared against the others, so it is
+        # considered even when *numbers* leaves it out.
+        selected += [i for i in issues if i.number in focused and i not in selected]
     is_writer = WriterCheck(source)
     files = [
         reduced
@@ -291,6 +381,255 @@ def check_tracks(
     _report_pairs(files, report, focused)
     _report_prs(files, prs, report, focused)
     _report_shared_files(files, report, focused)
+    if focused:
+        _report_placement_none(files, report, focused)
+    return report
+
+
+def _follow_ups(text: str) -> list[int]:
+    """Return the issues the wrap-up's ``Follow-ups:`` line names.
+
+    Only the Issue Management section counts, outside fences: that is
+    where ``forge-pr-wrapup`` writes the line, and nothing quoted
+    elsewhere in the wrap-up can add an issue to placement.
+
+    Args:
+        text: The wrap-up comment body.
+
+    Returns:
+        Issue numbers in first-appearance order, without duplicates.
+    """
+    lines = text.split("\n")
+    fenced = fenced_line_indexes(lines)
+    refs: list[int] = []
+    inside = False
+    for i, line in enumerate(lines):
+        if i in fenced:
+            continue
+        if line.startswith("## "):
+            inside = line.strip() == "## Issue Management"
+            continue
+        if inside and line.startswith(FOLLOW_UPS_LABEL):
+            for number in ISSUE_REF_RE.findall(line[len(FOLLOW_UPS_LABEL) :]):
+                if int(number) not in refs:
+                    refs.append(int(number))
+    return refs
+
+
+def wrapup_follow_ups(
+    source: GitHubSource, pr_number: int, report: Report
+) -> list[int] | None:
+    """Return the follow-ups PR *pr_number*'s newest trusted wrap-up names.
+
+    The wrap-up is the newest comment opening with :data:`WRAPUP_HEADER`
+    whose author has write access — the same trust rule a plan comment
+    meets, since what it names is handed to placement.
+
+    Args:
+        source: GitHub reads.
+        pr_number: The PR whose wrap-up to read.
+        report: Report that receives the notes and any unknown line.
+
+    Returns:
+        The follow-up issue numbers (possibly none), or None when the
+        wrap-up could not be read or authenticated.
+    """
+    comments = source.comments(pr_number)
+    if comments is None:
+        report.unknown(f"unknown: could not read PR #{pr_number}'s comments")
+        return None
+    lookup = authenticated_comment(comments, WriterCheck(source), WRAPUP_HEADER)
+    for comment_id in lookup.ignored:
+        report.note(
+            f"note: ignored wrap-up comment {comment_id} on PR #{pr_number}; "
+            "its author lacks write access"
+        )
+    if lookup.unresolved is not None:
+        report.unknown(
+            f"unknown: could not check the access of wrap-up comment "
+            f"{lookup.unresolved}'s author on PR #{pr_number}"
+        )
+        return None
+    if lookup.plan is None:
+        report.unknown(
+            f"unknown: PR #{pr_number} has no wrap-up by a write-access author"
+        )
+        return None
+    refs = _follow_ups(lookup.plan.body)
+    named = " ".join(f"#{ref}" for ref in refs) or "none"
+    report.note(f"wrap-up: comment {lookup.plan.id} on PR #{pr_number}")
+    report.note(f"follow-ups: {named}")
+    return refs
+
+
+def check_tracks_from_pr(
+    source: GitHubSource, pr_number: int, numbers: Sequence[int] = ()
+) -> Report:
+    """Run :func:`check_tracks` focused on the follow-ups PR *pr_number* names.
+
+    Args:
+        source: GitHub reads.
+        pr_number: The PR whose wrap-up names the follow-ups.
+        numbers: Issues to consider; empty for every open issue.
+
+    Returns:
+        The report: ``placement: none`` when the wrap-up names no
+        follow-up, unknown when it cannot be read.
+    """
+    report = Report()
+    refs = wrapup_follow_ups(source, pr_number, report)
+    if refs is None:
+        return report
+    if not refs:
+        report.note("placement: none")
+        return report
+    report.absorb(check_tracks(source, numbers, focus=refs, skip_closed_focus=True))
+    return report
+
+
+# --------------------------------------------------------------------------
+# track-members
+# --------------------------------------------------------------------------
+
+
+def plan_track_names(plan_body: str) -> set[str]:
+    """Return every name a plan's ``track: <name>`` lines give, outside fences.
+
+    Names are returned raw so a malformed one still counts as "another
+    track" rather than none; callers never echo them.
+
+    Args:
+        plan_body: The plan-validated comment body.
+
+    Returns:
+        The names, possibly empty.
+    """
+    return {
+        match.group("name")
+        for line in strip_fences(plan_body.splitlines())
+        if (match := _PLAN_TRACK_LINE_RE.fullmatch(line.strip())) is not None
+    }
+
+
+def _plan_reason(names: set[str], track: str) -> str | None:
+    """Return why a plan naming *names* does not place its issue in *track*.
+
+    Args:
+        names: The track names the plan gives.
+        track: The track asked about.
+
+    Returns:
+        The reason, or None when the plan names exactly *track*.
+    """
+    if names == {track}:
+        return None
+    if not names:
+        return "its plan names no track"
+    if track in names:
+        return "its plan names more than one track"
+    return "its plan names another track"
+
+
+def _exclusions(
+    issue: Issue, track: str, is_writer: WriterCheck, report: Report
+) -> list[str] | None:
+    """Return every reason *issue* is not a member of *track*.
+
+    Args:
+        issue: Candidate issue (comments included).
+        track: Validated track name.
+        is_writer: Write-access check, shared across candidates.
+        report: Report that receives notes and unknown lines.
+
+    Returns:
+        The reasons (empty for a member), or None when membership is unknown.
+    """
+    lookup = authenticated_plan(issue.comments, is_writer)
+    if not record_lookup(lookup, issue.number, report):
+        return None
+    reasons: list[str] = []
+    if lookup.plan is None:
+        reasons.append("no authenticated plan")
+    elif (why := _plan_reason(plan_track_names(lookup.plan.body), track)) is not None:
+        reasons.append(why)
+    author = is_writer(issue.author)
+    if author is None:
+        report.unknown(
+            f"unknown: could not check the access of #{issue.number}'s author"
+        )
+        return None
+    if not author:
+        reasons.append(
+            "its author lacks write access (eligibility: endorsement not checked)"
+        )
+    return reasons
+
+
+def _names_track_in_text(issue: Issue, track: str) -> bool:
+    """Return whether any plan-marker comment on *issue* has *track*'s line.
+
+    A cheap text filter before authentication, so an unlabelled issue
+    costs no permission lookup unless some plan comment names the track.
+
+    Args:
+        issue: The issue.
+        track: Validated track name.
+
+    Returns:
+        Whether a candidate comment carries the line.
+    """
+    return any(
+        comment.body.lstrip().startswith(PLAN_MARKER)
+        and track in plan_track_names(comment.body)
+        for comment in issue.comments
+    )
+
+
+def check_track_members(source: GitHubSource, track: str) -> Report:
+    """Report which open issues belong to track *track*, and why others do not.
+
+    Args:
+        source: GitHub reads.
+        track: Track name, without the ``track:`` prefix.
+
+    Returns:
+        The report: a ``member:`` note per member, a finding per labelled
+        issue excluded and per member missing the label, unknown when a
+        read or access check fails or the name is malformed.
+    """
+    report = Report()
+    if _TRACK_NAME_RE.fullmatch(track) is None:
+        report.unknown(f"refused: a track name must match {TRACK_NAME_PATTERN}")
+        return report
+    issues = source.open_issues()
+    if issues is None:
+        report.unknown("unknown: could not list open issues from GitHub")
+        return report
+    label = f"{TRACK_PREFIX}{track}"
+    is_writer = WriterCheck(source)
+    members = excluded = 0
+    for issue in issues:
+        labelled = label in issue.labels
+        if not labelled and not _names_track_in_text(issue, track):
+            continue
+        reasons = _exclusions(issue, track, is_writer, report)
+        if reasons is None:
+            continue
+        if reasons and labelled:
+            excluded += 1
+            report.finding(f"excluded: #{issue.number} — {'; '.join(reasons)}")
+        elif not reasons:
+            members += 1
+            report.note(f"member: #{issue.number}")
+            if not labelled:
+                report.finding(
+                    f"unlabelled: #{issue.number} — its plan names the track "
+                    f"but it lacks the {label} label"
+                )
+    if not members and not excluded and not report.unknowns:
+        report.unknown(f"refused: no open issue carries {label} or names it in a plan")
+        return report
+    report.note(f"track-members: {track} — {members} member(s), {excluded} excluded")
     return report
 
 
@@ -459,6 +798,9 @@ def _probe_pairs(
 
     A pair that merges cleanly but changes common files still entangles:
     whichever merges second was verified against a base without the other.
+    Generated artifacts (:data:`~forge.pr_delta.REGEN_COMMANDS`) do not
+    count towards that: their merged content is regenerated, never
+    reconciled. A conflict still counts wherever it arises.
 
     Args:
         found: One entry per PR.
@@ -468,7 +810,7 @@ def _probe_pairs(
     for left, right in combinations(found, 2):
         a, b = left.pr, right.pr
         clean = probe(a.head_sha, b.head_sha)
-        shared = len(set(a.files) & set(b.files))
+        shared = len((set(a.files) & set(b.files)) - _GENERATED_PATHS)
         if clean is None:
             report.unknown(
                 f"unknown: git could not probe PR #{a.number} with PR #{b.number}"
@@ -577,20 +919,7 @@ def git_merge_probe(root: Path) -> Callable[[str, str], bool | None]:
     Returns:
         :func:`~forge.git_utils.merge_tree_clean` bound to *root*.
     """
-
-    def probe(left: str, right: str) -> bool | None:
-        """Return whether *left* and *right* merge cleanly (None: unknown).
-
-        Args:
-            left: One side.
-            right: The other side.
-
-        Returns:
-            The probe verdict.
-        """
-        return merge_tree_clean(root, left, right)
-
-    return probe
+    return partial(merge_tree_clean, root)
 
 
 def fetch_pr_heads(root: Path, prs: Sequence[OpenPR], report: Report) -> list[OpenPR]:

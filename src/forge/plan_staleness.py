@@ -456,27 +456,29 @@ def named_paths(text: str) -> list[str]:
     return paths
 
 
-def authenticated_plan(
-    comments: Iterable[Comment], is_writer: Callable[[str], bool | None]
+def authenticated_comment(
+    comments: Iterable[Comment],
+    is_writer: Callable[[str], bool | None],
+    marker: str,
 ) -> PlanLookup:
-    """Find the newest plan comment whose author has write access.
+    """Find the newest comment opening with *marker* whose author has write access.
 
-    A comment counts only when its body opens with :data:`PLAN_MARKER`;
-    anyone can type the marker, so a candidate from a confirmed non-writer
+    Anyone can type a marker, so a candidate from a confirmed non-writer
     is skipped — never trusted, never a veto. A candidate whose author's
-    access cannot be looked up stops the search: it may be the real plan,
-    so the answer is unknown rather than an older or absent plan.
+    access cannot be looked up stops the search: it may be the real one,
+    so the answer is unknown rather than an older or absent comment.
 
     Args:
-        comments: The issue's comments.
+        comments: The issue's or PR's comments.
         is_writer: Tri-state permission predicate for a login (``None``
             when the lookup failed).
+        marker: Text the comment body must open with.
 
     Returns:
-        The lookup outcome.
+        The lookup outcome; its ``plan`` field holds the comment found.
     """
     candidates = sorted(
-        (c for c in comments if c.body.lstrip().startswith(PLAN_MARKER)),
+        (c for c in comments if c.body.lstrip().startswith(marker)),
         key=lambda c: c.created_at,
         reverse=True,
     )
@@ -489,6 +491,22 @@ def authenticated_plan(
             return PlanLookup(comment, ignored=tuple(ignored))
         ignored.append(comment.id)
     return PlanLookup(None, ignored=tuple(ignored))
+
+
+def authenticated_plan(
+    comments: Iterable[Comment], is_writer: Callable[[str], bool | None]
+) -> PlanLookup:
+    """Find the newest :data:`PLAN_MARKER` comment whose author has write access.
+
+    Args:
+        comments: The issue's comments.
+        is_writer: Tri-state permission predicate for a login (``None``
+            when the lookup failed).
+
+    Returns:
+        The lookup outcome (see :func:`authenticated_comment`).
+    """
+    return authenticated_comment(comments, is_writer, PLAN_MARKER)
 
 
 def plan_paths(plan: Comment | None, body: str) -> tuple[list[str], bool]:

@@ -1853,6 +1853,8 @@ def test_main_compose_code_quality_overrides_unstamped_environment_step_log(
     [
         ("deferred to #12", ["12"]),
         ("filed as #12", ["12"]),
+        ("Deferred to #5", ["5"]),
+        ("FILED AS #6", ["6"]),
         ("deferred to a later PR", []),
         ("deferred to PR #12", []),
         ("filed as issue #12", []),
@@ -1895,18 +1897,22 @@ def test_follow_up_refs_without_reporter_sections_is_empty() -> None:
 
 
 def test_main_post_carries_the_findings_follow_ups_into_issue_management(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, clean_wrapup_body: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    clean_wrapup_body: str,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """SCENARIO: an authored finding says it was filed as #9.
 
     MOCK SETUP: as the clean-run post test (fake `gh_pr_view`, fetch,
     behind_ahead, `post_wrapup`, `refresh_state`).
     EXPECTED BEHAVIOR: the posted wrap-up's Issue Management carries the
-    `Follow-up filed: #9` line next to the closing keyword.
+    `Follow-ups: #9` line next to the closing keyword, and the CLI prints
+    `follow-ups: #9` once the post succeeded.
     """
     body = clean_wrapup_body.replace(
         "## Design Check\nPASS — no issues.",
-        "## Design Check\n- naming drift — filed as #9",
+        "## Design Check\n- naming drift — Filed as #9",
     )
     path = tmp_path / "wrapup.md"
     path.write_text(body, encoding="utf-8")
@@ -1923,4 +1929,34 @@ def test_main_post_carries_the_findings_follow_ups_into_issue_management(
     rc = mod.main(["post", "--pr", "61", "--body-file", str(path)])
 
     assert rc == 0
-    assert "Closes #42\nFollow-up filed: #9" in post_calls[0][1]
+    assert "Closes #42\nFollow-ups: #9" in post_calls[0][1]
+    assert "follow-ups: #9" in capsys.readouterr().out.splitlines()
+
+
+def test_main_post_without_follow_ups_prints_no_follow_ups_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    clean_wrapup_body: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """SCENARIO: a clean wrap-up whose findings name no issue is posted.
+
+    MOCK SETUP: as the follow-ups post test above.
+    EXPECTED BEHAVIOR: neither a `Follow-ups:` line in the post nor a
+    `follow-ups:` line on stdout — no line claims a checked "none".
+    """
+    path = tmp_path / "wrapup.md"
+    path.write_text(clean_wrapup_body, encoding="utf-8")
+    monkeypatch.setattr(mod, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(mod, "gh_pr_view", lambda *_a, **_kw: _pr_view())
+    monkeypatch.setattr(mod, "fetch_quietly", lambda *_a, **_kw: True)
+    monkeypatch.setattr(mod, "behind_ahead", lambda *_a, **_kw: (0, 1))
+    post_calls: list[tuple[int, str]] = []
+    monkeypatch.setattr(
+        mod, "post_wrapup", lambda pr, text: post_calls.append((pr, text)) or 0
+    )
+    monkeypatch.setattr(mod, "refresh_state", lambda *_a, **_kw: 0)
+
+    assert mod.main(["post", "--pr", "61", "--body-file", str(path)]) == 0
+    assert "Follow-ups:" not in post_calls[0][1]
+    assert "follow-ups:" not in capsys.readouterr().out

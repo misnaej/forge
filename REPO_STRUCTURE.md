@@ -205,6 +205,7 @@ Pytest suite mirroring the `src/forge/` layout:
 
 1. **Package Tests**
    - conftest.py: shared pytest fixtures
+   - _plan_fakes.py: `forge-plan-check` fakes and builders (a fake GitHub, history and merge-probe stand-ins), imported explicitly by the plan_staleness, plan_tracks and plan_check_cli suites
    - test_config.py: tests for config (model/tool-root resolution)
    - test_continuation.py: tests for continuation (the `forge-continuation` CLI, PR-field carry-forward, `check`)
    - test_continuation_state.py: tests for continuation_state (status-panel format, byte-preserving rewrite, migration, guards)
@@ -313,6 +314,7 @@ repos by `install-forge-claude-md` (guarded there by a README notice + the
 - configuration.md: complete `[tool.forge.*]` config reference + setup guide (written counterpart to `forge-config --list`)
 - ci-recipe.md: consumer CI recipe (channel pin + per-PR workflow + scheduled upgrade PR)
 - smart-test.md: usage guide for `forge-smart-test` — depth model, consumer guarantees, opt-in correctness extensions
+- backlog-tracks.md: backlog tracks — `track:<name>` naming, the `track:` plan line, membership via `forge-plan-check track-members`, placement limits, hub-file evidence, first run vs re-align
 
 ## Documentation (`docs/`)
 

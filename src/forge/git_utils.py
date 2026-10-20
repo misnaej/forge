@@ -688,6 +688,10 @@ def _run_git(*args: str, cwd: Path | None = None) -> str:
 # answer, or a stalled remote, must end instead of hanging the caller
 # (FOUNDATION §15).
 PUSH_TIMEOUT_S = 120
+# A local git command that may still run long — a real three-way merge
+# over a large tree — is bounded too, so a pathological object store
+# ends as "unknown" instead of hanging the caller.
+LOCAL_GIT_TIMEOUT_S = 60
 _SSH_BATCH_MODE = "ssh -o BatchMode=yes"
 
 
@@ -1507,7 +1511,7 @@ def merge_tree_clean(repo_root: Path, left: str, right: str) -> bool | None:
             right,
             cwd=repo_root,
             log_errors=False,
-            timeout=PUSH_TIMEOUT_S,
+            timeout=LOCAL_GIT_TIMEOUT_S,
         )
     except subprocess.CalledProcessError as exc:
         return False if exc.returncode == 1 else None

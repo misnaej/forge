@@ -34,7 +34,9 @@ from forge.plan_staleness_gh import GhSource
 from forge.plan_tracks import (
     check_current,
     check_merge_order,
+    check_track_members,
     check_tracks,
+    check_tracks_from_pr,
     fetch_pr_heads,
     git_merge_probe,
 )
@@ -104,7 +106,8 @@ def _build_parser() -> argparse.ArgumentParser:
     tracks.add_argument(
         "issues", type=int, nargs="*", help="Issues to consider (default: all open)."
     )
-    tracks.add_argument(
+    focus = tracks.add_mutually_exclusive_group()
+    focus.add_argument(
         "--focus",
         type=int,
         nargs="+",
@@ -112,6 +115,17 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="ISSUE",
         help="Report only the overlaps involving these issues (e.g. newly filed).",
     )
+    focus.add_argument(
+        "--from-pr",
+        type=int,
+        metavar="N",
+        help="Focus on the Follow-ups: line of PR N's newest write-access wrap-up.",
+    )
+    members = sub.add_parser(
+        "track-members",
+        help="Open issues whose authenticated plan places them in a track.",
+    )
+    members.add_argument("name", help="Track name, without the track: prefix.")
     current = sub.add_parser(
         "current", help="Merges touching each issue's files since it was filed."
     )
@@ -262,7 +276,12 @@ def main(argv: list[str] | None = None, source: GitHubSource | None = None) -> i
         "prerequisites": lambda: check_prerequisites(gh, args.issue),
         "drift": lambda: _run_drift(args, gh),
         "overlap": lambda: check_overlap(gh, args.pr),
-        "tracks": lambda: check_tracks(gh, args.issues, focus=args.focus),
+        "tracks": lambda: (
+            check_tracks(gh, args.issues, focus=args.focus)
+            if args.from_pr is None
+            else check_tracks_from_pr(gh, args.from_pr, args.issues)
+        ),
+        "track-members": lambda: check_track_members(gh, args.name),
         "current": lambda: _run_current(args, gh),
         "merge-order": lambda: _run_merge_order(args, gh),
     }

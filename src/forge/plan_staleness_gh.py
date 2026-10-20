@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, TypeVar
 
 from forge.gh_comments import GH_LIST_TIMEOUT, parse_paged_json
 from forge.git_utils import gh_api
@@ -30,6 +30,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 WRITE_PERMISSIONS: Final[frozenset[str]] = frozenset({"admin", "maintain", "write"})
+
+_Record = TypeVar("_Record")
 
 
 @dataclass(frozen=True)
@@ -44,7 +46,12 @@ class Comment:
 
 @dataclass(frozen=True)
 class Issue:
-    """One issue; the fields after ``created_at`` come only from the open listing."""
+    """One issue; comments, title and update time come only from the open listing.
+
+    ``author`` is the login that opened the issue — what the §14
+    eligibility rule asks about — and is empty when GitHub reports none
+    (a deleted account).
+    """
 
     number: int
     body: str
@@ -53,6 +60,7 @@ class Issue:
     comments: tuple[Comment, ...] = ()
     title: str = ""
     updated_at: str = ""
+    author: str = ""
 
 
 @dataclass(frozen=True)
@@ -108,7 +116,7 @@ _STATUS_QUERY: Final[str] = (
 _PR_QUERY: Final[str] = (
     "query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,name:$name)"
     "{pullRequest(number:$n){merged mergeCommit{oid}"
-    " closingIssuesReferences(first:50){nodes{number}}}}}"
+    " closingIssuesReferences(first:50){totalCount nodes{number}}}}}"
 )
 _OPEN_ISSUES_QUERY: Final[str] = (
     "query($owner:String!,$name:String!,$endCursor:String)"
@@ -116,12 +124,13 @@ _OPEN_ISSUES_QUERY: Final[str] = (
     "after:$endCursor){pageInfo{hasNextPage endCursor} nodes{number title body"
     " createdAt"
     " updatedAt"
+    " author{login}"
     " labels(first:50){nodes{name}} comments(last:100){totalCount"
     " nodes{databaseId body createdAt author{login}}}}}}}"
 )
 _OPEN_ISSUES_JQ: Final[str] = (
     "[.data.repository.issues.nodes[] | {number, title, body, created_at: .createdAt,"
-    " updated_at: .updatedAt,"
+    ' updated_at: .updatedAt, author: (.author.login // ""),'
     " labels: [.labels.nodes[].name], total: .comments.totalCount,"
     " comments: [.comments.nodes[] | {id: .databaseId, body, created_at: .createdAt,"
     ' author: (.author.login // "")}]}]'
@@ -134,13 +143,14 @@ _OPEN_PRS_QUERY: Final[str] = (
     "query($owner:String!,$name:String!,$endCursor:String)"
     "{repository(owner:$owner,name:$name){pullRequests(states:OPEN,first:50,"
     "after:$endCursor){pageInfo{hasNextPage endCursor} nodes{number headRefOid"
-    " baseRefName isDraft closingIssuesReferences(first:50){nodes{number}}"
+    " baseRefName isDraft closingIssuesReferences(first:50){totalCount nodes{number}}"
     " files(first:100){totalCount nodes{path}}}}}}"
 )
 _OPEN_PRS_JQ: Final[str] = (
     "[.data.repository.pullRequests.nodes[] | {number, head_sha: .headRefOid,"
     " base_ref: .baseRefName, draft: .isDraft,"
     " closes: [.closingIssuesReferences.nodes[].number],"
+    " closes_total: .closingIssuesReferences.totalCount,"
     " total: .files.totalCount, files: [.files.nodes[].path]}]"
 )
 _COMMENTS_JQ: Final[str] = (
@@ -285,7 +295,8 @@ class GhSource:
             self._run(
                 f"repos/{{owner}}/{{repo}}/issues/{number}",
                 "--jq",
-                '{number, body: (.body // ""), labels: [.labels[].name], created_at}',
+                '{number, body: (.body // ""), labels: [.labels[].name], created_at,'
+                ' author: (.user.login // "")}',
             )
         )
         if data is None:
@@ -296,6 +307,7 @@ class GhSource:
                 body=str(data["body"]),
                 labels=tuple(str(n) for n in data["labels"]),
                 created_at=str(data["created_at"]),
+                author=str(data.get("author") or ""),
             )
         except (KeyError, TypeError, ValueError):
             return None
@@ -388,6 +400,11 @@ class GhSource:
         if files is None or data is None:
             return None
         try:
+            closing = data["closingIssuesReferences"]
+            # A PR closing more issues than the page holds would hide the
+            # rest from the overlap check's skip list: unknown, not partial.
+            if int(closing["totalCount"]) > len(closing["nodes"]):
+                return None
             return MergedPR(
                 number=number,
                 merged=bool(data["merged"]),
@@ -419,12 +436,20 @@ class GhSource:
             )
         )
 
-    def open_pull_requests(self) -> list[OpenPR] | None:
-        """Return every open PR with its head, base, changed files and closed issues.
+    def _listing(
+        self, query: str, jq: str, build: Callable[[dict[str, Any]], _Record]
+    ) -> list[_Record] | None:
+        """Run one paginated GraphQL listing and build a record per entry.
+
+        Args:
+            query: GraphQL query text taking an ``$endCursor`` variable.
+            jq: ``jq`` expression projecting each page to a list of entries.
+            build: Builds one record, raising :class:`_IncompleteListingError`
+                when its entry cannot be read completely.
 
         Returns:
-            Every open PR, or None when the listing, any page of it, or any
-            truncated PR's file refetch could not be read.
+            Every record, or None when the listing, any page of it, or any
+            entry could not be read completely.
         """
         items = _pages(
             self._run(
@@ -432,18 +457,28 @@ class GhSource:
                 "--paginate",
                 *_REPO_FIELDS,
                 "-f",
-                f"query={_OPEN_PRS_QUERY}",
+                f"query={query}",
                 "--jq",
-                _OPEN_PRS_JQ,
+                jq,
                 timeout=GH_LIST_TIMEOUT * 2,
             )
         )
         if items is None:
             return None
         try:
-            return [self._open_pr(item) for item in items]
+            return [build(item) for item in items]
         except _IncompleteListingError:
             return None
+
+    def open_pull_requests(self) -> list[OpenPR] | None:
+        """Return every open PR with its head, base, changed files and closed issues.
+
+        Returns:
+            Every open PR, or None when the listing, any page of it, any
+            truncated PR's file refetch, or a PR closing more issues than
+            the page holds could not be read completely.
+        """
+        return self._listing(_OPEN_PRS_QUERY, _OPEN_PRS_JQ, self._open_pr)
 
     def _open_pr(self, item: dict[str, Any]) -> OpenPR:
         """Build one listed PR, fetching every file when the page truncated them.
@@ -455,11 +490,15 @@ class GhSource:
             The PR record.
 
         Raises:
-            _IncompleteListingError: When the entry is malformed or its
-                truncated file list could not be refetched.
+            _IncompleteListingError: When the entry is malformed, its
+                truncated file list could not be refetched, or it closes
+                more issues than the page holds (a delivery the ``tracks``
+                check would then misread as a collision).
         """
         try:
             number = int(item["number"])
+            if int(item["closes_total"]) > len(item["closes"]):
+                raise _IncompleteListingError
             files = [str(f) for f in item["files"]]
             if int(item["total"]) > len(files):
                 fetched = self._pr_files(number)
@@ -485,24 +524,7 @@ class GhSource:
             listing, any page of it, or any truncated issue's comment
             refetch could not be read.
         """
-        items = _pages(
-            self._run(
-                "graphql",
-                "--paginate",
-                *_REPO_FIELDS,
-                "-f",
-                f"query={_OPEN_ISSUES_QUERY}",
-                "--jq",
-                _OPEN_ISSUES_JQ,
-                timeout=GH_LIST_TIMEOUT * 2,
-            )
-        )
-        if items is None:
-            return None
-        try:
-            return [self._open_issue(item) for item in items]
-        except _IncompleteListingError:
-            return None
+        return self._listing(_OPEN_ISSUES_QUERY, _OPEN_ISSUES_JQ, self._open_issue)
 
     def open_issue_count(self) -> int | None:
         """Return how many issues GitHub counts as open.
@@ -561,6 +583,7 @@ class GhSource:
                 comments=tuple(comments),
                 title=str(item.get("title") or ""),
                 updated_at=str(item.get("updated_at") or ""),
+                author=str(item.get("author") or ""),
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise _IncompleteListingError from exc

@@ -180,6 +180,19 @@ def build_widget():
     assert not any(i.function == "build_widget" for i in issues)
 
 
+def test_underscore_helper_module_is_neither_a_test_file_nor_flagged(
+    tmp_path: Path,
+) -> None:
+    """Behavior: `_fakes.py` is a helper module, like conftest (Rules 2 and 4)."""
+    path = tmp_path / "_fakes.py"
+    path.write_text("def build_widget():\n    return object()\n")
+
+    issues = verify_test_naming.verify_file(path)
+
+    assert not any(i.function == "build_widget" for i in issues)
+    assert verify_test_naming._check_file_name_alignment(path) == []
+
+
 # ---------------------------------------------------------------------------
 # main() — CLI entrypoint (verify-forge-test-naming)
 # ---------------------------------------------------------------------------

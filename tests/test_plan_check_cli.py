@@ -18,7 +18,8 @@ import pytest
 
 from forge import plan_check_cli as cli
 from forge import plan_staleness as ps
-from tests.conftest import (
+from forge.plan_staleness_gh import Comment
+from tests._plan_fakes import (
     PLAN_PERMISSIONS,
     FakeGitHub,
     LogRecorder,
@@ -124,11 +125,7 @@ def test_set_subcommands_exit_codes(
 def test_tracks_focus_flag_filters_and_unknown_focus_exits_2(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Behavior: `tracks --focus` limits the report; an unopened focus issue exits 2.
-
-    Args:
-        capsys: Pytest capture fixture.
-    """
+    """Behavior: `tracks --focus` limits the report; an unopened focus issue exits 2."""
     issues = [
         make_open_issue(1, "a.py"),
         make_open_issue(2, "a.py", "b.py"),
@@ -143,14 +140,57 @@ def test_tracks_focus_flag_filters_and_unknown_focus_exits_2(
     assert cli.main(["tracks", "--focus", "99"], source=gh) == ps.EXIT_UNKNOWN
 
 
+def test_tracks_from_pr_reads_the_wrap_up_and_excludes_focus(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Behavior: `--from-pr` focuses on a wrap-up's follow-ups; not with `--focus`."""
+    issues = [make_open_issue(1, "a.py"), make_open_issue(2, "a.py")]
+    wrapup = Comment(
+        7,
+        "verified-at: 7ab3e4e\n\n## Issue Management\n\nFollow-ups: #2\n",
+        "2026-10-01T00:00:00Z",
+        "maintainer",
+    )
+    gh = FakeGitHub(
+        open_listing=issues,
+        open_prs=[],
+        permissions=PLAN_PERMISSIONS,
+        comment_lists={60: [wrapup]},
+    )
+
+    assert cli.main(["tracks", "--from-pr", "60"], source=gh) == ps.EXIT_FINDING
+    assert "overlap: #1 and #2" in capsys.readouterr().out
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(["tracks", "--from-pr", "60", "--focus", "1"], source=gh)
+    assert exit_info.value.code == 2
+
+
+@pytest.mark.parametrize(
+    ("plan_extra", "exit_code"),
+    [("track: alpha", ps.EXIT_CLEAN), ("", ps.EXIT_FINDING)],
+    ids=["member", "excluded"],
+)
+def test_track_members_exit_codes(
+    plan_extra: str, exit_code: int, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Behavior: `track-members` exits 0 when every candidate is a member, else 1.
+
+    Args:
+        plan_extra: Text appended to the labelled issue's plan.
+        exit_code: Expected exit code.
+        capsys: Pytest capture fixture.
+    """
+    issue = make_open_issue(1, "a.py", labels=("track:alpha",), plan_extra=plan_extra)
+    gh = FakeGitHub(open_listing=[issue], permissions=PLAN_PERMISSIONS)
+
+    assert cli.main(["track-members", "alpha"], source=gh) == exit_code
+    assert "track-members: alpha" in capsys.readouterr().out
+
+
 def test_bad_since_exits_2_before_any_check(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Behavior: an unparseable `--since` is a usage error (2), not a silent default.
-
-    Args:
-        capsys: Pytest capture fixture.
-    """
+    """Behavior: an unparseable `--since` is a usage error (2), not a silent default."""
     with pytest.raises(SystemExit) as exit_info:
         cli.main(["drift", "10", "--since", "yesterday"], source=FakeGitHub())
 
