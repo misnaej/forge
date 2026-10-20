@@ -2,7 +2,10 @@
 
 A plan validated for unattended execution describes the code as it stood
 when it was approved. These checks ask, without judgment, whether that is
-still true (FOUNDATION §14 "Plan-readiness pipeline"):
+still true (FOUNDATION §14 "Plan-readiness pipeline"). The command line
+lives in :mod:`forge.plan_check_cli`; the checks across a *set* of issues
+or PRs (``tracks``, ``current``, ``merge-order``) in
+:mod:`forge.plan_tracks`.
 
 ``prerequisites <issue>``
     Every ``Requires:`` entry — in the issue body and in its authenticated
@@ -34,48 +37,38 @@ is *unknown*, never clean. Output is plain lines a skill can relay:
 GitHub-derived text is limited to numbers, dates and validated paths, or
 fenced and capped. GitHub reads live in :mod:`forge.plan_staleness_gh`.
 
-Exit codes:
+Exit codes (every subcommand):
     0  clean
-    1  finding — an unmet prerequisite, drift, or an overlapping issue
+    1  finding — an unmet prerequisite, drift, an overlapping issue or
+       PR, a conflicting PR, or a PR count past the merge-order cap
     2  unknown or refused — a GitHub/JSON failure, an unparseable or
        missing ``Requires:`` line, a plan author whose access cannot be
        checked, no named files, both labels present, an unresolvable or
-       unfetchable base ref, or a PR that is not merged
+       unfetchable base ref, a PR that is not merged, or a merge probe
+       git could not answer
 """
 
 from __future__ import annotations
 
-import argparse
 import logging
 import re
 import subprocess
-import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final, Protocol
 
-from forge.config import load_config
-from forge.git_utils import (
-    configure_cli_logging,
-    emit,
-    fetch_quietly,
-    repo_root,
-    resolve_base_branch_ref,
-    run_git,
-    wrap_in_code_fence,
-)
-from forge.plan_staleness_gh import WRITE_PERMISSIONS, GhSource
-from forge.pr_delta import strip_fences
+from forge.git_utils import run_git, wrap_in_code_fence
+from forge.plan_staleness_gh import WRITE_PERMISSIONS
+from forge.pr_delta import ISSUE_REF_RE, strip_fences
 
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
     from pathlib import Path
 
-    from forge.plan_staleness_gh import Comment, Issue, MergedPR, RefStatus
+    from forge.plan_staleness_gh import Comment, Issue, MergedPR, OpenPR, RefStatus
 
 
-configure_cli_logging()
 logger = logging.getLogger(__name__)
 
 PLAN_MARKER: Final[str] = "[issue-triage] plan-validated:"
@@ -95,7 +88,6 @@ ECHO_CAP: Final[int] = 200
 _REQUIRES_RE: Final[re.Pattern[str]] = re.compile(
     r"(?:^[\s>*\-]*|\*\*)Requires:(?P<rest>.*)$"
 )
-_REF_RE: Final[re.Pattern[str]] = re.compile(r"(?:\bPR\s*)?#(\d{1,7})\b")
 _PAREN_RE: Final[re.Pattern[str]] = re.compile(r"\([^()]*\)")
 # What may sit between references without making the entry unparseable.
 _FILLER_RE: Final[re.Pattern[str]] = re.compile(
@@ -232,6 +224,14 @@ class GitHubSource(Protocol):
             listing could not be read completely.
         """
 
+    def open_pull_requests(self) -> list[OpenPR] | None:
+        """Return every open PR with its head, base, changed files and closed issues.
+
+        Returns:
+            Every open PR, or None when the listing could not be read
+            completely.
+        """
+
 
 @dataclass
 class Report:
@@ -266,6 +266,16 @@ class Report:
         """
         self.unknowns += 1
         self.lines.append(line)
+
+    def absorb(self, other: Report) -> None:
+        """Append *other*'s lines and add its counts to this report's.
+
+        Args:
+            other: A report produced for one part of this check.
+        """
+        self.lines.extend(other.lines)
+        self.findings += other.findings
+        self.unknowns += other.unknowns
 
     @property
     def exit_code(self) -> int:
@@ -331,8 +341,8 @@ def parse_requires(texts: Iterable[str]) -> Requires:
                 continue
             found = True
             stripped = _PAREN_RE.sub(" ", rest)
-            numbers = [int(n) for n in _REF_RE.findall(stripped)]
-            residue = _FILLER_RE.sub(" ", _REF_RE.sub(" ", stripped)).strip()
+            numbers = [int(n) for n in ISSUE_REF_RE.findall(stripped)]
+            residue = _FILLER_RE.sub(" ", ISSUE_REF_RE.sub(" ", stripped)).strip()
             if numbers and not residue:
                 refs.extend(n for n in numbers if n not in refs)
             elif not numbers and _NOTHING_RE.match(residue):
@@ -517,7 +527,12 @@ def parse_timestamp(value: str) -> datetime:
 
 
 def parse_merge_log(raw: str) -> list[Merge]:
-    """Parse ``git log --name-only --format=%x1e%H%x1f%cI%x1f%s`` output.
+    """Parse ``git log --name-only -z --format=%x1e%H%x1f%cI%x1f%s`` output.
+
+    ``-z`` is what makes a name exact: without it git C-quotes a path
+    holding non-ASCII bytes or a newline, so it never equals the plan's
+    path and a merge that touched it reads as no drift. Each record is
+    the header, a NUL, a newline, then NUL-terminated names.
 
     Args:
         raw: The log output.
@@ -527,14 +542,15 @@ def parse_merge_log(raw: str) -> list[Merge]:
     """
     merges: list[Merge] = []
     for record in raw.split("\x1e"):
-        lines = [line for line in record.splitlines() if line.strip()]
-        if not lines:
+        header, _, names = record.partition("\0")
+        if not header.strip():
             continue
-        sha, date, subject = ([*lines[0].split("\x1f"), "", ""])[:3]
+        sha, date, subject = ([*header.strip().split("\x1f"), "", ""])[:3]
         match = _PR_SUBJECT_RE.search(subject)
         pr = int(match.group(1) or match.group(2)) if match else None
         when = parse_timestamp(date).astimezone(UTC)
-        merges.append(Merge(sha, when, pr, tuple(lines[1:])))
+        files = tuple(name for name in names.removeprefix("\n").split("\0") if name)
+        merges.append(Merge(sha, when, pr, files))
     return merges
 
 
@@ -580,7 +596,7 @@ class WriterCheck:
         return self._cache[login]
 
 
-def _record_lookup(lookup: PlanLookup, number: int, report: Report) -> bool:
+def record_lookup(lookup: PlanLookup, number: int, report: Report) -> bool:
     """Write a plan lookup's notes into *report*; ``False`` when it is unknown.
 
     Args:
@@ -605,7 +621,7 @@ def _record_lookup(lookup: PlanLookup, number: int, report: Report) -> bool:
     return True
 
 
-def _issue_and_plan(
+def issue_and_plan(
     source: GitHubSource, number: int, report: Report
 ) -> tuple[Issue, Comment | None] | None:
     """Fetch issue *number* and its authenticated plan, recording failures.
@@ -625,7 +641,7 @@ def _issue_and_plan(
         report.unknown(f"unknown: could not read issue #{number} from GitHub")
         return None
     lookup = authenticated_plan(comments, WriterCheck(source))
-    if not _record_lookup(lookup, number, report):
+    if not record_lookup(lookup, number, report):
         return None
     if lookup.plan is None:
         report.note(f"plan: no authenticated plan-validated comment on #{number}")
@@ -681,7 +697,7 @@ def check_prerequisites(source: GitHubSource, number: int) -> Report:
         The report; a finding per unmet prerequisite.
     """
     report = Report()
-    fetched = _issue_and_plan(source, number, report)
+    fetched = issue_and_plan(source, number, report)
     if fetched is None:
         return report
     issue, plan = fetched
@@ -796,10 +812,38 @@ def check_drift(
         The report; a finding per merge.
     """
     report = Report()
-    fetched = _issue_and_plan(source, number, report)
+    fetched = issue_and_plan(source, number, report)
     if fetched is None:
         return report
     issue, plan = fetched
+    report.absorb(drift_from(source, issue, plan, since=since, log_merges=log_merges))
+    return report
+
+
+def drift_from(
+    source: GitHubSource,
+    issue: Issue,
+    plan: Comment | None,
+    *,
+    since: datetime | None,
+    log_merges: Callable[[list[str]], list[Merge] | None],
+) -> Report:
+    """Run the drift check on an already-fetched issue and plan.
+
+    The half of :func:`check_drift` after the GitHub reads, so a caller
+    checking a set fetches each issue once and lists history once.
+
+    Args:
+        source: GitHub reads (prerequisite statuses).
+        issue: The issue.
+        plan: Its authenticated plan, if any.
+        since: Cut-off; ``None`` uses the plan's post time.
+        log_merges: Base-branch history reader, as for :func:`check_drift`.
+
+    Returns:
+        The report; a finding per merge.
+    """
+    report = Report()
     window = _drift_window(issue, plan, since, report)
     if window is None:
         return report
@@ -834,7 +878,7 @@ def _check_overlap_issue(
         report: Report to write into.
     """
     lookup = authenticated_plan(issue.comments, is_writer)
-    if not _record_lookup(lookup, issue.number, report):
+    if not record_lookup(lookup, issue.number, report):
         return
     paths, from_body = plan_paths(lookup.plan, issue.body)
     hits = sorted(files.intersection(paths))
@@ -915,6 +959,7 @@ def git_merge_log(
                 "log",
                 "--first-parent",
                 "--name-only",
+                "-z",
                 "--format=%x1e%H%x1f%cI%x1f%s",
                 "--end-of-options",
                 base_ref,
@@ -927,107 +972,3 @@ def git_merge_log(
             return None
 
     return log_merges
-
-
-# --------------------------------------------------------------------------
-# CLI
-# --------------------------------------------------------------------------
-
-
-def _since_arg(value: str) -> datetime:
-    """Argparse type for ``--since``: an ISO-8601 timestamp.
-
-    Args:
-        value: Command-line text to parse.
-
-    Returns:
-        The parsed timestamp.
-    """
-    try:
-        return parse_timestamp(value)
-    except ValueError as exc:
-        msg = f"not an ISO-8601 timestamp: {value!r}"
-        raise argparse.ArgumentTypeError(msg) from exc
-
-
-def _build_parser() -> argparse.ArgumentParser:
-    """Return the ``forge-plan-check`` argument parser."""
-    parser = argparse.ArgumentParser(
-        prog="forge-plan-check",
-        description="Mechanical premise and prerequisite checks for a plan "
-        "(exit 0 clean, 1 finding, 2 unknown or refused).",
-    )
-    sub = parser.add_subparsers(dest="command", required=True)
-    prereq = sub.add_parser("prerequisites", help="Have all Requires: entries landed?")
-    prereq.add_argument("issue", type=int)
-    drift = sub.add_parser("drift", help="Merges touching the plan's files since.")
-    drift.add_argument("issue", type=int)
-    drift.add_argument(
-        "--since",
-        type=_since_arg,
-        help="ISO-8601 cut-off (default: when the authenticated plan was posted).",
-    )
-    drift.add_argument(
-        "--base", help="Base branch (default: [tool.forge].base_branch)."
-    )
-    overlap = sub.add_parser("overlap", help="Open issues naming a merged PR's files.")
-    overlap.add_argument("pr", type=int)
-    return parser
-
-
-def _run_drift(args: argparse.Namespace, source: GitHubSource) -> Report:
-    """Resolve and refresh the base ref, then run the drift check.
-
-    Args:
-        args: Parsed command-line arguments.
-        source: GitHub reader to query.
-
-    Returns:
-        The drift report.
-    """
-    root = repo_root()
-    base_branch = args.base or load_config(root).base_branch
-    base_ref = resolve_base_branch_ref(root, base_branch)
-    if base_ref is None:
-        report = Report()
-        report.unknown(f"refused: base branch {base_branch!r} does not resolve")
-        return report
-    remote = base_ref.startswith("origin/")
-    if remote and not fetch_quietly(root, "origin", base_branch):
-        report = Report()
-        report.unknown(f"unknown: could not fetch {base_ref}; history may be stale")
-        return report
-    report = check_drift(
-        source, args.issue, since=args.since, log_merges=git_merge_log(root, base_ref)
-    )
-    if not remote:
-        report.lines.insert(
-            0, f"note: history read from local {base_ref}; it was not fetched"
-        )
-    return report
-
-
-def main(argv: list[str] | None = None, source: GitHubSource | None = None) -> int:
-    """Run one ``forge-plan-check`` subcommand and print its report.
-
-    Args:
-        argv: Argument vector (defaults to ``sys.argv``).
-        source: GitHub reads; defaults to :class:`GhSource`.
-
-    Returns:
-        0 clean, 1 finding, 2 unknown or refused.
-    """
-    args = _build_parser().parse_args(argv)
-    gh: GitHubSource = source if source is not None else GhSource()
-    if args.command == "prerequisites":
-        report = check_prerequisites(gh, args.issue)
-    elif args.command == "drift":
-        report = _run_drift(args, gh)
-    else:
-        report = check_overlap(gh, args.pr)
-    emit(report.render())
-    return report.exit_code
-
-
-if __name__ == "__main__":
-    sys.exit(main())

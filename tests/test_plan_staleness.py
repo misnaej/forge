@@ -20,9 +20,23 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from forge import plan_check_cli as cli
 from forge import plan_staleness as ps
-from forge.plan_staleness_gh import Comment, GhSource, Issue, MergedPR, RefStatus
-from tests.conftest import GIT_ENV, init_git_repo
+from forge.plan_staleness_gh import (
+    Comment,
+    GhSource,
+    Issue,
+    MergedPR,
+    OpenPR,
+    RefStatus,
+)
+from tests.conftest import (
+    GIT_ENV,
+    FakeGitHub,
+    LogRecorder,
+    init_git_repo,
+    report_lines,
+)
 
 
 if TYPE_CHECKING:
@@ -30,81 +44,6 @@ if TYPE_CHECKING:
 
 
 PLAN_TIME = "2026-09-14T20:00:00Z"
-
-
-@dataclass
-class FakeGitHub:
-    """In-memory ``GitHubSource``; a missing record reads as a failed call."""
-
-    issues: dict[int, Issue] = field(default_factory=dict)
-    comment_lists: dict[int, list[Comment]] = field(default_factory=dict)
-    permissions: dict[str, str] = field(default_factory=dict)
-    statuses: dict[int, RefStatus] = field(default_factory=dict)
-    prs: dict[int, MergedPR] = field(default_factory=dict)
-    open_listing: list[Issue] | None = None
-
-    def issue(self, number: int) -> Issue | None:
-        """Return the recorded issue.
-
-        Args:
-            number: Issue number.
-
-        Returns:
-            The recorded issue, or None when unrecorded.
-        """
-        return self.issues.get(number)
-
-    def comments(self, number: int) -> list[Comment] | None:
-        """Return the recorded comments.
-
-        Args:
-            number: Issue number.
-
-        Returns:
-            The recorded comments, or None when unrecorded.
-        """
-        return self.comment_lists.get(number)
-
-    def permission(self, login: str) -> str | None:
-        """Return the recorded permission.
-
-        Args:
-            login: GitHub login.
-
-        Returns:
-            The recorded permission, or None when unrecorded.
-        """
-        return self.permissions.get(login)
-
-    def ref_status(self, number: int) -> RefStatus | None:
-        """Return the recorded status.
-
-        Args:
-            number: Issue or pull-request number.
-
-        Returns:
-            The recorded status, or None when unrecorded.
-        """
-        return self.statuses.get(number)
-
-    def pull_request(self, number: int) -> MergedPR | None:
-        """Return the recorded PR.
-
-        Args:
-            number: Pull-request number.
-
-        Returns:
-            The recorded PR, or None when unrecorded.
-        """
-        return self.prs.get(number)
-
-    def open_issues(self) -> list[Issue] | None:
-        """Return the recorded open-issue listing.
-
-        Returns:
-            The recorded listing, or None when unrecorded.
-        """
-        return self.open_listing
 
 
 @dataclass
@@ -280,44 +219,6 @@ def _status(
     )
 
 
-class LogRecorder:
-    """A ``log_merges`` stand-in recording the paths it was asked about."""
-
-    def __init__(self, merges: list[ps.Merge] | None = None) -> None:
-        """Set the merges to return.
-
-        Args:
-            merges: Merges every call returns; None means git failed.
-        """
-        self.merges = merges
-        self.seen: list[list[str]] = []
-
-    def __call__(self, paths: list[str]) -> list[ps.Merge] | None:
-        """Record *paths* and return the canned merges.
-
-        Args:
-            paths: File paths to log.
-
-        Returns:
-            The canned merges.
-        """
-        self.seen.append(paths)
-        return self.merges
-
-
-def _lines(report: ps.Report, prefix: str) -> list[str]:
-    """Return the report lines starting with *prefix*.
-
-    Args:
-        report: The report.
-        prefix: Line prefix.
-
-    Returns:
-        Matching lines.
-    """
-    return [line for line in report.lines if line.startswith(prefix)]
-
-
 # --------------------------------------------------------------------------
 # prerequisites
 # --------------------------------------------------------------------------
@@ -349,7 +250,24 @@ def test_closed_issue_without_landed_work_still_blocks(status: RefStatus) -> Non
     gh.statuses[5] = status
     report = ps.check_prerequisites(gh, 10)
     assert report.exit_code == ps.EXIT_FINDING
-    assert _lines(report, "blocked: #5")
+    assert report_lines(report, "blocked: #5")
+
+
+@pytest.mark.parametrize(
+    ("entry", "refs"),
+    [("#5", (5,)), ("PR #5", (5,)), ("#12345678", ())],
+    ids=["issue", "pr", "eight-digits-unparsed"],
+)
+def test_requires_reference_shapes(entry: str, refs: tuple[int, ...]) -> None:
+    """Behavior: `#N` and `PR #N` parse; a number past seven digits is not a reference.
+
+    Args:
+        entry: Text after `Requires:`.
+        refs: References the parser must extract.
+    """
+    parsed = ps.parse_requires([f"Requires: {entry}"])
+    assert parsed.refs == refs
+    assert bool(parsed.unparsed) is (not refs)
 
 
 def test_requires_nothing_is_satisfied() -> None:
@@ -363,7 +281,7 @@ def test_prerequisites_notes_but_does_not_refuse_both_labels() -> None:
     gh = _source("Requires: nothing", [], "blocked", "plan-ready")
     report = ps.check_prerequisites(gh, 10)
     assert report.exit_code == ps.EXIT_CLEAN
-    assert _lines(report, "note: #10 carries both blocked and plan-ready")
+    assert report_lines(report, "note: #10 carries both blocked and plan-ready")
 
 
 def test_plan_requires_line_is_checked_too() -> None:
@@ -393,7 +311,7 @@ def test_missing_requires_line_points_at_adding_one() -> None:
     """No `Requires:` line is unknown, and the output says to add one."""
     report = ps.check_prerequisites(_source("no prerequisite line at all", []), 10)
     assert report.exit_code == ps.EXIT_UNKNOWN
-    assert "add one" in _lines(report, "unknown:")[0]
+    assert "add one" in report_lines(report, "unknown:")[0]
 
 
 def test_github_failure_is_unknown() -> None:
@@ -405,7 +323,7 @@ def test_github_failure_is_unknown() -> None:
 
 def test_main_exit_code_follows_report(capsys: pytest.CaptureFixture[str]) -> None:
     """`main` prints the verdict and returns the report's exit code."""
-    assert ps.main(["prerequisites", "10"], source=FakeGitHub()) == ps.EXIT_UNKNOWN
+    assert cli.main(["prerequisites", "10"], source=FakeGitHub()) == ps.EXIT_UNKNOWN
     assert capsys.readouterr().out.rstrip().endswith("verdict: unknown")
 
 
@@ -516,7 +434,7 @@ def test_drift_reports_merge_after_plan_time() -> None:
     report = ps.check_drift(gh, 10, since=None, log_merges=log)
     assert log.seen == [["src/forge/a.py"]]
     assert report.exit_code == ps.EXIT_FINDING
-    assert _lines(report, "drift:") == [
+    assert report_lines(report, "drift:") == [
         f"drift: {'a' * 12} 2026-09-20T12:00:00+00:00 PR #9 changed src/forge/a.py",
         (
             f"drift: {'a' * 12} 2026-09-19T12:00:00+00:00 no PR number in subject "
@@ -545,7 +463,7 @@ def test_body_only_requires_cannot_hide_drift() -> None:
     log = LogRecorder([_merge("20", "src/forge/a.py", pr=9)])
     report = ps.check_drift(gh, 10, since=None, log_merges=log)
     assert report.exit_code == ps.EXIT_FINDING
-    assert _lines(report, "drift:")
+    assert report_lines(report, "drift:")
 
 
 def test_drift_notes_merges_that_deliver_its_own_prerequisites() -> None:
@@ -566,7 +484,7 @@ def test_drift_notes_merges_that_deliver_its_own_prerequisites() -> None:
     )
     report = ps.check_drift(gh, 10, since=None, log_merges=log)
     assert report.exit_code == ps.EXIT_CLEAN
-    notes = _lines(report, "note:")
+    notes = report_lines(report, "note:")
     assert any("PR #7 delivers prerequisite #7" in n for n in notes)
     assert any("PR #30 delivers prerequisite #8" in n for n in notes)
 
@@ -577,7 +495,7 @@ def test_drift_falls_back_to_body_with_a_note_then_refuses() -> None:
     log = LogRecorder([])
     report = ps.check_drift(gh, 10, since=None, log_merges=log)
     assert log.seen == [["agents/x.md"]]
-    assert _lines(report, "note: #10 paths come from the issue body")
+    assert report_lines(report, "note: #10 paths come from the issue body")
 
     gh = _source("Nothing named.", [_plan("No files here.")])
     report = ps.check_drift(gh, 10, since=None, log_merges=LogRecorder([]))
@@ -592,7 +510,7 @@ def test_drift_ignores_a_stranger_only_plan() -> None:
     since = ps.parse_timestamp("2026-09-01T00:00:00Z")
     report = ps.check_drift(gh, 10, since=since, log_merges=log)
     assert log.seen == [["src/forge/body.py"]]
-    assert _lines(report, "note: ignored plan comment 1")
+    assert report_lines(report, "note: ignored plan comment 1")
     no_since = ps.check_drift(gh, 10, since=None, log_merges=LogRecorder([]))
     assert no_since.exit_code == ps.EXIT_UNKNOWN
 
@@ -659,7 +577,7 @@ def test_incident_replay_drift_flags_premise_changed_before_approval(
         since=ps.parse_timestamp("2026-09-10T07:00:00Z"),
         log_merges=ps.git_merge_log(tmp_path, "main"),
     )
-    drift = _lines(report, "drift:")
+    drift = report_lines(report, "drift:")
     assert len(drift) == 1
     assert "PR #2 changed agents/git-commit-push.md" in drift[0]
 
@@ -686,6 +604,52 @@ def test_git_merge_log_reads_first_parent_history(tmp_path: Path) -> None:
     assert ps.git_merge_log(tmp_path, "no-such-ref")(["a.md"]) is None
 
 
+def test_parse_merge_log_reads_nul_separated_names_with_spaces() -> None:
+    """Behavior: `-z` records yield exact names, spaces included, one Merge each."""
+    raw = (
+        "\x1e"
+        + "a" * 40
+        + "\x1f2026-09-02T10:00:00+00:00\x1fMerge pull request #7 from x"
+        "\0\n" + "a b.md\0src/c.py\0"
+        "\x1e" + "b" * 40 + "\x1f2026-09-01T10:00:00+00:00\x1fplain commit"
+        "\0\n" + "d.md\0"
+    )
+
+    merges = ps.parse_merge_log(raw)
+
+    assert [m.pr for m in merges] == [7, None]
+    assert merges[0].paths == ("a b.md", "src/c.py")
+    assert merges[1].paths == ("d.md",)
+
+
+def test_git_merge_log_returns_non_ascii_and_spaced_names_exactly(
+    tmp_path: Path,
+) -> None:
+    """Behavior: a merge touching `café.md` and `a b.md` reports both names unquoted.
+
+    Without `-z` git C-quotes the non-ASCII name, so it would never equal the
+    plan's path and the drift would read as none.
+    """
+    init_git_repo(tmp_path)
+    for name in ("café.md", "a b.md"):
+        (tmp_path / name).write_text(name)
+    git = ["git", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"]
+    subprocess.run([*git, "add", "-A"], cwd=tmp_path, env=GIT_ENV, check=True)
+    subprocess.run(
+        [*git, "commit", "-q", "-m", "Merge pull request #5 from x"],
+        cwd=tmp_path,
+        env=GIT_ENV,
+        check=True,
+    )
+
+    merges = ps.git_merge_log(tmp_path, "HEAD")(["café.md", "a b.md"])
+
+    assert merges is not None
+    assert len(merges) == 1
+    assert merges[0].pr == 5
+    assert set(merges[0].paths) == {"café.md", "a b.md"}
+
+
 # --------------------------------------------------------------------------
 # main drift / overlap plumbing
 # --------------------------------------------------------------------------
@@ -700,10 +664,10 @@ def drift_base(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, obj
         (whether the fetch succeeds).
     """
     knobs: dict[str, object] = {"ref": "origin/main", "fetch": True}
-    monkeypatch.setattr(ps, "repo_root", lambda: tmp_path)
-    monkeypatch.setattr(ps, "resolve_base_branch_ref", lambda *_: knobs["ref"])
-    monkeypatch.setattr(ps, "fetch_quietly", lambda *_: knobs["fetch"])
-    monkeypatch.setattr(ps, "git_merge_log", lambda *_: LogRecorder([]))
+    monkeypatch.setattr(cli, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(cli, "resolve_base_branch_ref", lambda *_: knobs["ref"])
+    monkeypatch.setattr(cli, "fetch_quietly", lambda *_: knobs["fetch"])
+    monkeypatch.setattr(cli, "git_merge_log", lambda *_: LogRecorder([]))
     return knobs
 
 
@@ -713,18 +677,18 @@ def test_main_drift_exit_codes(
     """Clean drift exits 0; an unresolved base or failed fetch refuses with 2."""
     gh = _source("", [_plan("Edit `src/forge/a.py`.")])
     argv = ["drift", "10", "--base", "main"]
-    assert ps.main(argv, source=gh) == ps.EXIT_CLEAN
+    assert cli.main(argv, source=gh) == ps.EXIT_CLEAN
 
     drift_base["ref"] = "main"
-    assert ps.main(argv, source=gh) == ps.EXIT_CLEAN
+    assert cli.main(argv, source=gh) == ps.EXIT_CLEAN
     assert "note: history read from local main" in capsys.readouterr().out
 
     drift_base["ref"] = "origin/main"
     drift_base["fetch"] = False
-    assert ps.main(argv, source=gh) == ps.EXIT_UNKNOWN
+    assert cli.main(argv, source=gh) == ps.EXIT_UNKNOWN
 
     drift_base["ref"] = None
-    assert ps.main(argv, source=gh) == ps.EXIT_UNKNOWN
+    assert cli.main(argv, source=gh) == ps.EXIT_UNKNOWN
 
 
 def test_main_overlap_exit_codes() -> None:
@@ -733,8 +697,8 @@ def test_main_overlap_exit_codes() -> None:
         prs={50: MergedPR(50, merged=True, merge_sha="", closes=(), files=("a.py",))},
         open_listing=[],
     )
-    assert ps.main(["overlap", "50"], source=gh) == ps.EXIT_CLEAN
-    assert ps.main(["overlap", "51"], source=gh) == ps.EXIT_UNKNOWN
+    assert cli.main(["overlap", "50"], source=gh) == ps.EXIT_CLEAN
+    assert cli.main(["overlap", "51"], source=gh) == ps.EXIT_UNKNOWN
 
 
 # --------------------------------------------------------------------------
@@ -782,12 +746,12 @@ def test_overlap_lists_issues_naming_changed_files() -> None:
         ],
     )
     report = ps.check_overlap(gh, 50)
-    assert _lines(report, "overlap:") == [
+    assert report_lines(report, "overlap:") == [
         "overlap: #2 plan-ready names src/forge/a.py",
         "overlap: #4 names src/forge/a.py",
     ]
-    assert _lines(report, "note: #4 paths come from the issue body")
-    assert _lines(report, "merge:") == ["merge: PR #50 changed 1 file(s)"]
+    assert report_lines(report, "note: #4 paths come from the issue body")
+    assert report_lines(report, "merge:") == ["merge: PR #50 changed 1 file(s)"]
     assert report.exit_code == ps.EXIT_FINDING
 
 
@@ -1000,3 +964,64 @@ def test_gh_source_maps_issue_status(
     assert status is not None
     assert ps.prerequisite_verdict(status)[0] is satisfied
     assert status.landed_by == landed_by
+
+
+# --------------------------------------------------------------------------
+# GhSource.open_pull_requests
+# --------------------------------------------------------------------------
+
+
+def _open_pr_entry(
+    number: int, files: list[str], *, total: int | None = None
+) -> dict[str, object]:
+    """Return one projected open-PR listing entry.
+
+    Args:
+        number: PR number.
+        files: Paths the listing carries.
+        total: The file total GitHub reports; defaults to ``len(files)``.
+
+    Returns:
+        The entry as the listing's ``--jq`` projection prints it.
+    """
+    return {
+        "number": number,
+        "head_sha": f"{number:040x}",
+        "base_ref": "main",
+        "draft": False,
+        "closes": [number + 100],
+        "total": len(files) if total is None else total,
+        "files": files,
+    }
+
+
+def test_gh_source_open_pull_requests_flattens_pages() -> None:
+    """Behavior: a PR on page two is listed after page one's, every field mapped."""
+    raw = _page(_open_pr_entry(1, ["a.py"])) + "\n" + _page(_open_pr_entry(2, ["b.py"]))
+    prs = GhSource(run=RecordedGh({"graphql": raw})).open_pull_requests()
+    assert prs is not None
+    assert [pr.number for pr in prs] == [1, 2]
+    assert prs[1] == OpenPR(
+        2,
+        head_sha=f"{2:040x}",
+        base_ref="main",
+        draft=False,
+        closes=(102,),
+        files=("b.py",),
+    )
+
+
+def test_gh_source_open_pull_requests_refetches_truncated_files() -> None:
+    """Behavior: a PR past the listed file cap gets its whole file list from REST."""
+    listing = _page(_open_pr_entry(7, ["a.py"], total=3))
+    rest = _page("a.py", "b.py", "c.py")
+    gh = GhSource(run=RecordedGh({"pulls/7/files": rest, "graphql": listing}))
+    prs = gh.open_pull_requests()
+    assert prs is not None
+    assert prs[0].files == ("a.py", "b.py", "c.py")
+
+
+def test_gh_source_open_pull_requests_unreadable_refetch_is_unknown() -> None:
+    """Behavior: a half-known file list would hide collisions, so listing is None."""
+    listing = _page(_open_pr_entry(7, ["a.py"], total=3))
+    assert GhSource(run=RecordedGh({"graphql": listing})).open_pull_requests() is None

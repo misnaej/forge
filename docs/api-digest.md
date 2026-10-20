@@ -754,6 +754,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `push_branch(repo_root: Path, branch: str, *, set_upstream: bool = False, remote: str = 'origin') -> PushResult` — Push *branch* to *remote* without ever prompting or hanging.
 - `push_tag(repo_root: Path, tag: str, *, remote: str = 'origin') -> PushResult` — Push *tag* to *remote* without ever prompting or hanging.
 - `behind_ahead(repo_root: Path, base_ref: str) -> tuple[int, int] | None` — Return how many commits HEAD is behind and ahead of *base_ref*.
+- `merge_tree_clean(repo_root: Path, left: str, right: str) -> bool | None` — Return whether merging *left* and *right* would be free of conflicts.
 - `unpushed_commit_count(repo_root: Path) -> int | None` — Return how many commits HEAD holds that its upstream does not.
 - `staged_unstaged_paths(repo_root: Path) -> tuple[list[str], list[str]] | None` — Split the working tree's changed paths into staged and unstaged.
 - `class BaseSync` — Whether a PR's branch can merge into its base as it stands.
@@ -964,6 +965,20 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `has_vulns(data: dict) -> bool` — Report whether any scanned dependency carries a vulnerability.
 - `render_report(data: dict) -> str` — Render parsed pip-audit JSON as the human-readable step-log body.
 
+## `forge.plan_check_cli`
+
+> _forge-plan-check — the command line over the plan checks._
+
+- `_since_arg(value: str) -> datetime` _(internal)_ — Argparse type for ``--since``: an ISO-8601 timestamp.
+- `_add_base(parser: argparse.ArgumentParser) -> None` _(internal)_ — Add the shared ``--base`` option to *parser*.
+- `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Return the ``forge-plan-check`` argument parser.
+- `_base_ref(base: str | None, root: Path) -> tuple[str, str] | Report` _(internal)_ — Resolve and refresh the base ref, or return the refusal.
+- `_local_note(report: Report, base_ref: str) -> Report` _(internal)_ — Open *report* with a note when history came from an unfetched local ref.
+- `_run_drift(args: argparse.Namespace, source: GitHubSource) -> Report` _(internal)_ — Resolve and refresh the base ref, then run the drift check.
+- `_run_current(args: argparse.Namespace, source: GitHubSource) -> Report` _(internal)_ — Resolve and refresh the base ref, then run the set currency check.
+- `_run_merge_order(args: argparse.Namespace, source: GitHubSource) -> Report` _(internal)_ — List open PRs on the base, fetch their heads, then probe and order them.
+- `main(argv: list[str] | None = None, source: GitHubSource | None = None) -> int` — Run one ``forge-plan-check`` subcommand and print its report.
+
 ## `forge.plan_staleness`
 
 > _forge-plan-check — mechanical premise and prerequisite checks for validated plans._
@@ -980,10 +995,12 @@ A compact index of this codebase's symbols — every top-level function and clas
   - `ref_status(self, number: int) -> RefStatus | None` — Return the landing status of issue-or-PR *number*.
   - `pull_request(self, number: int) -> MergedPR | None` — Return PR *number*'s merge state, changed files and closed issues.
   - `open_issues(self) -> list[Issue] | None` — Return every open issue, comments included.
+  - `open_pull_requests(self) -> list[OpenPR] | None` — Return every open PR with its head, base, changed files and closed issues.
 - `class Report` — Lines to emit plus the counts that decide the exit code.
   - `note(self, line: str) -> None` — Record an informational *line*.
   - `finding(self, line: str) -> None` — Record a finding *line*.
   - `unknown(self, line: str) -> None` — Record an unknown-or-refused *line*.
+  - `absorb(self, other: Report) -> None` — Append *other*'s lines and add its counts to this report's.
   - `exit_code(self) -> int` — Return 2 on any unknown, else 1 on any finding, else 0.
   - `render(self) -> str` — Return the report lines followed by one verdict line.
 - `_requires_rest(line: str) -> str | None` _(internal)_ — Return the text after a ``Requires:`` marker on *line*, or None.
@@ -996,23 +1013,20 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `authenticated_plan(comments: Iterable[Comment], is_writer: Callable[[str], bool | None]) -> PlanLookup` — Find the newest plan comment whose author has write access.
 - `plan_paths(plan: Comment | None, body: str) -> tuple[list[str], bool]` — Return the files the plan names, falling back to the issue body's.
 - `parse_timestamp(value: str) -> datetime` — Parse an ISO-8601 timestamp, reading a naive one as UTC.
-- `parse_merge_log(raw: str) -> list[Merge]` — Parse ``git log --name-only --format=%x1e%H%x1f%cI%x1f%s`` output.
+- `parse_merge_log(raw: str) -> list[Merge]` — Parse ``git log --name-only -z --format=%x1e%H%x1f%cI%x1f%s`` output.
 - `class WriterCheck` — Tri-state write-access predicate over a :class:`PermissionSource`, cached.
-- `_record_lookup(lookup: PlanLookup, number: int, report: Report) -> bool` _(internal)_ — Write a plan lookup's notes into *report*; ``False`` when it is unknown.
-- `_issue_and_plan(source: GitHubSource, number: int, report: Report) -> tuple[Issue, Comment | None] | None` _(internal)_ — Fetch issue *number* and its authenticated plan, recording failures.
+- `record_lookup(lookup: PlanLookup, number: int, report: Report) -> bool` — Write a plan lookup's notes into *report*; ``False`` when it is unknown.
+- `issue_and_plan(source: GitHubSource, number: int, report: Report) -> tuple[Issue, Comment | None] | None` — Fetch issue *number* and its authenticated plan, recording failures.
 - `_requires_texts(issue: Issue, plan: Comment | None) -> list[str]` _(internal)_ — Return the texts whose ``Requires:`` lines count: body, then plan.
 - `_statuses(source: GitHubSource, refs: Iterable[int], report: Report) -> dict[int, RefStatus]` _(internal)_ — Look up each prerequisite, recording an unknown line per failure.
 - `check_prerequisites(source: GitHubSource, number: int) -> Report` — Check that every prerequisite of issue *number* has landed.
 - `_drift_window(issue: Issue, plan: Comment | None, since: datetime | None, report: Report) -> tuple[list[str], datetime] | None` _(internal)_ — Return the paths and cut-off drift checks, or None after a refusal.
 - `_report_merges(merges: Iterable[Merge], since: datetime, delivered: Mapping[int, int], report: Report) -> None` _(internal)_ — Record each merge after *since*: a note when it delivers a prerequisite.
 - `check_drift(source: GitHubSource, number: int, *, since: datetime | None, log_merges: Callable[[list[str]], list[Merge] | None]) -> Report` — List base-branch merges that touched the plan's files since *since*.
+- `drift_from(source: GitHubSource, issue: Issue, plan: Comment | None, *, since: datetime | None, log_merges: Callable[[list[str]], list[Merge] | None]) -> Report` — Run the drift check on an already-fetched issue and plan.
 - `_check_overlap_issue(issue: Issue, files: set[str], is_writer: WriterCheck, report: Report) -> None` _(internal)_ — Record whether open *issue*'s files intersect *files*.
 - `check_overlap(source: GitHubSource, pr_number: int) -> Report` — List open issues naming a file merged PR *pr_number* changed.
 - `git_merge_log(root: Path, base_ref: str) -> Callable[[list[str]], list[Merge] | None]` — Return a ``log_merges`` callable over *base_ref*'s first-parent history.
-- `_since_arg(value: str) -> datetime` _(internal)_ — Argparse type for ``--since``: an ISO-8601 timestamp.
-- `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Return the ``forge-plan-check`` argument parser.
-- `_run_drift(args: argparse.Namespace, source: GitHubSource) -> Report` _(internal)_ — Resolve and refresh the base ref, then run the drift check.
-- `main(argv: list[str] | None = None, source: GitHubSource | None = None) -> int` — Run one ``forge-plan-check`` subcommand and print its report.
 
 ## `forge.plan_staleness_gh`
 
@@ -1022,20 +1036,47 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `class Issue` — One issue; the fields after ``created_at`` come only from the open listing.
 - `class RefStatus` — What GitHub reports about one ``Requires:`` reference.
 - `class MergedPR` — A PR's merge state, changed files and the issues it closes.
+- `class OpenPR` — An open PR as the set checks need it: where it points and what it touches.
 - `_loads(raw: str | None) -> dict[str, Any] | None` _(internal)_ — Decode one JSON object; ``None`` for a failed call, bad JSON or a non-object.
 - `_pages(raw: str | None) -> list[Any] | None` _(internal)_ — Flatten paginated output, or ``None`` when the call or any page failed.
 - `_comment(item: dict[str, Any]) -> Comment` _(internal)_ — Build a :class:`Comment` from a projected JSON mapping.
 - `_issue_status(number: int, data: dict[str, Any]) -> RefStatus` _(internal)_ — Map an ``Issue`` GraphQL node to a :class:`RefStatus`.
-- `class _IncompleteListingError` _(internal)_ — An open issue could not be read completely; the listing is unknown.
+- `class _IncompleteListingError` _(internal)_ — An open issue or PR could not be read completely; the listing is unknown.
 - `class GhSource` — Production ``GitHubSource`` over ``gh api``; ``None`` on any failure.
   - `issue(self, number: int) -> Issue | None` — Return issue *number* (body, labels, creation time).
   - `comments(self, number: int) -> list[Comment] | None` — Return every comment on issue *number*, an empty list when none.
   - `permission(self, login: str) -> str | None` — Return *login*'s permission on the repo (``admin``, ``write``, ...).
   - `ref_status(self, number: int) -> RefStatus | None` — Return the landing status of issue-or-PR *number*.
   - `pull_request(self, number: int) -> MergedPR | None` — Return PR *number*'s merge state, changed files and closed issues.
+  - `open_pull_requests(self) -> list[OpenPR] | None` — Return every open PR with its head, base, changed files and closed issues.
   - `open_issues(self) -> list[Issue] | None` — Return every open issue, comments included.
   - `open_issue_count(self) -> int | None` — Return how many issues GitHub counts as open.
   - `repo_slug(self) -> str | None` — Return the repository's ``owner/name``.
+
+## `forge.plan_tracks`
+
+> _plan_tracks — ``forge-plan-check``'s checks across a set of issues or PRs._
+
+- `class IssueFiles` — One open issue reduced to what grouping needs.
+- `_track_labels(issue: Issue, report: Report) -> tuple[str, ...]` _(internal)_ — Return *issue*'s well-formed ``track:`` labels, noting any malformed one.
+- `_issue_files(issue: Issue, is_writer: WriterCheck, report: Report) -> IssueFiles | None` _(internal)_ — Reduce *issue* to its files and track labels, recording notes.
+- `_select(issues: Sequence[Issue], numbers: Sequence[int], report: Report) -> list[Issue]` _(internal)_ — Return the listed issues the caller named (all when none), refusing others.
+- `_report_pairs(files: Sequence[IssueFiles], report: Report, focus: frozenset[int]) -> None` _(internal)_ — Record every pair of issues naming a common file.
+- `_report_prs(files: Sequence[IssueFiles], prs: Sequence[OpenPR], report: Report, focus: frozenset[int]) -> None` _(internal)_ — Record every open PR changing a file an issue names.
+- `_report_shared_files(files: Sequence[IssueFiles], report: Report, focus: frozenset[int]) -> None` _(internal)_ — Record each file more than one issue names, most-named first.
+- `check_tracks(source: GitHubSource, numbers: Sequence[int] = (), *, focus: Sequence[int] = ()) -> Report` — Report which open issues share files with each other and with open PRs.
+- `_restricted(merges: list[Merge] | None) -> Callable[[list[str]], list[Merge] | None]` _(internal)_ — Return a ``log_merges`` callable answering from one listing.
+- `_verdict_line(number: int, part: Report) -> str` _(internal)_ — Return the one-line per-issue verdict of the ``current`` check.
+- `check_current(source: GitHubSource, numbers: Sequence[int], *, log_merges: Callable[[list[str]], list[Merge] | None]) -> Report` — Run the drift check of each issue since it was filed, listing history once.
+- `class _Entanglement` _(internal)_ — What the probes found about one PR: partner PR number to the reason.
+  - `weight(self) -> tuple[int, int, int]` — Order PRs entangled with nothing first and the most entangled last.
+- `_probe_base(pr: OpenPR, base_ref: str, probe: Callable[[str, str], bool | None], report: Report) -> bool | None` _(internal)_ — Probe *pr* against the base, recording the outcome.
+- `_probe_pairs(found: Sequence[_Entanglement], probe: Callable[[str, str], bool | None], report: Report) -> None` _(internal)_ — Probe every pair of PRs, recording each entanglement on both sides.
+- `_report_order(found: Sequence[_Entanglement], report: Report) -> None` _(internal)_ — Record the suggested merge order with its refresh-after notes.
+- `_usable(prs: Sequence[OpenPR], report: Report, *, cap: int) -> list[OpenPR]` _(internal)_ — Return the PRs to probe: well-formed heads, at most *cap* of them.
+- `check_merge_order(prs: Sequence[OpenPR], base_ref: str, probe: Callable[[str, str], bool | None], *, cap: int = MERGE_ORDER_CAP) -> Report` — Probe *prs* against the base and each other, then suggest a merge order.
+- `git_merge_probe(root: Path) -> Callable[[str, str], bool | None]` — Return a merge probe over *root*'s object store.
+- `fetch_pr_heads(root: Path, prs: Sequence[OpenPR], report: Report) -> list[OpenPR]` — Fetch each PR's head commit so it can be probed; drop the failures.
 
 ## `forge.post_checkout`
 
@@ -1177,6 +1218,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_collapse(existing: list[dict[str, object]], new_sha: str) -> int` _(internal)_ — Fold every earlier wrap-up into a ``<details>`` block, once.
 - `post_wrapup(pr_number: int, body: str) -> int` — Post *body* as the PR's wrap-up, retiring the ones it supersedes.
 - `_section_bounds(lines: list[str], title: str) -> tuple[int, int] | None` _(internal)_ — Return the ``(heading, end)`` line indexes of section *title*.
+- `follow_up_refs(text: str) -> list[int]` — Return the issues the wrap-up's findings were deferred to or filed as.
 - `refresh_sections(text: str, *, ci_status: str, issue_management: str) -> str` — Replace the CI Status and Issue Management bodies, leaving the rest as is.
 - `post_gates(view: Mapping[str, object], verified_sha: str, *, behind: int | None, emergency: bool) -> tuple[list[str], list[str]]` — Decide whether a wrap-up may be published on the PR as it is now.
 - `_read_optional(path: Path | None) -> str | None` _(internal)_ — Read *path* when given.
@@ -1214,7 +1256,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_skipped(entry: Mapping[str, object]) -> bool` _(internal)_ — Return whether a rollup entry concluded without executing.
 - `rollup_not_run(rollup: Sequence[Mapping[str, object]]) -> bool` — Return whether checks were reported but none of them executed.
 - `summarize_rollup(rollup: Sequence[Mapping[str, object]], *, is_draft: bool = False) -> str` — Summarize ``gh pr view --json statusCheckRollup`` as one status line.
-- `render_issue_management(closing_refs: Sequence[int], *, pr_body_checked: bool, pr_named: bool, also_closed: Sequence[int] = ()) -> str` — Render the Issue Management line from the closing keywords found.
+- `render_issue_management(closing_refs: Sequence[int], *, pr_body_checked: bool, pr_named: bool, also_closed: Sequence[int] = (), follow_ups: Sequence[int] = ()) -> str` — Render the Issue Management line from the closing keywords found.
 - `unfilled_slots(text: str) -> list[str]` — Return the names of every fill-in slot still in *text*.
 - `evidence_fence(block: str) -> str` — Return only the fenced part of a ``run_gate_evidence`` block.
 

@@ -1094,7 +1094,10 @@ taxonomy by family:
   `breaking-change` (API break).
 
 Consumer repos may add domain-specific labels (e.g. `frontend`, `data-pipeline`)
-without conflict.
+without conflict. **Grouping labels are `track:<name>`** — a set of issues
+planned and shipped as one PR. They are created per batch, on demand, each
+with an `[issue-triage]` comment, and never join the canonical set above:
+a track lives as long as its work.
 
 ### Backlog Index, overrides, templates
 
@@ -1171,7 +1174,11 @@ mutates nothing. `/plan-batch` is the optional coordinator between
 screening and the human gate: it drafts several issues concurrently
 through agents forbidden to mutate anything, and relays each draft for
 validation — leaving the gate itself, and the one-at-a-time execution
-rule `/sentinel` sets, untouched.
+rule `/sentinel` sets, untouched. It also groups issues into tracks, so
+one validated plan and one PR deliver several issues; the issues a PR
+files are placed into tracks as it finishes, by `issue-triage`'s
+`placement` mode, which asks rather than guesses when placements
+conflict.
 
 ### Decision trail
 

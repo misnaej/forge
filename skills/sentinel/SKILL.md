@@ -24,7 +24,8 @@ gh issue list --state open --label plan-ready --limit 1000 \
 ```
 
 1. Candidates found → pickup re-check, then execute the best one
-   (highest tier, oldest validation first).
+   (highest tier, oldest validation first; a track plan is one
+   candidate — see Track mode).
 2. No candidates → run the **empty-loop screen** below, then end the
    session with a resume line in the written section of
    `.plan/CONTINUATION.md` (FOUNDATION §10); re-invoking
@@ -113,6 +114,30 @@ end to end: verification reporters, fixes, wrap-up + squash-merge
 message, then `[sentinel] PR #N opened` on the issue. **Stop at the
 wrap-up.** Merging is the user's decision.
 
+## Track mode
+
+A **track plan** is one validated plan recorded on several issues:
+each member carries the `track:<name>` label and its own
+`plan-validated:` comment naming that track (`/plan-batch` records it
+that way). A candidate whose plan names a track is executed as the
+whole track, never as one member of it:
+
+- **Pickup re-check per member** — every check above runs on every
+  member issue. One member failing skips the whole track (the hard-skip
+  comment goes on the failing member, the report names the track);
+  never ship a track short of a member silently.
+- **Markers on every member** — `[sentinel] taken up` before touching
+  code and `[sentinel] PR #N opened` at the wrap-up, on each issue, so
+  no member looks free to another session or the `plan-readiness`
+  screen.
+- **One branch, one PR** — the PR description carries one `Closes #N`
+  line per member the PR completes and `Part of #N` for a member the
+  plan delivers only partially (FOUNDATION §6 — a close keyword closes
+  the whole issue).
+
+The rest of Execute, the freeze flow and the monitors are unchanged; a
+track counts as one execution.
+
 ## Blocked on a question mid-execution
 
 Freeze, never guess:
@@ -146,8 +171,8 @@ the watch loop.
 ## Rules
 
 - Never merge, force-push, or rebase; never touch protected branches.
-- One issue in execution at a time — parallelism lives in the
-  background monitors, not in concurrent builds.
+- One issue or track in execution at a time — parallelism lives in
+  the background monitors, not in concurrent builds.
 - Every skip or deferral leaves an `[issue-triage]` comment trail.
 - A plan that stops matching reality goes back through `/plan-issue`;
   sentinel never improvises past its spec.

@@ -35,6 +35,7 @@ import pytest
 from forge import pr_wrapup as mod
 from forge.emergency import EmergencyState, write_state
 from forge.git_utils import code_health_dir
+from forge.pr_delta import FOLLOW_UP_RE
 from forge.pr_plan import WrapupFreshness
 from forge.pr_squash_comment import SQUASH_MARKER
 from forge.pr_wrapup_compose import slot, summarize_rollup
@@ -1840,3 +1841,86 @@ def test_main_compose_code_quality_overrides_unstamped_environment_step_log(
     assert rc == 0
     written = (code_health_dir(tmp_path) / "pr_wrapup.md").read_text(encoding="utf-8")
     assert "not verified at this tree: env_sync" not in written
+
+
+# ---------------------------------------------------------------------------
+# follow-ups: FOLLOW_UP_RE / follow_up_refs
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        ("deferred to #12", ["12"]),
+        ("filed as #12", ["12"]),
+        ("deferred to a later PR", []),
+        ("deferred to PR #12", []),
+        ("filed as issue #12", []),
+        ("defered to #12", []),
+        ("filed as #12345678", []),
+        ("redeferred to #3", []),
+        ("undeferred to #3", []),
+    ],
+)
+def test_follow_up_re_matches_only_the_two_exact_forms(
+    line: str, expected: list[str]
+) -> None:
+    """Behavior: only `deferred to #N` / `filed as #N` name a follow-up issue.
+
+    Args:
+        line: Disposition text.
+        expected: Issue numbers the pattern must capture.
+    """
+    assert FOLLOW_UP_RE.findall(line) == expected
+
+
+def test_follow_up_refs_counts_reporter_sections_only_in_order_without_duplicates() -> (
+    None
+):
+    """Behavior: fenced and non-reporter text is ignored; order is first-seen."""
+    text = (
+        f"{VERIFIED_AT}\n\n"
+        "## Design Check\n- finding A — deferred to #30\n"
+        "```\nfiled as #99\n```\n\n"
+        "## Security Review\n- finding B — filed as #20\n- finding C — filed as #30\n\n"
+        "## Code Quality\ndeferred to #77\n"
+    )
+
+    assert mod.follow_up_refs(text) == [30, 20]
+
+
+def test_follow_up_refs_without_reporter_sections_is_empty() -> None:
+    """Behavior: a wrap-up without reporter sections yields no refs, not an error."""
+    assert mod.follow_up_refs("## Code Quality\nfiled as #5\n") == []
+
+
+def test_main_post_carries_the_findings_follow_ups_into_issue_management(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, clean_wrapup_body: str
+) -> None:
+    """SCENARIO: an authored finding says it was filed as #9.
+
+    MOCK SETUP: as the clean-run post test (fake `gh_pr_view`, fetch,
+    behind_ahead, `post_wrapup`, `refresh_state`).
+    EXPECTED BEHAVIOR: the posted wrap-up's Issue Management carries the
+    `Follow-up filed: #9` line next to the closing keyword.
+    """
+    body = clean_wrapup_body.replace(
+        "## Design Check\nPASS — no issues.",
+        "## Design Check\n- naming drift — filed as #9",
+    )
+    path = tmp_path / "wrapup.md"
+    path.write_text(body, encoding="utf-8")
+    monkeypatch.setattr(mod, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(mod, "gh_pr_view", lambda *_a, **_kw: _pr_view())
+    monkeypatch.setattr(mod, "fetch_quietly", lambda *_a, **_kw: True)
+    monkeypatch.setattr(mod, "behind_ahead", lambda *_a, **_kw: (0, 1))
+    post_calls: list[tuple[int, str]] = []
+    monkeypatch.setattr(
+        mod, "post_wrapup", lambda pr, text: post_calls.append((pr, text)) or 0
+    )
+    monkeypatch.setattr(mod, "refresh_state", lambda *_a, **_kw: 0)
+
+    rc = mod.main(["post", "--pr", "61", "--body-file", str(path)])
+
+    assert rc == 0
+    assert "Closes #42\nFollow-up filed: #9" in post_calls[0][1]

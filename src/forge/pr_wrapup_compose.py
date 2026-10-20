@@ -544,12 +544,17 @@ def render_issue_management(
     pr_body_checked: bool,
     pr_named: bool,
     also_closed: Sequence[int] = (),
+    follow_ups: Sequence[int] = (),
 ) -> str:
     """Render the Issue Management line from the closing keywords found.
 
     *also_closed* names issues a close keyword elsewhere in the PR body
     would close. The no-keyword warning is worded so it never contradicts
     them: what is missing is a closing line, not a closing effect.
+
+    *follow_ups* are the issues the PR's findings were deferred to or
+    filed as — what placement reads after posting. No follow-ups adds
+    nothing: a "none filed" line would read as a claim that was checked.
 
     Args:
         closing_refs: Issue numbers the PR would close.
@@ -558,6 +563,7 @@ def render_issue_management(
             as opposed to no PR existing yet; only shapes the note.
         also_closed: Issue numbers GitHub would also close although
             *closing_refs* omits them.
+        follow_ups: Issue numbers the findings name as their disposition.
 
     Returns:
         One of ``Closes #…``; ``Closes #… — GitHub would also close (on
@@ -565,7 +571,9 @@ def render_issue_management(
         found …`` warning; or ``⚠️ no closing keyword on its own line …;
         GitHub would still close (on merge into the default branch): #…``.
         Each is marked provisional when no PR body existed to search, so
-        the refs came from the branch's commit messages instead.
+        the refs came from the branch's commit messages instead. A second
+        line, ``Follow-up filed: #N`` or ``Follow-ups filed: #…``, follows
+        when *follow_ups* is not empty.
     """
     also = ", ".join(f"#{ref}" for ref in also_closed)
     if closing_refs:
@@ -587,6 +595,9 @@ def render_issue_management(
             f" — provisional: read from the branch's commit messages because "
             f"{why}; only the PR body's keywords close issues"
         )
+    if follow_ups:
+        label = "Follow-up filed" if len(follow_ups) == 1 else "Follow-ups filed"
+        text += f"\n{label}: " + ", ".join(f"#{ref}" for ref in follow_ups)
     return text
 
 
