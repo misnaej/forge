@@ -132,7 +132,9 @@ _GUARD_GIT_OPTS='((-c|-C|--git-dir|--work-tree|--namespace|--exec-path|--config-
 GIT_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"'git[[:space:]]+'"${_GUARD_GIT_OPTS}"
 # GIT_UNKNOWN_ANCHOR is GIT_ANCHOR with the command word replaced by a
 # word that starts with `$` and holds no `/` (spelled as the characters
-# it may hold, since a bare `/` is barred here) — `$G`, `${G}`, `${G:-git}`,
+# it may hold, since a bare `/` is barred here), or a whole `${…}`
+# expansion, whose `/` belongs to the expansion (`${G:-/usr/bin/git}`,
+# `${G//x/y}`) — `$G`, `${G}`, `${G:-git}`,
 # `$1`, `$@` — or, in the command-positions view, a quoted span the view
 # could not decode to a plain word (`"$G"` reads as `_` there), standing
 # where git would (`$G reset --hard`, `sudo "$G" clean -fd`). A word
@@ -148,7 +150,7 @@ GIT_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"'git[[:spac
 # prefix. `[$]`, not a backslash, for the same awk -v and sed reasons as
 # GUARD_REDIR.
 # shellcheck disable=SC2034  # consumed by sourcing hooks
-GIT_UNKNOWN_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}"'([$][][[:alnum:]_{}:#%@*!?=+.,~^-]*|_)[[:space:]]+'"${_GUARD_GIT_OPTS}"
+GIT_UNKNOWN_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}"'([$]([{][^}[:space:]]*[}]|[][[:alnum:]_{}:#%@*!?=+.,~^-]*)|_)[[:space:]]+'"${_GUARD_GIT_OPTS}"
 
 # GH_ANCHOR is the same shape for `gh`: a real invocation at line-start
 # (leading whitespace included — the hand-rolled `^gh` patterns this

@@ -1376,6 +1376,12 @@ _FORCE_PUSH_CASES = [
     pytest.param("$G push origin main", 0, id="allows_variable_command_plain_push"),
     pytest.param('env -S "git" push -f', 2, id="blocks_env_split_quoted_program_word"),
     pytest.param('"${G:-git}" push -f', 2, id="blocks_quoted_default_value_variable"),
+    pytest.param(
+        "${G:-/usr/bin/git} push -f", 2, id="blocks_brace_expansion_holding_slash"
+    ),
+    pytest.param("${G//x/y} push -f", 2, id="blocks_brace_substitution_expansion"),
+    pytest.param("${G%/*} push -f", 2, id="blocks_brace_suffix_strip_expansion"),
+    pytest.param("${HOME}/bin/tool push -f", 0, id="allows_braced_variable_path"),
 ]
 
 
@@ -2703,6 +2709,12 @@ _DESTRUCTIVE_CLEAN_CASES = [
     pytest.param(
         'sudo "${G}" clean -fd', 2, id="blocks_quoted_braced_variable_after_sudo"
     ),
+    pytest.param(
+        "${G:-/usr/bin/git} reset --hard",
+        2,
+        id="blocks_brace_expansion_holding_slash",
+    ),
+    pytest.param("${HOME}/bin/tool reset", 0, id="allows_braced_variable_path"),
     pytest.param("$HOME/bin/tool reset", 0, id="allows_path_starting_with_variable"),
     pytest.param("$PWD/run.sh checkout", 0, id="allows_variable_path_script_verb"),
     pytest.param('echo "$G" reset', 0, id="allows_quoted_variable_as_argument"),
