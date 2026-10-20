@@ -165,6 +165,26 @@ def test_render_wrapup_light_code_mode_token_and_mechanical_recommendation() -> 
     assert validate_wrapup(_fill(text)) == []
 
 
+def test_render_wrapup_light_release_mode_token_and_skipped_sections() -> None:
+    """light-release writes its own mode token and skips design and security.
+
+    The token is what makes ``forge-pr-create`` re-run the classifier, so
+    it must be the exact line, not ``wrapup-mode: light`` (the light-code
+    token). The docs reporter still runs, so its section is a PASS line.
+    """
+    inputs = _inputs(
+        mode="light-release",
+        reporters=("docs-types-checker",),
+        reports={"docs-types-checker": _pass_report()},
+        reasons=("light-release: the diff is a release assembly",),
+    )
+    text = render_wrapup(inputs)
+    assert "wrapup-mode: light-release" in text.splitlines()
+    assert "wrapup-mode: light" not in text.splitlines()
+    assert "SKIPPED (light-release)" in text
+    assert validate_wrapup(_fill(text)) == []
+
+
 def test_light_code_recommendation_is_short() -> None:
     """Behavior test: the fixed line is at most 15 words (word-budget contract)."""
     assert len(LIGHT_CODE_RECOMMENDATION.split()) <= 15

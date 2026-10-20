@@ -269,28 +269,132 @@ def test_pr_create_refuses_light_wrapup_when_classifier_disagrees(
     assert calls == []
 
 
+@pytest.mark.parametrize(
+    ("declared", "classified"),
+    [("light", "light-code"), ("light-release", "light-release")],
+)
 def test_pr_create_publishes_light_wrapup_when_classifier_agrees(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, declared: str, classified: str
 ) -> None:
-    """A `wrapup-mode: light` wrap-up publishes when the classifier still agrees.
+    """A reporter-skipping wrap-up publishes when the classifier still agrees.
 
-    Complement of the disagreement case above — proves the re-check is a
-    real gate (can say yes) rather than one that only ever refuses light
-    wrap-ups.
+    SCENARIO: complement of the disagreement cases — the re-check can say
+        yes, so it is a real gate rather than one that only ever refuses.
+    MOCK SETUP: `pr_create.classify` returns *classified*.
+    EXPECTED BEHAVIOR: exit 0 and exactly one `gh` call.
+
+    Args:
+        declared: The `wrapup-mode:` the wrap-up carries.
+        classified: The mode the classifier reports.
     """
     repo = tmp_path / "repo"
     repo.mkdir()
     init_git_repo(repo)
-    _write_wrapup(repo, _head_sha(repo), mode_line="wrapup-mode: light")
+    _write_wrapup(repo, _head_sha(repo), mode_line=f"wrapup-mode: {declared}")
     monkeypatch.setattr(
         pr_create,
         "classify",
-        lambda _root, _base, _pr: SimpleNamespace(mode="light-code"),
+        lambda _root, _base, _pr: SimpleNamespace(mode=classified),
     )
     calls = _stub_gh(monkeypatch)
 
     assert _run_main(monkeypatch, repo) == 0
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("declared", "classified"),
+    [("light", "light-release"), ("light-release", "full")],
+)
+def test_pr_create_refuses_wrapup_mode_earned_by_the_other_escape(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    declared: str,
+    classified: str,
+) -> None:
+    """Each declared mode needs its own classifier verdict, not any light one.
+
+    SCENARIO: the classifier reads a different reporter-skipping mode than
+        the wrap-up declares.
+    MOCK SETUP: `pr_create.classify` returns *classified*.
+    EXPECTED BEHAVIOR: exit 2, nothing published.
+
+    Args:
+        declared: The wrap-up's declared mode.
+        classified: The mode the classifier returns instead.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    init_git_repo(repo)
+    _write_wrapup(repo, _head_sha(repo), mode_line=f"wrapup-mode: {declared}")
+    monkeypatch.setattr(
+        pr_create,
+        "classify",
+        lambda _root, _base, _pr: SimpleNamespace(mode=classified),
+    )
+    calls = _stub_gh(monkeypatch)
+
+    assert _run_main(monkeypatch, repo) == 2
+    assert calls == []
+
+
+def test_pr_create_refuses_light_release_wrapup_when_classifier_raises(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A classifier crash must not let a light-release wrap-up through.
+
+    SCENARIO: the re-check itself fails; the gate fails closed.
+    MOCK SETUP: `pr_create.classify` raises; `gh` is recorded.
+    EXPECTED BEHAVIOR: exit 2, nothing published.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    init_git_repo(repo)
+    _write_wrapup(repo, _head_sha(repo), mode_line="wrapup-mode: light-release")
+
+    def _boom(*_a: object, **_k: object) -> None:
+        msg = "classifier exploded"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(pr_create, "classify", _boom)
+    calls = _stub_gh(monkeypatch)
+
+    assert _run_main(monkeypatch, repo) == 2
+    assert calls == []
+
+
+@pytest.mark.parametrize("configured_base", [None, "other"])
+def test_pr_create_refuses_light_release_wrapup_without_agreeing_base_branch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, configured_base: str | None
+) -> None:
+    """The escape is judged against the configured base, so it must resolve and match.
+
+    SCENARIO: `[tool.forge] base_branch` is unset, or differs from `--base`.
+    MOCK SETUP: `pr_create.load_config` returns *configured_base*; the
+        classifier would say `light-release`, so only the base check refuses.
+    EXPECTED BEHAVIOR: exit 2, nothing published.
+
+    Args:
+        configured_base: The configured base branch, or `None` when unset.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    init_git_repo(repo)
+    _write_wrapup(repo, _head_sha(repo), mode_line="wrapup-mode: light-release")
+    monkeypatch.setattr(
+        pr_create,
+        "load_config",
+        lambda _root: SimpleNamespace(base_branch=configured_base),
+    )
+    monkeypatch.setattr(
+        pr_create,
+        "classify",
+        lambda _root, _base, _pr: SimpleNamespace(mode="light-release"),
+    )
+    calls = _stub_gh(monkeypatch)
+
+    assert _run_main(monkeypatch, repo) == 2
+    assert calls == []
 
 
 def test_pr_create_refuses_emergency_wrapup_when_sentinel_not_armed(

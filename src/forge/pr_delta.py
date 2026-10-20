@@ -1,10 +1,12 @@
 """pr_delta — thresholds and helpers for pr-manager finalization short-circuits.
 
-`forge:pr-manager` (via the `/pr` skill) has four independent ways to
+`forge:pr-manager` (via the `/pr` skill) has five independent ways to
 skip the full three-agent re-verification: **delta mode** (diff since
 the last verified SHA is small, out of high-blast-radius areas),
 the **docs-only light path** (whole diff doc-shaped), **regen-only
-eligibility** (managed artifacts, earned via provenance gates), and the
+eligibility** (managed artifacts, earned via provenance gates), the
+**release-assembly light path** (only what `forge-changelog release-pr`
+writes — re-earned at publish time like light-code), and the
 **light-code path** (small, no added files bar changelog fragments,
 no source or blast-radius path — earned at publish time by the hook's
 classifier re-run). The thresholds, path globs, and the SHA-extraction
@@ -25,6 +27,7 @@ from typing import TYPE_CHECKING, Final
 
 from forge import config
 from forge.changelog_fragments import FRAGMENTS_DIR, _parse_and_validate_filename
+from forge.rebump import CHANGELOG_PATH, PLUGIN_PATH
 
 
 if TYPE_CHECKING:
@@ -120,8 +123,8 @@ PROVENANCE_GATE_STEPS: Final[tuple[str, ...]] = (
 # source-under-src change, and no high-blast-radius path qualifies for
 # the LIGHT wrap-up (`wrapup-mode: light`): reporters
 # skipped, short-form wrap-up, strict pre-commit still in full. The
-# escape is never agent discretion — `block_unverified_pr_create`
-# re-runs the classifier at publish time and blocks on disagreement.
+# escape is never agent discretion — `forge-pr-create` re-runs the
+# classifier at publish time and refuses on disagreement.
 LIGHT_WRAPUP_LINE_THRESHOLD: Final[int] = 50
 
 
@@ -152,6 +155,21 @@ RULE_SURFACE_PATHS: Final[tuple[str, ...]] = (
 # classifier and the gate that mandates the file can never name different
 # directories.
 FRAGMENT_PATH_PREFIX: Final[str] = f"{FRAGMENTS_DIR.as_posix()}/"
+
+
+# What `forge-changelog release-pr` writes and nothing else: the manifest's
+# version bump, the assembled CHANGELOG.md, and the consumed fragments. A
+# diff made only of these classifies for the `light-release` path, where
+# the changelog prose is the one thing left to read. Every entry is
+# imported, never re-spelled, so the classifier and the writer cannot
+# name different files. The fragments entry is a directory prefix and is
+# matched through :func:`_is_fragment_path`, never as a bare prefix — a
+# prefix alone would admit ``changelog.d/evil.py``.
+RELEASE_ASSEMBLY_PATHS: Final[tuple[str, ...]] = (
+    PLUGIN_PATH,
+    CHANGELOG_PATH,
+    FRAGMENT_PATH_PREFIX,
+)
 
 
 # Matches the reporter-agent header contract documented in
@@ -443,6 +461,43 @@ def regen_only_diff(changed_paths: list[str]) -> bool:
     if not changed_paths:
         return False
     return all(path in MANAGED_REGEN_PATHS for path in changed_paths)
+
+
+def release_assembly_diff(changed_paths: list[str]) -> bool:
+    """Return whether every changed path is a release-assembly output.
+
+    Pure path classifier, same contract shape as :func:`regen_only_diff`
+    — it decides *eligibility* for the ``light-release`` path, never the
+    escape itself. The exact entries of :data:`RELEASE_ASSEMBLY_PATHS`
+    match as whole paths; its fragments-directory entry matches only a
+    direct child whose name is fragment-shaped (:func:`_is_fragment_path`).
+
+    Matching is **exact-case, deliberately**, for the reason
+    :func:`regen_only_diff` gives: casefolding a disqualifier refuses
+    more, casefolding an exemption excuses more. ``.Claude-Plugin/…`` is
+    a different, unreviewed file to git.
+
+    Known residuals (documented, accepted): classification sees path
+    strings only. It cannot tell a deleted fragment from an added or
+    edited one, nor a version-only manifest change from one that rewires
+    hooks — :func:`forge.pr_plan.classify` checks both against the diff
+    content before granting the mode. The ``CHANGELOG.md`` prose is not
+    machine-checked at all; the docs-types-checker that still runs, and
+    the human review, are its reviewers of record.
+
+    Args:
+        changed_paths: Repo-relative paths from ``git diff --name-only``.
+
+    Returns:
+        ``True`` when the diff is non-empty and every path is a
+        release-assembly output; ``False`` otherwise.
+    """
+    if not changed_paths:
+        return False
+    # Whole-path match only against the file entries: the fragments
+    # directory itself is never a changed file, so it must not match.
+    files = tuple(p for p in RELEASE_ASSEMBLY_PATHS if p != FRAGMENT_PATH_PREFIX)
+    return all(path in files or _is_fragment_path(path) for path in changed_paths)
 
 
 def touches_source_paths(changed_paths: list[str]) -> list[str]:

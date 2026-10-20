@@ -14,10 +14,10 @@ publishing a branch with no wrap-up at all.
 This command removes the inference instead of improving it. It runs in the
 checkout it publishes, so the branch is not a guess — it is where the
 process is standing. It verifies that checkout's own wrap-up against that
-checkout's own HEAD, earns the light and emergency escapes in the same
-place, and only then creates the pull request. The guard's job shrinks to
-refusing the raw command, which is a question about the command's *name*
-and needs no understanding of its arguments.
+checkout's own HEAD, earns the light, light-release and emergency escapes
+in the same place, and only then creates the pull request. The guard's
+job shrinks to refusing the raw command, which is a question about the
+command's *name* and needs no understanding of its arguments.
 
 That shape is not new here: ``forge-pr-wrapup post`` and
 ``block_raw_wrapup_post`` already moved wrap-up posting behind a command
@@ -62,6 +62,16 @@ logger = logging.getLogger(__name__)
 
 HEADER_LINES: Final[int] = 5
 SHORT_FLAG_LENGTH: Final[int] = 2
+
+# Each wrap-up mode that skips reporters on the author's classification,
+# mapped to the classifier verdict that must be reproduced at publish
+# time. Declaring the mode is a claim; re-running the classifier is the
+# proof. A mode absent here (light-docs, delta) writes no marker line, so
+# it has nothing to re-earn.
+EARNED_WRAPUP_MODES: Final[dict[str, str]] = {
+    "light": "light-code",
+    "light-release": "light-release",
+}
 
 # Passthrough is an ALLOWLIST, not a denylist. It forwards to a
 # third-party tool whose flag set grows, so a list of refusals silently
@@ -149,45 +159,51 @@ def _verified(wrapup_text: str, head_sha: str) -> bool:
     )
 
 
-def _earn_light(root: Path, base: str) -> str | None:
-    """Re-run the classifier so a light wrap-up is earned, not asserted.
+def _earn_escape(root: Path, base: str, declared: str) -> str | None:
+    """Re-run the classifier so a reporter-skipping wrap-up is earned, not asserted.
 
-    A ``light`` wrap-up skips the reporter round, so the escape is proved
-    at publish time rather than taken on the author's word. The classifier
-    is called as a function, not shelled out to and re-parsed: one
-    implementation, and its verdict cannot drift from the CLI's. Fails
-    CLOSED — any error or any verdict but light-code refuses.
+    A ``light`` or ``light-release`` wrap-up skips reporters, so the
+    escape is proved at publish time rather than taken on the author's
+    word. The classifier is called as a function, not shelled out to and
+    re-parsed: one implementation, and its verdict cannot drift from the
+    CLI's. Fails CLOSED — any error or any verdict but the one
+    :data:`EARNED_WRAPUP_MODES` names for *declared* refuses.
 
     Args:
         root: Checkout holding the branch.
         base: Base branch the diff is classified against.
+        declared: The wrap-up's ``wrapup-mode:`` value, a key of
+            :data:`EARNED_WRAPUP_MODES`.
 
     Returns:
         A refusal reason, or ``None``.
     """
+    required = EARNED_WRAPUP_MODES[declared]
+    claim = f"the wrap-up declares wrapup-mode: {declared}"
     configured = (load_config(root).base_branch or "").strip()
     if not configured:
         return (
-            "the wrap-up declares wrapup-mode: light but no [tool.forge] "
-            "base_branch resolves the base to classify against — author the "
-            "full wrap-up."
+            f"{claim} but no [tool.forge] base_branch resolves the base to "
+            "classify against — author the full wrap-up."
         )
     if configured != base:
         return (
-            f"the wrap-up declares wrapup-mode: light but this publishes against "
-            f"'{base}' while [tool.forge] base_branch is '{configured}'. The light "
-            "escape is judged against the configured base, so the two must agree."
+            f"{claim} but this publishes against '{base}' while [tool.forge] "
+            f"base_branch is '{configured}'. The {declared} escape is judged "
+            "against the configured base, so the two must agree."
         )
     try:
         mode = classify(root, f"origin/{configured}", None).mode
     except Exception:
-        logger.warning("classifier failed; refusing the light escape", exc_info=True)
+        logger.warning(
+            "classifier failed; refusing the %s escape", declared, exc_info=True
+        )
         mode = ""
-    if mode != "light-code":
+    if mode != required:
         return (
-            f"the wrap-up declares wrapup-mode: light but the classifier reads "
-            f"this diff as '{mode or 'unclassifiable'}' against origin/{configured} — "
-            "the light escape is not earned. Author the full wrap-up."
+            f"{claim} but the classifier reads this diff as "
+            f"'{mode or 'unclassifiable'}' against origin/{configured} — the "
+            f"{declared} escape is not earned. Author the full wrap-up."
         )
     return None
 
@@ -405,8 +421,10 @@ def _gate(root: Path, branch: str, base: str) -> tuple[str | None, bool]:
     # above applies to an emergency publication too.
     if re.search(r"^wrapup-mode:[ \t]*emergency[ \t]*$", text, re.MULTILINE):
         return None, True
-    if re.search(r"^wrapup-mode:[ \t]*light[ \t]*$", text, re.MULTILINE):
-        return _earn_light(root, base), False
+    for declared in EARNED_WRAPUP_MODES:
+        marker = rf"^wrapup-mode:[ \t]*{re.escape(declared)}[ \t]*$"
+        if re.search(marker, text, re.MULTILINE):
+            return _earn_escape(root, base, declared), False
     return None, False
 
 

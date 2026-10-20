@@ -265,6 +265,366 @@ def test_classify_docs_glob_precedence_over_regen_glob(tmp_path: Path) -> None:
     assert plan.mode == "light-docs"
 
 
+# --- classify(): light-release path ---------------------------------------
+
+_MANIFEST = '{\n  "name": "demo",\n  "version": "1.0.0",\n  "hooks": {}\n}\n'
+_BUMPED_MANIFEST = _MANIFEST.replace("1.0.0", "1.1.0")
+_FRAGMENT = "changelog.d/add-thing.added.md"
+
+
+def _release_base_repo(tmp_path: Path, *, manifest: str | None = _MANIFEST) -> Path:
+    """Build a repo whose ``main`` holds a manifest, a changelog and a fragment.
+
+    Args:
+        tmp_path: Pytest ``tmp_path`` fixture directory to build the repo under.
+        manifest: Manifest text committed on ``main``; ``None`` omits the file.
+
+    Returns:
+        The repo root, checked out on ``feature`` (no commits ahead yet).
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    init_git_repo(repo)
+    seed: dict[str, str | bytes] = {
+        "CHANGELOG.md": "# Changelog\n",
+        _FRAGMENT: "bump: minor\n\nAdd a thing.\n",
+    }
+    if manifest is not None:
+        seed[".claude-plugin/plugin.json"] = manifest
+    _commit_files(repo, seed, "seed on main")
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feature"], cwd=repo, env=GIT_ENV, check=True
+    )
+    return repo
+
+
+def _assemble_release(
+    repo: Path,
+    *,
+    manifest: str | None = _BUMPED_MANIFEST,
+    extra: dict | None = None,
+    consume_fragment: bool = True,
+) -> None:
+    """Commit what ``forge-changelog release-pr`` writes, plus optional extras.
+
+    Args:
+        repo: Repo from :func:`_release_base_repo`.
+        manifest: New manifest text; ``None`` leaves the manifest alone.
+        extra: Further files to commit in the same change.
+        consume_fragment: Delete the seeded fragment, as an assembly does.
+    """
+    files: dict[str, str | bytes] = {
+        "CHANGELOG.md": "# Changelog\n\n## 1.1.0\n- thing\n"
+    }
+    if manifest is not None:
+        files[".claude-plugin/plugin.json"] = manifest
+    files.update(extra or {})
+    for relpath, content in files.items():
+        path = repo / relpath
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(str(content), encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=repo, env=GIT_ENV, check=True)
+    if consume_fragment:
+        subprocess.run(
+            ["git", "rm", "-q", "--ignore-unmatch", _FRAGMENT],
+            cwd=repo,
+            env=GIT_ENV,
+            check=True,
+        )
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "assemble"], cwd=repo, env=GIT_ENV, check=True
+    )
+
+
+def _not_light_release_reason(plan: pr_plan.PrPlan) -> str:
+    """Return the ``not light-release:`` reason recorded on *plan*.
+
+    Args:
+        plan: A classified plan that must have refused light-release.
+
+    Returns:
+        The reason text after the prefix.
+    """
+    assert plan.mode != "light-release"
+    reason = next(r for r in plan.reasons if r.startswith("not light-release:"))
+    return reason.removeprefix("not light-release:").strip()
+
+
+def test_classify_light_release_for_version_only_assembly(tmp_path: Path) -> None:
+    """A version-only manifest bump + changelog + consumed fragment is light-release."""
+    repo = _release_base_repo(tmp_path)
+    _assemble_release(repo)
+
+    plan = pr_plan.classify(repo, "main", None)
+
+    assert plan.mode == "light-release"
+    assert plan.reporters == ["docs-types-checker"]
+    assert plan.precommit_scope == list(pr_plan.RELEASE_PRECOMMIT_STEPS)
+    assert "plugin_version" in plan.precommit_scope
+    assert "manifest_json" in plan.precommit_scope
+    assert any(r.startswith("not docs-only:") for r in plan.reasons)
+    assert any(r.startswith("not regen-only:") for r in plan.reasons)
+    assert plan.reasons[-1].startswith("light-release:")
+    assert plan.classified_at == _git_short_sha(repo)
+
+
+def test_classify_light_release_refuses_manifest_change_beyond_version(
+    tmp_path: Path,
+) -> None:
+    """A manifest change that also rewires something is not a version bump."""
+    repo = _release_base_repo(tmp_path)
+    rewired = _BUMPED_MANIFEST.replace('"hooks": {}', '"hooks": {"x": 1}')
+    _assemble_release(repo, manifest=rewired)
+
+    plan = pr_plan.classify(repo, "main", None)
+
+    assert plan.mode == "full"
+    assert "more than its version" in _not_light_release_reason(plan)
+
+
+@pytest.mark.parametrize(
+    "fragment_path", ["changelog.d/other.fixed.md", _FRAGMENT], ids=["added", "edited"]
+)
+def test_classify_light_release_refuses_added_or_edited_fragment(
+    tmp_path: Path, fragment_path: str
+) -> None:
+    """A fragment written or edited (not consumed) by the diff is not an assembly.
+
+    Args:
+        fragment_path: A new fragment, or the seeded one edited in place.
+    """
+    repo = _release_base_repo(tmp_path)
+    _assemble_release(
+        repo,
+        extra={fragment_path: "bump: patch\n\nFix.\n"},
+        consume_fragment=False,
+    )
+
+    plan = pr_plan.classify(repo, "main", None)
+
+    assert plan.mode == "full"
+    assert fragment_path in _not_light_release_reason(plan)
+
+
+def test_classify_light_release_outranks_delta_for_verified_pr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A release assembly stays light-release even when a verified SHA allows delta.
+
+    MOCK SETUP: ``pr_plan._latest_verified_sha`` returns the real assembly
+    commit; a small follow-up commit then sits on top of it.
+    """
+    repo = _release_base_repo(tmp_path)
+    _assemble_release(repo)
+    verified_sha = _git_short_sha(repo)
+    _commit_files(repo, {"CHANGELOG.md": "# Changelog\n\n## 1.1.0\n- more\n"}, "tweak")
+    monkeypatch.setattr(pr_plan, "_latest_verified_sha", lambda _pr: verified_sha)
+
+    plan = pr_plan.classify(repo, "main", 7)
+
+    assert plan.mode == "light-release"
+
+
+def test_classify_light_release_refuses_source_renamed_onto_changelog(
+    tmp_path: Path,
+) -> None:
+    """A source file moved onto CHANGELOG.md must not read as a changelog edit.
+
+    With rename detection the move would list only ``CHANGELOG.md``; the
+    classifier lists renames as delete plus add so ``src/`` is still seen.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    init_git_repo(repo)
+    _commit_files(
+        repo, {"src/mod.py": "x = 1\n", ".claude-plugin/plugin.json": _MANIFEST}, "seed"
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feature"], cwd=repo, env=GIT_ENV, check=True
+    )
+    # The manifest bump keeps the diff out of docs-only.
+    (repo / ".claude-plugin/plugin.json").write_text(_BUMPED_MANIFEST)
+    for cmd in (
+        ["git", "mv", "src/mod.py", "CHANGELOG.md"],
+        ["git", "add", "-A"],
+        ["git", "commit", "-q", "-m", "move source onto changelog"],
+    ):
+        subprocess.run(cmd, cwd=repo, env=GIT_ENV, check=True)
+
+    plan = pr_plan.classify(repo, "main", None)
+
+    assert plan.mode != "light-release"
+    assert "rename-free listing" in _not_light_release_reason(plan)
+
+
+@pytest.mark.parametrize(
+    ("new_version", "expected_reason"),
+    [
+        ("../../x", "not a plain X.Y.Z"),
+        ("1.2.3-rc1", "not a plain X.Y.Z"),
+        ("v1.2.4", "not a plain X.Y.Z"),
+        (
+            "\N{ARABIC-INDIC DIGIT ONE}\N{ARABIC-INDIC DIGIT ZERO}.0.0",
+            "not a plain X.Y.Z",
+        ),
+        ("0.9.9", "does not move above"),
+        ("1.00.0", "does not move above"),
+    ],
+)
+def test_classify_light_release_refuses_non_release_version_value(
+    tmp_path: Path, new_version: str, expected_reason: str
+) -> None:
+    """A version-only manifest change must still be a higher plain ``X.Y.Z``.
+
+    Args:
+        new_version: The value written over the base ``1.0.0``.
+        expected_reason: Fragment the refusal reason must contain.
+    """
+    repo = _release_base_repo(tmp_path)
+    _assemble_release(repo, manifest=_MANIFEST.replace("1.0.0", new_version))
+
+    plan = pr_plan.classify(repo, "main", None)
+
+    assert plan.mode == "full"
+    assert expected_reason in _not_light_release_reason(plan)
+
+
+def _make_changelog_irregular(repo: Path, kind: str) -> None:
+    """Commit CHANGELOG.md as a symlink or an executable file.
+
+    Args:
+        repo: Repo holding an already-committed assembly.
+        kind: ``"symlink"`` or ``"executable"``.
+    """
+    changelog = repo / "CHANGELOG.md"
+    if kind == "symlink":
+        changelog.unlink()
+        try:
+            changelog.symlink_to(".claude-plugin/plugin.json")
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks cannot be created on this platform")
+    else:
+        changelog.chmod(0o755)
+    subprocess.run(["git", "add", "-A"], cwd=repo, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "irregular changelog"],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+
+
+@pytest.mark.parametrize("kind", ["symlink", "executable"])
+def test_classify_light_release_refuses_irregular_changelog_file(
+    tmp_path: Path, kind: str
+) -> None:
+    """A symlinked or executable CHANGELOG.md is not prose, so no light-release.
+
+    Args:
+        kind: How CHANGELOG.md is made irregular.
+    """
+    repo = _release_base_repo(tmp_path)
+    _assemble_release(repo)
+    _make_changelog_irregular(repo, kind)
+
+    plan = pr_plan.classify(repo, "main", None)
+
+    assert plan.mode != "light-release"
+    assert _not_light_release_reason(plan).startswith("not a regular file")
+
+
+def test_classify_light_release_refuses_non_text_manifest(tmp_path: Path) -> None:
+    """A manifest with invalid UTF-8 on HEAD refuses instead of crashing."""
+    repo = _release_base_repo(tmp_path)
+    _assemble_release(repo)
+    (repo / ".claude-plugin/plugin.json").write_bytes(b'{"version": "\xff\xfe"}')
+    subprocess.run(["git", "add", "-A"], cwd=repo, env=GIT_ENV, check=True)
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "binary manifest"],
+        cwd=repo,
+        env=GIT_ENV,
+        check=True,
+    )
+
+    plan = pr_plan.classify(repo, "main", None)
+
+    assert plan.mode != "light-release"
+    assert "not text" in _not_light_release_reason(plan)
+
+
+@pytest.mark.parametrize("missing_side", ["base", "head"])
+def test_classify_light_release_refuses_manifest_missing_on_a_side(
+    tmp_path: Path, missing_side: str
+) -> None:
+    """A manifest added or removed by the diff is not a version bump.
+
+    Args:
+        missing_side: Which side lacks the manifest.
+    """
+    if missing_side == "base":
+        repo = _release_base_repo(tmp_path, manifest=None)
+        _assemble_release(repo)
+    else:
+        repo = _release_base_repo(tmp_path)
+        subprocess.run(
+            ["git", "rm", "-q", ".claude-plugin/plugin.json"],
+            cwd=repo,
+            env=GIT_ENV,
+            check=True,
+        )
+        _assemble_release(repo, manifest=None)
+
+    plan = pr_plan.classify(repo, "main", None)
+
+    assert plan.mode == "full"
+    assert "added or removed" in _not_light_release_reason(plan)
+
+
+@pytest.mark.parametrize("broken_side", ["base", "head"])
+def test_classify_light_release_refuses_unparseable_manifest(
+    tmp_path: Path, broken_side: str
+) -> None:
+    """An unreadable manifest on either side refuses with a stated reason.
+
+    Args:
+        broken_side: Which side holds the unparseable manifest.
+    """
+    if broken_side == "base":
+        repo = _release_base_repo(tmp_path, manifest="not json\n")
+        _assemble_release(repo)
+    else:
+        repo = _release_base_repo(tmp_path)
+        _assemble_release(repo, manifest="not json\n")
+
+    plan = pr_plan.classify(repo, "main", None)
+
+    assert plan.mode == "full"
+    assert "cannot be compared" in _not_light_release_reason(plan)
+
+
+def test_classify_docs_only_diff_without_manifest_stays_light_docs(
+    tmp_path: Path,
+) -> None:
+    """Without the manifest the diff is plain docs; docs-only outranks light-release."""
+    repo = _release_base_repo(tmp_path)
+    _assemble_release(repo, manifest=None)
+
+    plan = pr_plan.classify(repo, "main", None)
+
+    assert plan.mode == "light-docs"
+
+
+def test_classify_release_diff_plus_source_file_returns_full(tmp_path: Path) -> None:
+    """One source file beside a release assembly forfeits light-release."""
+    repo = _release_base_repo(tmp_path)
+    _assemble_release(repo, extra={"src/foo.py": "x = 1\n"})
+
+    plan = pr_plan.classify(repo, "main", None)
+
+    assert plan.mode == "full"
+    assert "outside the release-assembly" in _not_light_release_reason(plan)
+
+
 # --- classify(): light-code path ------------------------------------------
 
 

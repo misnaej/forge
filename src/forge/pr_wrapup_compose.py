@@ -81,7 +81,7 @@ class ComposeInputs:
     Attributes:
         head_sha: Short HEAD SHA the wrap-up verifies.
         mode: ``forge-pr-plan`` mode (full, light-docs, light-regen,
-            light-code, delta).
+            light-release, light-code, delta).
         reasons: ``forge-pr-plan`` reasons, in order.
         reporters: Reporter names the plan requires.
         reports: Reporter name → full report text.
@@ -190,6 +190,8 @@ def _recommendation(inputs: ComposeInputs) -> str:
         # The classifier's full reasons are printed by `compose` instead:
         # here they would spend most of the wrap-up's word budget.
         return LIGHT_CODE_RECOMMENDATION
+    # light-release keeps the slot: whether a release is ready is the
+    # author's judgment, not the classifier's.
     return slot("recommendation")
 
 
@@ -240,6 +242,11 @@ def render_wrapup(inputs: ComposeInputs) -> str:
         out.append("wrapup-mode: emergency")
     elif inputs.mode == "light-code":
         out.append("wrapup-mode: light")
+    elif inputs.mode == "light-release":
+        # The marker is what makes `forge-pr-create` re-run the classifier:
+        # this mode skips design and security on a manifest change, so it
+        # must be re-earned at publish time, never taken on this file's word.
+        out.append("wrapup-mode: light-release")
     if inputs.prior_art_report is not None:
         prior = next(
             (

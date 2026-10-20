@@ -360,7 +360,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_cmd_release(root: Path, date: str) -> int` _(internal)_ — Prepare the release commit: assemble + manifest write, all staged.
 - `_stage_release(root: Path, date: str, plan: AssemblyPlan) -> int` _(internal)_ — Assemble + manifest-write the release per *plan*, all staged.
 - `fragments_new_since_tag(root: Path, tag: str | None) -> list[Path]` — Return pending fragments absent from *tag*'s tree — the newly merged.
-- `_tag_exists(root: Path, version: str) -> bool` _(internal)_ — Check if a tag already exists in the repository.
+- `_tag_exists(root: Path, version: str) -> bool` _(internal)_ — Check if a tag exists in the local repository.
 - `_validate_auto_tag_fragments(new_paths: list[Path]) -> tuple[list[Fragment], list[str]]` _(internal)_ — Validate fragments and separate valid ones from errors.
 - `_create_and_push_tag(root: Path, version: str, level: str, n_fragments: int) -> int` _(internal)_ — Create and push an annotated tag, handling concurrent-runner races.
 - `_cmd_auto_tag(root: Path) -> int` _(internal)_ — Tag the current commit from its newly merged fragments (CI seam).
@@ -1054,7 +1054,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 - `_disallowed_passthrough(extra: list[str]) -> str | None` _(internal)_ — Return the first passthrough flag that is not on the allowlist.
 - `_verified(wrapup_text: str, head_sha: str) -> bool` _(internal)_ — Whether the wrap-up's OWN header names *head_sha*.
-- `_earn_light(root: Path, base: str) -> str | None` _(internal)_ — Re-run the classifier so a light wrap-up is earned, not asserted.
+- `_earn_escape(root: Path, base: str, declared: str) -> str | None` _(internal)_ — Re-run the classifier so a reporter-skipping wrap-up is earned, not asserted.
 - `_claim_emergency(root: Path, branch: str) -> str | None` _(internal)_ — Claim the armed emergency bypass for this publish, or refuse.
 - `_pr_number_from_url(stdout: str) -> int | None` _(internal)_ — Return the PR number from the URL ``gh pr create`` prints, if any.
 - `_existing_pr(branch: str) -> list[int] | None` _(internal)_ — List open PRs whose head is *branch*.
@@ -1080,6 +1080,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `configured_docs_only_globs(repo_root: Path) -> tuple[str, ...]` — Return the consumer's extra docs-only globs from ``[tool.forge.pr]``.
 - `docs_only_diff(changed_paths: list[str], extra_globs: tuple[str, ...] = ()) -> bool` — Return whether a diff qualifies for the docs-only light path.
 - `regen_only_diff(changed_paths: list[str]) -> bool` — Return whether every changed path is a forge-managed regen artifact.
+- `release_assembly_diff(changed_paths: list[str]) -> bool` — Return whether every changed path is a release-assembly output.
 - `touches_source_paths(changed_paths: list[str]) -> list[str]` — Return the subset of *changed_paths* under :data:`SOURCE_PATHS`.
 - `touches_rule_surface(changed_paths: list[str]) -> bool` — Return whether any of *changed_paths* is under :data:`RULE_SURFACE_PATHS`.
 - `non_fragment_adds(added_paths: list[str]) -> list[str]` — Return the subset of *added_paths* that is not a changelog fragment.
@@ -1127,6 +1128,11 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_latest_verified_sha(pr_number: int) -> str | None` _(internal)_ — Return the newest ``verified-at:`` SHA among the PR's comments.
 - `wrapup_freshness(pr_number: int) -> WrapupFreshness` — Compare the PR's newest ``verified-at:`` SHA against its current head.
 - `_try_delta(root: Path, pr_number: int | None, reasons: list[str], branch_paths: list[str]) -> bool` _(internal)_ — Evaluate delta-mode eligibility, appending the trail to *reasons*.
+- `class _RawEntry` _(internal)_ — One changed path as ``git diff --raw`` reports it.
+- `_raw_entries(root: Path, diff_range: str) -> list[_RawEntry]` _(internal)_ — Return status, path and modes per changed file across *diff_range*.
+- `_manifest_refusal(root: Path, base: str) -> str | None` _(internal)_ — Return why the manifest change is more than a version bump, or ``None``.
+- `_version_bump_refusal(old: str, new: str) -> str | None` _(internal)_ — Return why *new* is not a release version above *old*, or ``None``.
+- `_light_release_refusal(root: Path, base: str, paths: list[str]) -> str | None` _(internal)_ — Return why the diff is not a release assembly, or ``None`` when it is.
 - `classify(root: Path, base: str, pr_number: int | None) -> PrPlan` — Classify the current branch's finalization path.
 - `_write_evidence(root: Path, base: str, plan: PrPlan, pr_number: int | None) -> None` _(internal)_ — Write the review evidence pack; a failure is logged, never raised.
 - `main(argv: list[str] | None = None) -> int` — Run the finalization-path classifier (or the freshness check) and emit JSON.

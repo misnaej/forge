@@ -925,14 +925,17 @@ def fragments_new_since_tag(root: Path, tag: str | None) -> list[Path]:
 
 
 def _tag_exists(root: Path, version: str) -> bool:
-    """Check if a tag already exists in the repository.
+    """Check if a tag exists in the local repository.
+
+    Local refs only — a tag that exists only on the remote reads as
+    absent until it is fetched.
 
     Args:
         root: Repository root directory.
         version: The tag to check (e.g., "v1.2.3").
 
     Returns:
-        ``True`` if the tag exists locally or remotely, ``False`` otherwise.
+        ``True`` if the tag exists locally, ``False`` otherwise.
     """
     return bool(
         run_git(
