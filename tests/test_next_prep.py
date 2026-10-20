@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import subprocess
 from typing import TYPE_CHECKING
 
@@ -602,3 +603,36 @@ def test_main_no_sync_skips_checkout_and_pull(
     assert not any(c[:1] == ["switch"] for c in captured)
     assert not any(c[:1] == ["pull"] for c in captured)
     assert any(c[:2] == ["fetch", "--tags"] for c in captured)
+
+
+def test_pull_ff_only_runs_with_network_env_over_the_process_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pull cannot prompt (HTTPS or ssh) yet still finds `ssh` on `PATH`.
+
+    SCENARIO: no user ssh choice anywhere, so the batch-mode default applies.
+    MOCK SETUP: `subprocess.run` records the pull's kwargs; the config probe
+        inside `network_git_env` runs through the same seam and answers
+        "not configured".
+    EXPECTED BEHAVIOR: the pull env carries the no-prompt and ssh batch
+        variables and keeps every inherited variable such as `PATH`.
+    """
+    monkeypatch.delenv("GIT_SSH_COMMAND", raising=False)
+    monkeypatch.delenv("GIT_SSH", raising=False)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    seen: dict[str, object] = {}
+
+    def _fake_run(cmd: list[str], **kwargs: object) -> FakeProc:
+        if cmd[1:3] == ["pull", "--ff-only"]:
+            seen.update(kwargs)
+        return FakeProc(returncode=0)
+
+    monkeypatch.setattr(next_prep.subprocess, "run", _fake_run)
+
+    assert next_prep._pull_ff_only(tmp_path, "main") is True
+
+    env = seen["env"]
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+    assert env["GIT_SSH_COMMAND"] == "ssh -o BatchMode=yes"
+    assert env["PATH"] == os.environ["PATH"]

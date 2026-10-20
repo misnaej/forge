@@ -11,15 +11,17 @@ shortcut via ``--apply``.
 - **Phase 1** — ``forge-upgrade`` (or ``forge-upgrade --channel main``
   / ``--to vX.Y.Z``). Detects the current pin in the consumer's
   ``pyproject.toml``, rewrites it to the requested target, and prints
-  the exact ``pip install`` command for the user to run.
+  the exact install command for the user to run — ``pip install``, or
+  ``pixi lock && pixi install --locked`` in a repo that installs from a
+  pixi lock.
 - **Phase 2** — ``forge-upgrade --continue``. After the user has run
-  the printed pip command, runs ``install-forge-bootstrap`` to
+  the printed install command, runs ``install-forge-bootstrap`` to
   re-sync managed artifacts and prints the Claude Code plugin update
   reminder.
 - **One-shot** — ``forge-upgrade --apply``. For human-run setup
   scripts only: rewrites the pin, runs the force-reinstall pip
-  command, then runs the bootstrap. The ``block_install_deps`` Claude
-  hook refuses this flag for agents.
+  command, then runs the bootstrap; refused in a pixi-locked repo. The
+  ``block_install_deps`` Claude hook refuses this flag for agents.
 
 ``forge-upgrade --check`` reports current vs latest without writing
 anything.
@@ -285,6 +287,55 @@ def _git_url_for(auth_mode: AuthMode, ref: str) -> str:
     return f"git+https://github.com/{_FORGE_GITHUB_REPO}.git@{ref}"
 
 
+def uses_pixi_lock(repo_root: Path) -> bool:
+    """Return whether *repo_root* installs its environment from a pixi lock.
+
+    Such a repo must not be told to ``pip install``: that changes the
+    environment behind the lock's back and the next ``pixi install``
+    undoes it. Its install step is re-locking against the rewritten pin.
+
+    Args:
+        repo_root: Consumer repo root.
+
+    Returns:
+        ``True`` when ``pixi.lock`` or ``pixi.toml`` exists, or
+        ``pyproject.toml`` has a ``[tool.pixi…]`` table.
+    """
+    if (repo_root / "pixi.lock").is_file() or (repo_root / "pixi.toml").is_file():
+        return True
+    pyproject = repo_root / "pyproject.toml"
+    if not pyproject.is_file():
+        return False
+    try:
+        text = pyproject.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return re.search(r"^\[tool\.pixi[.\]]", text, re.MULTILINE) is not None
+
+
+PIXI_INSTALL_STEPS = "pixi lock && pixi install --locked"
+
+
+def install_command(
+    repo_root: Path, ref: str, *, auth_mode: AuthMode = "https-anonymous"
+) -> str:
+    """Return the command that installs *ref* the way this repo installs.
+
+    Args:
+        repo_root: Consumer repo root.
+        ref: Target ref, as for :func:`pip_command`.
+        auth_mode: As for :func:`pip_command`.
+
+    Returns:
+        :data:`PIXI_INSTALL_STEPS` for a pixi-locked repo (the rewritten
+        pin reaches the environment through a new lock), else
+        :func:`pip_command`.
+    """
+    if uses_pixi_lock(repo_root):
+        return PIXI_INSTALL_STEPS
+    return pip_command(ref, auth_mode=auth_mode)
+
+
 def pip_command(ref: str, *, auth_mode: AuthMode = "https-anonymous") -> str:
     """Return the exact ``pip install`` line for a given pin ref.
 
@@ -387,11 +438,11 @@ def _write_atomic(path: Path, content: str) -> None:
 
 
 def _run_phase1(args: argparse.Namespace, root: Path) -> tuple[int, str | None]:
-    """Phase 1 — detect the pin, rewrite it, print the pip command.
+    """Phase 1 — detect the pin, rewrite it, print the install command.
 
     ``--check`` short-circuits the rewrite even when no pin exists:
-    reports the current state + the pip command the user would need to
-    run manually.
+    reports the current state + the install command (pip, or the pixi
+    steps in a pixi-locked repo) the user would need to run manually.
 
     Args:
         args: Parsed CLI args.
@@ -416,10 +467,12 @@ def _run_phase1(args: argparse.Namespace, root: Path) -> tuple[int, str | None]:
             logger.info("current pin (%s): %s@%s", pin.path.name, pin.url, pin.ref)
         target_hint = _resolve_target_ref_or_none(args, current_ref)
         if target_hint is None:
-            logger.info("(no target — pass --channel or --to to see the pip command)")
+            logger.info(
+                "(no target — pass --channel or --to to see the install command)"
+            )
             return 0, None
         logger.info("would upgrade to: %s", target_hint)
-        logger.info("pip command: %s", pip_command(target_hint))
+        logger.info("install command: %s", install_command(root, target_hint))
         changelog_text = _read_changelog()
         if changelog_text is not None:
             pending = _pending_action_count(changelog_text)
@@ -436,9 +489,9 @@ def _run_phase1(args: argparse.Namespace, root: Path) -> tuple[int, str | None]:
     if pin is None:
         logger.warning(
             "no forge-scripts pin found (%s) — skipping rewrite. "
-            "Run the pip command manually:\n  %s",
+            "Run the install command manually:\n  %s",
             _PIN_SEARCH_SCOPE,
-            pip_command(target_ref),
+            install_command(root, target_ref),
         )
         logger.info("Then re-run: forge-upgrade --continue")
         return 0, target_ref
@@ -461,19 +514,26 @@ def _run_phase1(args: argparse.Namespace, root: Path) -> tuple[int, str | None]:
         )
 
     logger.info("")
-    logger.info("Next: run the pip install command manually, then ")
+    logger.info("Next: run the install command manually, then ")
     logger.info("`forge-upgrade --continue` to re-sync managed artifacts.")
     logger.info("")
-    logger.info("  %s", pip_command(target_ref))
+    logger.info("  %s", install_command(root, target_ref))
     installed = _installed_revision()
     if installed is not None and installed != target_ref:
+        # The wrapper caveat is about pip refresh scripts; a pixi lock has none.
+        wrappers = (
+            ""
+            if uses_pixi_lock(root)
+            else ", and refresh wrappers that only force-reinstall branch "
+            "pins will skip a tag pin"
+        )
         logger.warning(
             "installed build is from '%s', pin now says '%s' — the "
-            "environment does not update itself, and refresh wrappers "
-            "that only force-reinstall branch pins will skip a tag pin. "
-            "The pip command above is what makes them match.",
+            "environment does not update itself%s. "
+            "The install command above is what makes them match.",
             installed,
             target_ref,
+            wrappers,
         )
     return 0, target_ref
 
@@ -777,7 +837,7 @@ def _run_phase2(root: Path) -> int:
 
     Returns:
         Exit code from ``install-forge-bootstrap``; ``1`` when the
-        installed revision mismatches the pin (with the exact pip
+        installed revision mismatches the pin (with the exact install
         command to fix it); ``2`` when the pin names an undocumented
         release. ``0`` plus a plugin-update reminder when bootstrap
         succeeds.
@@ -791,7 +851,7 @@ def _run_phase2(root: Path) -> int:
             "install. Run:\n  %s\nthen re-run `forge-upgrade --continue`.",
             pinned_ref,
             installed,
-            pip_command(pinned_ref),
+            install_command(root, pinned_ref),
         )
         return 1
 
@@ -878,6 +938,45 @@ def _run_pip_install(
 _DEFAULT_PIP_TIMEOUT_CI: int = 600
 
 
+def _finish_apply(target_ref: str, root: Path) -> int:
+    """Verify the installed build, then re-sync artifacts after a successful pip.
+
+    Args:
+        target_ref: The release ref pip was asked to install.
+        root: Consumer repo root.
+
+    Returns:
+        ``2`` when the target release is undocumented; otherwise phase 2's
+        exit code.
+    """
+    installed = _installed_revision()
+    if installed is not None and installed != target_ref:
+        logger.warning(
+            "pip reported success but the installed build still reads "
+            "'%s' (expected '%s') — unexpected, since the command "
+            "already forces reinstall. Check for multiple environments "
+            "(`which pip` vs `which python`).",
+            installed,
+            target_ref,
+        )
+
+    refusal = _undocumented_release_refusal(target_ref, _read_changelog())
+    if refusal is not None:
+        logger.error("REFUSED: %s", refusal)
+        logger.error(
+            "Managed artifacts were not re-synced, but your pin now names "
+            "%s and the matching package is installed. Point the pin at a "
+            "documented release, or ask for an assembly run covering %s.",
+            target_ref,
+            target_ref,
+        )
+        return 2
+
+    logger.info("")
+    logger.info("Re-syncing managed artifacts...")
+    return _run_phase2(root)
+
+
 def _run_apply(args: argparse.Namespace, root: Path) -> int:
     """``--apply``: do phase 1 + run pip + do phase 2, in one command.
 
@@ -906,8 +1005,19 @@ def _run_apply(args: argparse.Namespace, root: Path) -> int:
     Returns:
         ``0`` when all three phases succeed; non-zero from whichever
         step failed; ``2`` when the auth context is ``"none"`` in a
-        non-interactive run.
+        non-interactive run, or when the repo installs from a pixi lock.
     """
+    if uses_pixi_lock(root):
+        # Running pip here would change the environment behind the lock;
+        # the two-phase flow prints the re-lock steps instead.
+        logger.error(
+            "forge-upgrade --apply: this repo installs from a pixi lock, so "
+            "--apply would run pip behind the lock. Run `forge-upgrade "
+            "--channel …` (or `--to …`), then `%s`, then "
+            "`forge-upgrade --continue`.",
+            PIXI_INSTALL_STEPS,
+        )
+        return 2
     rc, target_ref = _run_phase1(args, root)
     if rc != 0:
         return rc
@@ -944,32 +1054,7 @@ def _run_apply(args: argparse.Namespace, root: Path) -> int:
         logger.error("pip install failed (exit %d) — aborting --apply.", pip_rc)
         return pip_rc
 
-    installed = _installed_revision()
-    if installed is not None and installed != target_ref:
-        logger.warning(
-            "pip reported success but the installed build still reads "
-            "'%s' (expected '%s') — unexpected, since the command "
-            "already forces reinstall. Check for multiple environments "
-            "(`which pip` vs `which python`).",
-            installed,
-            target_ref,
-        )
-
-    refusal = _undocumented_release_refusal(target_ref, _read_changelog())
-    if refusal is not None:
-        logger.error("REFUSED: %s", refusal)
-        logger.error(
-            "Managed artifacts were not re-synced, but your pin now names "
-            "%s and the matching package is installed. Point the pin at a "
-            "documented release, or ask for an assembly run covering %s.",
-            target_ref,
-            target_ref,
-        )
-        return 2
-
-    logger.info("")
-    logger.info("Re-syncing managed artifacts...")
-    return _run_phase2(root)
+    return _finish_apply(target_ref, root)
 
 
 def main() -> int:
@@ -983,9 +1068,10 @@ def main() -> int:
         prog="forge-upgrade",
         description=(
             "Two-phase forge upgrade. Phase 1 (default): rewrite the "
-            "forge-scripts pin in pyproject.toml + print the exact pip "
-            "command. Phase 2 (--continue): after running pip, re-sync "
-            "managed artifacts via install-forge-bootstrap."
+            "forge-scripts pin in pyproject.toml + print the exact install "
+            "command (pip, or `pixi lock && pixi install --locked` in a "
+            "pixi-locked repo). Phase 2 (--continue): after running it, "
+            "re-sync managed artifacts via install-forge-bootstrap."
         ),
     )
     group = parser.add_mutually_exclusive_group()
@@ -1006,7 +1092,7 @@ def main() -> int:
         action="store_true",
         help=(
             "Phase 2: run install-forge-bootstrap to re-sync managed "
-            "artifacts. Use after the phase-1 pip command has been run."
+            "artifacts. Use after the phase-1 install command has been run."
         ),
     )
     parser.add_argument(
@@ -1021,7 +1107,8 @@ def main() -> int:
             "One-shot: rewrite the pin + run pip install --force-reinstall + "
             "re-sync managed artifacts. For human-run setup scripts only — "
             "Claude Code agents are blocked from this flag by "
-            "block_install_deps (FOUNDATION §2)."
+            "block_install_deps (FOUNDATION §2). Refused for a repo that "
+            "installs from a pixi lock."
         ),
     )
     parser.add_argument(

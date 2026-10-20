@@ -25,7 +25,8 @@ def _stub_subprocess(
 
     Args:
         monkeypatch: pytest monkeypatch fixture.
-        diff_stdout: What ``git diff --name-only`` should return.
+        diff_stdout: Newline-separated names ``git diff --name-only -z``
+            should return (converted to NUL-separated bytes).
         ruff_check_returncode: Exit code from ``ruff check --fix``.
         calls: Optional list to collect every argv.
 
@@ -38,7 +39,9 @@ def _stub_subprocess(
     def _fake_run(cmd: list[str], **_kwargs: object) -> object:
         captured.append(cmd)
         if cmd[:2] == ["git", "diff"]:
-            return type("P", (), {"returncode": 0, "stdout": diff_stdout})()
+            # `-z` output: NUL-separated bytes, never newline text.
+            stdout = diff_stdout.replace("\n", "\0").encode()
+            return type("P", (), {"returncode": 0, "stdout": stdout})()
         if cmd[:2] == ["ruff", "check"]:
             return type(
                 "P",

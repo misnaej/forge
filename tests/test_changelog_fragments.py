@@ -2249,6 +2249,46 @@ def test_branch_added_fragments_excludes_fork_point_and_base_side_deletions(
     assert branch_added_fragments(repo) == ["changelog.d/second.added.md"]
 
 
+def test_branch_added_fragments_names_awkward_fragment_files_verbatim(
+    tmp_path: Path,
+) -> None:
+    """A fragment with a non-ASCII or spaced name is counted under its real name.
+
+    Behavior: both the branch-side diff and the base-side membership
+    listing are NUL-separated, so the name neither vanishes (C-quoted) nor
+    gets mistaken for a base fragment.
+    """
+    origin = tmp_path / "origin.git"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    init_autotag_repo(repo, origin)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x"], cwd=repo, env=GIT_ENV, check=True
+    )
+    (repo / "changelog.d" / "café fix.added.md").write_text("bump: patch\n- x\n")
+    commit_all(repo, "feat: awkward fragment")
+
+    assert branch_added_fragments(repo) == ["changelog.d/café fix.added.md"]
+
+
+def test_fragments_in_tag_tree_names_awkward_fragment_files_verbatim(
+    tmp_path: Path,
+) -> None:
+    """The tag-tree membership set holds the real name of an awkward fragment."""
+    origin = tmp_path / "origin.git"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    init_autotag_repo(repo, origin)
+    (repo / "changelog.d" / "café fix.added.md").write_text("bump: patch\n- x\n")
+    commit_all(repo, "feat: awkward fragment")
+    subprocess.run(["git", "tag", "v0.0.1"], cwd=repo, env=GIT_ENV, check=True)
+
+    members = changelog_fragments._fragments_in_tag_tree(repo, "v0.0.1")
+
+    assert "changelog.d/café fix.added.md" in members
+    assert "changelog.d/first.added.md" in members
+
+
 def test_branch_added_fragments_excludes_base_fragments_mid_merge(
     tmp_path: Path,
 ) -> None:

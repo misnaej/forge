@@ -822,7 +822,16 @@ def test_classify_delta_outranks_light_code_for_verified_pr(
     stdout = json.dumps(
         {"comments": [{"body": f"verified-at: {verified_sha} wrap-up\n"}]}
     )
-    monkeypatch.setattr(pr_plan.subprocess, "run", make_fake_run(stdout=stdout))
+    fake_gh = make_fake_run(stdout=stdout)
+    real_run = subprocess.run
+
+    def _gh_fake_git_real(cmd: list[str], **kwargs: object) -> object:
+        # git's NUL-separated diffs need real bytes; only `gh` is faked.
+        if cmd[0] == "gh":
+            return fake_gh(cmd, **kwargs)
+        return real_run(cmd, **kwargs)
+
+    monkeypatch.setattr(pr_plan.subprocess, "run", _gh_fake_git_real)
 
     plan = pr_plan.classify(repo, "main", 7)
 
@@ -1677,3 +1686,42 @@ def test_main_freshness_ignores_evidence_flag(
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["fresh"] is True
+
+
+_AWKWARD_NAMES = ["café.py", " lead space.py", "two words.py"]
+
+
+def test_changed_paths_and_added_paths_return_awkward_names_verbatim(
+    tmp_path: Path,
+) -> None:
+    """Both listings name non-ASCII and whitespace-bearing files exactly.
+
+    Behavior: newline-separated output C-quoted `café.py` and a split on
+    whitespace would have cut `two words.py`; either made the file vanish
+    from the classifier's scope.
+    """
+    repo = _repo_with_branch_diff(tmp_path, dict.fromkeys(_AWKWARD_NAMES, "x = 1\n"))
+
+    assert sorted(pr_plan._changed_paths(repo, "main...HEAD")) == sorted(_AWKWARD_NAMES)
+    assert sorted(pr_plan.added_paths(repo, "main...HEAD")) == sorted(_AWKWARD_NAMES)
+
+
+def test_changed_paths_pathspec_scope_is_literal_for_awkward_names(
+    tmp_path: Path,
+) -> None:
+    """A pathspec naming `café.py` selects exactly it, not its neighbours."""
+    repo = _repo_with_branch_diff(tmp_path, dict.fromkeys(_AWKWARD_NAMES, "x = 1\n"))
+
+    assert pr_plan._changed_paths(repo, "main...HEAD", ["café.py"]) == ["café.py"]
+
+
+def test_changed_paths_failure_raises_instead_of_reading_as_no_change(
+    tmp_path: Path,
+) -> None:
+    """A bad range is an error, never an empty (apparently clean) diff."""
+    repo = _repo_with_branch_diff(tmp_path, {"a.py": "x = 1\n"})
+
+    with pytest.raises(subprocess.CalledProcessError):
+        pr_plan._changed_paths(repo, "no-such-ref...HEAD")
+    with pytest.raises(subprocess.CalledProcessError):
+        pr_plan.added_paths(repo, "no-such-ref...HEAD")

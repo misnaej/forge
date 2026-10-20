@@ -25,6 +25,7 @@ from forge import config
 from forge.git_utils import (
     FORGE_DIST_NAME,
     console_script_modules,
+    diff_names_z,
     merge_in_progress,
     run_git,
 )
@@ -267,11 +268,7 @@ def regen_decisions(
     """
     record_docs = load_record(repo_root)
     blobs = index_blobs(repo_root)
-    staged = set(
-        run_git(
-            "diff", "--cached", "--name-only", cwd=repo_root, check=False
-        ).splitlines()
-    )
+    staged = set(diff_names_z(repo_root, "--cached"))
     merge = merge_in_progress(repo_root)
     version = forge_version()
     decisions: list[RegenDecision] = []

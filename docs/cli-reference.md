@@ -869,8 +869,9 @@ usage: forge-upgrade [-h] [--channel {main,dev} | --to REF] [--continue]
                      [--check] [--apply] [--pip-timeout SECONDS]
 
 Two-phase forge upgrade. Phase 1 (default): rewrite the forge-scripts pin in
-pyproject.toml + print the exact pip command. Phase 2 (--continue): after
-running pip, re-sync managed artifacts via install-forge-bootstrap.
+pyproject.toml + print the exact install command (pip, or `pixi lock && pixi
+install --locked` in a pixi-locked repo). Phase 2 (--continue): after running
+it, re-sync managed artifacts via install-forge-bootstrap.
 
 options:
   -h, --help            show this help message and exit
@@ -878,14 +879,15 @@ options:
                         (every patch).
   --to REF              Pin to a specific git ref (e.g. `v1.3.0`).
   --continue            Phase 2: run install-forge-bootstrap to re-sync
-                        managed artifacts. Use after the phase-1 pip command
-                        has been run.
+                        managed artifacts. Use after the phase-1 install
+                        command has been run.
   --check               Dry-run: print what would change without rewriting the
                         pin.
   --apply               One-shot: rewrite the pin + run pip install --force-
                         reinstall + re-sync managed artifacts. For human-run
                         setup scripts only — Claude Code agents are blocked
                         from this flag by block_install_deps (FOUNDATION §2).
+                        Refused for a repo that installs from a pixi lock.
   --pip-timeout SECONDS
                         Wall-clock cap on the pip subprocess during --apply.
                         Default: no timeout interactively, 600s in CI
