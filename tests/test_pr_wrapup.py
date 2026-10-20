@@ -38,7 +38,7 @@ from forge.git_utils import code_health_dir
 from forge.pr_plan import WrapupFreshness
 from forge.pr_squash_comment import SQUASH_MARKER
 from forge.pr_wrapup_compose import slot, summarize_rollup
-from tests.conftest import CapturedCalls, init_git_repo
+from tests.conftest import CapturedCalls, commit_all, init_git_repo
 
 
 if TYPE_CHECKING:
@@ -491,6 +491,56 @@ def test_check_attribution_accepts_fenced_bare_product_mention() -> None:
     """
     text = "Evidence:\n```\nClaude Code keys its plugin cache\n```\n"
     assert mod._check_attribution(text) == []
+
+
+def _ci_body(ci_line: str, summary: str = "One summary line.") -> str:
+    """Build a wrap-up whose CI Status section is *ci_line*.
+
+    Args:
+        ci_line: Text for the CI Status section.
+        summary: The head's summary line.
+
+    Returns:
+        The full wrap-up text.
+    """
+    return _body([VERIFIED_AT, summary], overrides={"CI Status": ci_line})
+
+
+def test_validate_wrapup_accepts_a_vendor_named_ci_check_in_a_code_span() -> None:
+    """Behavior test: a CI job named for the vendor is reported, not authored."""
+    assert mod.validate_wrapup(_ci_body("❌ failed: `claude-review`")) == []
+
+
+def test_validate_wrapup_still_refuses_the_vendor_word_in_the_summary() -> None:
+    """Behavior test: the CI carve-out does not widen to the rest of the wrap-up."""
+    problems = mod.validate_wrapup(
+        _ci_body("❌ failed: `claude-review`", summary="Thanks Claude for the help.")
+    )
+    assert any("(in '" in p for p in problems)
+
+
+def test_validate_wrapup_refuses_a_credit_phrase_inside_the_ci_line() -> None:
+    """Behavior test: a code span in CI Status does not hide an explicit credit."""
+    problems = mod.validate_wrapup(_ci_body("❌ failed: `Generated with Claude`"))
+    assert any("pattern detected in CI Status" in p for p in problems)
+
+
+def test_validate_wrapup_refuses_a_bare_vendor_word_outside_a_ci_code_span() -> None:
+    """Behavior test: only code spans skip the backstop in the CI line."""
+    problems = mod.validate_wrapup(_ci_body("❌ failed: `build`, thanks Claude"))
+    assert any("(in '" in p for p in problems)
+
+
+def test_check_attribution_does_not_treat_a_fenced_ci_heading_as_the_ci_section() -> (
+    None
+):
+    """Behavior test: a ``## CI Status`` inside a fence is quoted text, not the section.
+
+    So the vendor word in the real summary is still refused rather than
+    being swallowed into a bogus CI section.
+    """
+    text = "Summary: thanks Claude.\n```\n## CI Status\n`x`\n```\n"
+    assert mod._check_attribution(text) != []
 
 
 # ---------------------------------------------------------------------------
@@ -1088,6 +1138,36 @@ def test_main_post_clean_run_writes_refreshed_body_posts_and_appends_continuatio
     assert continuation_calls == [(tmp_path, True)]
 
 
+def test_main_post_names_only_the_pr_bodys_closing_refs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, clean_wrapup_body: str
+) -> None:
+    """SCENARIO: stacked branch; a branch commit closes #701, the PR body #42.
+
+    MOCK SETUP: as the clean-run test, plus `_branch_messages` returning a
+    `Closes #701` message — if post still searched commits it would list it.
+    EXPECTED BEHAVIOR: the posted body names #42 only (behavior test: forge
+    squash-merges, so only the body's keywords close issues).
+    """
+    path = tmp_path / "wrapup.md"
+    path.write_text(clean_wrapup_body, encoding="utf-8")
+    monkeypatch.setattr(mod, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(mod, "gh_pr_view", lambda *_a, **_kw: _pr_view())
+    monkeypatch.setattr(mod, "fetch_quietly", lambda *_a, **_kw: True)
+    monkeypatch.setattr(mod, "behind_ahead", lambda *_a, **_kw: (0, 1))
+    monkeypatch.setattr(mod, "_branch_messages", lambda *_a, **_kw: "Closes #701")
+    post_calls: list[tuple[int, str]] = []
+    monkeypatch.setattr(
+        mod, "post_wrapup", lambda pr, body: post_calls.append((pr, body)) or 0
+    )
+    monkeypatch.setattr(mod, "refresh_state", lambda *_a, **_kw: 0)
+
+    rc = mod.main(["post", "--pr", "61", "--body-file", str(path)])
+
+    assert rc == 0
+    assert "Closes #42" in post_calls[0][1]
+    assert "#701" not in post_calls[0][1]
+
+
 def test_main_post_no_continuation_flag_skips_the_append(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1330,7 +1410,9 @@ def test_main_compose_writes_the_wrapup_file_and_prints_the_slot_count(
     assert "1 slot(s) to fill: summary" in out
     written = (code_health_dir(tmp_path) / "pr_wrapup.md").read_text(encoding="utf-8")
     assert "wrapup-mode: light" in written
-    assert "small diff" in written
+    # The reasons go to stdout, not into the (word-budgeted) wrap-up.
+    assert "small diff" not in written
+    assert "pr-wrapup: light-code because: small diff" in out
 
 
 def test_main_compose_reports_a_compose_error_as_exit_two(
@@ -1433,7 +1515,7 @@ def test_main_compose_delta_mode_renders_prior_sha_rollup_and_checked_issue_mana
     reaches in delta mode.
     EXPECTED BEHAVIOR: every reporter section renders compose's mechanical
     delta line naming the prior SHA, CI Status carries the rollup summary,
-    and Issue Management carries no "the PR body was not searched" suffix
+    and Issue Management carries no "provisional" suffix
     — the PR body was read (`pr_body_checked=True`).
     """
     init_git_repo(tmp_path)
@@ -1463,7 +1545,7 @@ def test_main_compose_delta_mode_renders_prior_sha_rollup_and_checked_issue_mana
     assert written.count("PASS — unchanged since abc1234 (delta)") == 3
     assert "✅ passed (1 checks)" in written
     assert "Closes #99" in written
-    assert "the PR body was not searched" not in written
+    assert "provisional" not in written
 
 
 def test_main_compose_names_an_issue_the_body_closes_inside_a_sentence(
@@ -1544,6 +1626,80 @@ def test_main_compose_draft_pr_with_only_skipped_checks_renders_draft_wording(
     assert "✅ passed" not in written
 
 
+def _commit_closing(repo: Path, message: str) -> None:
+    """Add one commit on top of the initial one, carrying *message*.
+
+    Args:
+        repo: Initialized repo whose ``HEAD~1`` is then the compose base.
+        message: The commit message.
+    """
+    # Seed the file first so the base..HEAD diff modifies rather than adds
+    # it: an added file would demand a prior-art report from compose.
+    (repo / "f.txt").write_text("seed", encoding="utf-8")
+    commit_all(repo, "seed")
+    (repo / "f.txt").write_text("x", encoding="utf-8")
+    commit_all(repo, message)
+
+
+def test_main_compose_with_a_pr_body_ignores_closing_keywords_in_commits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: stacked branch; the parent's commit closes #701, the PR body #696.
+
+    MOCK SETUP: real git repo with a `Closes #701` commit past the base;
+    `mod.gh_pr_view` returns a body closing #696.
+    EXPECTED BEHAVIOR: Issue Management names only #696 — forge squash-merges,
+    so only the body's keywords close anything (behavior test).
+    """
+    init_git_repo(tmp_path)
+    _commit_closing(tmp_path, "feat: parent work\n\nCloses #701")
+    monkeypatch.setattr(mod, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        mod,
+        "gh_pr_view",
+        lambda *_a, **_kw: {"body": "Closes #696", "statusCheckRollup": []},
+    )
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps({"mode": "light-code", "reporters": [], "reasons": []})
+    )
+
+    rc = mod.main(
+        ["compose", "--base", "HEAD~1", "--pr", "61", "--plan", str(plan_path)]
+    )
+
+    assert rc == 0
+    written = (code_health_dir(tmp_path) / "pr_wrapup.md").read_text(encoding="utf-8")
+    assert "Closes #696" in written
+    assert "#701" not in written
+
+
+def test_main_compose_without_a_pr_keeps_commit_refs_marked_provisional(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: `compose` before any PR exists.
+
+    MOCK SETUP: real git repo with a `Closes #701` commit past the base; no
+    `--pr`, so `gh_pr_view` is never consulted.
+    EXPECTED BEHAVIOR: the commit's ref is listed, marked provisional because
+    no PR exists yet (behavior test).
+    """
+    init_git_repo(tmp_path)
+    _commit_closing(tmp_path, "feat: work\n\nCloses #701")
+    monkeypatch.setattr(mod, "repo_root", lambda: tmp_path)
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps({"mode": "light-code", "reporters": [], "reasons": []})
+    )
+
+    rc = mod.main(["compose", "--base", "HEAD~1", "--plan", str(plan_path)])
+
+    assert rc == 0
+    written = (code_health_dir(tmp_path) / "pr_wrapup.md").read_text(encoding="utf-8")
+    assert "Closes #701 — provisional" in written
+    assert "because no PR exists yet" in written
+
+
 def test_main_compose_pr_view_unavailable_reports_unknown_ci_and_unsearched_body(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1554,7 +1710,8 @@ def test_main_compose_pr_view_unavailable_reports_unknown_ci_and_unsearched_body
     this isolates `_ci_status` / `render_issue_management`'s degrade path.
     EXPECTED BEHAVIOR: CI Status reads `unknown — could not read PR #61`
     (never the "pending" wording reserved for a PR that does not exist
-    yet), and Issue Management carries the "the PR body was not searched"
+    yet), and Issue Management carries the "provisional" suffix naming that
+    the PR body could not be read
     suffix — the closing-keyword search fell back to commit messages alone.
     """
     init_git_repo(tmp_path)
@@ -1570,7 +1727,8 @@ def test_main_compose_pr_view_unavailable_reports_unknown_ci_and_unsearched_body
     assert rc == 0
     written = (code_health_dir(tmp_path) / "pr_wrapup.md").read_text(encoding="utf-8")
     assert "unknown — could not read PR #61" in written
-    assert "the PR body was not searched" in written
+    assert "provisional: read from the branch's commit messages" in written
+    assert "because the PR body could not be read" in written
 
 
 def test_main_compose_pr_view_without_rollup_reports_no_checks(

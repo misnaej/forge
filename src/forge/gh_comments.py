@@ -305,6 +305,22 @@ def _vendor_hit(blob: str) -> tuple[str, str] | None:
     return None
 
 
+def attribution_phrase(text: str) -> str | None:
+    """Return the AI-credit phrase in *text*, ignoring bare vendor names.
+
+    The phrase layer of :func:`validate_no_ai_attribution` alone, for a
+    caller that vets tool-rendered text whose vendor tokens are not
+    authored (a CI job's name) yet must still refuse an explicit credit.
+
+    Args:
+        text: Text to scan (any markdown; fences are not exempt).
+
+    Returns:
+        The matched phrase, or ``None``.
+    """
+    return _phrase_hit(_normalise(text))
+
+
 def validate_no_ai_attribution(
     text: str, *, exempt_fenced_vendor_tokens: bool = False
 ) -> None:

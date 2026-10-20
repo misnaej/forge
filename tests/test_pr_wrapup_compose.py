@@ -15,6 +15,7 @@ from forge.pr_delta import extract_verified_shas
 from forge.pr_wrapup import validate_wrapup
 from forge.pr_wrapup_compose import (
     FILL_PREFIX,
+    LIGHT_CODE_RECOMMENDATION,
     REPORTER_SECTIONS,
     ComposeError,
     ComposeInputs,
@@ -143,10 +144,12 @@ def test_render_wrapup_full_mode_with_one_finding_uses_a_findings_slot() -> None
 
 
 def test_render_wrapup_light_code_mode_token_and_mechanical_recommendation() -> None:
-    """light-code writes ``wrapup-mode: light`` and a reasons-only Recommendation.
+    """light-code writes ``wrapup-mode: light`` and a fixed one-line Recommendation.
 
     Only ``light-code`` (and emergency) get the ``wrapup-mode:`` token the
     publish hook matches — every other mode renders no mode line at all.
+    The classifier's reasons stay out of the wrap-up (``compose`` prints
+    them instead), so they cannot spend its word budget.
     """
     inputs = _inputs(
         mode="light-code",
@@ -157,7 +160,8 @@ def test_render_wrapup_light_code_mode_token_and_mechanical_recommendation() -> 
     text = render_wrapup(inputs)
     assert "wrapup-mode: light" in text.splitlines()
     assert text.count("SKIPPED (light-code)") == 3
-    assert inputs.reasons[0] in text
+    assert inputs.reasons[0] not in text
+    assert LIGHT_CODE_RECOMMENDATION in text
     assert validate_wrapup(_fill(text)) == []
 
 
@@ -179,6 +183,33 @@ def test_render_wrapup_light_release_mode_token_and_skipped_sections() -> None:
     assert "wrapup-mode: light" not in text.splitlines()
     assert "SKIPPED (light-release)" in text
     assert validate_wrapup(_fill(text)) == []
+
+
+def test_light_code_recommendation_is_short() -> None:
+    """Behavior test: the fixed line is at most 15 words (word-budget contract)."""
+    assert len(LIGHT_CODE_RECOMMENDATION.split()) <= 15
+
+
+def test_render_wrapup_light_code_with_long_reasons_and_long_summary_fits_budget() -> (
+    None
+):
+    """Behavior test (regression): verbose reasons never break the light-code budget.
+
+    Reasons once became the Recommendation, so a long list plus a
+    85-word summary failed ``validate_wrapup``'s word budget.
+    """
+    reasons = tuple(
+        f"reason number {i} explaining why this stays light" for i in range(8)
+    )
+    text = render_wrapup(
+        _inputs(mode="light-code", reporters=(), reports={}, reasons=reasons)
+    )
+    # The fixed sections and headings cost about 32 of the 120 words, so
+    # 85 leaves a little headroom while still being a long summary.
+    summary = " ".join(["word"] * 85)
+    filled = text.replace(slot("summary"), summary)
+    assert summary in filled
+    assert validate_wrapup(filled) == []
 
 
 @pytest.mark.parametrize(
@@ -624,6 +655,31 @@ def test_summarize_rollup_strips_comment_markers_from_names(name: str) -> None:
     assert "-->" not in result
 
 
+def test_summarize_rollup_drops_format_characters_from_names() -> None:
+    """Behavior test: bidi overrides and zero-width chars cannot disguise a name."""
+    result = summarize_rollup([_failed("ab" + chr(0x202E) + "\u200b‍cd")])
+    assert result == "❌ failed: `abcd`"
+
+
+def test_summarize_rollup_name_of_only_format_characters_becomes_a_placeholder() -> (
+    None
+):
+    """Behavior test: a name that is nothing but format characters reads ``?``."""
+    assert summarize_rollup([_failed("\u200b" + chr(0x202E) + "")]) == "❌ failed: `?`"
+
+
+def test_summarize_rollup_format_character_cannot_split_a_comment_marker() -> None:
+    """Behavior test (regression): a zero-width char inside ``<!--`` is no disguise.
+
+    Were format characters dropped after the marker loop, ``<\u200b!-- x -->``
+    would slip past it and re-form as a live marker once rendered.
+    """
+    result = summarize_rollup([_failed("a <\u200b!-- forge:fill y -\u200b-> b")])
+    assert "<!--" not in result
+    assert "-->" not in result
+    assert "\u200b" not in result
+
+
 def test_summarize_rollup_caps_a_long_name_at_sixty_characters() -> None:
     """A verbose name is cut to sixty characters, the last one an ellipsis."""
     result = summarize_rollup([_failed("w" * 100)])
@@ -708,33 +764,60 @@ def test_rollup_not_run_is_false_for_an_empty_rollup() -> None:
 
 def test_render_issue_management_lists_closing_refs() -> None:
     """Multiple refs are comma-joined, each with its own ``#``."""
-    assert render_issue_management([1, 2], pr_body_checked=True) == "Closes #1, #2"
+    assert (
+        render_issue_management([1, 2], pr_body_checked=True, pr_named=True)
+        == "Closes #1, #2"
+    )
 
 
 def test_render_issue_management_warns_when_none_found() -> None:
     """No closing keyword found → the warning line, naming the accepted forms."""
-    text = render_issue_management([], pr_body_checked=True)
+    text = render_issue_management([], pr_body_checked=True, pr_named=True)
     assert text.startswith("⚠️ no closing keyword found")
 
 
 def test_render_issue_management_notes_an_unsearched_pr_body() -> None:
-    """Without a readable PR body, the line says only commits were searched."""
-    text = render_issue_management([7], pr_body_checked=False)
-    assert text == "Closes #7 — commit messages only; the PR body was not searched"
+    """Without a PR body, the refs are marked provisional and say why.
+
+    Behavior test: the suffix is prose a human acts on, so it must say that
+    only the PR body's keywords close issues.
+    """
+    text = render_issue_management([7], pr_body_checked=False, pr_named=False)
+    assert text == (
+        "Closes #7 — provisional: read from the branch's commit messages because "
+        "no PR exists yet; only the PR body's keywords close issues"
+    )
+
+
+def test_render_issue_management_names_an_unreadable_named_pr_as_the_reason() -> None:
+    """Behavior test: a PR that was named but unreadable is not called nonexistent."""
+    text = render_issue_management([7], pr_body_checked=False, pr_named=True)
+    assert "because the PR body could not be read;" in text
+    assert "no PR exists yet" not in text
+
+
+def test_render_issue_management_names_a_missing_pr_as_the_reason() -> None:
+    """Behavior test: with no PR named, the reason is that none exists yet."""
+    text = render_issue_management([7], pr_body_checked=False, pr_named=False)
+    assert "because no PR exists yet;" in text
+    assert "could not be read" not in text
 
 
 def test_render_issue_management_notes_absence_when_the_pr_body_was_not_searched() -> (
     None
 ):
-    """The not-searched note appends even when nothing was found either."""
-    text = render_issue_management([], pr_body_checked=False)
+    """The provisional note appends even when nothing was found either."""
+    text = render_issue_management([], pr_body_checked=False, pr_named=False)
     assert text.startswith("⚠️ no closing keyword found")
-    assert text.endswith("— commit messages only; the PR body was not searched")
+    assert text.endswith("only the PR body's keywords close issues")
+    assert "provisional: read from the branch's commit messages" in text
 
 
 def test_render_issue_management_names_what_github_also_closes() -> None:
     """Issues closed from prose are appended after the listed ones."""
-    text = render_issue_management([1], pr_body_checked=True, also_closed=[4, 5])
+    text = render_issue_management(
+        [1], pr_body_checked=True, pr_named=True, also_closed=[4, 5]
+    )
     assert text == (
         "Closes #1 — GitHub would also close (on merge into the default branch): #4, #5"
     )
@@ -743,18 +826,22 @@ def test_render_issue_management_names_what_github_also_closes() -> None:
 def test_render_issue_management_without_extras_renders_the_plain_forms() -> None:
     """An empty ``also_closed`` adds nothing to either plain form."""
     assert (
-        render_issue_management([1, 2], pr_body_checked=True, also_closed=())
+        render_issue_management(
+            [1, 2], pr_body_checked=True, pr_named=True, also_closed=()
+        )
         == "Closes #1, #2"
     )
     assert (
-        render_issue_management([], pr_body_checked=True, also_closed=())
+        render_issue_management([], pr_body_checked=True, pr_named=True, also_closed=())
         == "⚠️ no closing keyword found (Closes/Fixes/Resolves #N on its own line)"
     )
 
 
 def test_render_issue_management_no_closing_line_still_names_github_closes() -> None:
     """With no bare closing line, the warning never claims nothing closes."""
-    text = render_issue_management([], pr_body_checked=True, also_closed=[4])
+    text = render_issue_management(
+        [], pr_body_checked=True, pr_named=True, also_closed=[4]
+    )
     assert "no closing keyword found" not in text
     assert text == (
         "⚠️ no closing keyword on its own line (Closes/Fixes/Resolves #N); "

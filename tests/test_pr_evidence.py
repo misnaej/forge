@@ -49,6 +49,13 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+def _inputs() -> pr_evidence.PackInputs:
+    """Return the full-mode, no-PR-body inputs most pack tests render from."""
+    return pr_evidence.PackInputs(
+        base="main", plan={"mode": "full", "reasons": []}, added=[], pr_body=None
+    )
+
+
 # --- repo-building helpers ---------------------------------------------
 
 
@@ -287,9 +294,7 @@ def test_build_pack_snapshots_timing_before_the_gates_rewrite_it(
 
     monkeypatch.setattr(pr_evidence, "_run_tool", _fake_run_tool)
 
-    pack = pr_evidence.build_pack(
-        repo, base="main", plan={"mode": "full", "reasons": []}, added=[], pr_body=None
-    )
+    pack = pr_evidence.build_pack(repo, _inputs())
 
     health_section = pack.split("## Code health")[1].split("## Audits")[0]
     assert "ruff: PASS" in health_section
@@ -737,22 +742,22 @@ def test_surface_section_reports_unavailable_on_an_unresolvable_base(
 
 
 @pytest.mark.parametrize(
-    ("pr_body", "expect_commits_only"),
+    ("pr_body", "expect_provisional"),
     [
         ("Closes #12\n", False),
         (None, True),
     ],
 )
-def test_wiring_lines_notes_commit_only_search_without_a_pr_body(
-    tmp_path: Path, *, pr_body: str | None, expect_commits_only: bool
+def test_wiring_lines_notes_provisional_search_without_a_pr_body(
+    tmp_path: Path, *, pr_body: str | None, expect_provisional: bool
 ) -> None:
-    """The closing-keyword line names its source with/without a readable PR body.
+    """The closing-keyword line is provisional only when no PR body was read.
 
     Args:
         pr_body: The PR body text to search, or ``None`` when no PR is
             readable (commit messages only).
-        expect_commits_only: Whether the rendered closing-keyword line
-            should note the commits-only search.
+        expect_provisional: Whether the rendered closing-keyword line
+            should be marked provisional.
 
     ``render_issue_management`` already owns the exact wording (pinned in
     test_pr_wrapup_compose.py); this pins that ``_wiring_lines`` forwards
@@ -760,10 +765,56 @@ def test_wiring_lines_notes_commit_only_search_without_a_pr_body(
     """
     repo = _repo(tmp_path)
 
-    lines = pr_evidence._wiring_lines(repo, "main", pr_body)
+    lines = pr_evidence._wiring_lines(repo, "main", pr_body, pr_named=False)
 
     closing_line = next(line for line in lines if line.startswith("- closing"))
-    assert ("commit messages only" in closing_line) is expect_commits_only
+    assert ("provisional" in closing_line) is expect_provisional
+
+
+def test_wiring_lines_reads_closing_refs_from_the_pr_body_not_commits(
+    tmp_path: Path,
+) -> None:
+    """Behavior test: a stacked branch's inherited commit refs do not leak in.
+
+    The commit message closes #701 but the PR body closes only #696; forge
+    squash-merges, so only the body's keyword closes anything.
+    """
+    repo = _repo(tmp_path)
+    (repo / "x.txt").write_text("x", encoding="utf-8")
+    commit_all(repo, "feat: x\n\nCloses #701")
+
+    lines = pr_evidence._wiring_lines(repo, "main", "Closes #696\n", pr_named=True)
+
+    closing_line = next(line for line in lines if line.startswith("- closing"))
+    assert "#696" in closing_line
+    assert "#701" not in closing_line
+
+
+@pytest.mark.parametrize(
+    ("pr_named", "reason"),
+    [
+        (True, "the PR body could not be read"),
+        (False, "no PR exists yet"),
+    ],
+)
+def test_wiring_lines_names_why_the_pr_body_is_missing(
+    tmp_path: Path, *, pr_named: bool, reason: str
+) -> None:
+    """Behavior test: the provisional note says unreadable vs not-yet-opened.
+
+    Args:
+        pr_named: Whether a PR was named (so a missing body is unreadable).
+        reason: The reason phrase the closing line must contain.
+    """
+    repo = _repo(tmp_path)
+    (repo / "x.txt").write_text("x", encoding="utf-8")
+    commit_all(repo, "feat: x\n\nCloses #701")
+
+    lines = pr_evidence._wiring_lines(repo, "main", None, pr_named=pr_named)
+
+    closing_line = next(line for line in lines if line.startswith("- closing"))
+    assert "#701" in closing_line
+    assert reason in closing_line
 
 
 @pytest.mark.parametrize(
@@ -825,9 +876,7 @@ def test_write_pack_writes_a_stamp_that_reads_fresh(
     repo = _repo(tmp_path)
     monkeypatch.setattr(pr_evidence, "_run_tool", _fake_run_tool_precommit_passes)
 
-    path = pr_evidence.write_pack(
-        repo, base="main", plan={"mode": "full", "reasons": []}, added=[], pr_body=None
-    )
+    path = pr_evidence.write_pack(repo, _inputs())
 
     first_line = path.read_text(encoding="utf-8").splitlines()[0]
     assert PRODUCED_AT_RE.match(first_line) is not None
@@ -846,9 +895,7 @@ def test_build_pack_renders_sections_in_order(
     repo = _repo(tmp_path)
     monkeypatch.setattr(pr_evidence, "_run_tool", _fake_run_tool_precommit_passes)
 
-    pack = pr_evidence.build_pack(
-        repo, base="main", plan={"mode": "full", "reasons": []}, added=[], pr_body=None
-    )
+    pack = pr_evidence.build_pack(repo, _inputs())
 
     headers = [line for line in pack.splitlines() if line.startswith("## ")]
     assert headers == [
