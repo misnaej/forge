@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
 from forge.audit.all import SUB_AUDITS
@@ -470,46 +471,70 @@ def _fragment_line(root: Path, base: str) -> str:
     return line
 
 
-def _wiring_lines(root: Path, base: str, pr_body: str | None) -> list[str]:
+def _wiring_lines(
+    root: Path, base: str, pr_body: str | None, *, pr_named: bool
+) -> list[str]:
     """Render closing keywords and changelog-fragment presence.
+
+    Only the PR body's keywords close an issue (forge squash-merges), so
+    commit messages are read only when there is no body to read.
 
     Args:
         root: Repo root.
         base: The classified base ref.
         pr_body: The PR body, or ``None`` when there is no readable PR.
+        pr_named: A PR was named, so a ``None`` body means unreadable,
+            not absent.
 
     Returns:
         The section body.
     """
-    messages = run_git("log", "--format=%B", f"{base}..HEAD", cwd=root)
-    refs = find_closing_refs(f"{pr_body or ''}\n{messages}")
-    closing = render_issue_management(refs, pr_body_checked=pr_body is not None)
+    if pr_body is not None:
+        refs = find_closing_refs(pr_body)
+    else:
+        refs = find_closing_refs(
+            run_git("log", "--format=%B", f"{base}..HEAD", cwd=root)
+        )
+    closing = render_issue_management(
+        refs, pr_body_checked=pr_body is not None, pr_named=pr_named
+    )
     return [
         f"- closing keywords: {closing}",
         f"- changelog: {_fragment_line(root, base)}",
     ]
 
 
-def build_pack(
-    root: Path,
-    *,
-    base: str,
-    plan: Mapping[str, object],
-    added: Sequence[str],
-    pr_body: str | None,
-) -> str:
-    """Gather the evidence and render the pack.
+@dataclass(frozen=True)
+class PackInputs:
+    """The PR-specific inputs an evidence pack is rendered from.
 
-    Args:
-        root: Repo root.
+    Attributes:
         base: The classified base ref.
         plan: The emitted plan (``mode``, ``reasons``, ``classified_at``).
         added: Paths the branch adds over ``base...HEAD``.
         pr_body: The PR body, or ``None`` when there is no readable PR.
+        pr_named: A PR was named, so a ``None`` body means it could not
+            be read rather than that none exists.
+    """
+
+    base: str
+    plan: Mapping[str, object]
+    added: Sequence[str]
+    pr_body: str | None
+    pr_named: bool = False
+
+
+def build_pack(root: Path, inputs: PackInputs) -> str:
+    """Gather the evidence and render the pack.
+
+    Args:
+        root: Repo root.
+        inputs: The PR-specific inputs the pack is rendered from.
 
     Returns:
         The pack's markdown, without the ``# produced-at:`` stamp.
     """
+    base = inputs.base
     current = working_tree_sha(root)
     audits = _section("Audits", lambda: _audit_lines(root, base, current))
     health = _section("Code health", lambda: _health_lines(root))
@@ -518,8 +543,11 @@ def build_pack(
         "Public surface",
         lambda: _surface_lines(root, base, digest_checked=digest_checked),
     )
-    wiring = _section("Wiring", lambda: _wiring_lines(root, base, pr_body))
-    identity = _section("PR", lambda: _pr_lines(root, base, plan, added))
+    wiring = _section(
+        "Wiring",
+        lambda: _wiring_lines(root, base, inputs.pr_body, pr_named=inputs.pr_named),
+    )
+    identity = _section("PR", lambda: _pr_lines(root, base, inputs.plan, inputs.added))
     return "\n".join(
         [
             "# forge-pr-plan evidence pack",
@@ -534,25 +562,15 @@ def build_pack(
     )
 
 
-def write_pack(
-    root: Path,
-    *,
-    base: str,
-    plan: Mapping[str, object],
-    added: Sequence[str],
-    pr_body: str | None,
-) -> Path:
+def write_pack(root: Path, inputs: PackInputs) -> Path:
     """Build the pack and write it to ``code_health/pr_evidence.log``.
 
     Args:
         root: Repo root.
-        base: The classified base ref.
-        plan: The emitted plan (``mode``, ``reasons``, ``classified_at``).
-        added: Paths the branch adds over ``base...HEAD``.
-        pr_body: The PR body, or ``None`` when there is no readable PR.
+        inputs: The PR-specific inputs the pack is rendered from.
 
     Returns:
         The written log's path.
     """
-    pack = build_pack(root, base=base, plan=plan, added=added, pr_body=pr_body)
+    pack = build_pack(root, inputs)
     return write_step_log(root, EVIDENCE_LOG_NAME, pack)

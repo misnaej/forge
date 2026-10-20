@@ -18,6 +18,7 @@ once its slots are filled.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
@@ -31,6 +32,9 @@ if TYPE_CHECKING:
 
 FILL_PREFIX: Final[str] = "<!-- forge:fill"
 PENDING_CI: Final[str] = "pending — PR not yet published"
+LIGHT_CODE_RECOMMENDATION: Final[str] = (
+    "light-code: reporters skipped; publishing re-runs the classifier fail-closed"
+)
 
 # Wrap-up section title → the forge-pr-plan reporter name that fills it.
 REPORTER_SECTIONS: Final[tuple[tuple[str, str], ...]] = (
@@ -183,7 +187,9 @@ def _recommendation(inputs: ComposeInputs) -> str:
             "verification owed after delivery"
         )
     if inputs.mode == "light-code":
-        return "; ".join(inputs.reasons) or "light-code"
+        # The classifier's full reasons are printed by `compose` instead:
+        # here they would spend most of the wrap-up's word budget.
+        return LIGHT_CODE_RECOMMENDATION
     return slot("recommendation")
 
 
@@ -405,9 +411,12 @@ def _entry_name(entry: Mapping[str, object]) -> str:
     of the comment. Comment markers are removed in a loop because removing
     one can join its neighbours into a new one (``<!<!---->--``); a forged
     ``<!-- forge:fill … -->`` would otherwise make the posted wrap-up read
-    as unfilled. Whitespace runs collapse to one space so a newline cannot
-    start a line of its own in the one-line CI Status, and the length cap
-    keeps a verbose name from blowing the wrap-up's word budget.
+    as unfilled. Unicode format characters (bidi overrides, zero-width
+    spaces and joiners) are dropped first, so they can neither disguise
+    the name nor hide a comment marker from the loop. Whitespace runs
+    collapse to one space so a newline cannot start a line of its own in
+    the one-line CI Status, and the length cap keeps a verbose name from
+    blowing the wrap-up's word budget.
 
     Args:
         entry: One ``statusCheckRollup`` entry.
@@ -417,6 +426,7 @@ def _entry_name(entry: Mapping[str, object]) -> str:
         ``_NAME_MAX`` characters and wrapped in an inline code span.
     """
     name = str(entry.get("name") or entry.get("context") or "?")
+    name = "".join(c for c in name if unicodedata.category(c) != "Cf")
     while "<!--" in name or "-->" in name:
         name = name.replace("<!--", "").replace("-->", "")
     name = " ".join(name.split()) or "?"
@@ -525,6 +535,7 @@ def render_issue_management(
     closing_refs: Sequence[int],
     *,
     pr_body_checked: bool,
+    pr_named: bool,
     also_closed: Sequence[int] = (),
 ) -> str:
     """Render the Issue Management line from the closing keywords found.
@@ -536,6 +547,8 @@ def render_issue_management(
     Args:
         closing_refs: Issue numbers the PR would close.
         pr_body_checked: Whether the PR body was part of the search.
+        pr_named: Whether a PR was named but its body could not be read,
+            as opposed to no PR existing yet; only shapes the note.
         also_closed: Issue numbers GitHub would also close although
             *closing_refs* omits them.
 
@@ -544,8 +557,8 @@ def render_issue_management(
         merge into the default branch): #…``; the ``⚠️ no closing keyword
         found …`` warning; or ``⚠️ no closing keyword on its own line …;
         GitHub would still close (on merge into the default branch): #…``.
-        Each is suffixed with a note when only commit messages could be
-        searched.
+        Each is marked provisional when no PR body existed to search, so
+        the refs came from the branch's commit messages instead.
     """
     also = ", ".join(f"#{ref}" for ref in also_closed)
     if closing_refs:
@@ -562,7 +575,11 @@ def render_issue_management(
     else:
         text = "⚠️ no closing keyword found (Closes/Fixes/Resolves #N on its own line)"
     if not pr_body_checked:
-        text += " — commit messages only; the PR body was not searched"
+        why = "the PR body could not be read" if pr_named else "no PR exists yet"
+        text += (
+            f" — provisional: read from the branch's commit messages because "
+            f"{why}; only the PR body's keywords close issues"
+        )
     return text
 
 

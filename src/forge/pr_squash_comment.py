@@ -166,14 +166,18 @@ def _check_title(title: str) -> list[str]:
 
 
 def _check_bullets(bullets: list[str]) -> list[str]:
-    """Return the bullet-count problem and one problem per empty bullet.
+    """Return the bullet-count problem and one problem per bad bullet.
+
+    A bullet is one line, like the title: the body renders inside a fixed
+    code fence, so a line break could close that fence early and turn the
+    rest of the comment into live markdown.
 
     Args:
         bullets: List of ``--bullet`` strings as passed by the caller.
 
     Returns:
         A message when the count is outside ``[MIN_BULLETS, MAX_BULLETS]``,
-        followed by one message per whitespace-only bullet.
+        followed by one message per whitespace-only or multi-line bullet.
     """
     problems: list[str] = []
     n = len(bullets)
@@ -181,9 +185,11 @@ def _check_bullets(bullets: list[str]) -> list[str]:
         problems.append(
             f"got {n} bullet(s); FOUNDATION §6 requires {MIN_BULLETS}-{MAX_BULLETS}"
         )
-    problems.extend(
-        f"bullet {i} is empty" for i, b in enumerate(bullets, start=1) if not b.strip()
-    )
+    for i, b in enumerate(bullets, start=1):
+        if not b.strip():
+            problems.append(f"bullet {i} is empty")
+        elif "\n" in b or "\r" in b:
+            problems.append(f"bullet {i} must be a single line")
     return problems
 
 
