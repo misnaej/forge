@@ -398,7 +398,7 @@ options:
 ## forge-emergency
 
 ```text
-usage: forge-emergency [-h] {start,status,consume,record-pr,end} ...
+usage: forge-emergency [-h] {start,status,record-pr,end} ...
 
 One-shot deferred-verification bypass with a public ledger issue. Arms exactly
 one `wrapup-mode: emergency` publication; every safety hook stays fully
@@ -406,12 +406,11 @@ enforced, and so does pre-commit apart from the two environment-sync steps
 that self-skip in CI.
 
 positional arguments:
-  {start,status,consume,record-pr,end}
+  {start,status,record-pr,end}
     start               arm one bypass (files the ledger first)
-    status              print armed/spent/expired state
-    consume             spend the armed bypass (called by forge-pr-create)
-    record-pr           record the published emergency PR number in the
-                        sentinel
+    status              print armed/claimed/spent/expired state
+    record-pr           record the emergency PR number when forge-pr-create
+                        could not tell whether its publish created one
     end                 close the ledger once the debt is repaid
 
 options:

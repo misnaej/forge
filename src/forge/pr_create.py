@@ -34,6 +34,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import re
 import subprocess
@@ -41,8 +42,8 @@ import sys
 from pathlib import Path
 from typing import Final, cast
 
+from forge import emergency
 from forge.config import load_config
-from forge.emergency import consume as emergency_consume
 from forge.git_utils import (
     code_health_dir,
     configure_cli_logging,
@@ -207,35 +208,157 @@ def _earn_escape(root: Path, base: str, declared: str) -> str | None:
     return None
 
 
-def _spend_emergency(root: Path) -> str | None:
-    """Consume the armed emergency sentinel, or refuse.
+def _claim_emergency(root: Path, branch: str) -> str | None:
+    """Claim the armed emergency bypass for this publish, or refuse.
 
     Exactly one publication per ``forge-emergency start``, which filed a
-    public ledger issue first. Consumed through the same function the CLI
-    calls, so the sentinel has one owner and cannot be spent twice by two
-    code paths disagreeing. Fails CLOSED.
+    public ledger issue first. The claim reserves the bypass without
+    spending it: it is spent only once the PR exists (see
+    :func:`_publish_emergency`), so a publish that fails hands it back
+    instead of burning it. Fails CLOSED.
 
     Args:
         root: Checkout holding the branch.
+        branch: Branch being published, recorded with the claim.
 
     Returns:
-        A refusal reason, or ``None`` when the bypass was spent.
+        A refusal reason, or ``None`` when the bypass is claimed.
     """
     try:
-        spent = emergency_consume(root)
+        claimed = emergency.claim(root, branch)
     except OSError as exc:
         return f"the emergency sentinel could not be read ({exc})."
-    if spent != 0:
+    if claimed != 0:
         return (
             "wrapup-mode: emergency but no armed bypass (not started, expired, "
-            "or already spent). A human arms one with `forge-emergency start "
-            "--reason ...` — agents only on explicit user instruction."
+            "already spent, or claimed by another publish). A human arms one "
+            "with `forge-emergency start --reason ...` — agents only on "
+            "explicit user instruction."
         )
-    logger.warning(
-        "EMERGENCY bypass consumed — this PR publishes without verification; "
-        "retro-verification is owed on the ledger issue."
-    )
     return None
+
+
+def _pr_number_from_url(stdout: str) -> int | None:
+    """Return the PR number from the URL ``gh pr create`` prints, if any.
+
+    Args:
+        stdout: ``gh pr create`` standard output.
+
+    Returns:
+        The number, or ``None`` when no PR URL is present.
+    """
+    match = re.search(r"/pull/(\d+)\s*$", stdout.strip())
+    return int(match.group(1)) if match else None
+
+
+def _existing_pr(branch: str) -> list[int] | None:
+    """List open PRs whose head is *branch*.
+
+    Open only: a closed or merged PR from an earlier use of the same
+    branch name is not one this publish created, and naming it would
+    invite recording the wrong PR.
+
+    Args:
+        branch: Branch that was being published.
+
+    Returns:
+        The PR numbers — empty means definitely none — or ``None`` when
+        ``gh`` cannot answer, which is not the same as "none".
+    """
+    try:
+        proc = subprocess.run(
+            [
+                "gh",
+                "pr",
+                "list",
+                "--head",
+                branch,
+                "--state",
+                "open",
+                "--json",
+                "number",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        rows = json.loads(proc.stdout)
+        return [int(row["number"]) for row in rows]
+    except (ValueError, TypeError, KeyError):
+        return None
+
+
+def _publish_emergency(root: Path, branch: str, cmd: list[str]) -> int:
+    """Run ``gh pr create`` under a claimed bypass, then commit or release it.
+
+    Success with a PR URL spends the bypass with that PR number. A
+    definite failure — gh never ran, or it failed and no open PR exists
+    for the branch — releases the claim so the bypass survives for a
+    retry. Any
+    other outcome is unclear (a PR may exist), so the claim is held and
+    the recovery is named: guessing either way could burn a bypass or
+    orphan a published PR's verification debt.
+
+    Args:
+        root: Checkout holding the branch.
+        branch: Branch being published.
+        cmd: The full ``gh pr create`` argv.
+
+    Returns:
+        ``0`` when the PR was created, ``2`` otherwise.
+    """
+    try:
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, text=True, check=False)
+    except OSError:
+        emergency.release(root)
+        logger.exception(
+            "REFUSED: could not run gh — the emergency bypass was released and "
+            "is still armed. Install the GitHub CLI and retry."
+        )
+        return 2
+    sys.stdout.write(proc.stdout)
+    number = _pr_number_from_url(proc.stdout) if proc.returncode == 0 else None
+    if number is not None:
+        if emergency.commit(root, number) != 0:
+            logger.error(
+                "PR #%d was created, but the emergency spend could not be "
+                "recorded, so the ledger does not name it. Check "
+                "`forge-emergency status` and comment the PR on the ledger.",
+                number,
+            )
+            return 0
+        logger.warning(
+            "EMERGENCY bypass consumed by PR #%d — it publishes without "
+            "verification; retro-verification is owed on the ledger issue.",
+            number,
+        )
+        return 0
+    existing = _existing_pr(branch)
+    # Only a failed create may release: after a reported success an empty
+    # listing more likely lags than proves no PR exists.
+    if existing == [] and proc.returncode != 0:
+        emergency.release(root)
+        logger.error(
+            "gh pr create failed and no PR exists for '%s' — the emergency "
+            "bypass was released and is still armed; retry forge-pr-create.",
+            branch,
+        )
+        return 2
+    if existing:
+        found = "open PR(s) on this branch: " + ", ".join(f"#{n}" for n in existing)
+    else:
+        found = "whether a PR was created cannot be determined"
+    logger.error(
+        "emergency publish outcome unclear (%s). The bypass stays claimed. %s",
+        found,
+        emergency.RECOVERY_HINT,
+    )
+    return 0 if proc.returncode == 0 else 2
 
 
 def _read_verified_wrapup(root: Path, branch: str) -> tuple[str | None, str | None]:
@@ -270,13 +393,15 @@ def _read_verified_wrapup(root: Path, branch: str) -> tuple[str | None, str | No
     return text, None
 
 
-def _gate(root: Path, branch: str, base: str) -> str | None:
-    """Return why publication is refused, or ``None`` to allow it.
+def _gate(root: Path, branch: str, base: str) -> tuple[str | None, bool]:
+    """Return why publication is refused, and whether it is an emergency.
 
     Every check runs against *root*, which is the checkout holding the
     branch being published. That is the whole point of the command: the
     tree judged and the tree published are the same tree by construction,
-    not by inference from command text.
+    not by inference from command text. An emergency wrap-up is only
+    recognised here; the bypass is claimed later, as the last step before
+    publishing, so no refusal can follow a claim.
 
     Args:
         root: Checkout holding the branch.
@@ -284,22 +409,23 @@ def _gate(root: Path, branch: str, base: str) -> str | None:
         base: Base branch the diff is classified against.
 
     Returns:
-        A refusal reason, or ``None``.
+        ``(reason, emergency)`` — a refusal reason or ``None``, and whether
+        the wrap-up declares ``wrapup-mode: emergency``.
     """
     text, reason = _read_verified_wrapup(root, branch)
     if reason is not None:
-        return reason
+        return reason, False
     # Invariant: if reason is None, text is a valid string (per _read_verified_wrapup).
     text = cast("str", text)
     # Traceability is never deferred, only verification: the HEAD match
     # above applies to an emergency publication too.
     if re.search(r"^wrapup-mode:[ \t]*emergency[ \t]*$", text, re.MULTILINE):
-        return _spend_emergency(root)
+        return None, True
     for declared in EARNED_WRAPUP_MODES:
         marker = rf"^wrapup-mode:[ \t]*{re.escape(declared)}[ \t]*$"
         if re.search(marker, text, re.MULTILINE):
-            return _earn_escape(root, base, declared)
-    return None
+            return _earn_escape(root, base, declared), False
+    return None, False
 
 
 def _warn_unlisted_closes(body_file: str) -> None:
@@ -375,7 +501,7 @@ def main() -> int:
         return 2
     branch, _source = resolved
 
-    refusal = _gate(root, branch, args.base)
+    refusal, is_emergency = _gate(root, branch, args.base)
     if refusal is not None:
         logger.error("REFUSED: %s", refusal)
         return 2
@@ -412,6 +538,24 @@ def main() -> int:
         branch,
         code_health_dir(root) / WRAPUP_NAME,
     )
+    if is_emergency:
+        claim_refusal = _claim_emergency(root, branch)
+        if claim_refusal is not None:
+            logger.error("REFUSED: %s", claim_refusal)
+            return 2
+        return _publish_emergency(root, branch, cmd)
+    return _run_create(cmd)
+
+
+def _run_create(cmd: list[str]) -> int:
+    """Run the ``gh pr create`` command and map its outcome to an exit code.
+
+    Args:
+        cmd: The fully assembled ``gh pr create`` argv.
+
+    Returns:
+        ``0`` when gh exited cleanly; ``2`` when gh could not run or failed.
+    """
     try:
         proc = subprocess.run(cmd, check=False)
     except OSError:

@@ -252,6 +252,8 @@ rules inline.
 ### I WILL NOT (report and stop)
 - <action> → **Use `<other-agent>`**
 - <action> → **Use `<cli>`**
+- Undo my own edit with a restore or checkout → **edit the file again**
+  (a tree-wide restore destroys work that is not mine — FOUNDATION §2)
 
 ## Output
 

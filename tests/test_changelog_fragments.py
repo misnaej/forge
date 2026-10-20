@@ -27,6 +27,7 @@ from forge.changelog_fragments import (
     plan_assembly,
     validate_fragment,
 )
+from forge.upgrade import _consumer_upgrade_notes
 from tests.conftest import (
     GIT_ENV,
     FakeProc,
@@ -230,13 +231,23 @@ def test_validate_fragment_empty_body(tmp_path: Path) -> None:
     assert errors == ["note.added.md: empty entry body"]
 
 
-def test_validate_fragment_embedded_heading(tmp_path: Path) -> None:
-    """A `## ` heading in the body would splice fake structure — rejected."""
-    path = _write_fragment(
-        tmp_path, "note.added.md", "bump: minor\n## Sneaky heading\n- x\n"
-    )
+@pytest.mark.parametrize(
+    "heading",
+    ["## Sneaky heading", "### ⚠️ Upgrade notes", "### Features", "# Top"],
+)
+def test_validate_fragment_embedded_heading(tmp_path: Path, heading: str) -> None:
+    """Any heading in a body could forge or end a group — rejected.
+
+    A `### ⚠️ Upgrade notes` line in an ordinary fragment would inject a
+    lane forge-upgrade prints to consumers; a `### Features` line in an
+    upgrade fragment would cut that lane short.
+
+    Args:
+        heading: The heading line planted in the body.
+    """
+    path = _write_fragment(tmp_path, "note.added.md", f"bump: minor\n{heading}\n- x\n")
     _fragment, errors = validate_fragment(path)
-    assert any("embedded '## ' heading in body" in e for e in errors)
+    assert any("embedded markdown heading in body" in e for e in errors)
 
 
 def test_validate_fragment_unreadable_path_returns_only_unreadable_error(
@@ -347,6 +358,44 @@ def test_assemble_changelog_groups_by_type_in_fixed_order() -> None:
     ]
     result = assemble_changelog("", fragments, "v1.0.0")
     assert result.index("### Features") < result.index("### Docs")
+
+
+def test_validate_fragment_accepts_upgrade_type(tmp_path: Path) -> None:
+    """An ``upgrade`` fragment is a recognised type, not an unknown-type error."""
+    path = _write_fragment(
+        tmp_path, "move-config.upgrade.md", "bump: major\n- run forge-upgrade\n"
+    )
+    fragment, errors = validate_fragment(path)
+    assert errors == []
+    assert fragment is not None
+    assert fragment.type == "upgrade"
+
+
+def test_assemble_changelog_renders_upgrade_notes_before_features() -> None:
+    """The upgrade lane leads the entry, ahead of every other group."""
+    fragments = [
+        _make_fragment(ftype="added", slug="a1", body="- add entry"),
+        _make_fragment(ftype="upgrade", slug="u1", body="- upgrade entry"),
+    ]
+    result = assemble_changelog("", fragments, "v1.0.0")
+    assert result.index("### ⚠️ Upgrade notes") < result.index("### Features")
+
+
+def test_assembled_upgrade_lane_is_what_forge_upgrade_extracts() -> None:
+    """Round trip: the lane the assembler writes is the lane ``forge-upgrade`` reads.
+
+    The two sides share only a heading string; this pins that they agree,
+    and that sibling groups do not leak into the extracted notes.
+    """
+    fragments = [
+        _make_fragment(ftype="added", slug="a1", body="- add entry"),
+        _make_fragment(ftype="upgrade", slug="u1", body="- **Action:** do the thing"),
+    ]
+    changelog = assemble_changelog("", fragments, "v1.2.3")
+
+    notes = _consumer_upgrade_notes(changelog)
+
+    assert notes == "v1.2.3:\n- **Action:** do the thing"
 
 
 def test_assemble_changelog_preserves_within_group_caller_order() -> None:
