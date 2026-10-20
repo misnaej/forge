@@ -1375,6 +1375,7 @@ _FORCE_PUSH_CASES = [
     pytest.param("${G} push -f", 2, id="blocks_braced_variable_command_force"),
     pytest.param("$G push origin main", 0, id="allows_variable_command_plain_push"),
     pytest.param('env -S "git" push -f', 2, id="blocks_env_split_quoted_program_word"),
+    pytest.param('"${G:-git}" push -f', 2, id="blocks_quoted_default_value_variable"),
 ]
 
 
@@ -2134,6 +2135,59 @@ def test_guard_hook_fails_closed_when_lib_lacks_unknown_anchor(
     assert run(intact, "git status").returncode == 0
 
 
+@pytest.mark.parametrize(
+    ("hook", "variable"),
+    [
+        ("block_continuation_delete.sh", "_GUARD_PREFIX"),
+        ("block_continuation_delete.sh", "GUARD_WRAPPERS"),
+        ("block_install_deps.sh", "_GUARD_PREFIX"),
+        ("block_install_deps.sh", "GUARD_WRAPPERS"),
+    ],
+)
+def test_guard_hook_fails_closed_when_lib_lacks_prefix_definition(
+    hook: str, variable: str, tmp_path: Path
+) -> None:
+    """A hook sourcing a lib without its prefix/wrapper definition blocks.
+
+    Both hooks build their command pattern from these variables; were one
+    empty, the pattern would stop recognising wrapped commands and the
+    guard would silently allow them. The control run on an intact copy
+    pins that the block comes from the missing definition.
+
+    Args:
+        hook: Hook filename under `claude-hooks/`.
+        variable: Lib variable whose definition line is dropped.
+        tmp_path: Directory holding the hook and its edited lib copy.
+    """
+    lib_text = (_HOOKS_DIR / _GIT_ANCHOR_LIB).read_text()
+    kept = [
+        line
+        for line in lib_text.splitlines(keepends=True)
+        if not line.startswith(f"{variable}=")
+    ]
+    assert len(kept) < len(lib_text.splitlines()), "no definition line was dropped"
+    broken_dir = tmp_path / "broken"
+    intact_dir = tmp_path / "intact"
+    for directory, text in ((broken_dir, "".join(kept)), (intact_dir, lib_text)):
+        directory.mkdir()
+        (directory / _GIT_ANCHOR_LIB).write_text(text)
+        (directory / hook).write_bytes((_HOOKS_DIR / hook).read_bytes())
+
+    def run(directory: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", str(directory / hook)],
+            input=json.dumps({"tool_input": {"command": "ls"}}),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    broken = run(broken_dir)
+    assert broken.returncode == 2
+    assert "lacks a helper" in broken.stderr
+    assert run(intact_dir).returncode == 0
+
+
 # --- shared-anchor prefix bypasses (env-var / leading-ws / wrapper) --------
 # The anchor in block_force_push / block_raw_git / block_git_rebase must
 # recognize `git` even behind an inline env assignment, leading whitespace, or
@@ -2643,6 +2697,9 @@ _DESTRUCTIVE_CLEAN_CASES = [
         'env -S "git" reset --hard', 2, id="blocks_env_split_quoted_program_word"
     ),
     pytest.param('"$G" reset --hard', 2, id="blocks_quoted_variable_command"),
+    pytest.param(
+        '"${G:-git}" reset --hard', 2, id="blocks_quoted_default_value_variable"
+    ),
     pytest.param(
         'sudo "${G}" clean -fd', 2, id="blocks_quoted_braced_variable_after_sudo"
     ),

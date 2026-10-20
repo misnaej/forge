@@ -67,7 +67,8 @@ source "$ANCHOR_LIB"
 # Fail CLOSED on a lib that predates a helper this hook calls: an
 # undefined function returns 127 inside an `if`, which reads as "not
 # found" and would allow the command.
-if ! declare -F guard_begin command_positions guard_help_only invoked guard_chunks > /dev/null; then
+if ! declare -F guard_begin command_positions guard_help_only invoked guard_chunks > /dev/null \
+    || [ -z "${_GUARD_PREFIX:-}" ] || [ -z "${GUARD_WRAPPERS:-}" ]; then
     echo "BLOCKED: the guard anchor lib at $ANCHOR_LIB lacks a helper this hook needs (older or damaged plugin copy) — refusing the command rather than running unguarded." >&2
     exit 2
 fi

@@ -131,11 +131,15 @@ _GUARD_PREFIX='(([[:alnum:]_]+=[^[:space:]]+|'"${GUARD_BINPATH}"'('"${GUARD_WRAP
 _GUARD_GIT_OPTS='((-c|-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][^[:space:]]*[[:space:]]+|'"${GUARD_REDIR}"'[[:space:]]+)*'
 GIT_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"'git[[:space:]]+'"${_GUARD_GIT_OPTS}"
 # GIT_UNKNOWN_ANCHOR is GIT_ANCHOR with the command word replaced by a
-# word that is only a variable — `$G`, `${G}`, `$1`, `$@` — or, in the
-# command-positions view, a quoted span the view could not decode to a
-# plain word (`"$G"` reads as `_` there), standing where git would
-# (`$G reset --hard`, `sudo "$G" clean -fd`). A word that merely starts
-# with one (`$HOME/bin/tool reset`) names a path and is not matched;
+# word that starts with `$` and holds no `/` (spelled as the characters
+# it may hold, since a bare `/` is barred here) — `$G`, `${G}`, `${G:-git}`,
+# `$1`, `$@` — or, in the command-positions view, a quoted span the view
+# could not decode to a plain word (`"$G"` reads as `_` there), standing
+# where git would (`$G reset --hard`, `sudo "$G" clean -fd`). A word
+# with a `/` after its variable (`$HOME/bin/tool reset`) names a path and
+# is not matched — but quoted (`"$HOME/bin/tool" reset`) it is the `_` of
+# an undecodable span, and blocks like any quoted program word holding a
+# `$` or a blank (`"a b" stash`): an accepted false block;
 # neither is a command substitution (residual above). What such a word
 # runs is unknowable to a hook, so a guard that matches it followed by a
 # verb it blocks treats the invocation as unknowable and blocks. It is a
@@ -144,7 +148,7 @@ GIT_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"'git[[:spac
 # prefix. `[$]`, not a backslash, for the same awk -v and sed reasons as
 # GUARD_REDIR.
 # shellcheck disable=SC2034  # consumed by sourcing hooks
-GIT_UNKNOWN_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}"'([$]([[:alnum:]_]+|[{][^}[:space:]]*[}]|[@*#?!-])|_)[[:space:]]+'"${_GUARD_GIT_OPTS}"
+GIT_UNKNOWN_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}"'([$][][[:alnum:]_{}:#%@*!?=+.,~^-]*|_)[[:space:]]+'"${_GUARD_GIT_OPTS}"
 
 # GH_ANCHOR is the same shape for `gh`: a real invocation at line-start
 # (leading whitespace included — the hand-rolled `^gh` patterns this
