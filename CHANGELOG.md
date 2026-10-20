@@ -20,6 +20,52 @@ fragment type (**Features / Changes / Fixes / Removed / Docs**).
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v10.3.0 — 2026-10-20
+
+### ⚠️ Upgrade notes
+- **The git guards are stricter.** They now refuse a few command shapes they used to let through. If your own scripts or agent prompts run any of these, they will be blocked; spell the command out instead:
+  - git behind a variable (`$G reset --hard`, `"$G" push -f`) before a destructive or force-push verb — write `git` literally;
+  - a wrapper option followed by another program that runs git (`sudo -E somecmd git reset --hard`) — it now reads as the wrapper running git;
+  - `git checkout -B` / `git switch -C` onto an existing branch when commits would be dropped, or when the guard cannot check (for example after a `cd` in the same command) — use a new branch name, or let a human run it with `!`.
+- `forge-emergency consume` is removed. Nothing documented called it; `forge-pr-create` now spends the emergency bypass itself.
+- Forge contributors only: the `forge-plan-check` command moved to a new module, so a clone updated by hand needs `./dev/setup.sh` once (the post-merge hook does this automatically).
+
+### Features
+- **Backlog tracks: clear a backlog in groups, one PR each.** Forge now documents and supports the method of screening the backlog, re-checking that each issue is still real, grouping issues that touch the same area into a *track* shipped as one PR, planning and running one track at a time, and merging the resulting PRs in an order that does not keep invalidating them. The details live in the new reference page `forge-docs/backlog-tracks.md`; FOUNDATION §14 documents `track:<name>` labels.
+  - `/plan-batch` runs the whole method: re-check, group, one decision round, one plan per track recorded on every member issue, then a merge order. A queue nobody groups still batches issue by issue.
+  - `/sentinel` runs a track as one branch and one PR that closes every member, takes members only from `forge-plan-check track-members` (never from the label), and skips the whole track when any member fails its checks.
+  - After a wrap-up posts, `/pr` places the issues that PR filed into tracks in the background (a new `placement` mode of `issue-triage`). It only adds `track:` labels and comments, asks you when the fit is unclear, and never comments on the PR.
+  - A wrap-up now lists the issues its findings were deferred to or filed as on a `Follow-ups:` line, so they can be found mechanically.
+- **`forge-plan-check` gains four set-level checks:**
+  - `tracks` — which open issues name the same files as each other or as an open PR; `--focus <N>…` or `--from-pr <N>` narrows it to newly filed issues and prints `placement: none` when nothing involves them.
+  - `track-members <name>` — a track's real members: issues whose validated plan, by someone with write access, names the track.
+  - `current` — per issue, whether any merge touched its files since it was filed.
+  - `merge-order` — probes open PRs against the base and each other without checking anything out, and suggests an order with "refresh after" notes (up to 20 PRs).
+- **Release PRs get a lighter review.** A release-assembly PR — only the version bump, `CHANGELOG.md` and consumed fragments — takes a new `light-release` path where only the docs reviewer reads it. Eligibility is checked on content and re-checked when the PR is published.
+- New `upgrade` changelog fragment type, assembled first under **⚠️ Upgrade notes** — the lane `forge-upgrade` reads. Fragment bodies may no longer contain markdown headings, so no fragment can fake that lane.
+- `block_git_destructive` refuses a branch reset that would drop commits (`git checkout -B <existing> <start>`, `git switch -C …`); a new branch name or a fast-forward is still allowed (see Upgrade notes).
+- `/plan-issue` runs the prior-art check for every new file, command or symbol a plan proposes and records the verdict in the plan.
+- New `[tool.forge.smart_test].safe_fallback` (`escalate` by default — today's behaviour — `warn`, or `off`) sets what a change the test selector cannot map does; a changed conftest outside the test roots still always runs the full suite.
+- When a stale install would make the regenerated `docs/cli-reference.md` drop sections, `regen_docs` blocks the commit instead of staging the shrunken file.
+- The CVE scan records when it ran inside `code_health/pip_audit.json`, so copying or restoring that file no longer makes an old scan look fresh.
+- `check_commit_format` reads single-quoted commit messages on macOS too (it no longer depends on GNU-only `grep -P`).
+- The typecheck docs show how to pin the interpreter pyrefly checks against.
+- Internal: the guard hooks share more of one library and refuse when it lacks a helper they need; wrapper agents relay their base agent's report (FOUNDATION §16); the agent template says to revise an edit by editing again; `forge-agent-profile` keeps its transcript-name rules in one place; "is this path under a declared root" has one definition.
+
+### Fixes
+- **The git guards see git behind wrappers.** Commands launched through a wrapper option with its own value (`sudo -u root git clean -fd`, `env -C /tmp git reset --hard`), through `timeout`, `setsid`, `ionice`, `stdbuf`, `taskset`, `chrt`, `doas` or `xargs`, by `find … -exec`, or inside an `env -S '…'` string were let through unchecked; they are now judged like a plain `git …`. The install, PR-merge, ruff and continuation-file guards benefit the same way.
+- An emergency bypass is no longer burned by a publish that fails: `forge-pr-create` reserves it first and spends it only once the PR exists. `forge-emergency record-pr` accepts only an open PR from this repository on the claimed branch, the reservation survives a deleted lock file, `start` refuses while an earlier emergency is recorded, and `end` refuses to quietly cancel an interrupted publish (`--abandon` with `FORGE_EMERGENCY_ACK=1` settles it).
+- File names with spaces or non-ASCII characters (`café.py`) are no longer dropped from changed-file lists, the edits receipt, or the merge history `forge-plan-check` reads.
+- Background git calls that reach a remote run ssh in batch mode, so they fail instead of hanging on a passphrase or host prompt.
+- The tree-freshness stamp no longer reads a same-size edit made in the same second as clean.
+- `forge-upgrade` tells a repo that installs from a pixi lock to run `pixi lock && pixi install --locked`, and `--apply` refuses there rather than run pip behind the lock.
+- `forge-release --from-changelog` no longer reports success when its tag push fails.
+- `forge-pr-wrapup post` no longer refuses a wrap-up because a CI job's name contains an AI vendor word (a credit phrase in the CI Status line is still refused), and strips invisible Unicode characters from job names.
+- A light-code wrap-up's Recommendation is one short line; Issue Management lists only issues the PR body closes.
+- `forge-pr-squash-comment` refuses a bullet containing a line break, which could break the squash message's formatting.
+- Stale-install messages no longer tell repos other than forge to run forge's own `./dev/setup.sh`.
+- The slow-test coverage ranking no longer counts files from a same-named directory deeper in an absolute path.
+
 ## v10.2.0 — 2026-10-19
 
 ### Features
