@@ -37,12 +37,16 @@ guard_begin
 # (`/bin/rm`, `/usr/bin/sudo rm`) is still `rm` (GUARD_BINPATH). The
 # delete is found on the shared command-positions view (git_anchor.sh), so
 # `rm` quoted in prose (issue bodies, commit messages) never fires while
-# `bash -c "rm …"`, `eval rm …` and `find … -exec rm …` do.
+# `bash -c "rm …"`, `eval rm …` and `find … -exec rm …` do — the last
+# only when the protected file is named on the line: `find .plan -exec
+# rm {} \;` names it nowhere, so it is an accepted slip-through below.
 # Accepted slip-throughs — a guardrail against honest mistakes, not an
 # adversarial boundary: the command-position limits of the whole family
 # (indirect variables, interpreter one-liners), and deletes that do not
 # run `rm` or `unlink` at all — `busybox rm`, `find … -delete`, `shred`,
-# `truncate`, and emptying the file with a redirection (`: > …`).
+# `truncate`, and emptying the file with a redirection (`: > …`) — and
+# a delete whose target is generated rather than named (`find .plan
+# -exec rm {} \;`).
 RM_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"'(rm|unlink)([[:space:]]|$)'
 if ! command_positions "$COMMAND" | grep -qE "${RM_ANCHOR}"; then
     exit 0

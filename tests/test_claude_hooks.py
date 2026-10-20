@@ -1374,6 +1374,7 @@ _FORCE_PUSH_CASES = [
     pytest.param("sudo $G push --force", 2, id="blocks_variable_command_after_sudo"),
     pytest.param("${G} push -f", 2, id="blocks_braced_variable_command_force"),
     pytest.param("$G push origin main", 0, id="allows_variable_command_plain_push"),
+    pytest.param('env -S "git" push -f', 2, id="blocks_env_split_quoted_program_word"),
 ]
 
 
@@ -1973,6 +1974,12 @@ _WRAPPER_VALUE_BLOCKED = [
     pytest.param(_PR_MERGE, "sudo -u x gh pr merge 1", id="pr_merge_sudo_u"),
     pytest.param(
         _NO_VERIFY, "sudo -u root git commit --no-verify -m x", id="no_verify_sudo_u"
+    ),
+    pytest.param(
+        _PR_MERGE, 'env -S "gh" pr merge 1', id="pr_merge_env_split_quoted_program"
+    ),
+    pytest.param(
+        _INSTALL_DEPS, 'env -S "pip" install x', id="install_env_split_quoted_program"
     ),
 ]
 
@@ -2632,6 +2639,16 @@ _DESTRUCTIVE_CLEAN_CASES = [
     ),
     pytest.param("$G reset --hard", 2, id="blocks_variable_command_reset"),
     pytest.param("sudo $G clean -fd", 2, id="blocks_variable_command_clean"),
+    pytest.param(
+        'env -S "git" reset --hard', 2, id="blocks_env_split_quoted_program_word"
+    ),
+    pytest.param('"$G" reset --hard', 2, id="blocks_quoted_variable_command"),
+    pytest.param(
+        'sudo "${G}" clean -fd', 2, id="blocks_quoted_braced_variable_after_sudo"
+    ),
+    pytest.param("$HOME/bin/tool reset", 0, id="allows_path_starting_with_variable"),
+    pytest.param("$PWD/run.sh checkout", 0, id="allows_variable_path_script_verb"),
+    pytest.param('echo "$G" reset', 0, id="allows_quoted_variable_as_argument"),
     pytest.param("$EDITOR checkout.txt", 0, id="allows_variable_command_non_verb"),
     pytest.param(
         "for f in $x; do echo $f; done", 0, id="allows_variable_in_loop_header"
@@ -7835,6 +7852,8 @@ _SNAPSHOT_EXTRA_COMMANDS = [
     "pip install --help",
     "git rebase --help",
     "gh pr create --title x; echo --help",
+    'env -S "git" reset --hard',
+    '"$G" reset --hard',
     "git commit -m -h",
     "git commit -m -h --no-verify",
     "git commit -- -h",

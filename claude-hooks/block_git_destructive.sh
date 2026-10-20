@@ -108,8 +108,9 @@ _guarded() {
 # guards: what the word runs, and so whether the invocation destroys
 # anything, is unknowable here, so it blocks. Every form of those verbs
 # blocks this way — `$G stash list` and `$G checkout main` included — an
-# accepted false block: spelling git as `git` costs nothing.
-# The verb must end its word, so `$EDITOR checkout.txt` is not one.
+# accepted false block: spelling git as `git` costs nothing. So is a
+# wrapper option whose value is a variable (`sudo -u $USER reset` reads
+# `$USER` as the command word). The verb must end its word, so `$EDITOR checkout.txt` is not one.
 GIT_UNKNOWN_VERBS='(reset|clean|checkout|restore|stash|switch)([[:space:];&|)]|$)'
 if echo "$CMDPOS" | grep -qE "${GIT_UNKNOWN_ANCHOR}${GIT_UNKNOWN_VERBS}" \
     && ! guard_help_only "$CMDPOS" "${GIT_UNKNOWN_ANCHOR}${GIT_UNKNOWN_VERBS}"; then

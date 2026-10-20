@@ -395,6 +395,14 @@
   "positions": "gh pr create --title x; echo --help\n",
   "words": "gh pr create --title x; echo --help\n"
  },
+ "env -S \"git\" reset --hard": {
+  "positions": "env -S git reset --hard\n",
+  "words": "env -S git reset --hard\n"
+ },
+ "\"$G\" reset --hard": {
+  "positions": "_ reset --hard\n",
+  "words": "$G reset --hard\n"
+ },
  "git commit -m -h": {
   "positions": "git commit -m -h\n",
   "words": "git commit -m -h\n"

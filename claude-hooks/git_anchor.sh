@@ -124,12 +124,19 @@ GUARD_BINPATH='([^[:space:];&|()<>]*[/])?'
 # The wrappers that take a positional argument before the command
 # (`timeout 5`, `taskset 0x1`, `chrt 10`, `ionice 3`, `stdbuf …`) may also
 # skip one plain word after their options (`timeout -k 3 5 git …`).
-_GUARD_PREFIX='(([[:alnum:]_]+=[^[:space:]]+|'"${GUARD_BINPATH}"'(command|env|exec|builtin|sudo|nohup|nice|time|timeout|setsid|ionice|stdbuf|taskset|chrt|doas|xargs)|'"${GUARD_BINPATH}"'(timeout|ionice|stdbuf|taskset|chrt)([[:space:]]+-[^[:space:]]+([[:space:]]+[^[:space:]]+)?)*[[:space:]]+[^[:space:]]+|then|do|else|elif|[{!]|-[^[:space:]]+([[:space:]]+[^[:space:]]+)?|'"${GUARD_REDIR}"')[[:space:]]+)*'
+# GUARD_WRAPPERS is the one list of wrapper names: the command-positions
+# scanner receives it too, to tell a run `env -S` from a mentioned one.
+GUARD_WRAPPERS='command|env|exec|builtin|sudo|nohup|nice|time|timeout|setsid|ionice|stdbuf|taskset|chrt|doas|xargs'
+_GUARD_PREFIX='(([[:alnum:]_]+=[^[:space:]]+|'"${GUARD_BINPATH}"'('"${GUARD_WRAPPERS}"')|'"${GUARD_BINPATH}"'(timeout|ionice|stdbuf|taskset|chrt)([[:space:]]+-[^[:space:]]+([[:space:]]+[^[:space:]]+)?)*[[:space:]]+[^[:space:]]+|then|do|else|elif|[{!]|-[^[:space:]]+([[:space:]]+[^[:space:]]+)?|'"${GUARD_REDIR}"')[[:space:]]+)*'
 _GUARD_GIT_OPTS='((-c|-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][^[:space:]]*[[:space:]]+|'"${GUARD_REDIR}"'[[:space:]]+)*'
 GIT_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"'git[[:space:]]+'"${_GUARD_GIT_OPTS}"
 # GIT_UNKNOWN_ANCHOR is GIT_ANCHOR with the command word replaced by a
-# word that starts with a live `$` — a variable or `${…}` standing where
-# git would (`$G reset --hard`, `sudo $G clean -fd`). What such a word
+# word that is only a variable — `$G`, `${G}`, `$1`, `$@` — or, in the
+# command-positions view, a quoted span the view could not decode to a
+# plain word (`"$G"` reads as `_` there), standing where git would
+# (`$G reset --hard`, `sudo "$G" clean -fd`). A word that merely starts
+# with one (`$HOME/bin/tool reset`) names a path and is not matched;
+# neither is a command substitution (residual above). What such a word
 # runs is unknowable to a hook, so a guard that matches it followed by a
 # verb it blocks treats the invocation as unknowable and blocks. It is a
 # separate constant, never part of _GUARD_PREFIX: block_raw_ruff cuts its
@@ -137,7 +144,7 @@ GIT_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"'git[[:spac
 # prefix. `[$]`, not a backslash, for the same awk -v and sed reasons as
 # GUARD_REDIR.
 # shellcheck disable=SC2034  # consumed by sourcing hooks
-GIT_UNKNOWN_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"'[$][^[:space:]]*[[:space:]]+'"${_GUARD_GIT_OPTS}"
+GIT_UNKNOWN_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}"'([$]([[:alnum:]_]+|[{][^}[:space:]]*[}]|[@*#?!-])|_)[[:space:]]+'"${_GUARD_GIT_OPTS}"
 
 # GH_ANCHOR is the same shape for `gh`: a real invocation at line-start
 # (leading whitespace included — the hand-rolled `^gh` patterns this
@@ -505,7 +512,9 @@ function heredoc_open(s, i, before,   n, k, ch, j, rl) {
 # a QUOTED next word a
 # payload, re-scanned like a `bash -c` payload (wt 5) — env splits it into
 # the command it runs; that word alone, since the words after it are its
-# arguments. An unquoted `env -S git …` needs no unwrapping: the shared
+# arguments. Only a word holding a blank is a payload: a quoted single
+# word (`env -S "git" reset --hard`) is the program name, read as an
+# ordinary word, so its arguments stay in view. An unquoted `env -S git …` needs no unwrapping: the shared
 # prefix reads `-S` as a wrapper option. `sort -S 1G` and `sudo -S` have
 # no `env` before them, so nothing changes there.
 #
@@ -544,7 +553,7 @@ function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k
                 wt = wtype(unredir(substr(out, cb + 1)))
             if (!isr && wt == 0) {
                 if (spw ~ RE_EXECW) wt = 4
-                else if (qs && hev && spw ~ RE_ENVSW) wt = 5
+                else if (qs && hev && spw ~ RE_ENVSW && pword(s, i) ~ /[ \t]/) wt = 5
             }
             # Order matters: the base moves past pw only after the check
             # above, or a `bash <<<` chain would be cut before it is read.
@@ -696,7 +705,7 @@ BEGIN {
     # The first word of the chain (past assignments and compound keywords) is
     # env itself or a wrapper that runs a command, so `env` is being run.
     ASSIGN = "[A-Za-z_][A-Za-z0-9_]*=[^ \t]*[ \t]+"
-    RE_ENVHEAD = "^[ \t\n;&|()]*((then|do|else|elif|[{!])[ \t]+)*(" ASSIGN ")*([^ \t\n;&|()<>]*/)?(env|command|exec|builtin|sudo|doas|nohup|nice|time|timeout|setsid|ionice|stdbuf|taskset|chrt|xargs)([ \t]|$)"
+    RE_ENVHEAD = "^[ \t\n;&|()]*((then|do|else|elif|[{!])[ \t]+)*(" ASSIGN ")*([^ \t\n;&|()<>]*/)?(" WRAPPERS ")([ \t]|$)"
 }
 { src = (NR == 1) ? $0 : src "\n" $0 }
 END { printf "%s\n", scan(src, 1, 0) }
@@ -786,7 +795,7 @@ command_positions() {
         esac
         shift
     done
-    view=$(printf '%s\n' "$1" | LC_ALL=C awk -v KEEP="$keep" "$_GUARD_CMDPOS_AWK" 2>/dev/null) || view="$1"
+    view=$(printf '%s\n' "$1" | LC_ALL=C awk -v KEEP="$keep" -v WRAPPERS="$GUARD_WRAPPERS" "$_GUARD_CMDPOS_AWK" 2>/dev/null) || view="$1"
     if [ "$noredir" = 1 ]; then
         view=$(guard_unredir "$view")
     fi
