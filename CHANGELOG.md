@@ -45,7 +45,7 @@ versions follow forge's rolling-next convention.
 - New `upgrade` changelog fragment type, assembled first under **⚠️ Upgrade notes** — the lane `forge-upgrade` reads. Fragment bodies may no longer contain markdown headings, so no fragment can fake that lane.
 - `block_git_destructive` refuses a branch reset that would drop commits (`git checkout -B <existing> <start>`, `git switch -C …`); a new branch name or a fast-forward is still allowed (see Upgrade notes).
 - `/plan-issue` runs the prior-art check for every new file, command or symbol a plan proposes and records the verdict in the plan.
-- New `[tool.forge.smart_test].safe_fallback` (`escalate` by default — today's behaviour — `warn`, or `off`) sets what a change the test selector cannot map does.
+- New `[tool.forge.smart_test].safe_fallback` (`escalate` by default — today's behaviour — `warn`, or `off`) sets what a change the test selector cannot map does; a changed conftest outside the test roots still always runs the full suite.
 - When a stale install would make the regenerated `docs/cli-reference.md` drop sections, `regen_docs` blocks the commit instead of staging the shrunken file.
 - The CVE scan records when it ran inside `code_health/pip_audit.json`, so copying or restoring that file no longer makes an old scan look fresh.
 - `check_commit_format` reads single-quoted commit messages on macOS too (it no longer depends on GNU-only `grep -P`).
@@ -60,7 +60,7 @@ versions follow forge's rolling-next convention.
 - The tree-freshness stamp no longer reads a same-size edit made in the same second as clean.
 - `forge-upgrade` tells a repo that installs from a pixi lock to run `pixi lock && pixi install --locked`, and `--apply` refuses there rather than run pip behind the lock.
 - `forge-release --from-changelog` no longer reports success when its tag push fails.
-- `forge-pr-wrapup post` no longer refuses a wrap-up because a CI job's name contains an AI vendor word, and strips invisible Unicode characters from job names.
+- `forge-pr-wrapup post` no longer refuses a wrap-up because a CI job's name contains an AI vendor word (a credit phrase in the CI Status line is still refused), and strips invisible Unicode characters from job names.
 - A light-code wrap-up's Recommendation is one short line; Issue Management lists only issues the PR body closes.
 - `forge-pr-squash-comment` refuses a bullet containing a line break, which could break the squash message's formatting.
 - Stale-install messages no longer tell repos other than forge to run forge's own `./dev/setup.sh`.
