@@ -210,6 +210,28 @@ def test_from_pr_without_follow_ups_is_placement_none_and_clean() -> None:
     assert report_lines(report, "placement:") == ["placement: none"]
 
 
+def test_from_pr_report_without_issue_management_is_unknown_not_placement_none() -> (
+    None
+):
+    """Behavior: a lone reporter report is not a wrap-up, so it is unknown (2)."""
+    gh = _chain_listing()
+    report_only = Comment(
+        902,
+        f"{_HEAD}\n\n## Design Check\nFollow-ups: #77\n",
+        "2026-10-01T00:00:00Z",
+        "maintainer",
+    )
+    gh.comment_lists[60] = [report_only]
+
+    report = pt.check_tracks_from_pr(gh, 60)
+
+    assert report.exit_code == ps.EXIT_UNKNOWN
+    unknown = report_lines(report, "unknown:")
+    assert len(unknown) == 1
+    assert "not a wrap-up" in unknown[0]
+    assert report_lines(report, "placement:") == []
+
+
 def test_from_pr_ignores_a_strangers_newer_wrap_up() -> None:
     """Behavior: a non-writer's wrap-up is skipped; the writer's older one is read."""
     gh = _chain_listing()

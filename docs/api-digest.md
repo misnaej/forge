@@ -1068,7 +1068,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_open_focus(issues: Sequence[Issue], focus: Sequence[int], report: Report) -> list[int]` _(internal)_ — Return the focus issues still open, noting each one that is not.
 - `_report_placement_none(files: Sequence[IssueFiles], report: Report, focus: frozenset[int]) -> None` _(internal)_ — Say ``placement: none`` when nothing places the focus issues.
 - `check_tracks(source: GitHubSource, numbers: Sequence[int] = (), *, focus: Sequence[int] = (), skip_closed_focus: bool = False) -> Report` — Report which open issues share files with each other and with open PRs.
-- `_follow_ups(text: str) -> list[int]` _(internal)_ — Return the issues the wrap-up's ``Follow-ups:`` line names.
+- `_follow_ups(text: str) -> list[int] | None` _(internal)_ — Return the issues the wrap-up's ``Follow-ups:`` line names.
 - `wrapup_follow_ups(source: GitHubSource, pr_number: int, report: Report) -> list[int] | None` — Return the follow-ups PR *pr_number*'s newest trusted wrap-up names.
 - `check_tracks_from_pr(source: GitHubSource, pr_number: int, numbers: Sequence[int] = ()) -> Report` — Run :func:`check_tracks` focused on the follow-ups PR *pr_number* names.
 - `plan_track_names(plan_body: str) -> set[str]` — Return every name a plan's ``track: <name>`` lines give, outside fences.

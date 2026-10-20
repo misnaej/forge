@@ -62,7 +62,9 @@ whose issue author has write access. Every other candidate is printed as
 or another one, or an author without write access (the command does not
 check endorsement, so an endorsed outside issue is excluded too and
 waits for a human). A `plan-ready` issue whose plan names the track but
-which lacks the label is reported as well. Exit 0 means every candidate
+which lacks the label is reported as well. Only open issues are read: a
+member already closed is not listed, so a track whose members partly
+shipped elsewhere runs with the rest. Exit 0 means every candidate
 is a member; 1 means something was excluded; 2 means GitHub could not
 be read, which is unknown, never "all members".
 

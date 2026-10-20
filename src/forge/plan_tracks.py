@@ -386,34 +386,39 @@ def check_tracks(
     return report
 
 
-def _follow_ups(text: str) -> list[int]:
+def _follow_ups(text: str) -> list[int] | None:
     """Return the issues the wrap-up's ``Follow-ups:`` line names.
 
     Only the Issue Management section counts, outside fences: that is
     where ``forge-pr-wrapup`` writes the line, and nothing quoted
-    elsewhere in the wrap-up can add an issue to placement.
+    elsewhere in the wrap-up can add an issue to placement. A comment
+    without that section is not a wrap-up (a lone reporter report also
+    opens with ``verified-at:``), so it says nothing about follow-ups.
 
     Args:
         text: The wrap-up comment body.
 
     Returns:
-        Issue numbers in first-appearance order, without duplicates.
+        Issue numbers in first-appearance order, without duplicates, or
+        None when the comment has no Issue Management section.
     """
     lines = text.split("\n")
     fenced = fenced_line_indexes(lines)
     refs: list[int] = []
     inside = False
+    seen = False
     for i, line in enumerate(lines):
         if i in fenced:
             continue
         if line.startswith("## "):
             inside = line.strip() == "## Issue Management"
+            seen = seen or inside
             continue
         if inside and line.startswith(FOLLOW_UPS_LABEL):
             for number in ISSUE_REF_RE.findall(line[len(FOLLOW_UPS_LABEL) :]):
                 if int(number) not in refs:
                     refs.append(int(number))
-    return refs
+    return refs if seen else None
 
 
 def wrapup_follow_ups(
@@ -456,6 +461,13 @@ def wrapup_follow_ups(
         )
         return None
     refs = _follow_ups(lookup.plan.body)
+    if refs is None:
+        report.unknown(
+            f"unknown: PR #{pr_number}'s newest trusted verified-at: comment "
+            f"({lookup.plan.id}) has no Issue Management section, so it is not "
+            "a wrap-up"
+        )
+        return None
     named = " ".join(f"#{ref}" for ref in refs) or "none"
     report.note(f"wrap-up: comment {lookup.plan.id} on PR #{pr_number}")
     report.note(f"follow-ups: {named}")
