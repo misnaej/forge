@@ -49,39 +49,28 @@ def _clear_own_login_cache() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _parse_files
+# _filter_paths
 # ---------------------------------------------------------------------------
 
 
-def test_parse_files_empty_output_returns_empty() -> None:
-    """Empty input produces an empty list."""
-    assert git_utils._parse_files("", suffix=".py", prefix=None) == []
-
-
-def test_parse_files_filters_by_suffix() -> None:
+def test_filter_paths_filters_by_suffix() -> None:
     """Only files ending with the configured suffix survive."""
-    output = "a.py\nb.txt\nc.py\n"
-    assert git_utils._parse_files(output, suffix=".py", prefix=None) == ["a.py", "c.py"]
+    files = ["a.py", "b.txt", "c.py"]
+    assert git_utils._filter_paths(files, suffix=".py", prefix=None) == ["a.py", "c.py"]
 
 
-def test_parse_files_filters_by_single_prefix() -> None:
+def test_filter_paths_filters_by_single_prefix() -> None:
     """A string prefix keeps only matching paths."""
-    output = "tests/foo.py\nsrc/bar.py\n"
-    result = git_utils._parse_files(output, suffix=".py", prefix="tests/")
+    files = ["tests/foo.py", "src/bar.py"]
+    result = git_utils._filter_paths(files, suffix=".py", prefix="tests/")
     assert result == ["tests/foo.py"]
 
 
-def test_parse_files_filters_by_tuple_of_prefixes() -> None:
+def test_filter_paths_filters_by_tuple_of_prefixes() -> None:
     """A tuple of prefixes accepts any matching layout (test/ OR tests/)."""
-    output = "test/a.py\ntests/b.py\nsrc/c.py\n"
-    result = git_utils._parse_files(output, suffix=".py", prefix=("test/", "tests/"))
+    files = ["test/a.py", "tests/b.py", "src/c.py"]
+    result = git_utils._filter_paths(files, suffix=".py", prefix=("test/", "tests/"))
     assert result == ["test/a.py", "tests/b.py"]
-
-
-def test_parse_files_strips_whitespace_and_blank_lines() -> None:
-    """Surrounding whitespace and blank lines are dropped."""
-    output = "  a.py  \n\n  b.py\n"
-    assert git_utils._parse_files(output, suffix=".py", prefix=None) == ["a.py", "b.py"]
 
 
 # ---------------------------------------------------------------------------
@@ -312,8 +301,8 @@ def _stub_branch_path(
         if cmd[1:3] == ["rev-parse", "--verify"]:
             return type("P", (), {"returncode": 0, "stdout": "ok\n"})()
         if cmd[1:3] == ["diff", "--name-only"]:
-            tail = cmd[-1] if len(cmd) > 3 else ""
-            stdout = diff_outputs.get(tail, "")
+            tail = cmd[-1] if len(cmd) > 4 else ""
+            stdout = diff_outputs.get(tail, "").replace("\n", "\0").encode()
             return type("P", (), {"returncode": 0, "stdout": stdout})()
         return type("P", (), {"returncode": 0, "stdout": ""})()
 
@@ -723,11 +712,16 @@ def test_fetch_tags_best_effort_success_returns_no_notes(
         calls.append((list(cmd), kw))
         return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
+    monkeypatch.setattr(
+        git_utils, "network_git_env", lambda _cwd: {"GIT_TERMINAL_PROMPT": "0"}
+    )
     monkeypatch.setattr(git_utils.subprocess, "run", _fake_subprocess_run)
     assert git_utils.fetch_tags_best_effort(tmp_path) == []
     assert len(calls) == 1
     cmd, kw = calls[0]
     assert cmd == ["git", "fetch", "--tags", "--quiet", "origin"]
+    assert kw["env"]["GIT_TERMINAL_PROMPT"] == "0"
+    assert kw["env"]["PATH"] == os.environ["PATH"]
     assert kw["cwd"] == tmp_path
     assert kw["stdin"] is subprocess.DEVNULL
     assert kw["timeout"] == 10
@@ -782,6 +776,7 @@ def test_fetch_tags_best_effort_custom_timeout_flows_through(
         calls.append(kw)
         return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
+    monkeypatch.setattr(git_utils, "network_git_env", lambda _cwd: {})
     monkeypatch.setattr(git_utils.subprocess, "run", _fake_subprocess_run)
     assert git_utils.fetch_tags_best_effort(tmp_path, timeout=3) == []
     assert calls[0]["timeout"] == 3
@@ -1748,7 +1743,7 @@ def test_added_or_moved_files_routes_through_resolve_base_branch_ref(
 
     def _fake_run(cmd: list[str], **_kwargs: object) -> object:
         if cmd[-1] == "sentinel/ref":
-            return type("P", (), {"returncode": 0, "stdout": "src/a.py\n"})()
+            return type("P", (), {"returncode": 0, "stdout": b"src/a.py\0"})()
         return type("P", (), {"returncode": 0, "stdout": ""})()
 
     monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
@@ -1797,7 +1792,10 @@ def test_added_or_moved_files_filters_by_suffix(
         lambda *_a, **_kw: type(
             "P",
             (),
-            {"returncode": 0, "stdout": "src/a.py\npyproject.toml\nREADME.md\n"},
+            {
+                "returncode": 0,
+                "stdout": b"src/a.py\0pyproject.toml\0README.md\0",
+            },
         )(),
     )
     files = git_utils.added_or_moved_files(repo_root=tmp_path, suffix=suffix)
@@ -1814,7 +1812,7 @@ def test_added_or_moved_files_empty_output_returns_empty_list(
     monkeypatch.setattr(
         git_utils.subprocess,
         "run",
-        lambda *_a, **_kw: type("P", (), {"returncode": 0, "stdout": ""})(),
+        lambda *_a, **_kw: type("P", (), {"returncode": 0, "stdout": b""})(),
     )
     assert git_utils.added_or_moved_files(repo_root=tmp_path) == []
 
@@ -1830,7 +1828,7 @@ def test_added_or_moved_files_uses_diff_filter_ar(
 
     def _fake_run(cmd: list[str], **_kwargs: object) -> object:
         captured["cmd"] = cmd
-        return type("P", (), {"returncode": 0, "stdout": ""})()
+        return type("P", (), {"returncode": 0, "stdout": b""})()
 
     monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
     git_utils.added_or_moved_files(repo_root=tmp_path)
@@ -1838,6 +1836,7 @@ def test_added_or_moved_files_uses_diff_filter_ar(
         "git",
         "diff",
         "--name-only",
+        "-z",
         "--diff-filter=AR",
         "origin/main",
     ]
@@ -1854,7 +1853,7 @@ def test_added_or_moved_files_repo_root_threads_to_cwd(
 
     def _fake_run(cmd: list[str], **kwargs: object) -> object:
         calls.append((cmd, kwargs.get("cwd")))
-        return type("P", (), {"returncode": 0, "stdout": ""})()
+        return type("P", (), {"returncode": 0, "stdout": b""})()
 
     monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
     git_utils.added_or_moved_files(repo_root=tmp_path)
@@ -2205,17 +2204,21 @@ def test_fetch_quietly_sets_git_terminal_prompt_env(
 ) -> None:
     """The fetch runs with `GIT_TERMINAL_PROMPT=0` for security.
 
-    A credential prompt never blocks.
+    A credential prompt never blocks; the env is exactly what
+    `network_git_env` answers for the repo.
     """
     captured: dict[str, object] = {}
 
-    def _fake_run_git(*_args: str, **kwargs: object) -> str:
+    def _fake_run_git(*args: str, **kwargs: object) -> str:
+        if args[:1] == ("config",):
+            return ""
         captured.update(kwargs)
         return ""
 
     monkeypatch.setattr(git_utils, "run_git", _fake_run_git)
     assert git_utils.fetch_quietly(tmp_path, "origin", "main") is True
-    assert captured["env"] == {"GIT_TERMINAL_PROMPT": "0"}
+    assert captured["env"] == git_utils.network_git_env(tmp_path)
+    assert captured["env"]["GIT_TERMINAL_PROMPT"] == "0"
     assert captured["timeout"] == git_utils.PUSH_TIMEOUT_S
 
 
@@ -2224,7 +2227,9 @@ def test_fetch_quietly_returns_false_on_timeout(
 ) -> None:
     """A stalled remote (timeout) reads as a failed fetch, never a raise."""
 
-    def _fake_run_git(*args: str, timeout: float, **_kw: object) -> str:
+    def _fake_run_git(*args: str, timeout: float = 1, **_kw: object) -> str:
+        if args[:1] == ("config",):
+            return ""
         raise subprocess.TimeoutExpired(cmd=["git", *args], timeout=timeout)
 
     monkeypatch.setattr(git_utils, "run_git", _fake_run_git)
@@ -2255,14 +2260,16 @@ def test_tag_on_remote_unknown_when_the_probe_times_out(
     """
     seen: dict[str, object] = {}
 
-    def _fake_run_git(*args: str, timeout: float, **kw: object) -> str:
+    def _fake_run_git(*args: str, timeout: float = 1, **kw: object) -> str:
+        if args[:1] == ("config",):
+            return ""
         seen.update(kw, timeout=timeout)
         raise subprocess.TimeoutExpired(cmd=["git", *args], timeout=timeout)
 
     monkeypatch.setattr(git_utils, "run_git", _fake_run_git)
     assert git_utils.tag_on_remote(tmp_path, "v1.0.0") is None
     assert seen["timeout"] == git_utils.PUSH_TIMEOUT_S
-    assert seen["env"] == {"GIT_TERMINAL_PROMPT": "0"}
+    assert seen["env"]["GIT_TERMINAL_PROMPT"] == "0"
 
 
 def test_fetch_quietly_dash_prefixed_remote_or_refspec_returns_false_without_git(
@@ -2435,7 +2442,8 @@ def test_push_branch_argv_uses_fully_qualified_same_name_refspec(
     calls: list[list[str]] = []
 
     def _fake_run(cmd: list[str], **_kwargs: object) -> object:
-        calls.append(cmd)
+        if cmd[1] == "push":
+            calls.append(cmd)
         return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
     monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
@@ -2674,7 +2682,8 @@ def test_push_tag_argv_uses_fully_qualified_same_name_refspec(
     calls: list[list[str]] = []
 
     def _fake_run(cmd: list[str], **_kwargs: object) -> object:
-        calls.append(cmd)
+        if cmd[1] == "push":
+            calls.append(cmd)
         return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
 
     monkeypatch.setattr(git_utils.subprocess, "run", _fake_run)
@@ -3200,7 +3209,7 @@ def test_stage_modified_paths_returns_empty_when_nothing_changed(
 
     def _fake(cmd: list[str], **_kw: object) -> object:
         cmds.append(cmd)
-        return type("P", (), {"returncode": 0, "stdout": ""})()
+        return type("P", (), {"returncode": 0, "stdout": b""})()
 
     monkeypatch.setattr(git_utils.subprocess, "run", _fake)
     result = git_utils.stage_modified_paths(tmp_path, ["docs/api-digest.md"])
@@ -3228,8 +3237,8 @@ def test_stage_modified_paths_stages_changed_files_and_returns_list(
     def _fake(cmd: list[str], **_kw: object) -> object:
         cmds.append(cmd)
         if cmd[1] == "diff":
-            return type("P", (), {"returncode": 0, "stdout": "docs/api-digest.md\n"})()
-        return type("P", (), {"returncode": 0, "stdout": ""})()
+            return type("P", (), {"returncode": 0, "stdout": b"docs/api-digest.md\0"})()
+        return type("P", (), {"returncode": 0, "stdout": b""})()
 
     monkeypatch.setattr(git_utils.subprocess, "run", _fake)
     result = git_utils.stage_modified_paths(tmp_path, ["docs/api-digest.md"])
@@ -3252,7 +3261,7 @@ def test_stage_modified_paths_passes_multiple_pathspecs_to_diff(
 
     def _fake(cmd: list[str], **_kw: object) -> object:
         captured.append(cmd)
-        return type("P", (), {"returncode": 0, "stdout": ""})()
+        return type("P", (), {"returncode": 0, "stdout": b""})()
 
     monkeypatch.setattr(git_utils.subprocess, "run", _fake)
     git_utils.stage_modified_paths(
@@ -3395,8 +3404,8 @@ def test_get_modified_files_routes_through_resolve_base_branch_ref(
         if cmd[1:3] == ["branch", "--show-current"]:
             return type("P", (), {"returncode": 0, "stdout": "feat/x\n"})()
         if cmd[1:3] == ["diff", "--name-only"]:
-            tail = cmd[-1] if len(cmd) > 3 else ""
-            stdout = "src/a.py\n" if tail == "sentinel/ref...HEAD" else ""
+            tail = cmd[-1] if len(cmd) > 4 else ""
+            stdout = b"src/a.py\0" if tail == "sentinel/ref...HEAD" else b""
             return type("P", (), {"returncode": 0, "stdout": stdout})()
         return type("P", (), {"returncode": 0, "stdout": ""})()
 
@@ -4138,7 +4147,7 @@ def test_working_tree_sha_returns_none_when_index_copy_raises_permission_error(
 
     SCENARIO: a clean, ordinary repo — the failure mode under test is the
     copy step itself, not any repo-state edge case.
-    MOCK SETUP: `shutil.copyfile` — the single seam `_tree_without_logs`
+    MOCK SETUP: `shutil.copy2` — the single seam `_tree_without_logs`
     uses to snapshot the active index into the scratch one — raises
     `PermissionError`, simulating a locked or unreadable index file.
     EXPECTED BEHAVIOR: `working_tree_sha` catches it (the same `OSError`
@@ -4153,7 +4162,7 @@ def test_working_tree_sha_returns_none_when_index_copy_raises_permission_error(
         msg = "locked"
         raise PermissionError(msg)
 
-    monkeypatch.setattr(git_utils.shutil, "copyfile", _raise_permission_error)
+    monkeypatch.setattr(git_utils.shutil, "copy2", _raise_permission_error)
 
     assert git_utils.working_tree_sha(tmp_path) is None
 
@@ -4263,7 +4272,7 @@ def test_produced_at_stamp_renders_tree_unknown_when_index_copy_raises(
 
     SCENARIO: a clean, ordinary repo, same as the `working_tree_sha` test
     above.
-    MOCK SETUP: `shutil.copyfile` raises `PermissionError` — the same
+    MOCK SETUP: `shutil.copy2` raises `PermissionError` — the same
     seam as the `working_tree_sha` test above.
     EXPECTED BEHAVIOR: `working_tree_sha` (called internally) returns
     `None`, and the stamp built on top of it renders the literal
@@ -4277,7 +4286,7 @@ def test_produced_at_stamp_renders_tree_unknown_when_index_copy_raises(
         msg = "locked"
         raise PermissionError(msg)
 
-    monkeypatch.setattr(git_utils.shutil, "copyfile", _raise_permission_error)
+    monkeypatch.setattr(git_utils.shutil, "copy2", _raise_permission_error)
 
     stamp = git_utils.produced_at_stamp(tmp_path)
 
@@ -4694,3 +4703,306 @@ def test_base_sync_summary_names_every_problem(
         summary: Expected single-token summary.
     """
     assert git_utils.base_sync(mergeable, behind).summary == summary
+
+
+# ---------------------------------------------------------------------------
+# NUL-separated name listings (awkward file names)
+# ---------------------------------------------------------------------------
+
+# Names git C-quotes (non-ASCII) or that whitespace handling mangles.
+AWKWARD_NAMES = ["café.py", " lead space.py", "two words.py"]
+
+
+def _git(repo: Path, *args: str) -> None:
+    """Run a git command in *repo*, failing the test on a non-zero exit.
+
+    Args:
+        repo: Working directory the git command runs in.
+        *args: Arguments passed to ``git`` after the program name.
+    """
+    subprocess.run(["git", *args], cwd=repo, env=_GIT_ENV, check=True)
+
+
+@pytest.fixture
+def repo_with_awkward_tracked_files(tmp_path: Path) -> Path:
+    """A repo whose ``main`` commit tracks one file per awkward name."""
+    _init_git_repo(tmp_path)
+    for name in AWKWARD_NAMES:
+        (tmp_path / name).write_text("v1\n")
+    commit_all(tmp_path, "seed")
+    return tmp_path
+
+
+@pytest.mark.parametrize(
+    "variant",
+    ["unstaged", "staged", "committed-range", "pathspec"],
+)
+def test_diff_names_z_returns_awkward_names_verbatim(
+    repo_with_awkward_tracked_files: Path, variant: str
+) -> None:
+    """Non-ASCII and whitespace-bearing names come back exactly as named.
+
+    Newline-separated output C-quotes ``café.py`` and loses the leading
+    space; each diff flavour forge uses must return the real name.
+
+    Args:
+        variant: Which ``git diff`` flavour to list.
+    """
+    repo = repo_with_awkward_tracked_files
+    _git(repo, "checkout", "-q", "-b", "feature")
+    for name in AWKWARD_NAMES:
+        (repo / name).write_text("v2\n")
+    if variant == "staged":
+        _git(repo, "add", "-A")
+        names = git_utils.diff_names_z(repo, "--cached")
+    elif variant == "committed-range":
+        commit_all(repo, "edit")
+        names = git_utils.diff_names_z(repo, "main...HEAD")
+    elif variant == "pathspec":
+        names = git_utils.diff_names_z(repo, "--", *AWKWARD_NAMES[:2])
+        assert sorted(names) == sorted(AWKWARD_NAMES[:2])
+        return
+    else:
+        names = git_utils.diff_names_z(repo)
+    assert sorted(names) == sorted(AWKWARD_NAMES)
+
+
+def test_diff_names_z_keeps_invalid_utf8_names_distinguishable(
+    tmp_path: Path,
+) -> None:
+    """A name that is not valid UTF-8 is escaped, not dropped or raised on."""
+    _init_git_repo(tmp_path)
+    raw_name = b"bad\xff.py"
+    (tmp_path / os.fsdecode(raw_name)).write_text("v1\n")
+    commit_all(tmp_path, "seed")
+    (tmp_path / os.fsdecode(raw_name)).write_text("v2\n")
+    assert git_utils.diff_names_z(tmp_path) == ["bad\\xff.py"]
+
+
+def test_diff_names_z_empty_diff_is_empty_list(tmp_path: Path) -> None:
+    """No change means ``[]``, not ``[""]``."""
+    _init_git_repo(tmp_path)
+    assert git_utils.diff_names_z(tmp_path) == []
+
+
+def test_git_z_names_failure_is_empty_unless_check_raises(tmp_path: Path) -> None:
+    """A failing git reads as ``[]`` by default and raises under ``check``."""
+    not_a_repo = tmp_path / "plain"
+    not_a_repo.mkdir()
+    assert git_utils.git_z_names(not_a_repo, "ls-files", "-z") == []
+    assert git_utils.diff_names_z(not_a_repo) == []
+    with pytest.raises(subprocess.CalledProcessError):
+        git_utils.git_z_names(not_a_repo, "ls-files", "-z", check=True)
+    with pytest.raises(subprocess.CalledProcessError):
+        git_utils.diff_names_z(not_a_repo, "no-such-ref", check=True)
+
+
+def test_git_z_names_lists_untracked_awkward_names(tmp_path: Path) -> None:
+    """`ls-files --others` is read NUL-separated too."""
+    _init_git_repo(tmp_path)
+    for name in AWKWARD_NAMES:
+        (tmp_path / name).write_text("x\n")
+    names = git_utils.git_z_names(
+        tmp_path, "ls-files", "-z", "--others", "--exclude-standard"
+    )
+    assert sorted(names) == sorted(AWKWARD_NAMES)
+
+
+def test_get_modified_files_sees_awkward_names_on_every_path(
+    repo_with_awkward_tracked_files: Path,
+) -> None:
+    """Committed, staged and unstaged awkward names all reach the result.
+
+    End to end through real git on a feature branch: one name per source of
+    changes, so a quoting or whitespace bug in any of the three diffs drops
+    its name.
+    """
+    repo = repo_with_awkward_tracked_files
+    _git(repo, "checkout", "-q", "-b", "feature")
+    (repo / AWKWARD_NAMES[0]).write_text("committed\n")
+    commit_all(repo, "committed edit")
+    (repo / AWKWARD_NAMES[1]).write_text("staged\n")
+    _git(repo, "add", AWKWARD_NAMES[1])
+    (repo / AWKWARD_NAMES[2]).write_text("unstaged\n")
+
+    files = git_utils.get_modified_files(repo_root=repo, base_branch="main")
+
+    assert sorted(files) == sorted(AWKWARD_NAMES)
+
+
+def test_added_or_moved_files_and_unmerged_paths_see_awkward_names(
+    repo_with_awkward_tracked_files: Path,
+) -> None:
+    """The AR-filtered listing keeps awkward added names (real git)."""
+    repo = repo_with_awkward_tracked_files
+    _git(repo, "checkout", "-q", "-b", "feature")
+    (repo / "naïve fichier.py").write_text("new\n")
+    commit_all(repo, "add")
+    added = git_utils.added_or_moved_files(repo_root=repo, base_branch="main")
+    assert added == ["naïve fichier.py"]
+    assert git_utils.unmerged_paths(repo) == []
+
+
+def test_stage_modified_paths_stages_awkward_names(
+    repo_with_awkward_tracked_files: Path,
+) -> None:
+    """A modified file with a non-ASCII or spaced name is staged and returned."""
+    repo = repo_with_awkward_tracked_files
+    for name in AWKWARD_NAMES:
+        (repo / name).write_text("v2\n")
+    staged = git_utils.stage_modified_paths(repo, AWKWARD_NAMES)
+    assert sorted(staged) == sorted(AWKWARD_NAMES)
+    assert sorted(git_utils.diff_names_z(repo, "--cached")) == sorted(AWKWARD_NAMES)
+
+
+# ---------------------------------------------------------------------------
+# network_git_env
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def no_user_ssh_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Hide every ambient source of a user ssh command; returns an empty repo.
+
+    Deletes ``GIT_SSH_COMMAND`` / ``GIT_SSH`` and points the global and
+    system git config at nothing, so only what a test sets is in play.
+    """
+    monkeypatch.delenv("GIT_SSH_COMMAND", raising=False)
+    monkeypatch.delenv("GIT_SSH", raising=False)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_git_repo(repo)
+    return repo
+
+
+def test_network_git_env_defaults_to_no_prompt_and_batch_ssh(
+    no_user_ssh_config: Path,
+) -> None:
+    """With no user ssh choice, neither HTTPS nor ssh may ask a question."""
+    assert git_utils.network_git_env(no_user_ssh_config) == {
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_SSH_COMMAND": "ssh -o BatchMode=yes",
+    }
+
+
+@pytest.mark.parametrize("variable", ["GIT_SSH_COMMAND", "GIT_SSH"])
+def test_network_git_env_respects_ssh_env_var(
+    no_user_ssh_config: Path, monkeypatch: pytest.MonkeyPatch, variable: str
+) -> None:
+    """A user-chosen ssh command in the environment is never overridden.
+
+    Args:
+        variable: The environment variable the user set.
+    """
+    monkeypatch.setenv(variable, "my-ssh -i key")
+    assert git_utils.network_git_env(no_user_ssh_config) == {"GIT_TERMINAL_PROMPT": "0"}
+
+
+def test_network_git_env_respects_core_ssh_command(no_user_ssh_config: Path) -> None:
+    """A repo-configured ``core.sshCommand`` is never overridden."""
+    _git(no_user_ssh_config, "config", "core.sshCommand", "ssh -J jump")
+    assert git_utils.network_git_env(no_user_ssh_config) == {"GIT_TERMINAL_PROMPT": "0"}
+
+
+def test_network_git_env_probe_failure_still_sets_batch_ssh(
+    no_user_ssh_config: Path, tmp_path: Path
+) -> None:
+    """Outside any repo the config probe fails, and batch mode still applies."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert git_utils.network_git_env(plain) == {
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_SSH_COMMAND": "ssh -o BatchMode=yes",
+    }
+
+
+def test_push_branch_keeps_batch_ssh_after_override_filtering(
+    no_user_ssh_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The push env drops git overrides yet still carries the ssh batch mode.
+
+    SCENARIO: `GIT_DIR` is set in the caller's environment (an override the
+        push must not inherit) while no user ssh choice exists.
+    MOCK SETUP: `subprocess.run` records the env of the `push` call.
+    EXPECTED BEHAVIOR: no `GIT_DIR` in the push env; `GIT_SSH_COMMAND` and
+        `GIT_TERMINAL_PROMPT` present; `PATH` kept.
+    """
+    monkeypatch.setenv("GIT_DIR", "/nonexistent")
+    seen: dict[str, object] = {}
+    real_run = subprocess.run
+
+    def _spy(cmd: list[str], **kwargs: object) -> object:
+        if cmd[1] == "push":
+            seen.update(kwargs)
+            return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+        # The config probe must see the real repo, not the poisoned GIT_DIR.
+        env = {k: v for k, v in os.environ.items() if k != "GIT_DIR"}
+        return real_run(cmd, **{**kwargs, "env": env})
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _spy)
+    git_utils.push_branch(no_user_ssh_config, "feat/x")
+    env = seen["env"]
+    assert "GIT_DIR" not in env
+    assert env["GIT_SSH_COMMAND"] == "ssh -o BatchMode=yes"
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+    assert env["PATH"] == os.environ["PATH"]
+
+
+def test_fetch_tags_best_effort_runs_with_network_env_and_keeps_path(
+    no_user_ssh_config: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The bare `fetch --tags` can no longer hang on an ssh prompt.
+
+    The env is the network env merged over the process env, so `PATH`
+    survives (git must still find `ssh`).
+    """
+    seen: dict[str, object] = {}
+    real_run = subprocess.run
+
+    def _spy(cmd: list[str], **kwargs: object) -> object:
+        if cmd[1:3] == ["fetch", "--tags"]:
+            seen.update(kwargs)
+            return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+        return real_run(cmd, **kwargs)
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _spy)
+    assert git_utils.fetch_tags_best_effort(no_user_ssh_config) == []
+    env = seen["env"]
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+    assert env["GIT_SSH_COMMAND"] == "ssh -o BatchMode=yes"
+    assert env["PATH"] == os.environ["PATH"]
+
+
+# ---------------------------------------------------------------------------
+# scratch index keeps the source index's mtime
+# ---------------------------------------------------------------------------
+
+
+def test_working_tree_sha_sees_same_size_edit_in_the_same_clock_tick(
+    tmp_path: Path,
+) -> None:
+    """A same-size, same-mtime edit still changes the fingerprint.
+
+    SCENARIO: the file's recorded mtime equals the index file's own mtime
+        (git's "racily clean" case), then the file is rewritten with
+        different content of the same size and the same mtime.
+    EXPECTED BEHAVIOR: the fingerprint differs from `HEAD`'s tree. A scratch
+        index copied with a fresh mtime made git trust the stale stat data
+        and report the tree unchanged.
+    """
+    _init_git_repo(tmp_path)
+    tracked = tmp_path / "tracked.txt"
+    tracked.write_text("aaaa\n")
+    stamp = int(datetime.now(UTC).timestamp()) - 1000
+    os.utime(tracked, (stamp, stamp))
+    commit_all(tmp_path, "seed")
+    os.utime(tmp_path / ".git" / "index", (stamp, stamp))
+    tracked.write_text("bbbb\n")
+    os.utime(tracked, (stamp, stamp))
+
+    result = git_utils.working_tree_sha(tmp_path)
+
+    assert result is not None
+    assert result != git_utils.get_tree_sha(tmp_path, "HEAD")

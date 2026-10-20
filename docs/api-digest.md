@@ -721,6 +721,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `gh_api(*args: str, timeout: int = GH_TIMEOUT_S) -> str | None` — Run ``gh api`` with *args* and return stripped stdout, or ``None``.
 - `own_login() -> str | None` — Return the GitHub login ``gh`` is authenticated as, once per process.
 - `_run_git(*args: str, cwd: Path | None = None) -> str` _(internal)_ — Run a git command and return stdout.
+- `network_git_env(cwd: Path | None) -> dict[str, str]` — Return the variables a git call that reaches a remote runs with.
 - `_log_git_timeout(args: tuple[str, ...], timeout: float | None) -> None` _(internal)_ — Log the one-line ``git <verb> timed out`` notice, without a traceback.
 - `run_git(*args: str, cwd: Path | None = None, check: bool = True, log_errors: bool = True, env: Mapping[str, str] | None = None, timeout: float | None = None) -> str` — Run ``git`` with *args* in *cwd* and return stripped stdout.
 - `_fallback_identity_args(repo_root: Path) -> list[str]` _(internal)_ — Return ``-c`` identity flags when git has no usable committer identity.
@@ -768,9 +769,9 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `read_local_plugin_version(repo_root: Path) -> str | None` — Return the working-tree ``.claude-plugin/plugin.json["version"]``.
 - `render_plugin_version(source_text: str, version: str) -> str` — Return *source_text* with its ``"version"`` field rewritten to *version*.
 - `write_plugin_version(root: Path, version: str) -> None` — Rewrite ``.claude-plugin/plugin.json``'s version field on disk.
-- `_parse_files(output: str, *, suffix: str, prefix: str | tuple[str, ...] | None) -> list[str]` _(internal)_ — Parse git diff output into a filtered file list.
 - `_filter_paths(files: list[str], *, suffix: str, prefix: str | tuple[str, ...] | None) -> list[str]` _(internal)_ — Keep the paths ending in *suffix* and, when given, starting with *prefix*.
-- `_ls_files_z(cwd: Path | None, *args: str) -> list[str]` _(internal)_ — Return ``git ls-files -z [args]`` paths exactly as they are named on disk.
+- `git_z_names(cwd: Path | None, *argv: str, check: bool = False) -> list[str]` — Return the paths a NUL-separated (``-z``) git listing names, verbatim.
+- `diff_names_z(cwd: Path | None, *diff_args: str, check: bool = False) -> list[str]` — Return the paths ``git diff --name-only`` reports, named exactly.
 - `is_ancestor(root: Path | None, ancestor_ref: str, descendant_ref: str) -> bool` — Return whether *ancestor_ref* is an ancestor of *descendant_ref*.
 - `added_or_moved_files(*, repo_root: Path | None = None, base_branch: str = 'main', suffix: str = '.py') -> list[str]` — Return files ADDED or RENAMED vs the base branch (``--diff-filter=AR``).
 - `get_modified_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None, repo_root: Path | None = None, base_branch: str = 'main', include_unstaged: bool = True) -> list[str]` — Get list of modified files from git.
@@ -1554,11 +1555,13 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `find_pin(repo_root: Path) -> Pin | None` — Locate the ``forge-scripts`` pin in *repo_root*'s dependency files.
 - `_rewrite_pin(pin: Pin, new_ref: str) -> str` _(internal)_ — Return the file content with *pin*'s line rewritten to *new_ref*.
 - `_git_url_for(auth_mode: AuthMode, ref: str) -> str` _(internal)_ — Return the ``git+...`` URL pip should resolve for *ref* under *auth_mode*.
+- `uses_pixi_lock(repo_root: Path) -> bool` — Return whether *repo_root* installs its environment from a pixi lock.
+- `install_command(repo_root: Path, ref: str, *, auth_mode: AuthMode = 'https-anonymous') -> str` — Return the command that installs *ref* the way this repo installs.
 - `pip_command(ref: str, *, auth_mode: AuthMode = 'https-anonymous') -> str` — Return the exact ``pip install`` line for a given pin ref.
 - `_resolve_target_ref_or_none(args: argparse.Namespace, current_ref: str | None) -> str | None` _(internal)_ — Resolve the target ref from CLI flags, falling back to current.
 - `_resolve_target_ref(args: argparse.Namespace, current_ref: str | None) -> str` _(internal)_ — Resolve the target ref or exit when undetermined.
 - `_write_atomic(path: Path, content: str) -> None` _(internal)_ — Replace *path*'s contents with *content*, atomically.
-- `_run_phase1(args: argparse.Namespace, root: Path) -> tuple[int, str | None]` _(internal)_ — Phase 1 — detect the pin, rewrite it, print the pip command.
+- `_run_phase1(args: argparse.Namespace, root: Path) -> tuple[int, str | None]` _(internal)_ — Phase 1 — detect the pin, rewrite it, print the install command.
 - `_read_changelog() -> str | None` _(internal)_ — Return forge's packaged ``CHANGELOG.md`` text, or ``None`` if unavailable.
 - `_consumer_upgrade_notes(changelog_text: str, *, max_versions: int = 3) -> str | None` _(internal)_ — Extract the most recent ``⚠️ Upgrade notes`` lanes from the changelog.
 - `_recent_action_items(changelog_text: str, *, max_versions: int = _ACTIONS_MAX_VERSIONS) -> list[tuple[str, str]]` _(internal)_ — Return ``**Action:**`` items from the newest marker-bearing versions.
@@ -1569,6 +1572,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_print_upgrade_notes() -> None` _(internal)_ — Surface consumer-action upgrade notes after a successful upgrade.
 - `_run_phase2(root: Path) -> int` _(internal)_ — Phase 2 — verify the install matches the pin, then re-sync artifacts.
 - `_run_pip_install(ref: str, *, auth_mode: AuthMode, timeout_seconds: int | None) -> int` _(internal)_ — Run the force-reinstall pip command, wrapped in a progress logger.
+- `_finish_apply(target_ref: str, root: Path) -> int` _(internal)_ — Verify the installed build, then re-sync artifacts after a successful pip.
 - `_run_apply(args: argparse.Namespace, root: Path) -> int` _(internal)_ — ``--apply``: do phase 1 + run pip + do phase 2, in one command.
 - `main() -> int` — One-command forge upgrade entry point.
 

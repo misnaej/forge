@@ -14,7 +14,13 @@ import fnmatch
 from typing import TYPE_CHECKING
 
 from forge.config import load_config
-from forge.git_utils import ref_exists, resolve_base_branch_ref, run_git
+from forge.git_utils import (
+    diff_names_z,
+    git_z_names,
+    ref_exists,
+    resolve_base_branch_ref,
+    run_git,
+)
 
 
 if TYPE_CHECKING:
@@ -143,16 +149,12 @@ def _changed_files_all_sources(repo_root: Path, base_ref: str) -> set[str]:
     """
     merge_base = run_git("merge-base", base_ref, "HEAD", cwd=repo_root, check=False)
     diff_base = merge_base or base_ref
-    arg_sets = (
-        ("diff", "--name-only", diff_base, "HEAD"),
-        ("diff", "--name-only"),
-        ("diff", "--name-only", "--cached"),
-        ("ls-files", "--others", "--exclude-standard"),
-    )
     files: set[str] = set()
-    for args in arg_sets:
-        out = run_git(*args, cwd=repo_root, check=False)
-        files.update(line for line in out.splitlines() if line)
+    for diff_args in ((diff_base, "HEAD"), (), ("--cached",)):
+        files.update(diff_names_z(repo_root, *diff_args))
+    files.update(
+        git_z_names(repo_root, "ls-files", "-z", "--others", "--exclude-standard")
+    )
     return files
 
 

@@ -542,7 +542,7 @@ def test_check_with_channel_but_no_pin_prints_pip_command(
     assert rc == 0
     msgs = " ".join(r.getMessage() for r in caplog.records)
     assert "would upgrade to: main" in msgs
-    assert "pip command" in msgs
+    assert "install command" in msgs
 
 
 def test_to_rejects_shell_metacharacters(
@@ -1567,3 +1567,180 @@ def test_undocumented_release_refusal_none_when_no_release_heading() -> None:
     """A changelog with no recognized release heading -> proceed."""
     text = "# Changelog\n\n## Unreleased\n\n- Some change pending release.\n"
     assert upgrade._undocumented_release_refusal("v8.4.1", text) is None
+
+
+# ---------------------------------------------------------------------------
+# pixi-locked repos: the install step is a re-lock, never pip
+# ---------------------------------------------------------------------------
+
+
+def _make_pixi_repo(root: Path) -> None:
+    """Write a consumer pyproject plus a ``pixi.lock`` (a lock-based repo).
+
+    Args:
+        root: Directory the pyproject and lock files are written into.
+    """
+    (root / "pyproject.toml").write_text(_BASE_PYPROJECT)
+    (root / "pixi.lock").write_text("version: 6\n")
+
+
+@pytest.mark.parametrize(
+    ("files", "expected"),
+    [
+        pytest.param({"pixi.lock": "version: 6\n"}, True, id="pixi-lock"),
+        pytest.param({"pixi.toml": "[workspace]\n"}, True, id="pixi-toml"),
+        pytest.param(
+            {"pyproject.toml": "[tool.pixi.workspace]\nname = 'x'\n"},
+            True,
+            id="tool-pixi-subtable",
+        ),
+        pytest.param(
+            {"pyproject.toml": "[tool.pixi]\nx = 1\n"}, True, id="tool-pixi-table"
+        ),
+        pytest.param({"pyproject.toml": _BASE_PYPROJECT}, False, id="plain-pyproject"),
+        pytest.param(
+            {"pyproject.toml": "[tool.pixie]\nx = 1\n"}, False, id="lookalike-table"
+        ),
+        pytest.param({}, False, id="no-files"),
+    ],
+)
+def test_uses_pixi_lock_detects_each_lock_marker(
+    tmp_path: Path, files: dict[str, str], *, expected: bool
+) -> None:
+    """Any pixi marker flips detection; a plain or lookalike repo does not.
+
+    Args:
+        files: File name to content written into the repo root.
+        expected: Whether the repo counts as pixi-locked.
+    """
+    for name, content in files.items():
+        (tmp_path / name).write_text(content)
+    assert upgrade.uses_pixi_lock(tmp_path) is expected
+
+
+def test_install_command_branches_on_the_lock(tmp_path: Path) -> None:
+    """A pixi repo gets the re-lock steps; any other repo gets the pip line."""
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    pixi = tmp_path / "pixi"
+    pixi.mkdir()
+    (pixi / "pixi.lock").write_text("version: 6\n")
+
+    assert upgrade.install_command(plain, "main") == upgrade.pip_command("main")
+    assert upgrade.install_command(pixi, "main") == upgrade.PIXI_INSTALL_STEPS
+    assert "pip install" not in upgrade.install_command(pixi, "main")
+
+
+def test_install_command_passes_auth_mode_to_pip_line(tmp_path: Path) -> None:
+    """The auth mode still reaches the pip line for a non-pixi repo."""
+    assert upgrade.install_command(
+        tmp_path, "main", auth_mode="ssh"
+    ) == upgrade.pip_command("main", auth_mode="ssh")
+
+
+@pytest.mark.parametrize("pixi", [False, True], ids=["pip-repo", "pixi-repo"])
+def test_phase1_check_prints_the_repos_install_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    *,
+    pixi: bool,
+) -> None:
+    """`--check` names the install command that fits the repo.
+
+    Args:
+        pixi: Whether the repo installs from a pixi lock.
+    """
+    (tmp_path / "pyproject.toml").write_text(_BASE_PYPROJECT)
+    if pixi:
+        (tmp_path / "pixi.lock").write_text("version: 6\n")
+    monkeypatch.setattr(upgrade, "repo_root", lambda: tmp_path)
+    argv = ["forge-upgrade", "--channel", "main", "--check"]
+    with patch.object(upgrade.sys, "argv", argv), caplog.at_level("INFO"):
+        assert upgrade.main() == 0
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert ("pixi lock && pixi install --locked" in msgs) is pixi
+    assert ("pip install --upgrade" in msgs) is not pixi
+
+
+def test_phase1_next_step_and_mismatch_warning_name_the_relock_for_pixi(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Phase 1's Next line and mismatch warning never say pip in a pixi repo."""
+    _make_pixi_repo(tmp_path)
+    monkeypatch.setattr(upgrade, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(upgrade, "_installed_revision", lambda: "v1.1.0")
+    argv = ["forge-upgrade", "--channel", "main"]
+    with patch.object(upgrade.sys, "argv", argv), caplog.at_level("INFO"):
+        assert upgrade.main() == 0
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert upgrade.PIXI_INSTALL_STEPS in msgs
+    assert "pip install" not in msgs
+    assert "force-reinstall" not in msgs
+    assert "The install command above is what makes them match" in msgs
+
+
+def test_phase1_without_pin_in_pixi_repo_suggests_relock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """With a target but no pin, the manual-run hint is the re-lock steps."""
+    (tmp_path / "pixi.lock").write_text("version: 6\n")
+    monkeypatch.setattr(upgrade, "repo_root", lambda: tmp_path)
+    argv = ["forge-upgrade", "--channel", "main"]
+    with patch.object(upgrade.sys, "argv", argv), caplog.at_level("WARNING"):
+        assert upgrade.main() == 0
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert upgrade.PIXI_INSTALL_STEPS in msgs
+    assert "pip install" not in msgs
+
+
+def test_phase2_gate_names_the_relock_for_pixi(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The stale-install refusal tells a pixi repo to re-lock, not to pip install."""
+    _make_pixi_repo(tmp_path)
+    monkeypatch.setattr(upgrade, "_installed_revision", lambda: "v1.1.0")
+    with caplog.at_level("ERROR"):
+        rc = upgrade._run_phase2(tmp_path)
+    assert rc == 1
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert upgrade.PIXI_INSTALL_STEPS in msgs
+    assert "pip install" not in msgs
+
+
+def test_apply_refuses_in_pixi_repo_without_touching_pin_or_pip(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """`--apply` exits 2 for a pixi-locked repo: no pin rewrite, no subprocess.
+
+    SCENARIO: a lock-based consumer runs the one-shot flag.
+    MOCK SETUP: `subprocess.run` raises if reached; the pin file is compared
+        byte-for-byte afterwards.
+    EXPECTED BEHAVIOR: rc 2, an error naming the re-lock steps, pyproject
+        untouched.
+    """
+    _make_pixi_repo(tmp_path)
+    original = (tmp_path / "pyproject.toml").read_text()
+    monkeypatch.setattr(upgrade, "repo_root", lambda: tmp_path)
+    _stub_run_context(monkeypatch)
+
+    def _fail_if_called(*_a: object, **_kw: object) -> object:
+        msg = "no subprocess may run for a pixi-locked --apply"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(upgrade.subprocess, "run", _fail_if_called)
+    argv = ["forge-upgrade", "--apply", "--channel", "main"]
+    with patch.object(upgrade.sys, "argv", argv), caplog.at_level("ERROR"):
+        rc = upgrade.main()
+    assert rc == 2
+    assert (tmp_path / "pyproject.toml").read_text() == original
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert upgrade.PIXI_INSTALL_STEPS in msgs

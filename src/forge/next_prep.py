@@ -49,6 +49,7 @@ from forge.git_utils import (
     create_annotated_tag,
     fetch_tags_best_effort,
     latest_v_tag,
+    network_git_env,
     parse_semver,
     read_local_plugin_version,
     run_git,
@@ -215,7 +216,7 @@ def _maybe_tag_release(repo_root: Path) -> TagDecision:
             "origin",
             tag,
             cwd=repo_root,
-            env={"GIT_TERMINAL_PROMPT": "0"},
+            env=network_git_env(repo_root),
             timeout=PUSH_TIMEOUT_S,
         )
     except subprocess.TimeoutExpired:
@@ -275,7 +276,7 @@ def _fetch_origin(repo_root: Path) -> bool:
             "fetch",
             "--prune",
             cwd=repo_root,
-            env={"GIT_TERMINAL_PROMPT": "0"},
+            env=network_git_env(repo_root),
             timeout=PUSH_TIMEOUT_S,
         )
     except subprocess.TimeoutExpired:
@@ -471,7 +472,7 @@ def _pull_ff_only(repo_root: Path, target_branch: str) -> bool:
             capture_output=True,
             text=True,
             check=False,
-            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+            env={**os.environ, **network_git_env(repo_root)},
             timeout=PUSH_TIMEOUT_S,
         )
     except subprocess.TimeoutExpired:

@@ -952,7 +952,9 @@ def _timing_out_push(*, land: bool) -> Callable[..., str]:
             # The push must be bounded and prompt-free, or a stalled
             # remote hangs the release instead of reaching this branch.
             assert timeout == release.PUSH_TIMEOUT_S
-            assert env == {"GIT_TERMINAL_PROMPT": "0"}
+            assert env is not None
+            assert env["GIT_TERMINAL_PROMPT"] == "0"
+            assert env == git_utils.network_git_env(cwd)
             if land:
                 git_utils.run_git(*args, cwd=cwd)
             raise subprocess.TimeoutExpired(cmd=["git", *args], timeout=timeout)

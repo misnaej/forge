@@ -436,8 +436,8 @@ Three ways to handle this:
 | Approach | When |
 |---|---|
 | **Pin to a tag** (`@v1.3.0`) | CI / production — version comparisons are reliable. An upgrade to a tag whose own changelog does not document it is refused (exit `2`) — only tags cut per merge before releases were tagged at the release merge hit this ([which tags you can adopt](docs/adopting.md#which-tags-you-can-adopt)); a branch pin is never gated. |
-| **`forge-upgrade --apply`** | Setup scripts / Makefile / human-driven upgrades. Wraps the `--force-reinstall --no-deps` pip command + re-sync in one call. |
-| **Two-phase `forge-upgrade` + manual pip** | Claude Code agents — they're blocked from running `pip install`, so the agent rewrites the pin + prints the command; you run it. |
+| **`forge-upgrade --apply`** | Setup scripts / Makefile / human-driven upgrades. Wraps the `--force-reinstall --no-deps` pip command + re-sync in one call. Refused in a repo that installs from a pixi lock — use the two-phase flow there. |
+| **Two-phase `forge-upgrade` + manual install** | Claude Code agents — they're blocked from running `pip install`, so the agent rewrites the pin + prints the command (pip, or `pixi lock && pixi install --locked` in a pixi-locked repo); you run it. |
 
 **Switching from a branch pin to a tag pin has a footgun**: refresh
 wrappers built around the branch-caching rule above typically
@@ -566,12 +566,13 @@ because [FOUNDATION §2](FOUNDATION.md#2-core-safety-rules) forbids
 agents from running `pip install`:
 
 ```bash
-# Phase 1 — rewrite the pin + print the exact pip command.
+# Phase 1 — rewrite the pin + print the exact install command
+#           (pip, or the pixi steps in a pixi-locked repo).
 forge-upgrade --channel main          # pin @main (every release)
 forge-upgrade --to v1.3.0             # pin a specific tag
 forge-upgrade --check                 # dry-run; print without writing
 
-# Phase 2 — after running the printed pip command, re-sync managed
+# Phase 2 — after running the printed command, re-sync managed
 #           artifacts (forge-doctor included).
 forge-upgrade --continue
 ```
@@ -579,7 +580,10 @@ forge-upgrade --continue
 The phase-1 rewrite targets the `forge-scripts @ git+...` line in
 `pyproject.toml`. Phase 2 runs `install-forge-bootstrap` under the
 hood; if your project uses requirements.txt or a lockfile, run the
-phase-1 pip command manually then `forge-upgrade --continue`.
+phase-1 install command manually then `forge-upgrade --continue`. A
+repo that installs from a pixi lock (`pixi.lock`, `pixi.toml` or a
+`[tool.pixi]` table) is told `pixi lock && pixi install --locked`
+instead of pip.
 
 The same upgrade run by hand:
 

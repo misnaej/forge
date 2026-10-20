@@ -201,8 +201,8 @@ artifact is **drift-aware**, not blindly overwritten:
 Pick a channel and let `forge-upgrade` rewrite the pin + re-sync:
 
 ```bash
-forge-upgrade --channel main          # phase 1: rewrite pin + print the pip command
-# run the printed pip command yourself, then:
+forge-upgrade --channel main          # phase 1: rewrite pin + print the install command
+# run the printed command yourself (pip, or the pixi steps in a pixi-locked repo), then:
 forge-upgrade --continue              # phase 2: install-forge-bootstrap re-sync
 ```
 
