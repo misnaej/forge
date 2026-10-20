@@ -109,7 +109,10 @@ FRAGMENTS_DIR = Path("changelog.d")
 
 # Fragment type token → release-entry group heading, in assembly order.
 # dict order IS the rendered group order — deliberate and stable.
+# `upgrade` renders first: it is the lane consumers are told to read
+# before anything else, and the heading `forge-upgrade` extracts.
 FRAGMENT_TYPES: dict[str, str] = {
+    "upgrade": "⚠️ Upgrade notes",
     "added": "Features",
     "changed": "Changes",
     "fixed": "Fixes",
@@ -137,7 +140,10 @@ _VERSION_SHAPED_RE = re.compile(r"\bv?\d+\.\d+\.\d+\b")
 
 # An embedded `## ` heading would splice fake structure into the
 # assembled changelog — rejected outright.
-_EMBEDDED_HEADING_RE = re.compile(r"^##\s", re.MULTILINE)
+# Any markdown heading, not just `## `: the assembler writes the group
+# headings, and a `### …` line in a body could forge a group — notably the
+# `### ⚠️ Upgrade notes` lane forge-upgrade extracts — or end one early.
+_EMBEDDED_HEADING_RE = re.compile(r"^#{1,6}\s", re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -259,7 +265,10 @@ def _check_no_versions_or_headings(name: str, body: str) -> list[str]:
             "only writer of version numbers"
         )
     if _EMBEDDED_HEADING_RE.search(body):
-        errors.append(f"{name}: embedded '## ' heading in body — not allowed")
+        errors.append(
+            f"{name}: embedded markdown heading in body — not allowed; the "
+            "assembler writes every heading"
+        )
     return errors
 
 
