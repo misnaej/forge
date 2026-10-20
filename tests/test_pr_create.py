@@ -9,23 +9,27 @@
 # executing them — the seam is which binary the argv names, never the
 # whole subprocess surface, so `git` calls the gate depends on
 # (``rev-parse``, ``branch --show-current``) still run for real.
-# `classify` and `emergency_consume` are patched at the `forge.pr_create`
-# namespace (FOUNDATION §5) with plain callables/lambdas returning a
-# canned verdict — the classifier and the sentinel each have their own
-# test module; only the gate's dispatch on their result is under test
-# here.
+# `classify` is patched at the `forge.pr_create` namespace (FOUNDATION §5)
+# with a plain lambda returning a canned verdict — the classifier has its
+# own test module; only the gate's dispatch on its result is under test
+# here. The emergency sentinel is NOT faked: tests write a real sentinel
+# (claims live in the sentinel) in the ephemeral repo, so
+# claim/commit/release run for real and
+# only the `gh` binary is scripted.
 """
 
 from __future__ import annotations
 
 import subprocess
 import sys
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
 
-from forge import pr_create
+from forge import emergency, pr_create
+from forge.emergency_state import armed_state
 from forge.git_utils import code_health_dir
 from tests.conftest import GIT_ENV, commit_all, init_git_repo
 
@@ -296,17 +300,307 @@ def test_pr_create_refuses_emergency_wrapup_when_sentinel_not_armed(
 
     Traceability (the HEAD match) is never deferred, only verification —
     an emergency declaration still needs a spendable sentinel behind it,
-    not just the header line.
+    not just the header line. No sentinel exists in the repo, so the real
+    claim refuses.
     """
     repo = tmp_path / "repo"
     repo.mkdir()
     init_git_repo(repo)
     _write_wrapup(repo, _head_sha(repo), mode_line="wrapup-mode: emergency")
-    monkeypatch.setattr(pr_create, "emergency_consume", lambda _root: 1)
     calls = _stub_gh(monkeypatch)
 
     assert _run_main(monkeypatch, repo) == 2
     assert calls == []
+
+
+def _armed_emergency_repo(tmp_path: Path) -> Path:
+    """Build a checkout with an emergency wrap-up and an armed sentinel.
+
+    Args:
+        tmp_path: Pytest's per-test temporary directory.
+
+    Returns:
+        The checkout root.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    init_git_repo(repo)
+    _write_wrapup(repo, _head_sha(repo), mode_line="wrapup-mode: emergency")
+    emergency.write_state(
+        repo,
+        emergency.EmergencyState(
+            ledger_issue=5,
+            reason="x",
+            expires_at=(datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+        ),
+    )
+    return repo
+
+
+def _script_gh(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    create: subprocess.CompletedProcess[str] | OSError,
+    listing: subprocess.CompletedProcess[str] | None = None,
+) -> list[list[str]]:
+    """Script `gh pr create` and `gh pr list` replies; other `gh` calls succeed.
+
+    Args:
+        monkeypatch: Pytest's monkeypatch fixture.
+        create: Reply to `gh pr create` — a completed process, or an
+            ``OSError`` raised as if the binary could not run.
+        listing: Reply to `gh pr list`; ``None`` fails the test if called.
+
+    Returns:
+        Every `gh` argv, in call order.
+    """
+    real_run = subprocess.run
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        if cmd[0] != "gh":
+            return real_run(cmd, **kwargs)  # type: ignore[arg-type]
+        calls.append(cmd)
+        if cmd[1:3] == ["pr", "create"]:
+            if isinstance(create, OSError):
+                raise create
+            return create
+        if cmd[1:3] == ["pr", "list"]:
+            assert listing is not None, "gh pr list must not be called"
+            return listing
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(pr_create.subprocess, "run", _fake_run)
+    return calls
+
+
+def _reply(returncode: int, stdout: str = "") -> subprocess.CompletedProcess[str]:
+    """Build a canned completed `gh` process.
+
+    Args:
+        returncode: Exit status.
+        stdout: Captured standard output.
+
+    Returns:
+        The completed process.
+    """
+    return subprocess.CompletedProcess([], returncode, stdout=stdout, stderr="")
+
+
+def test_emergency_publish_success_spends_with_pr_number_from_url(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A created PR commits the bypass with the number parsed from its URL.
+
+    SCENARIO: armed sentinel, emergency wrap-up, `gh pr create` prints a PR URL.
+    MOCK SETUP: scripted `gh`; `pr list` is forbidden (must not be probed).
+    EXPECTED BEHAVIOR: exit 0, sentinel spent with the PR number, one
+    ledger comment, no `gh pr list`.
+    """
+    repo = _armed_emergency_repo(tmp_path)
+    calls = _script_gh(
+        monkeypatch, create=_reply(0, "https://github.com/o/r/pull/31\n")
+    )
+
+    assert _run_main(monkeypatch, repo) == 0
+
+    state = emergency.read_state(repo)
+    assert state is not None
+    assert state.spent is True
+    assert state.pr_number == 31
+    assert not [c for c in calls if c[1:3] == ["pr", "list"]]
+    assert len([c for c in calls if c[1:3] == ["issue", "comment"]]) == 1
+
+
+def test_emergency_publish_failure_with_no_pr_releases_the_bypass(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A failed create with no PR for the branch hands the bypass back for a retry.
+
+    SCENARIO: `gh pr create` fails; `gh pr list` returns `[]`.
+    MOCK SETUP: scripted `gh` replies.
+    EXPECTED BEHAVIOR: exit 2, still armed, no claim recorded, the probe
+    asked for open PRs only, and a retry claim succeeds.
+    """
+    repo = _armed_emergency_repo(tmp_path)
+    calls = _script_gh(monkeypatch, create=_reply(1), listing=_reply(0, "[]"))
+
+    assert _run_main(monkeypatch, repo) == 2
+
+    assert armed_state(repo) is not None
+    probe = next(c for c in calls if c[1:3] == ["pr", "list"])
+    assert probe[probe.index("--state") + 1] == "open"
+    assert emergency.claim(repo, "fix/x") == 0
+
+
+def test_emergency_publish_reported_success_without_url_never_releases_on_empty_list(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A zero-exit create is never handed back, even when the open list is empty.
+
+    SCENARIO: `gh pr create` exits 0 with no URL; `gh pr list` returns `[]`
+    (the listing may simply lag the creation).
+    MOCK SETUP: scripted `gh` replies.
+    EXPECTED BEHAVIOR: exit 0, the claim is held (not armed, not spent).
+    """
+    repo = _armed_emergency_repo(tmp_path)
+    _script_gh(
+        monkeypatch, create=_reply(0, "something odd\n"), listing=_reply(0, "[]")
+    )
+
+    assert _run_main(monkeypatch, repo) == 0
+
+    state = emergency.read_state(repo)
+    assert state is not None
+    assert state.spent is False
+    assert state.claimed_branch is not None
+    assert armed_state(repo) is None
+
+
+@pytest.mark.parametrize(
+    "listing",
+    [_reply(0, '[{"number": 44}]'), _reply(1)],
+    ids=["pr-found", "probe-errors"],
+)
+def test_emergency_publish_with_unclear_outcome_holds_the_claim(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    listing: subprocess.CompletedProcess[str],
+) -> None:
+    """When a PR may exist the claim is held and recovery is named, never guessed.
+
+    SCENARIO: `gh pr create` fails, then `gh pr list` reports a PR or errors.
+    MOCK SETUP: scripted `gh` replies.
+    EXPECTED BEHAVIOR: exit 2, claim kept, sentinel unspent, log carries
+    the recovery hint, and a second claim is refused.
+
+    Args:
+        listing: The `gh pr list` reply.
+    """
+    repo = _armed_emergency_repo(tmp_path)
+    _script_gh(monkeypatch, create=_reply(1), listing=listing)
+
+    with caplog.at_level("ERROR", logger=pr_create.__name__):
+        assert _run_main(monkeypatch, repo) == 2
+
+    state = emergency.read_state(repo)
+    assert state is not None
+    assert state.spent is False
+    assert state.claimed_branch is not None
+    assert any(emergency.RECOVERY_HINT in r.getMessage() for r in caplog.records)
+    assert emergency.claim(repo, "fix/x") == 1
+
+
+def test_emergency_publish_releases_the_bypass_when_gh_cannot_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """If `gh` never ran, no PR can exist: the bypass is released, still armed.
+
+    SCENARIO: running `gh pr create` raises `OSError` (binary missing).
+    MOCK SETUP: scripted `gh` raising from `subprocess.run`.
+    EXPECTED BEHAVIOR: exit 2, sentinel still armed (claim released).
+    """
+    repo = _armed_emergency_repo(tmp_path)
+    _script_gh(monkeypatch, create=FileNotFoundError("gh"))
+
+    assert _run_main(monkeypatch, repo) == 2
+
+    assert armed_state(repo) is not None
+
+
+def test_emergency_publish_with_no_parseable_url_holds_the_claim(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A zero-exit create with no PR URL is unclear: the claim is held, not guessed.
+
+    SCENARIO: `gh pr create` exits 0 but prints text with no PR URL.
+    MOCK SETUP: scripted `gh`; `pr list` finds one open PR (the probe now
+    runs on this path too, to name candidates).
+    EXPECTED BEHAVIOR: exit 0, claim kept, sentinel unspent, log carries
+    the recovery hint and the candidate PR number.
+    """
+    repo = _armed_emergency_repo(tmp_path)
+    _script_gh(
+        monkeypatch,
+        create=_reply(0, "something odd\n"),
+        listing=_reply(0, '[{"number": 44}]'),
+    )
+
+    with caplog.at_level("ERROR", logger=pr_create.__name__):
+        assert _run_main(monkeypatch, repo) == 0
+
+    state = emergency.read_state(repo)
+    assert state is not None
+    assert state.spent is False
+    assert state.claimed_branch is not None
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(emergency.RECOVERY_HINT in m and "#44" in m for m in messages)
+
+
+@pytest.mark.parametrize("refusal", ["passthrough", "wrapup-names-other-sha"])
+def test_emergency_refusal_before_publish_never_claims_the_bypass(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, refusal: str
+) -> None:
+    """A refusal that precedes publication leaves the armed bypass untouched.
+
+    SCENARIO: armed sentinel, then either a disallowed passthrough flag or
+    a wrap-up naming a different commit.
+    MOCK SETUP: scripted `gh`; any `gh` call is recorded.
+    EXPECTED BEHAVIOR: exit 2, `gh` never called, no claim, still armed.
+
+    Args:
+        refusal: Which pre-publication refusal to trigger.
+    """
+    repo = _armed_emergency_repo(tmp_path)
+    calls = _script_gh(monkeypatch, create=_reply(0, "https://github.com/o/r/pull/9\n"))
+    extra: list[str] = []
+    if refusal == "passthrough":
+        extra = ["--", "--fill"]
+    else:
+        _write_wrapup(repo, "0" * 40, mode_line="wrapup-mode: emergency")
+
+    assert _run_main(monkeypatch, repo, *extra) == 2
+
+    assert calls == []
+    assert not (repo / emergency._CLAIM_LOCK).exists()
+    assert armed_state(repo) is not None
+
+
+def test_emergency_publish_reports_a_spend_that_could_not_be_recorded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A PR created while the claim vanished is reported, not announced as consumed.
+
+    SCENARIO: `gh pr create` succeeds with a PR URL, but the sentinel no
+    longer holds the claim by the time the spend is recorded.
+    MOCK SETUP: scripted `gh`; the `pr create` reply releases the claim as
+    a side effect, i.e. after it was taken.
+    EXPECTED BEHAVIOR: exit 0, error log names `forge-emergency status`, no
+    "consumed by PR" warning.
+    """
+    repo = _armed_emergency_repo(tmp_path)
+    _script_gh(monkeypatch, create=_reply(0, "https://github.com/o/r/pull/31\n"))
+    scripted_run = pr_create.subprocess.run
+
+    def _run_dropping_claim(
+        cmd: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        result = scripted_run(cmd, **kwargs)  # type: ignore[arg-type]
+        if cmd[1:3] == ["pr", "create"]:
+            emergency.release(repo)
+        return result
+
+    monkeypatch.setattr(pr_create.subprocess, "run", _run_dropping_claim)
+
+    with caplog.at_level("WARNING", logger=pr_create.__name__):
+        assert _run_main(monkeypatch, repo) == 0
+
+    errors = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
+    assert any(
+        "could not be recorded" in m and "forge-emergency status" in m for m in errors
+    )
+    assert not any("consumed by PR" in r.getMessage() for r in caplog.records)
 
 
 @pytest.mark.parametrize(

@@ -9,7 +9,7 @@ Checked on every commit by `verify-forge-repo-structure`: every listed file and 
    - regen_docs.py: when `regen_docs` must rebuild the generated docs — input fingerprints from index blob shas + the installed forge, compared with a per-clone record under `.git/forge/` of the last successful build
    - next_prep.py: `forge-next-prep` — refresh main, optional rolling-next tag bump, prune stale branches; used by `/next` skill
    - emergency_state.py: dependency-free reader for the `forge-emergency` sentinel (fails closed: absent, unreadable or corrupt means "not armed"), split out so pre-commit gates can check it without importing the CLI's PR-planning surface
-   - emergency.py: `forge-emergency` — one-shot deferred-verification bypass (start/status/consume/end): ledger issue first, gitignored sentinel, `forge-pr-create` consumes the single allowed `wrapup-mode: emergency` publication, retroactive verification closes the ledger after delivery; pre-commit and §2 hooks never relieved
+   - emergency.py: `forge-emergency` — one-shot deferred-verification bypass (start/status/record-pr/end): ledger issue first, gitignored sentinel, `forge-pr-create` claims the single allowed `wrapup-mode: emergency` publication and spends it once the PR exists, retroactive verification closes the ledger after delivery; pre-commit and §2 hooks never relieved
    - rebump.py: `forge-rebump` — mechanical post-merge version-slot resolver: classifies a feature branch's bump intent from its fork-point manifest delta (merge stages mid-merge, merge-base on a clean tree), takes the next open slot above the latest tag, restacks/retitles the CHANGELOG in shared-heading mode (fragments mode: no-op), stages, never commits; refuses on unrelated conflicts
    - release.py: `forge-release` — single-track release orchestrator for tag-versioned (setuptools-scm) consumer repos: guards (clean tree, on base branch, single-track model, CHANGELOG entry) → annotated tag + push (exempt in `cli_wiring_exempt.toml`)
    - continuation.py: `forge-continuation` — `state [--with-pr] [--attempt …]` rewrites `.plan/CONTINUATION.md`'s generated status panel (PR mergeability, CI and wrap-up freshness read from GitHub with `--with-pr`, otherwise carried forward with their as-of SHA); `check` reports the written section's line usage against `judgment_max_lines`; called by `forge-pr-wrapup post` and the PreCompact hook
@@ -230,7 +230,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_install_labels.py: tests for install_labels
    - test_manifests.py: tests for plugin manifests
    - test_next_prep.py: tests for next_prep
-   - test_emergency.py: tests for emergency (forge-emergency start/status/consume/end, ledger parsing, TTL clamping)
+   - test_emergency.py: tests for emergency (forge-emergency start/status/record-pr/end, claim/commit/release lifecycle, ledger parsing, TTL clamping)
    - test_rebump.py: tests for rebump (forge-rebump post-merge version-slot + changelog resolver)
    - test_release.py: tests for release (forge-release CLI guards + tagging)
    - test_release_e2e.py: end-to-end single-track consumer release fixture (recipes + changelog steps)
