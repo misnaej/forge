@@ -72,6 +72,7 @@ from forge.git_utils import (
     run_git,
 )
 from forge.pr_delta import (
+    FOLLOW_UP_RE,
     PROVENANCE_GATE_STEPS,
     VERIFIED_AT_RE,
     extract_verified_shas,
@@ -85,6 +86,7 @@ from forge.pr_plan import added_paths, classify, gh_pr_view, wrapup_freshness
 from forge.pr_squash_comment import SQUASH_MARKER, ensure_last
 from forge.pr_wrapup_compose import (
     PENDING_CI,
+    REPORTER_SECTIONS,
     ComposeError,
     ComposeInputs,
     evidence_fence,
@@ -549,12 +551,44 @@ def _section_bounds(lines: list[str], title: str) -> tuple[int, int] | None:
     return start, end
 
 
+def follow_up_refs(text: str) -> list[int]:
+    """Return the issues the wrap-up's findings were deferred to or filed as.
+
+    Only the reporter sections count — that is where a finding's
+    disposition is written — and only the exact forms ``deferred to #N``
+    and ``filed as #N`` (in any case) outside fences: a quoted report naming an issue is
+    not this PR's disposition.
+
+    Args:
+        text: The authored wrap-up, slots filled.
+
+    Returns:
+        Issue numbers in first-appearance order, without duplicates.
+    """
+    lines = text.split("\n")
+    fenced = fenced_line_indexes(lines)
+    refs: list[int] = []
+    for title, _reporter in REPORTER_SECTIONS:
+        bounds = _section_bounds(lines, title)
+        if bounds is None:
+            continue
+        for i in range(bounds[0] + 1, bounds[1]):
+            if i in fenced:
+                continue
+            for number in FOLLOW_UP_RE.findall(lines[i]):
+                if int(number) not in refs:
+                    refs.append(int(number))
+    return refs
+
+
 def refresh_sections(text: str, *, ci_status: str, issue_management: str) -> str:
     """Replace the CI Status and Issue Management bodies, leaving the rest as is.
 
-    The two sections whose truth changes after authoring — CI finishes, the
-    PR body gains its closing keyword — are rewritten at posting time;
-    every other byte of the authored wrap-up is kept.
+    The two sections whose truth changes after authoring are rewritten at
+    posting time: CI finishes, and Issue Management gains the PR body's
+    closing keywords plus the follow-ups the now-filled findings name
+    (:func:`follow_up_refs`; the caller renders both into
+    *issue_management*). Every other byte of the authored wrap-up is kept.
 
     Args:
         text: The authored wrap-up.
@@ -973,6 +1007,7 @@ def _cmd_post(args: argparse.Namespace, text: str, path: Path) -> int:
         return EXIT_REFUSED
     body = str(view.get("body") or "")
     refs = find_closing_refs(body)
+    follow_ups = follow_up_refs(text)
     refreshed = refresh_sections(
         text,
         ci_status=_ci_status(args.pr, view),
@@ -981,6 +1016,7 @@ def _cmd_post(args: argparse.Namespace, text: str, path: Path) -> int:
             pr_body_checked=True,
             pr_named=True,
             also_closed=_also_closed(body, refs),
+            follow_ups=follow_ups,
         ),
     )
     problems = validate_wrapup(refreshed)
@@ -992,6 +1028,9 @@ def _cmd_post(args: argparse.Namespace, text: str, path: Path) -> int:
     rc = post_wrapup(args.pr, refreshed)
     if rc != 0:
         return rc
+    if follow_ups:
+        # Informational: the issues placement will consider, as posted.
+        emit("follow-ups: " + " ".join(f"#{ref}" for ref in follow_ups))
     if not args.no_continuation:
         refresh_state(root, with_pr=True)
     return 0

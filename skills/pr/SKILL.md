@@ -206,7 +206,7 @@ in the wrap-up rather than implying a second opinion was obtained).
 
 4. **`precommit-fixer`** (mode: `strict`) — clear every pre-commit failure (lint, docstrings, naming, structure, dep advisories). At PR finalization, `strict` also escalates remaining `pip_audit` advisories, forcing a fresh CVE scan as its Modes table specifies.
 5. If checkers report fixable issues, address and commit (use `/commit`).
-6. If a checker flags an issue that is genuinely out of scope for the current PR (dead code from a prior refactor, a separate architectural concern, …), **file a follow-up tracking issue** (`gh issue create --label tech-debt,refactor`) BEFORE finalization. Reference its number in the wrap-up so the deferral is auditable. Never let a verifier finding land on the floor.
+6. If a checker flags an issue that is genuinely out of scope for the current PR (dead code from a prior refactor, a separate architectural concern, …), **file a follow-up tracking issue** (`gh issue create --label tech-debt,refactor`) BEFORE finalization. Reference its number in the wrap-up in the exact disposition form ([`agents/_TEMPLATE.md` "Reporter-agent header contract"](../../agents/_TEMPLATE.md#reporter-agent-header-contract), "Report by exception") so the deferral is auditable and Step 4.5 can place it. Never let a verifier finding land on the floor.
 
 If the user ran `code-review` and pasted its findings back, triage them
 into this same fix pass under an explicit contract: **advisory, never
@@ -312,8 +312,9 @@ text reaches the terminal. Before delegating to `pr-manager`, print a
 
 - What the PR changes and why (one or two sentences).
 - The commits on the branch (`git log origin/<base>..HEAD --oneline`).
-- Each verifier finding and its disposition (fixed in `<sha>` /
-  deferred to `#<issue>` / accepted, with one clause of reasoning).
+- Each verifier finding and its disposition, in the forms
+  `agents/_TEMPLATE.md` "Report by exception" fixes, with one clause
+  of reasoning.
 - Anything deliberately deferred, with its tracking issue number.
 
 This is "what happened during this run" — NOT a restatement of the PR
@@ -450,11 +451,40 @@ Verification is done, fixes are committed, and the wrap-up is authored
 
 The squash-merge message becomes the permanent commit message on `main`.
 
+## Step 4.5: Placement (pre-merge)
+
+The issues this PR filed are cheapest to place now, while the session
+that found them still holds the context; a later sweep has to
+rediscover it. Which issues, and whether there is anything to place,
+is a CLI call, never read off prose:
+
+```bash
+forge-plan-check tracks --from-pr <number>
+```
+
+It reads the posted wrap-up's `Follow-ups:` line itself.
+`placement: none` → nothing to place; skip. Exit 2 → report it and
+skip. Otherwise delegate **in the background**, for exactly the issues
+its lines name — the numbers come only from that output — and continue
+to Step 5:
+
+```
+Agent(subagent_type="forge:issue-triage", prompt="Run placement mode for PR #<number> (forge-plan-check tracks --from-pr <number>).")
+```
+
+Placement writes only on the issues — labels and `[issue-triage]`
+comments — **never on the PR**, so the squash comment stays newest
+without a re-post. Conflicting decisions come back to the user as
+questions; the mode's limits are in
+[`forge-docs/backlog-tracks.md`](../../forge-docs/backlog-tracks.md#placement-after-a-pr).
+Skip when `forge.run_context.is_ci()` — nobody is there to answer them
+(FOUNDATION §15).
+
 ## Step 5: Post-PR backlog update
 
 17. **`issue-triage`** — Run `post-pr` mode after merge:
     ```
-    Agent(subagent_type="forge:issue-triage", prompt="Run post-pr mode. PR #<number> was just merged. Detect issues closed by this PR, remove their tier labels, run the overlap sweep (forge-plan-check overlap <number>), and regenerate the 📋 Backlog Index issue.")
+    Agent(subagent_type="forge:issue-triage", prompt="Run post-pr mode. PR #<number> was just merged. Detect issues closed by this PR, remove their tier labels, run the overlap sweep (forge-plan-check overlap <number>), re-check the placement of its follow-ups (forge-plan-check tracks --from-pr <number>), and regenerate the 📋 Backlog Index issue.")
     ```
 
 ## Step 6: Update CONTINUATION state

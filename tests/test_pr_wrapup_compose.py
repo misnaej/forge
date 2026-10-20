@@ -893,3 +893,34 @@ def test_evidence_fence_returns_from_the_first_fence_to_the_end() -> None:
 def test_evidence_fence_empty_when_no_fence_present() -> None:
     """A block with no fence at all returns an empty string."""
     assert evidence_fence("## Heading\n\nNo fence here.\n") == ""
+
+
+@pytest.mark.parametrize(
+    ("follow_ups", "expected_tail"),
+    [
+        ([9], "\nFollow-ups: #9"),
+        ([9, 12], "\nFollow-ups: #9, #12"),
+    ],
+    ids=["one", "many"],
+)
+def test_render_issue_management_names_follow_ups_after_the_closing_line(
+    follow_ups: list[int], expected_tail: str
+) -> None:
+    """Behavior: follow-ups follow the closing line under one label for any count.
+
+    Args:
+        follow_ups: Issues the findings name.
+        expected_tail: Text that must follow the unchanged closing line.
+    """
+    text = render_issue_management(
+        [1], pr_body_checked=True, pr_named=True, follow_ups=follow_ups
+    )
+    assert text == "Closes #1" + expected_tail
+
+
+def test_render_issue_management_without_follow_ups_adds_no_none_filed_claim() -> None:
+    """Behavior: no follow-ups leaves the line as before, claiming nothing."""
+    text = render_issue_management(
+        [1], pr_body_checked=True, pr_named=True, follow_ups=()
+    )
+    assert text == "Closes #1"

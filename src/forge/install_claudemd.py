@@ -271,7 +271,12 @@ def sync_foundation(
 
 
 FORGE_DOCS_DIR = "forge-docs"
-FORGE_DOCS_PAGES = ("configuration.md", "ci-recipe.md", "smart-test.md")
+FORGE_DOCS_PAGES = (
+    "configuration.md",
+    "ci-recipe.md",
+    "smart-test.md",
+    "backlog-tracks.md",
+)
 FORGE_DOCS_README = "README.md"
 # Distinct from BLOCK_NAME: the mirrored-docs README is its own managed
 # artifact — sharing FOUNDATION's marker would couple their versioning

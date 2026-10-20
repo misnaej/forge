@@ -228,6 +228,22 @@ _LOOSE_CLOSING_RE: Final[re.Pattern[str]] = re.compile(
 # An inline code span: a backtick run closed by a run of the same length.
 # Text inside one is quoted, not prose GitHub acts on.
 _CODE_SPAN_RE: Final[re.Pattern[str]] = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(?!`)")
+# One issue or PR reference, ``#N`` or ``PR #N``: the shape
+# ``forge-plan-check`` reads out of ``Requires:`` lines. Seven digits is
+# past any real repository and keeps ``int()`` safe on untrusted text.
+ISSUE_REF_RE: Final[re.Pattern[str]] = re.compile(r"(?:\bPR\s*)?#(\d{1,7})\b")
+# A finding's disposition naming the issue it went to — the two exact,
+# machine-readable forms of the reporter contract (``agents/_TEMPLATE.md``).
+# "deferred to a later PR" names no issue, so it does not match. Case is
+# ignored: a disposition opening a sentence ("Deferred to #5") is the same
+# disposition.
+FOLLOW_UP_RE: Final[re.Pattern[str]] = re.compile(
+    r"\b(?:deferred to|filed as) #(\d{1,7})\b", re.IGNORECASE
+)
+# The wrap-up's Issue Management line listing those issues: one label for
+# any count, written by ``forge-pr-wrapup`` and read back by
+# ``forge-plan-check tracks --from-pr``.
+FOLLOW_UPS_LABEL: Final[str] = "Follow-ups:"
 
 
 def fenced_line_indexes(lines: list[str]) -> set[int]:

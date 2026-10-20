@@ -688,6 +688,10 @@ def _run_git(*args: str, cwd: Path | None = None) -> str:
 # answer, or a stalled remote, must end instead of hanging the caller
 # (FOUNDATION §15).
 PUSH_TIMEOUT_S = 120
+# A local git command that may still run long — a real three-way merge
+# over a large tree — is bounded too, so a pathological object store
+# ends as "unknown" instead of hanging the caller.
+LOCAL_GIT_TIMEOUT_S = 60
 _SSH_BATCH_MODE = "ssh -o BatchMode=yes"
 
 
@@ -1462,6 +1466,58 @@ def behind_ahead(repo_root: Path, base_ref: str) -> tuple[int, int] | None:
     except ValueError:
         return None
     return behind, ahead
+
+
+def merge_tree_clean(repo_root: Path, left: str, right: str) -> bool | None:
+    """Return whether merging *left* and *right* would be free of conflicts.
+
+    Runs the real three-way merge with ``git merge-tree --write-tree``
+    (git 2.38 or newer), touching neither the working tree, the index nor
+    any ref. The verdict is read from the exit status alone — 0 clean,
+    1 conflicts — never from the output, whose shape varies by version.
+
+    Args:
+        repo_root: Git repo root.
+        left: One side (a ref or commit SHA, e.g. ``origin/main``).
+        right: The other side.
+
+    Returns:
+        ``True`` when the merge is clean, ``False`` when it conflicts, and
+        ``None`` for any other outcome: an older git without
+        ``--write-tree`` (exit 129), an unknown ref, unrelated histories,
+        a timeout, or a dash-prefixed side (never passed to git).
+    """
+    if left.startswith("-") or right.startswith("-"):
+        return None
+    try:
+        # git exits 1 for an unknown ref as well as for a conflict, so
+        # both sides are resolved first: only a real merge reaches exit 1.
+        for side in (left, right):
+            run_git(
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                f"{side}^{{commit}}",
+                cwd=repo_root,
+                log_errors=False,
+            )
+    except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired):
+        return None
+    try:
+        run_git(
+            "merge-tree",
+            "--write-tree",
+            left,
+            right,
+            cwd=repo_root,
+            log_errors=False,
+            timeout=LOCAL_GIT_TIMEOUT_S,
+        )
+    except subprocess.CalledProcessError as exc:
+        return False if exc.returncode == 1 else None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return True
 
 
 def unpushed_commit_count(repo_root: Path) -> int | None:

@@ -22,7 +22,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final
 
-from forge.pr_delta import VERIFIED_AT_RE
+from forge.pr_delta import FOLLOW_UPS_LABEL, VERIFIED_AT_RE
 from forge.precommit import NOT_VERIFIED, timing_markers
 
 
@@ -544,12 +544,18 @@ def render_issue_management(
     pr_body_checked: bool,
     pr_named: bool,
     also_closed: Sequence[int] = (),
+    follow_ups: Sequence[int] = (),
 ) -> str:
     """Render the Issue Management line from the closing keywords found.
 
     *also_closed* names issues a close keyword elsewhere in the PR body
     would close. The no-keyword warning is worded so it never contradicts
     them: what is missing is a closing line, not a closing effect.
+
+    *follow_ups* are the issues the PR's findings were deferred to or
+    filed as — what ``forge-plan-check tracks --from-pr`` reads after
+    posting. No follow-ups adds
+    nothing: a "none filed" line would read as a claim that was checked.
 
     Args:
         closing_refs: Issue numbers the PR would close.
@@ -558,6 +564,7 @@ def render_issue_management(
             as opposed to no PR existing yet; only shapes the note.
         also_closed: Issue numbers GitHub would also close although
             *closing_refs* omits them.
+        follow_ups: Issue numbers the findings name as their disposition.
 
     Returns:
         One of ``Closes #…``; ``Closes #… — GitHub would also close (on
@@ -565,7 +572,10 @@ def render_issue_management(
         found …`` warning; or ``⚠️ no closing keyword on its own line …;
         GitHub would still close (on merge into the default branch): #…``.
         Each is marked provisional when no PR body existed to search, so
-        the refs came from the branch's commit messages instead.
+        the refs came from the branch's commit messages instead. A second
+        line, ``Follow-ups: #…`` (one label for any count, since a
+        finding may be deferred to an issue that already existed),
+        follows when *follow_ups* is not empty.
     """
     also = ", ".join(f"#{ref}" for ref in also_closed)
     if closing_refs:
@@ -587,6 +597,8 @@ def render_issue_management(
             f" — provisional: read from the branch's commit messages because "
             f"{why}; only the PR body's keywords close issues"
         )
+    if follow_ups:
+        text += f"\n{FOLLOW_UPS_LABEL} " + ", ".join(f"#{ref}" for ref in follow_ups)
     return text
 
 

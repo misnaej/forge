@@ -5006,3 +5006,107 @@ def test_working_tree_sha_sees_same_size_edit_in_the_same_clock_tick(
 
     assert result is not None
     assert result != git_utils.get_tree_sha(tmp_path, "HEAD")
+
+
+# ---------------------------------------------------------------------------
+# merge_tree_clean
+# ---------------------------------------------------------------------------
+
+
+def _git(repo: Path, *args: str) -> None:
+    """Run ``git`` in *repo* with the test identity; raise on failure.
+
+    Args:
+        repo: Working directory the command runs in.
+        *args: Arguments passed to ``git``.
+    """
+    subprocess.run(["git", *args], cwd=repo, env=_GIT_ENV, check=True)
+
+
+@pytest.fixture(scope="module")
+def repo_with_two_branches(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A repo whose branches merge cleanly (disjoint files) or conflict (same line).
+
+    Returns:
+        Repo root: ``main`` holds ``shared.txt``; ``left``/``right`` edit
+        different new files; ``clash-left``/``clash-right`` edit the same
+        line of ``shared.txt`` differently.
+    """
+    repo = tmp_path_factory.mktemp("merge_tree")
+    _init_git_repo(repo)
+    (repo / "shared.txt").write_text("one\ntwo\nthree\n")
+    commit_all(repo, "base")
+    for branch, path, text in (
+        ("left", "left.txt", "l\n"),
+        ("right", "right.txt", "r\n"),
+        ("clash-left", "shared.txt", "LEFT\ntwo\nthree\n"),
+        ("clash-right", "shared.txt", "RIGHT\ntwo\nthree\n"),
+    ):
+        _git(repo, "checkout", "-q", "-b", branch, "main")
+        (repo / path).write_text(text)
+        commit_all(repo, branch)
+    _git(repo, "checkout", "-q", "main")
+    return repo
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "expected"),
+    [
+        ("left", "right", True),
+        ("clash-left", "clash-right", False),
+        ("left", "no-such-ref", None),
+    ],
+    ids=["clean", "same-line-conflict", "unknown-ref"],
+)
+def test_merge_tree_clean_reads_the_verdict_from_the_real_merge(
+    repo_with_two_branches: Path, left: str, right: str, *, expected: bool | None
+) -> None:
+    """Behavior: clean, conflicting and unresolvable pairs map to True/False/None.
+
+    Args:
+        repo_with_two_branches: Shared real repository.
+        left: One side of the merge.
+        right: The other side.
+        expected: Verdict `merge_tree_clean` must return.
+    """
+    assert git_utils.merge_tree_clean(repo_with_two_branches, left, right) is expected
+
+
+def test_merge_tree_clean_never_passes_a_dash_ref_to_git(
+    repo_with_two_branches: Path,
+) -> None:
+    """Behavior (security): an option-shaped side is unknown and git never sees it."""
+    planted = repo_with_two_branches / "planted"
+    assert (
+        git_utils.merge_tree_clean(
+            repo_with_two_branches, f"--output={planted}", "left"
+        )
+        is None
+    )
+    assert not planted.exists()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        subprocess.CalledProcessError(129, "git"),
+        subprocess.TimeoutExpired("git", 1),
+    ],
+    ids=["old-git-exit-129", "timeout"],
+)
+def test_merge_tree_clean_is_unknown_when_git_cannot_answer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, error: Exception
+) -> None:
+    """Behavior: an older git or a timeout is None, never read as clean or conflict.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+        tmp_path: Scratch directory used as the repo root.
+        error: The failure `run_git` raises.
+    """
+
+    def failing(*_a: object, **_kw: object) -> str:
+        raise error
+
+    monkeypatch.setattr(git_utils, "run_git", failing)
+    assert git_utils.merge_tree_clean(tmp_path, "a", "b") is None

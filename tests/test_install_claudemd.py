@@ -415,6 +415,26 @@ def test_sync_forge_docs_self_skips_in_forge_repo() -> None:
     assert changed is False
 
 
+def test_every_forge_docs_page_is_shipped_and_listed() -> None:
+    """Behavior: each canonical `forge-docs/` page is mirrored to consumers.
+
+    A page added to `forge-docs/` but left out of `FORGE_DOCS_PAGES`, or
+    without its `src/forge/data/docs/` link, would exist in forge and
+    silently never reach a consumer repo.
+    """
+    repo_root = Path(__file__).resolve().parents[1]
+    canonical = sorted(
+        path.name
+        for path in (repo_root / "forge-docs").glob("*.md")
+        if path.name != install_claudemd.FORGE_DOCS_README
+    )
+    shipped = repo_root / "src" / "forge" / "data" / "docs"
+
+    assert sorted(install_claudemd.FORGE_DOCS_PAGES) == canonical
+    for name in canonical:
+        assert (shipped / name).resolve() == (repo_root / "forge-docs" / name)
+
+
 def test_sync_forge_docs_missing_package_data_returns_false(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
