@@ -21,6 +21,11 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
+# Fail CLOSED on a lib that predates a helper this hook calls.
+if ! declare -F command_positions guard_help_only > /dev/null; then
+    echo "BLOCKED: the guard anchor lib at $ANCHOR_LIB lacks a helper this hook needs (older or damaged plugin copy) — refusing the command rather than running unguarded." >&2
+    exit 2
+fi
 
 # Try heredoc pattern first: the subject is the first non-empty line
 # after `<<'EOF'` (or unquoted `<<EOF`).
@@ -31,11 +36,28 @@ MSG=$(echo "$COMMAND" | awk "
     in_heredoc { gsub(/^[[:space:]]+/, \"\"); print; exit }
 " 2>/dev/null || true)
 
-# Fall back to -m "..." or -m '...' single-line extraction.
+# Fall back to -m "..." or -m '...' single-line extraction. POSIX tools
+# only (no GNU `grep -P`), so the same extraction works on BSD/macOS.
+# Both expressions read the FIRST `-m` of a line — the subject, not a
+# later body `-m`: MSG_PFX is any text holding no `-m` that opens a quoted
+# message (a `-m` inside a path, `/a-m/x`, is passed over). The first
+# expression takes a double-quoted message; `t` ends the line there, so
+# only a line it did not match tries the single-quoted one. A sed failure
+# is remembered: on a commit it blocks below rather than reading as "no
+# message".
+# Known limit: "first `-m` of a line" is the first on the command line,
+# not necessarily the commit's own — in `git tag -m 'x' v1 && git commit
+# -m 'wip-sync: y'` the wip-sync pairing below reads the tag's message.
+MSG_EXTRACT_FAILED=false
 if [ -z "$MSG" ]; then
-    MSG=$(echo "$COMMAND" | grep -oP '(?<=-m\s["\x27])[^"\x27]+' 2>/dev/null \
-        || echo "$COMMAND" | sed -n 's/.*-m "\([^"]*\)".*/\1/p' 2>/dev/null \
-        || true)
+    MSG_PFX="([^-]|-[^m]|-m[[:space:]]*[^\"'[:space:]])*"
+    MSG=$(printf '%s\n' "$COMMAND" | sed -E -n \
+        -e "s/^${MSG_PFX}-m[[:space:]]*\"([^\"]*)\".*/\\2/p" \
+        -e t \
+        -e "s/^${MSG_PFX}-m[[:space:]]*'([^']*)'.*/\\2/p") || {
+        MSG=""
+        MSG_EXTRACT_FAILED=true
+    }
 fi
 
 # FORGE_COMMIT_TYPES_BEGIN — managed by `forge-gen-commit-types`. The
@@ -71,6 +93,9 @@ fi
 if ! $IS_COMMIT; then
     HAS_WIP_MSG=false
     MSG=""
+elif $MSG_EXTRACT_FAILED; then
+    echo "BLOCKED: could not read the commit message from this command (the message extraction failed), so the wip-sync pairing check cannot run — refusing the commit rather than skipping the check." >&2
+    exit 2
 fi
 if [ -n "$MSG" ] && echo "$MSG" | grep -qE '^wip-sync:'; then
     HAS_WIP_MSG=true

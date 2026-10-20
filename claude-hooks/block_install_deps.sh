@@ -64,6 +64,13 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
+# Fail CLOSED on a lib that predates a helper this hook calls: an
+# undefined function returns 127 inside an `if`, which reads as "not
+# found" and would allow the command.
+if ! declare -F guard_begin command_positions guard_help_only invoked guard_chunks > /dev/null; then
+    echo "BLOCKED: the guard anchor lib at $ANCHOR_LIB lacks a helper this hook needs (older or damaged plugin copy) — refusing the command rather than running unguarded." >&2
+    exit 2
+fi
 guard_begin
 
 # Resolve the opt-out config. Prints ALL, NONE, or a comma-list of
@@ -120,11 +127,7 @@ WORDS=$(command_positions --words --no-redir "$COMMAND")
 # wrapper option that takes a value (`sudo -u user pip install`), the same
 # limit as the git guards.
 CMD_PFX='(^|[;&|(){}!])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"
-# invoked <regex> — a real invocation matching <regex> that is not only a
-# help request.
-invoked() {
-    echo "$CMDPOS" | grep -qE "$1" && ! guard_help_only "$CMDPOS" "$1"
-}
+# `invoked <regex>` (git_anchor.sh) reads CMDPOS above.
 
 # Wrapper install forms (`<mgr> run pip install …`, `<mgr> run conda install …`)
 # are checked FIRST so a read-only `<mgr> run …` allowlist entry below can't
@@ -179,9 +182,14 @@ if blocked pixi; then
     # timed-out hook does not block. Prints the first disallowed verb.
     # A segment opens with the same prefix run as every other rule here
     # (`sudo pixi add`, `FOO=1 /usr/bin/pixi add`); PFX holds no backslash,
-    # so awk -v passes it through unchanged.
-    verb=$(printf '%s\n' "$CMDPOS" | tr ';&|(){}!' '\n' | LC_ALL=C awk -v OK="$PIXI_ALLOWED_VERBS" \
-        -v PFX="^[[:space:]]*${_GUARD_PREFIX}${GUARD_BINPATH}pixi([[:space:]]+|$)" '
+    # so awk -v passes it through unchanged. Segments end at every command
+    # boundary the header lists — this hook's own charset; a splitter
+    # failure is "cannot judge", which blocks.
+    if ! PIXI_SEGMENTS=$(guard_chunks ';&|(){}!' "$CMDPOS"); then
+        verb="(the pixi verb check could not run)"
+    else
+        verb=$(printf '%s\n' "$PIXI_SEGMENTS" | LC_ALL=C awk -v OK="$PIXI_ALLOWED_VERBS" \
+            -v PFX="^[[:space:]]*${_GUARD_PREFIX}${GUARD_BINPATH}pixi([[:space:]]+|$)" '
 match($0, PFX) {
     n = split(substr($0, RSTART + RLENGTH), T, /[[:space:]]+/)
     v = ""; first = 0
@@ -199,6 +207,7 @@ match($0, PFX) {
     }
     if (v !~ ("^(" OK ")$")) { print v; exit }
 }') || verb="(the pixi verb check could not run)"
+    fi
     if [ -n "$verb" ]; then
         echo "BLOCKED: \`pixi $verb\` is not on the agent allowlist ($(printf '%s' "$PIXI_ALLOWED_VERBS" | tr '|' ' ')). Unrecognised pixi verbs block by default — most of pixi's surface writes pixi.toml, pixi.lock, or the global tool store. If this one only reads, tell the user to run it themselves with: ! $COMMAND" >&2
         exit 2

@@ -1358,7 +1358,7 @@ def test_force_push_verdict(command: str, expected: int) -> None:
 
 
 # --- git_anchor.sh: shared lib integrity (#348 dedup contract) -------------
-# GIT_ANCHOR/SEG_ANCHOR moved to one sourced home so the git-guard
+# GIT_ANCHOR moved to one sourced home so the git-guard
 # hooks share a single anchor definition instead of per-hook copies drifting
 # independently. This pins the dedup: every consumer sources the lib, and
 # none keeps a local `GIT_ANCHOR=` fallback that could silently diverge.
@@ -1431,14 +1431,14 @@ def _sourced_lib_values(*names: str) -> dict[str, str]:
     return dict(zip(names, proc.stdout.split("\0"), strict=False))
 
 
-def test_git_anchor_lib_defines_both_anchors() -> None:
+def test_git_anchor_lib_defines_shared_anchors() -> None:
     """Sourcing `git_anchor.sh` leaves every shared anchor defined and non-empty.
 
     The anchors are assembled from shared parts, so the lib's text no
     longer spells `GIT_ANCHOR='…'` literally; what every consumer relies on
     is the value a `source` leaves behind.
     """
-    names = ("GIT_ANCHOR", "SEG_ANCHOR", "GH_ANCHOR", "GH_OPTS", "GUARD_REDIR")
+    names = ("GIT_ANCHOR", "GH_ANCHOR", "GH_OPTS", "GUARD_REDIR")
     values = _sourced_lib_values(*names)
     for name in names:
         assert values.get(name), f"{name} is empty after sourcing the lib"
@@ -1466,7 +1466,7 @@ def test_composed_anchors_hold_slash_only_bracketed_and_no_backslash() -> None:
     `/` would end the pattern early. A backslash would be eaten by
     `awk -v` in `guard_git_invocations`.
     """
-    names = ("GUARD_BINPATH", "GIT_ANCHOR", "SEG_ANCHOR", "GH_ANCHOR")
+    names = ("GUARD_BINPATH", "GIT_ANCHOR", "GH_ANCHOR")
     values = _sourced_lib_values(*names)
     for name in names:
         value = values[name]
@@ -2984,7 +2984,6 @@ def test_destructive_restore_allowed_forms(command: str, tmp_path: Path) -> None
     [
         "cd x && git checkout -q -b feat",
         "cd x && git checkout -b feat",
-        "cd x && git checkout -B feat main",
         "cd x && git checkout --orphan new",
         "(cd x && git checkout -b feat)",
     ],
@@ -2995,7 +2994,7 @@ def test_destructive_allows_branch_creating_checkout_after_cd(
     """A checkout that creates a branch restores no path, whatever directory `cd` picks.
 
     Args:
-        command: A `-b` / `-B` / `--orphan` checkout behind a `cd`.
+        command: A `-b` / `--orphan` checkout behind a `cd`.
     """
     assert _run_hook(_DESTRUCTIVE, command, options=HookOptions(cwd=tmp_path)) == 0
 
@@ -3009,6 +3008,7 @@ def test_destructive_allows_branch_creating_checkout_after_cd(
         "cd x && git checkout -q -b feat && git checkout -- f",
         "cd x && git checkout -b x -p",
         "cd x && git checkout -f -b x",
+        "cd x && git checkout -B feat main",
     ],
 )
 def test_destructive_blocks_non_creating_or_pathful_checkout_after_cd(
@@ -3021,6 +3021,620 @@ def test_destructive_blocks_non_creating_or_pathful_checkout_after_cd(
             branch creation, behind a `cd`.
     """
     assert _run_hook(_DESTRUCTIVE, command, options=HookOptions(cwd=tmp_path)) == 2
+
+
+# --- branch resets: `checkout -B` / `switch -C` must not drop commits ------
+# restore_repo: `main` = initial+base, `other` = main + one commit (g).
+# So `main` is an ancestor of `other` (moving main there fast-forwards),
+# and `other`'s tip is not contained in `main` (moving other there drops g).
+
+_RESET_BLOCKED = [
+    pytest.param("git checkout -B main HEAD~1", id="co-current-rewind"),
+    pytest.param("git checkout -B other main", id="co-other-not-contained"),
+    pytest.param("git checkout -qBother main", id="co-cluster-attached-name"),
+    pytest.param("git checkout -qB other main", id="co-cluster-name-next-word"),
+    pytest.param("git checkout -B other main --", id="co-trailing-dashdash"),
+    pytest.param("git checkout -B other -- main", id="co-start-after-dashdash"),
+    pytest.param("git checkout -B main nosuchref", id="co-unresolvable-start"),
+    pytest.param("git checkout -B $BR main", id="co-name-variable"),
+    pytest.param("git checkout -B oth* main", id="co-name-glob"),
+    pytest.param("git checkout -B other $START", id="co-start-variable"),
+    pytest.param("git switch -C main HEAD~1", id="sw-current-rewind"),
+    pytest.param("git switch -C other main", id="sw-other-not-contained"),
+    pytest.param("git switch --force-create=other main", id="sw-long-equals"),
+    pytest.param("git switch --force-create other main", id="sw-long-next-word"),
+    pytest.param("git switch -qCother main", id="sw-cluster-attached-name"),
+    pytest.param("git switch -C main nosuchref", id="sw-unresolvable-start"),
+    pytest.param("git switch -C $BR main", id="sw-name-variable"),
+]
+
+_RESET_ALLOWED = [
+    pytest.param("git checkout -B main other", id="co-fast-forward"),
+    pytest.param("git checkout -B main", id="co-default-head-is-tip"),
+    pytest.param("git checkout -B fresh main", id="co-new-name"),
+    pytest.param("git checkout -B fresh nosuchref", id="co-new-name-any-start"),
+    pytest.param("git switch -C main other", id="sw-fast-forward"),
+    pytest.param("git switch -C fresh main", id="sw-new-name"),
+    pytest.param("git switch --force-create=main other", id="sw-long-fast-forward"),
+]
+
+
+@pytest.mark.parametrize("command", _RESET_BLOCKED)
+def test_destructive_blocks_branch_reset_that_drops_or_cannot_check(
+    command: str, restore_repo: Path
+) -> None:
+    """A reset of an existing branch is blocked unless it provably drops nothing.
+
+    Pins both halves of the rule: a rewind (tip not in the start point)
+    and every case the hook cannot check fail closed.
+
+    Args:
+        command: A `checkout -B` / `switch -C` the hook must refuse.
+        restore_repo: Repo with `main` and a longer `other`.
+    """
+    assert _restore_exit(restore_repo, command) == 2
+
+
+@pytest.mark.parametrize("command", _RESET_ALLOWED)
+def test_destructive_allows_branch_reset_that_loses_nothing(
+    command: str, restore_repo: Path
+) -> None:
+    """A new name or a fast-forward of an existing branch is allowed.
+
+    Args:
+        command: A `checkout -B` / `switch -C` that loses no commit.
+        restore_repo: Repo with `main` and a longer `other`.
+    """
+    assert _restore_exit(restore_repo, command) == 0
+
+
+def test_destructive_blocks_branch_reset_with_ambiguous_start(
+    restore_repo: Path,
+) -> None:
+    """A start point naming both a branch and a tag does not resolve uniquely.
+
+    Git picks one with a warning; the hook must not guess which commit
+    the reset lands on.
+
+    Args:
+        restore_repo: Repo with `main` and a longer `other`.
+    """
+    _git(restore_repo, "branch", "amb", "main")
+    _git(restore_repo, "tag", "amb", "other")
+    assert _restore_exit(restore_repo, "git checkout -B main amb") == 2
+    assert _restore_exit(restore_repo, "git switch -C main amb") == 2
+
+
+def test_destructive_branch_reset_dash_c_resolves_the_target_repo(
+    restore_repo: Path, tmp_path: Path
+) -> None:
+    """`git -C <abs repo>` is judged against that repo, not the hook's cwd.
+
+    Args:
+        restore_repo: Repo with `main` and a longer `other`.
+        tmp_path: Directory the hook runs in, outside the repo.
+    """
+    allowed = f"git -C {restore_repo} checkout -B new main"
+    assert _restore_exit(restore_repo, allowed, cwd=tmp_path) == 0
+    blocked = f"git -C {restore_repo} checkout -B other main"
+    assert _restore_exit(restore_repo, blocked, cwd=tmp_path) == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("git checkout -B other main", id="checkout"),
+        pytest.param("git switch -C other main", id="switch"),
+    ],
+)
+def test_destructive_branch_reset_refusal_names_branch_and_safe_alternatives(
+    command: str, restore_repo: Path
+) -> None:
+    """The refusal names the branch and offers only unblocked ways forward.
+
+    A message that suggested a blocked command (`git reset`, a forced
+    reset again) would send the reader into another refusal; the only
+    `!`-prefixed text allowed is the human escape the hook always appends.
+
+    Args:
+        command: A reset that drops commits.
+        restore_repo: Repo with `main` and a longer `other`.
+    """
+    proc = _run_hook_proc(_DESTRUCTIVE, command, options=HookOptions(cwd=restore_repo))
+    assert proc.returncode == 2
+    new = "-b" if command.startswith("git checkout") else "-c"
+    verb = command.split()[1]
+    assert "other" in proc.stderr
+    assert f"git {verb} {new} <new-name>" in proc.stderr
+    assert "git branch -m other" in proc.stderr
+    # The message may compare the reset to `git reset` (a description);
+    # any other mention would be a suggestion.
+    advice = proc.stderr.split("! ", maxsplit=1)[0].replace("like `git reset`", "")
+    assert "git reset" not in advice
+    assert f"git {verb} {'-B' if verb == 'checkout' else '-C'} <" not in advice
+
+
+# --- branch resets: start-point shapes, fail-closed limits, linked worktrees --
+
+
+def _on_branch(repo: Path, branch: str) -> None:
+    """Switch *repo* to *branch* with real git (fixture setup only).
+
+    Args:
+        repo: Repo to switch.
+        branch: Existing branch to check out.
+    """
+    _git(repo, "checkout", "-q", branch)
+
+
+@pytest.mark.parametrize(
+    ("head", "command", "expected"),
+    [
+        pytest.param("main", "git checkout -B other", 2, id="co-default-start-drops"),
+        pytest.param("other", "git checkout -B main", 0, id="co-default-start-ff"),
+        pytest.param("main", "git switch -C other", 2, id="sw-default-start-drops"),
+        pytest.param("other", "git switch -C main", 0, id="sw-default-start-ff"),
+        # `-- f` is probed as a start point too; `f` is no commit, so the hook
+        # fails closed even though git itself would reject this command.
+        pytest.param(
+            "other", "git checkout -B main -- f", 2, id="co-dashdash-unresolvable"
+        ),
+        pytest.param(
+            "main", "git checkout -B other -- f", 2, id="co-dashdash-path-drops"
+        ),
+    ],
+)
+def test_destructive_branch_reset_default_start_is_head(
+    head: str, command: str, expected: int, restore_repo: Path
+) -> None:
+    """With no start point the reset lands on HEAD, judged like an explicit start.
+
+    Args:
+        head: Branch HEAD sits on when the command runs.
+        command: The reset.
+        expected: Hook exit code.
+        restore_repo: Repo with `main` and a longer `other`.
+    """
+    _on_branch(restore_repo, head)
+    assert _restore_exit(restore_repo, command) == expected
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        pytest.param("git checkout -B main --track other", 0, id="track-ff"),
+        pytest.param("git checkout -B main -t other", 0, id="t-ff"),
+        pytest.param("git checkout -B main --no-track other", 0, id="no-track-ff"),
+        pytest.param("git checkout -B other --track main", 2, id="track-drops"),
+        pytest.param(
+            "git checkout -B main --track origin/main", 2, id="track-remote-rewind"
+        ),
+        pytest.param("git checkout -tB other main", 2, id="cluster-t-then-B-drops"),
+        pytest.param("git checkout -tB main other", 0, id="cluster-t-then-B-ff"),
+    ],
+)
+def test_destructive_branch_reset_tracking_options_do_not_hide_the_start(
+    command: str, expected: int, restore_repo: Path
+) -> None:
+    """`--track` / `-t` / `--no-track` are skipped; the start is still judged.
+
+    `origin/main` is a remote-tracking ref older than `main`, so resetting
+    `main` onto it is a rewind.
+
+    Args:
+        command: The reset.
+        expected: Hook exit code.
+        restore_repo: Repo with `main` and a longer `other`.
+    """
+    _git(restore_repo, "update-ref", "refs/remotes/origin/main", "main~1")
+    assert _restore_exit(restore_repo, command) == expected
+
+
+def test_destructive_branch_reset_start_point_kinds(restore_repo: Path) -> None:
+    """Tags (lightweight, annotated) and remote-tracking refs resolve to commits.
+
+    The annotated tag is a tag object, so this exercises the `^{commit}` peel.
+
+    Args:
+        restore_repo: Repo with `main` and a longer `other`.
+    """
+    _git(restore_repo, "tag", "light-old", "main~1")
+    _git(restore_repo, "tag", "-a", "-m", "tip", "ann-other", "other")
+    _git(restore_repo, "update-ref", "refs/remotes/origin/x", "other")
+    _git(restore_repo, "update-ref", "refs/remotes/origin/old", "main~1")
+    assert _restore_exit(restore_repo, "git checkout -B main light-old") == 2
+    assert _restore_exit(restore_repo, "git checkout -B main ann-other") == 0
+    assert _restore_exit(restore_repo, "git checkout -B main origin/x") == 0
+    assert _restore_exit(restore_repo, "git checkout -B main origin/old") == 2
+
+
+def test_destructive_branch_reset_unreachable_directory_fails_closed(
+    restore_repo: Path,
+) -> None:
+    """A `-C` directory git cannot open blocks, naming the failed lookup.
+
+    Args:
+        restore_repo: Repo used as the hook's cwd.
+    """
+    proc = _run_hook_proc(
+        _DESTRUCTIVE,
+        "git -C /nonexistent checkout -B main main",
+        options=HookOptions(cwd=restore_repo),
+    )
+    assert proc.returncode == 2
+    assert "could not look up" in proc.stderr
+
+
+def _many_new_resets(count: int) -> str:
+    """Return *count* `checkout -B` commands, each with a distinct new name.
+
+    Args:
+        count: How many distinct resets to chain.
+
+    Returns:
+        The `&&`-joined command.
+    """
+    return " && ".join(f"git checkout -B fresh{i} main" for i in range(count))
+
+
+def test_destructive_branch_reset_count_limit_and_dedup(restore_repo: Path) -> None:
+    """More than eight distinct resets block unprobed; duplicates count once.
+
+    Args:
+        restore_repo: Repo with `main` and a longer `other`.
+    """
+    assert _restore_exit(restore_repo, _many_new_resets(8)) == 0
+    assert _restore_exit(restore_repo, _many_new_resets(9)) == 2
+    repeated = " && ".join(["git checkout -B main other"] * 12)
+    assert _restore_exit(restore_repo, repeated) == 0
+
+
+def test_destructive_branch_reset_judges_every_reset_in_a_chain(
+    restore_repo: Path,
+) -> None:
+    """A safe first reset does not vouch for a dropping second one.
+
+    Args:
+        restore_repo: Repo with `main` and a longer `other`.
+    """
+    chain = "git checkout -B fresh main && git checkout -B other main"
+    assert _restore_exit(restore_repo, chain) == 2
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        pytest.param("git checkout -B fresh nosuchref", 0, id="new-name-missing-start"),
+        pytest.param("git checkout -B fresh main~1", 0, id="new-name-older-start"),
+        # Documented stance: a variable start is unreadable before the hook
+        # ever asks whether the name exists, so it blocks even for a new name.
+        pytest.param("git checkout -B fresh $START", 2, id="new-name-variable-start"),
+    ],
+)
+def test_destructive_branch_reset_new_name_loses_nothing(
+    command: str, expected: int, restore_repo: Path
+) -> None:
+    """A new name loses nothing whatever a literal start; an unreadable start blocks.
+
+    Args:
+        command: The reset.
+        expected: Hook exit code.
+        restore_repo: Repo with `main` and a longer `other`.
+    """
+    assert _restore_exit(restore_repo, command) == expected
+
+
+def test_destructive_branch_reset_reflog_and_upstream_starts(
+    restore_repo: Path,
+) -> None:
+    """`HEAD@{1}` and `@{u}` resolve to real commits and are judged as such.
+
+    Args:
+        restore_repo: Repo with `main` and a longer `other`.
+    """
+    _git(restore_repo, "checkout", "-q", "main~1")
+    _on_branch(restore_repo, "main")
+    # HEAD@{1} is the older commit HEAD sat on before returning to main.
+    assert _restore_exit(restore_repo, "git checkout -B main HEAD@{1}") == 2
+    # No upstream configured: `@{u}` does not resolve, so it fails closed.
+    assert _restore_exit(restore_repo, "git checkout -B main @{u}") == 2
+    _git(restore_repo, "branch", "-q", "--set-upstream-to=other", "main")
+    assert _restore_exit(restore_repo, "git checkout -B main @{u}") == 0
+
+
+def test_destructive_branch_reset_behind_cd_blocks_unless_dash_c_names_the_repo(
+    restore_repo: Path, tmp_path: Path
+) -> None:
+    """A `cd` makes the directory unknowable; a literal `-C` behind it is recorded.
+
+    The `cd x && git -C <repo> ...` rows pin current behavior: an earlier
+    `cd` makes the directory unknowable even beside a literal `-C`, so
+    both the safe and the dropping reset block.
+
+    Args:
+        restore_repo: Repo with `main` and a longer `other`.
+        tmp_path: Directory the hook runs in.
+    """
+    assert _restore_exit(restore_repo, "cd x && git switch -C feat main") == 2
+    behind_cd = f"cd x && git -C {restore_repo} checkout -B new main"
+    assert _restore_exit(restore_repo, behind_cd, cwd=tmp_path) == 2
+    behind_cd_drops = f"cd x && git -C {restore_repo} checkout -B other main"
+    assert _restore_exit(restore_repo, behind_cd_drops, cwd=tmp_path) == 2
+
+
+def test_destructive_branch_reset_linked_worktree(
+    restore_repo: Path, tmp_path: Path
+) -> None:
+    """`git -C <linked worktree>` resolves branches through the shared repo.
+
+    Args:
+        restore_repo: Repo with `main` and a longer `other`.
+        tmp_path: Parent of the linked worktree and the hook's cwd.
+    """
+    worktree = tmp_path / "wt"
+    _git(restore_repo, "worktree", "add", "-q", "-b", "wt", str(worktree), "main")
+    blocked = f"git -C {worktree} checkout -B other main"
+    allowed = f"git -C {worktree} checkout -B fresh main"
+    assert _restore_exit(restore_repo, blocked, cwd=tmp_path) == 2
+    assert _restore_exit(restore_repo, allowed, cwd=tmp_path) == 0
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git checkout -b B main",
+        "git switch -c Cname",
+        "git switch -C x --detach",
+        "git switch --force-c fresh main",
+        "git switch --force- fresh main",
+        'echo "git checkout -B other main"',
+        "git checkout -B --help",
+    ],
+)
+def test_destructive_branch_reset_allows_non_resets_and_new_names(
+    command: str, restore_repo: Path
+) -> None:
+    """Creation-only forms, new-name resets and quoted mentions are not blocked.
+
+    `--force-c` / `--force-` are accepted abbreviations of `--force-create`
+    and are judged as resets (a new name, so allowed).
+
+    Args:
+        command: A command that drops nothing.
+        restore_repo: Repo with `main` and a longer `other`.
+    """
+    assert _restore_exit(restore_repo, command) == 0
+
+
+@pytest.mark.parametrize("flag", ["--force-c", "--force-"])
+def test_destructive_branch_reset_abbreviated_force_create_is_judged(
+    flag: str, restore_repo: Path
+) -> None:
+    """An abbreviated `--force-create` onto an existing branch still blocks.
+
+    Args:
+        flag: An abbreviation of `--force-create`.
+        restore_repo: Repo with `main` and a longer `other`.
+    """
+    assert _restore_exit(restore_repo, f"git switch {flag} other main") == 2
+
+
+@pytest.fixture
+def abbrev_repo(restore_repo: Path) -> Path:
+    """`restore_repo` where `main` has one more commit than `old`.
+
+    Branch `merge` sits at `main`'s tip, so moving `main` to `merge` is a
+    no-op fast-forward and moving it to `old` drops a commit.
+
+    Returns:
+        The repo root, checked out on `main`.
+    """
+    (restore_repo / "m").write_text("main only\n")
+    _git(restore_repo, "add", "-A")
+    _git(restore_repo, "commit", "-q", "-m", "main moves on")
+    _git(restore_repo, "branch", "merge", "main")
+    _git(restore_repo, "branch", "old", "main~1")
+    return restore_repo
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("git checkout --confl merge -B main old", id="co-abbrev-value"),
+        pytest.param("git switch --confl merge -C main old", id="sw-abbrev-value"),
+        pytest.param("git checkout --conflict merge -B main old", id="co-full-value"),
+    ],
+)
+def test_destructive_branch_reset_abbreviated_value_option_does_not_hide_start(
+    command: str, abbrev_repo: Path
+) -> None:
+    """An abbreviated value-taking option consumes its value, not the start point.
+
+    Read as the start point, `merge` (main's tip) would make the rewind to
+    `old` look like a fast-forward.
+
+    Args:
+        command: A rewinding reset behind a value-taking long option.
+        abbrev_repo: Repo where `old` is behind `main`.
+    """
+    assert _restore_exit(abbrev_repo, command) == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("git checkout --conflict=merge -B main merge", id="equals"),
+        pytest.param("git checkout --confl merge -B main merge", id="abbrev"),
+        pytest.param("git switch --cr foo -C main merge", id="switch-cr"),
+        pytest.param("git checkout --no-track -B main merge", id="no-track"),
+    ],
+)
+def test_destructive_branch_reset_long_option_forms_that_lose_nothing(
+    command: str, abbrev_repo: Path
+) -> None:
+    """Long options are read as git reads them, so fast-forwards stay allowed.
+
+    Args:
+        command: A reset that moves nothing or creates a new name.
+        abbrev_repo: Repo where `merge` is at `main`'s tip.
+    """
+    assert _restore_exit(abbrev_repo, command) == 0
+
+
+def test_destructive_branch_reset_force_is_a_no_value_option(
+    abbrev_repo: Path,
+) -> None:
+    """`--force` takes no value, so `old` is still read as the reset's start.
+
+    The command is still refused, but as a forced switch (which discards
+    local changes), not as a reset the hook cannot read.
+
+    Args:
+        abbrev_repo: Repo where `old` is behind `main`.
+    """
+    proc = _run_hook_proc(
+        _DESTRUCTIVE,
+        "git checkout --force -B newb old",
+        options=HookOptions(cwd=abbrev_repo),
+    )
+    assert proc.returncode == 2
+    assert "long option the hook does not know" not in proc.stderr
+    assert "forced" in proc.stderr.lower()
+
+
+def test_destructive_branch_reset_unknown_long_option_blocks_and_says_so(
+    abbrev_repo: Path,
+) -> None:
+    """A long option outside git's lists may take the start point as its value.
+
+    Args:
+        abbrev_repo: Repo where `old` is behind `main`.
+    """
+    proc = _run_hook_proc(
+        _DESTRUCTIVE,
+        "git checkout --frobnicate -B main old",
+        options=HookOptions(cwd=abbrev_repo),
+    )
+    assert proc.returncode == 2
+    assert "long option the hook does not know" in proc.stderr
+
+
+@pytest.mark.parametrize(
+    ("command", "phrase"),
+    [
+        pytest.param("cd x && git checkout -B a b", "directory it runs in", id="cd"),
+        pytest.param(
+            "env -C/tmp git checkout -B a b", "directory it runs in", id="env-C"
+        ),
+        pytest.param(
+            "env --chdir=/tmp git checkout -B a b",
+            "directory it runs in",
+            id="env-chdir",
+        ),
+        pytest.param(
+            "sudo -D/tmp git checkout -B a b", "directory it runs in", id="sudo-D"
+        ),
+        pytest.param(
+            "GIT_NAMESPACE=x git checkout -B a b",
+            "directory it runs in",
+            id="git-namespace-var",
+        ),
+        pytest.param(
+            "git --namespace x checkout -B a b",
+            "directory it runs in",
+            id="namespace-option",
+        ),
+        pytest.param("git checkout -B a $X", "is not literal", id="opaque"),
+        pytest.param(
+            "git checkout --frobnicate -B a b",
+            "long option the hook does not know",
+            id="option",
+        ),
+        pytest.param('git switch -C "a b" c', "holds a blank", id="views"),
+        pytest.param(
+            " && ".join(f"git checkout -B n{i} main" for i in range(9)),
+            "more than 8 branch resets",
+            id="many",
+        ),
+    ],
+)
+def test_destructive_branch_reset_unknown_names_its_cause(
+    command: str, phrase: str, restore_repo: Path
+) -> None:
+    """Each unreadable-reset refusal names the one cause that applied.
+
+    Args:
+        command: A reset the hook cannot read for one specific reason.
+        phrase: Text only that cause's message carries.
+        restore_repo: Repo with `main` and a longer `other`.
+    """
+    proc = _run_hook_proc(_DESTRUCTIVE, command, options=HookOptions(cwd=restore_repo))
+    assert proc.returncode == 2
+    assert phrase in proc.stderr
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("env -C/tmp git checkout a.txt", id="env-C-checkout"),
+        pytest.param("sudo -D/tmp git restore a", id="sudo-D-restore"),
+    ],
+)
+def test_destructive_restore_behind_directory_changing_wrapper_blocks(
+    command: str, restore_repo: Path
+) -> None:
+    """A wrapper that changes directory makes the restore's target unknowable.
+
+    Args:
+        command: A path restore behind `env -C` / `sudo -D`.
+        restore_repo: Repo the hook runs in.
+    """
+    assert _restore_exit(restore_repo, command) == 2
+
+
+def test_destructive_branch_reset_sudo_dash_c_is_not_gits_dash_c(
+    restore_repo: Path,
+) -> None:
+    """`sudo -C3` closes descriptors; it is not `git -C 3`.
+
+    The reset of `other` onto `main` drops a commit, so it blocks, and the
+    refusal is about the rewind in the real directory, not about an
+    unknown or nonexistent directory `3`.
+
+    Args:
+        restore_repo: Repo with `main` and a longer `other`.
+    """
+    proc = _run_hook_proc(
+        _DESTRUCTIVE,
+        "sudo -C3 git checkout -B other main",
+        options=HookOptions(cwd=restore_repo),
+    )
+    assert proc.returncode == 2
+    assert "directory it runs in" not in proc.stderr
+    assert "/3" not in proc.stderr
+    ok = _restore_exit(restore_repo, "sudo -C3 git checkout -B fresh main")
+    assert ok == 0
+
+
+def test_destructive_branch_reset_unresolvable_start_says_to_fix_the_start(
+    restore_repo: Path,
+) -> None:
+    """A start point that does not resolve is told to be fixed, not re-used.
+
+    Suggesting `-b <new> <same bad start>` would send the reader into the
+    same git error.
+
+    Args:
+        restore_repo: Repo with `main` and a longer `other`.
+    """
+    proc = _run_hook_proc(
+        _DESTRUCTIVE,
+        "git checkout -B main nosuchref",
+        options=HookOptions(cwd=restore_repo),
+    )
+    assert proc.returncode == 2
+    assert "Fix the start point" in proc.stderr
+    assert "git checkout -b <new-name> nosuchref" not in proc.stderr
 
 
 @pytest.mark.parametrize(
@@ -3875,6 +4489,251 @@ def test_raw_ruff_prefix_derived_from_shared_anchor() -> None:
     assert "raw 'ruff' from Bash is forbidden" in proc.stderr
 
 
+def _run_hook_with_stub_lib(
+    hook: str,
+    command: str,
+    tmp_path: Path,
+    lib_tail: str,
+    agent_type: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run *hook* beside a stub `git_anchor.sh` that sources the real lib.
+
+    The stub then runs *lib_tail*.
+
+    Args:
+        hook: Hook filename under `claude-hooks/`, copied into `tmp_path`.
+        command: The Bash command the hook judges.
+        tmp_path: Directory holding the copied hook and the stub lib.
+        lib_tail: Shell run after the real lib is sourced (e.g. removing a helper).
+        agent_type: Agent the payload names, for hooks scoped to one agent.
+
+    Returns:
+        The completed hook process.
+    """
+    isolated = tmp_path / hook
+    isolated.write_bytes((_HOOKS_DIR / hook).read_bytes())
+    (tmp_path / _GIT_ANCHOR_LIB).write_text(
+        f'source "{_HOOKS_DIR / _GIT_ANCHOR_LIB}"\n{lib_tail}\n'
+    )
+    payload: dict[str, object] = {"tool_input": {"command": command}}
+    if agent_type:
+        payload["agent_type"] = agent_type
+    return subprocess.run(
+        ["bash", str(isolated)],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=tmp_path,
+    )
+
+
+_HOOK_HELPERS = [
+    pytest.param(
+        _INSTALL_DEPS,
+        "pip install requests",
+        (
+            "guard_begin",
+            "command_positions",
+            "guard_help_only",
+            "invoked",
+            "guard_chunks",
+        ),
+        id="install-deps",
+    ),
+    pytest.param(
+        _RAW_RUFF,
+        "ruff check .",
+        ("guard_begin", "command_positions", "guard_help_only", "invoked"),
+        id="raw-ruff",
+    ),
+    pytest.param(
+        "block_fixer_recon.sh",
+        "cat code_health/ruff.log",
+        ("guard_begin", "command_positions", "guard_chunks"),
+        id="fixer-recon",
+    ),
+    pytest.param(
+        "block_continuation_delete.sh",
+        "rm .plan/CONTINUATION.md",
+        ("guard_begin", "command_positions", "guard_unredir", "guard_chunks"),
+        id="continuation-delete",
+    ),
+    pytest.param(
+        "check_commit_format.sh",
+        "git commit -m 'not conventional'",
+        ("command_positions", "guard_help_only"),
+        id="commit-format",
+    ),
+    *(
+        pytest.param(
+            _DESTRUCTIVE,
+            command,
+            (
+                "guard_begin",
+                "command_positions",
+                "guard_git_invocations",
+                "guard_help_only",
+            ),
+            id=f"destructive-{kind}",
+        )
+        for kind, command in (
+            ("reset", "git reset --hard"),
+            ("clean", "git clean -fd"),
+            ("restore", "git restore f"),
+        )
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("hook", "command", "helpers"),
+    _HOOK_HELPERS,
+)
+def test_hook_blocks_when_anchor_lib_lacks_a_helper(
+    hook: str, command: str, helpers: tuple[str, ...], tmp_path: Path
+) -> None:
+    """A lib older than the hook blocks (2) for each helper its check names.
+
+    An undefined function returns 127 inside an `if`, which reads as "not
+    found" and would let the guarded command through; the hook must check
+    for its helpers up front and refuse.
+
+    Args:
+        hook: A hook that calls the helpers.
+        command: A command the hook would normally block, so an allow is a bug.
+        helpers: Every helper the hook's `declare -F` check names.
+        tmp_path: Parent of one isolated directory per removed helper.
+    """
+    for missing in helpers:
+        isolated = tmp_path / missing
+        isolated.mkdir()
+        proc = _run_hook_with_stub_lib(
+            hook,
+            command,
+            isolated,
+            f"unset -f {missing}",
+            # The recon guard exits 0 for every other agent before its check.
+            agent_type="forge:precommit-fixer",
+        )
+        assert proc.returncode == 2, missing
+        assert "lacks a helper" in proc.stderr, missing
+
+
+@pytest.mark.parametrize("anchor", ["''", "'no-such-shape'"], ids=["empty", "no-git"])
+def test_raw_ruff_blocks_when_prefix_cannot_be_derived(
+    anchor: str, tmp_path: Path
+) -> None:
+    """A lib whose GIT_ANCHOR has no cuttable shape refuses every command.
+
+    Args:
+        anchor: Shell literal assigned to `GIT_ANCHOR` after sourcing the lib.
+        tmp_path: Directory holding the copied hook and the stub lib.
+    """
+    proc = _run_hook_with_stub_lib(
+        _RAW_RUFF, "echo hello", tmp_path, f"GIT_ANCHOR={anchor}"
+    )
+    assert proc.returncode == 2
+    assert "could not derive" in proc.stderr
+
+
+# --- guard_chunks: each call site's separator charset ----------------------
+
+
+def _guard_chunks(charset: str, text: str) -> subprocess.CompletedProcess[str]:
+    """Call the lib's `guard_chunks <charset> <text>` in a plain bash.
+
+    Args:
+        charset: The separator charset argument.
+        text: The text to split.
+
+    Returns:
+        The completed process (status, stdout, stderr).
+    """
+    script = 'source "$1"; guard_chunks "$2" "$3"'
+    return subprocess.run(
+        ["bash", "-c", script, "_", str(_HOOKS_DIR / _GIT_ANCHOR_LIB), charset, text],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("charset", "text", "chunks"),
+    [
+        pytest.param(
+            ";&|(){}!",
+            "a;b&c|d(e)f{g}h!i",
+            list("abcdefghi"),
+            id="install-deps-splits-every-boundary",
+        ),
+        pytest.param(
+            ";&|(",
+            "a;b&c|d(e)f{g}h!i",
+            ["a", "b", "c", "d", "e)f{g}h!i"],
+            id="fixer-recon-keeps-closers-and-bang",
+        ),
+        pytest.param(
+            ";&",
+            "a;b&c|d(e)",
+            ["a", "b", "c|d(e)"],
+            id="continuation-delete-keeps-pipe",
+        ),
+        pytest.param(";", "a\nb;c", ["a", "b", "c"], id="newline-always-ends-a-chunk"),
+        pytest.param("<>", "a<b>c", ["a", "b", "c"], id="redirection-chars-allowed"),
+    ],
+)
+def test_guard_chunks_splits_at_exactly_the_charset(
+    charset: str, text: str, chunks: list[str]
+) -> None:
+    """Only the caller's own characters (plus newline) end a chunk.
+
+    Args:
+        charset: A call site's literal separator set.
+        text: Input holding every boundary character.
+        chunks: The chunks that call site must see, one per output line.
+    """
+    proc = _guard_chunks(charset, text)
+    assert proc.returncode == 0
+    assert proc.stdout.splitlines() == chunks
+
+
+@pytest.mark.parametrize("charset", ["", "a", "\\", ";a", "a-z", "[:space:]", ";\n"])
+def test_guard_chunks_refuses_an_invalid_charset(charset: str) -> None:
+    """An empty set, a letter, a backslash, a range or a class returns 2, no output.
+
+    Args:
+        charset: A charset that is not purely shell separator characters.
+    """
+    proc = _guard_chunks(charset, "a;b")
+    assert proc.returncode == 2
+    assert proc.stdout == ""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "find .plan | xargs rm -rf",
+        "find .plan -type f | xargs rm",
+        "rm -rf .plan",
+        "echo hi; rm -rf .plan",
+    ],
+)
+def test_continuation_delete_still_blocks_plan_delete_through_a_pipe(
+    command: str,
+) -> None:
+    """The pipe stays inside one chunk, so `find .plan | xargs rm` is still refused.
+
+    Splitting at `|` once let this slip: the `.plan` target and the `rm`
+    verb landed in different chunks.
+
+    Args:
+        command: A delete of `.plan`, direct or via a pipeline.
+    """
+    assert _run_hook("block_continuation_delete.sh", command) == 2
+
+
 _UNVERIFIED_PR_CREATE = "block_unverified_pr_create.sh"
 
 
@@ -4303,7 +5162,7 @@ def test_fixer_recon_allows_three_full_precommit_runs_then_blocks_fourth(
     _seed_precommit_ledger(repo_two, "agent-a", 2)
     env_two = {**os.environ, "CLAUDE_PROJECT_DIR": str(repo_two)}
     proc = _run_hook_proc(
-        _FIXER_RECON,
+        "block_fixer_recon.sh",
         "forge-precommit",
         options=HookOptions(
             agent_type="forge:precommit-fixer",
@@ -4327,7 +5186,7 @@ def test_fixer_recon_allows_three_full_precommit_runs_then_blocks_fourth(
     _seed_precommit_ledger(repo_three, "agent-a", 3)
     env_three = {**os.environ, "CLAUDE_PROJECT_DIR": str(repo_three)}
     proc = _run_hook_proc(
-        _FIXER_RECON,
+        "block_fixer_recon.sh",
         "forge-precommit",
         options=HookOptions(
             agent_type="forge:precommit-fixer",
@@ -4362,7 +5221,7 @@ def test_fixer_recon_partial_runs_never_count_toward_cap(
     _seed_precommit_ledger(tmp_path, "agent-a", 3)
     env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)}
     proc = _run_hook_proc(
-        _FIXER_RECON,
+        "block_fixer_recon.sh",
         command,
         options=HookOptions(
             agent_type="forge:precommit-fixer",
@@ -4382,7 +5241,7 @@ def test_fixer_recon_env_prefixed_full_run_counts(tmp_path: Path) -> None:
     init_git_repo(tmp_path)
     env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)}
     proc = _run_hook_proc(
-        _FIXER_RECON,
+        "block_fixer_recon.sh",
         "FORGE_X=1 forge-precommit",
         options=HookOptions(
             agent_type="forge:precommit-fixer",
@@ -4403,7 +5262,7 @@ def test_fixer_recon_cap_is_scoped_per_agent_id(tmp_path: Path) -> None:
     _seed_precommit_ledger(tmp_path, "agent-b", 3)
     env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)}
     proc = _run_hook_proc(
-        _FIXER_RECON,
+        "block_fixer_recon.sh",
         "forge-precommit",
         options=HookOptions(
             agent_type="forge:precommit-fixer",
@@ -4421,7 +5280,7 @@ def test_fixer_recon_no_agent_id_allowed_and_writes_nothing(tmp_path: Path) -> N
     init_git_repo(tmp_path)
     env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)}
     proc = _run_hook_proc(
-        _FIXER_RECON,
+        "block_fixer_recon.sh",
         "forge-precommit",
         options=HookOptions(agent_type="forge:precommit-fixer", cwd=tmp_path, env=env),
     )
@@ -4445,7 +5304,7 @@ def test_fixer_recon_tolerates_garbled_ledger_line(tmp_path: Path) -> None:
     _seed_precommit_ledger(tmp_path, "agent-a", 2)
     ledger.write_text(junk + ledger.read_text())
     proc = _run_hook_proc(
-        _FIXER_RECON,
+        "block_fixer_recon.sh",
         "forge-precommit",
         options=HookOptions(
             agent_type="forge:precommit-fixer",
@@ -4460,7 +5319,7 @@ def test_fixer_recon_tolerates_garbled_ledger_line(tmp_path: Path) -> None:
     _seed_precommit_ledger(tmp_path, "agent-a", 3)
     ledger.write_text(junk + ledger.read_text())
     proc = _run_hook_proc(
-        _FIXER_RECON,
+        "block_fixer_recon.sh",
         "forge-precommit",
         options=HookOptions(
             agent_type="forge:precommit-fixer",
@@ -4628,7 +5487,7 @@ def test_commit_format_allows_heredoc_conventional() -> None:
 def test_commit_format_allows_paired_wip_sync_single_line() -> None:
     """FORGE_WIP_SYNC=1 paired with a `wip-sync:` single-line message passes."""
     proc = _run_hook_proc(
-        _COMMIT_FORMAT,
+        "check_commit_format.sh",
         'FORGE_WIP_SYNC=1 git commit -m "wip-sync: checkpoint before merge"',
     )
     assert proc.returncode == 0
@@ -4750,6 +5609,107 @@ def test_commit_format_allows_grep_for_wip_env_marker_literal() -> None:
         _run_hook(_COMMIT_FORMAT, "grep -n FORGE_WIP_SYNC=1 src/forge/precommit.py")
         == 0
     )
+
+
+def _no_pcre_grep_env(tmp_path: Path) -> dict[str, str]:
+    """Build an environment whose `grep` rejects `-P`, like BSD grep on macOS.
+
+    Args:
+        tmp_path: Directory to hold the fake `grep`.
+
+    Returns:
+        An environment with the fake `grep` first on `PATH`.
+    """
+    real = shutil.which("grep")
+    assert real is not None
+    fake = tmp_path / "bin" / "grep"
+    fake.parent.mkdir()
+    fake.write_text(
+        "#!/bin/bash\n"
+        'for a in "$@"; do\n'
+        '  case "$a" in -[a-zA-Z]*P*)\n'
+        '    echo "grep: invalid option -- P" >&2; exit 2 ;;\n'
+        "  esac\n"
+        "done\n"
+        f'exec {shlex.quote(real)} "$@"\n'
+    )
+    fake.chmod(0o755)
+    return {**os.environ, "PATH": f"{fake.parent}{os.pathsep}{os.environ['PATH']}"}
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        pytest.param(
+            "FORGE_WIP_SYNC=1 git commit -m 'wip-sync: x'", 0, id="single-wip-paired"
+        ),
+        pytest.param("git commit -m 'wip-sync: x'", 2, id="single-wip-unpaired"),
+        pytest.param("git commit -m 'fix: x'", 0, id="single-conventional"),
+        pytest.param(
+            'FORGE_WIP_SYNC=1 git commit -m "wip-sync: x"', 0, id="double-wip-paired"
+        ),
+        pytest.param('git commit -m "wip-sync: x"', 2, id="double-wip-unpaired"),
+        pytest.param('git commit -m "fix: x"', 0, id="double-conventional"),
+        pytest.param(
+            "FORGE_WIP_SYNC=1 git commit -m 'fix: x'", 2, id="single-env-not-wip"
+        ),
+        pytest.param(
+            "FORGE_WIP_SYNC=1 git commit -m 'wip-sync: s' -m 'fix: body'",
+            0,
+            id="two-m-reads-subject-wip",
+        ),
+        pytest.param(
+            "FORGE_WIP_SYNC=1 git commit -m 'fix: s' -m 'wip-sync: body'",
+            2,
+            id="two-m-ignores-wip-body",
+        ),
+        pytest.param(
+            "git commit -m 'wip-sync: s' -m 'fix: body'", 2, id="two-m-unpaired-wip"
+        ),
+        pytest.param(
+            "FORGE_WIP_SYNC=1 git commit -F /a-m/x -m 'wip-sync: s'",
+            0,
+            id="path-with-m-skipped",
+        ),
+    ],
+)
+def test_commit_format_pairing_without_pcre_grep(
+    command: str, expected: int, tmp_path: Path
+) -> None:
+    """The wip-sync pairing check reads the message with POSIX tools only.
+
+    BSD grep has no `-P`; the old extraction then emptied the message for
+    every single-quoted `-m`, flipping the pairing verdict both ways.
+
+    Args:
+        command: A `git commit` the hook judges.
+        expected: Expected exit code (2 blocks, 0 allows).
+        tmp_path: Directory holding the `-P`-rejecting fake `grep`.
+    """
+    proc = _run_hook_proc(
+        _COMMIT_FORMAT, command, options=HookOptions(env=_no_pcre_grep_env(tmp_path))
+    )
+    assert proc.returncode == expected
+
+
+def test_commit_format_path_containing_dash_m_is_not_the_message(
+    tmp_path: Path,
+) -> None:
+    """`-m` inside `/a-m/x` is passed over; the real `-m` supplies the message.
+
+    A misread would take a path fragment as the subject and emit the
+    non-conventional WARNING.
+
+    Args:
+        tmp_path: Directory holding the `-P`-rejecting fake `grep`.
+    """
+    proc = _run_hook_proc(
+        "check_commit_format.sh",
+        "git commit -F /a-m/x -m 'fix: x'",
+        options=HookOptions(env=_no_pcre_grep_env(tmp_path)),
+    )
+    assert proc.returncode == 0
+    assert _WARNING not in proc.stdout
 
 
 # --- keep_squash_comment_last.sh: the squash comment stays newest ----------
@@ -6056,7 +7016,7 @@ def _recon_hook_writes_there(tmp_path: Path) -> None:
         "FORGE_CODE_HEALTH_DIR": str(logs),
     }
     proc = _run_hook_proc(
-        _FIXER_RECON,
+        "block_fixer_recon.sh",
         "forge-precommit",
         options=HookOptions(
             agent_type="forge:precommit-fixer",

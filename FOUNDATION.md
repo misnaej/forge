@@ -239,7 +239,11 @@ gate.
   `git restore <path>` over a modified, staged or untracked file, or
   over paths the guard cannot determine), no
   forced switch (`git checkout -f`, `git switch -f` /
-  `--discard-changes`), and no `git stash` beyond `list` / `show`.**
+  `--discard-changes`), no branch reset that drops commits
+  (`git checkout -B` / `git switch -C` onto an existing branch whose tip
+  the start point does not contain), and no `git stash` beyond `list` /
+  `show`.** A reset stays allowed under a new branch name, after
+  `git branch -m` frees the old one, or when it only fast-forwards.
   Rewinds un-commit published history on a synced branch; the rest
   destroy uncommitted or untracked work — `clean` with no recovery at
   all — and in a checkout other sessions share, that work may not be
