@@ -1343,6 +1343,37 @@ _FORCE_PUSH_CASES = [
         id="allows_force_mention_after_chained_command",
     ),
     pytest.param("git status", 0, id="allows_non_push_git"),
+    pytest.param("find . -exec git push -f {} \\;", 2, id="blocks_find_exec"),
+    pytest.param("env -S 'git push -f'", 2, id="blocks_env_split_string_payload"),
+    pytest.param("env -S git push -f", 2, id="blocks_env_split_string_words"),
+    pytest.param(
+        "true; env -S 'git push -f'",
+        2,
+        id="blocks_env_split_string_after_separator",
+    ),
+    pytest.param(
+        "if x; then env -S 'git push -f'; fi",
+        2,
+        id="blocks_env_split_string_in_compound",
+    ),
+    pytest.param(
+        "true; echo env -S 'git push -f'",
+        0,
+        id="allows_env_s_mentioned_after_separator",
+    ),
+    pytest.param(
+        "find . -exec echo 'git push -f' \\;",
+        0,
+        id="allows_find_exec_quoted_argument",
+    ),
+    pytest.param("echo env -S 'git push -f'", 0, id="allows_env_s_without_env_command"),
+    pytest.param(
+        "find . -name x -exec grep foo {} \\;", 0, id="allows_find_exec_other_command"
+    ),
+    pytest.param("$G push -f", 2, id="blocks_variable_command_force"),
+    pytest.param("sudo $G push --force", 2, id="blocks_variable_command_after_sudo"),
+    pytest.param("${G} push -f", 2, id="blocks_braced_variable_command_force"),
+    pytest.param("$G push origin main", 0, id="allows_variable_command_plain_push"),
 ]
 
 
@@ -1438,7 +1469,7 @@ def test_git_anchor_lib_defines_shared_anchors() -> None:
     longer spells `GIT_ANCHOR='…'` literally; what every consumer relies on
     is the value a `source` leaves behind.
     """
-    names = ("GIT_ANCHOR", "GH_ANCHOR", "GH_OPTS", "GUARD_REDIR")
+    names = ("GIT_ANCHOR", "GIT_UNKNOWN_ANCHOR", "GH_ANCHOR", "GH_OPTS", "GUARD_REDIR")
     values = _sourced_lib_values(*names)
     for name in names:
         assert values.get(name), f"{name} is empty after sourcing the lib"
@@ -1466,7 +1497,7 @@ def test_composed_anchors_hold_slash_only_bracketed_and_no_backslash() -> None:
     `/` would end the pattern early. A backslash would be eaten by
     `awk -v` in `guard_git_invocations`.
     """
-    names = ("GUARD_BINPATH", "GIT_ANCHOR", "GH_ANCHOR")
+    names = ("GUARD_BINPATH", "GIT_ANCHOR", "GIT_UNKNOWN_ANCHOR", "GH_ANCHOR")
     values = _sourced_lib_values(*names)
     for name in names:
         value = values[name]
@@ -1899,6 +1930,103 @@ def test_guards_do_not_take_a_path_for_a_command_it_is_not(
     assert _run_hook(hook, command, options=options) == 0
 
 
+# --- Wrapper options that take a value ---------------------------------------
+# `sudo -u root git push -f` runs git; the word after `-u` is the option's
+# value, not the wrapped command. One row per wrapper shape and guard family.
+
+_WRAPPER_VALUE_BLOCKED = [
+    pytest.param(_FORCE_PUSH, "sudo -u root git push -f", id="force_sudo_u"),
+    pytest.param(_FORCE_PUSH, "env -C /tmp git push -f", id="force_env_C"),
+    pytest.param(_FORCE_PUSH, "timeout 5 git push -f", id="force_timeout"),
+    pytest.param(_FORCE_PUSH, "timeout -k 3 5 git push -f", id="force_timeout_k"),
+    pytest.param(_FORCE_PUSH, "xargs git push -f", id="force_xargs"),
+    pytest.param(_FORCE_PUSH, "setsid git push -f", id="force_setsid"),
+    pytest.param(_FORCE_PUSH, "doas git push -f", id="force_doas"),
+    pytest.param(_FORCE_PUSH, "ionice -c 3 git push -f", id="force_ionice"),
+    pytest.param(_FORCE_PUSH, "stdbuf -oL git push -f", id="force_stdbuf"),
+    pytest.param(_FORCE_PUSH, "taskset 0x1 git push -f", id="force_taskset"),
+    pytest.param(_FORCE_PUSH, "chrt 10 git push -f", id="force_chrt"),
+    pytest.param(
+        _PROTECTED, "sudo -u root git push origin main", id="protected_sudo_u"
+    ),
+    pytest.param(
+        "block_git_destructive.sh",
+        "sudo -u root git clean -fd",
+        id="destructive_sudo_u",
+    ),
+    pytest.param(
+        "block_git_destructive.sh",
+        "env -C /tmp git reset --hard",
+        id="destructive_env_C",
+    ),
+    pytest.param(
+        "block_continuation_delete.sh",
+        "sudo -u root rm .plan/CONTINUATION.md",
+        id="continuation_sudo_u",
+    ),
+    pytest.param(
+        "block_continuation_delete.sh",
+        "timeout 5 rm -rf .plan",
+        id="continuation_timeout",
+    ),
+    pytest.param(_INSTALL_DEPS, "sudo -u x pip install foo", id="install_sudo_u"),
+    pytest.param(_PR_MERGE, "sudo -u x gh pr merge 1", id="pr_merge_sudo_u"),
+    pytest.param(
+        _NO_VERIFY, "sudo -u root git commit --no-verify -m x", id="no_verify_sudo_u"
+    ),
+]
+
+
+@pytest.mark.parametrize(("hook", "command"), _WRAPPER_VALUE_BLOCKED)
+def test_guards_read_past_a_wrapper_option_value(hook: str, command: str) -> None:
+    """A wrapper's option value never hides the command it runs.
+
+    Args:
+        hook: Hook script under test.
+        command: A command the hook refuses without the wrapper.
+    """
+    options = (
+        HookOptions(agent_type="forge:git-commit-push") if hook == _PROTECTED else None
+    )
+    assert _run_hook(hook, command, options=options) == 2
+
+
+_WRAPPER_VALUE_ALLOWED = [
+    pytest.param(
+        _PROTECTED, "sudo -u root git push origin feat", id="protected_plain_sudo_u"
+    ),
+    pytest.param(_FORCE_PUSH, "sudo -u root git push origin feat", id="plain_sudo_u"),
+    pytest.param(_FORCE_PUSH, "timeout 5 git push origin feat", id="plain_timeout"),
+    pytest.param(_FORCE_PUSH, "ls -la | xargs echo", id="xargs_runs_echo"),
+    pytest.param(
+        "block_git_destructive.sh", "sudo -u root git status", id="status_sudo_u"
+    ),
+    pytest.param("block_git_destructive.sh", "timeout 5 git log", id="log_timeout"),
+    pytest.param(
+        "block_continuation_delete.sh", "rm .plan/x.md", id="continuation_sibling"
+    ),
+    pytest.param(_INSTALL_DEPS, "sudo -S ls", id="sudo_S_flag"),
+    pytest.param(_INSTALL_DEPS, "sort -S 1G file", id="sort_S_flag"),
+    pytest.param(_INSTALL_DEPS, "nice -n 5 make", id="nice_n_value"),
+]
+
+
+@pytest.mark.parametrize(("hook", "command"), _WRAPPER_VALUE_ALLOWED)
+def test_guards_do_not_take_a_wrapper_value_for_a_command(
+    hook: str, command: str
+) -> None:
+    """Reading past a wrapper's value never turns a safe command into a block.
+
+    Args:
+        hook: Hook script under test.
+        command: A command the hook allows.
+    """
+    options = (
+        HookOptions(agent_type="forge:git-commit-push") if hook == _PROTECTED else None
+    )
+    assert _run_hook(hook, command, options=options) == 0
+
+
 # A command each hook's guard would normally block — any command works here,
 # since a missing anchor lib must fail closed BEFORE the command is parsed.
 _GIT_GUARD_BLOCKING_COMMANDS = {
@@ -1951,6 +2079,52 @@ def test_git_guard_hook_fails_closed_without_anchor_lib(
     )
     assert proc.returncode == 2
     assert "anchor lib missing" in proc.stderr
+
+
+@pytest.mark.parametrize("hook", ["block_force_push.sh", "block_git_destructive.sh"])
+def test_guard_hook_fails_closed_when_lib_lacks_unknown_anchor(
+    hook: str, tmp_path: Path
+) -> None:
+    """A hook sourcing a lib that predates `GIT_UNKNOWN_ANCHOR` blocks, not allows.
+
+    Both hooks build a pattern from that anchor; were it empty, the
+    pattern would match everything or nothing and the guard would
+    silently stop judging variable-held commands. The control run on an
+    intact copy pins that the block comes from the missing definition.
+
+    Args:
+        hook: Hook filename under `claude-hooks/`.
+        tmp_path: Directory holding the hook and its edited lib copy.
+    """
+    lib_without_unknown_anchor = tmp_path / "lib_without_unknown_anchor"
+    lib_without_unknown_anchor.mkdir()
+    lib_text = (_HOOKS_DIR / _GIT_ANCHOR_LIB).read_text()
+    kept = [
+        line
+        for line in lib_text.splitlines(keepends=True)
+        if not line.startswith("GIT_UNKNOWN_ANCHOR=")
+    ]
+    assert len(kept) < len(lib_text.splitlines()), "no definition line was dropped"
+    (lib_without_unknown_anchor / _GIT_ANCHOR_LIB).write_text("".join(kept))
+    intact = tmp_path / "intact"
+    intact.mkdir()
+    (intact / _GIT_ANCHOR_LIB).write_text(lib_text)
+    for directory in (lib_without_unknown_anchor, intact):
+        (directory / hook).write_bytes((_HOOKS_DIR / hook).read_bytes())
+
+    def run(directory: Path, command: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", str(directory / hook)],
+            input=json.dumps({"tool_input": {"command": command}}),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    broken = run(lib_without_unknown_anchor, _GIT_GUARD_BLOCKING_COMMANDS[hook])
+    assert broken.returncode == 2
+    assert "damaged plugin copy" in broken.stderr
+    assert run(intact, "git status").returncode == 0
 
 
 # --- shared-anchor prefix bypasses (env-var / leading-ws / wrapper) --------
@@ -2451,6 +2625,16 @@ _DESTRUCTIVE_CLEAN_CASES = [
     ),
     pytest.param(
         "git clean <(true) -n", 0, id="allows_clean_dry_run_after_process_substitution"
+    ),
+    pytest.param("find . -exec git reset {} \\;", 2, id="blocks_find_exec"),
+    pytest.param(
+        "find . -exec echo 'git reset' \\;", 0, id="allows_find_exec_quoted_argument"
+    ),
+    pytest.param("$G reset --hard", 2, id="blocks_variable_command_reset"),
+    pytest.param("sudo $G clean -fd", 2, id="blocks_variable_command_clean"),
+    pytest.param("$EDITOR checkout.txt", 0, id="allows_variable_command_non_verb"),
+    pytest.param(
+        "for f in $x; do echo $f; done", 0, id="allows_variable_in_loop_header"
     ),
 ]
 
@@ -3954,6 +4138,15 @@ def test_amend_blocks_sudo_wrapper(tmp_path: Path) -> None:
     )
 
 
+def test_amend_blocks_timeout_wrapper(tmp_path: Path) -> None:
+    """A `timeout 5`-wrapped amend is blocked (wrapper takes a positional value)."""
+    work, _bare = init_single_track_repo(tmp_path)
+    assert (
+        _run_hook(_AMEND, "timeout 5 git commit --amend", options=HookOptions(cwd=work))
+        == 2
+    )
+
+
 def test_amend_blocks_subshell_wrapper(tmp_path: Path) -> None:
     """A subshell-wrapped amend (`(git commit --amend)`) is blocked.
 
@@ -4439,6 +4632,9 @@ _RAW_RUFF_BLOCKED = [
     pytest.param("python3 -m ruff check .", id="python_m"),
     pytest.param("ruff --config ruff.toml check .", id="global_option"),
     pytest.param("uv run ruff check .", id="runner"),
+    pytest.param("xargs ruff check .", id="xargs_wrapper"),
+    pytest.param("find . -exec ruff check {} \\;", id="find_exec"),
+    pytest.param("sudo -u root ruff check .", id="wrapper_option_value"),
 ]
 
 
@@ -7712,6 +7908,19 @@ _SNAPSHOT_EXTRA_COMMANDS = [
     'gh pr create --body "gh pr merge 9"',
     "gh 'pr merge' 9",
     "git 'push' origin 'feat'",
+    # Commands started by find / env -S.
+    "find . -exec git reset {} \\;",
+    "find . -execdir git push -f {} \\;",
+    "find . -ok git clean -fd {} \\;",
+    "find . -okdir git reset {} \\;",
+    "find . -exec echo 'git reset' \\;",
+    "find . -name x -exec grep foo {} \\;",
+    "env -S 'git reset --hard'",
+    "env -S git push -f",
+    "echo env -S 'git status'",
+    "sort -S 1G file",
+    "sudo -S ls",
+    "git log --format='%H -exec x'",
 ]
 
 
