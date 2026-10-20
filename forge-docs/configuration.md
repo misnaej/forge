@@ -258,7 +258,7 @@ or a cadence value forge does not recognise. Naming the step
 | `max_age_hours` | `24` | Age at which a previous scan stops counting, under `cadence = "hours"`. | Your tolerance for an older answer differs. |
 | `blocking` | `false` | Fail the commit on a CVE finding (else non-blocking WARN). | A vulnerable dependency should refuse a commit. |
 
-The reuse stamp is the modification time of `code_health/pip_audit.json`. Do not cache that directory in CI: restoring a cache sets file times to the restore, which manufactures a fresh-looking scan that never ran.
+The reuse stamp is the scan time recorded inside `code_health/pip_audit.json` (its `scanned_at` field), so copying or restoring the file does not make an old scan look fresh. A sidecar written before that field existed falls back to the file's modification time, which a copy or cache restore resets to the moment of the copy; a field that is present but unusable, or a sidecar that cannot be read, means scan. Either way, do not cache that directory in CI: a restored scan describes the environment it was taken in, not the one the job built.
 
 ## `[tool.forge.doctest]` — opt-in doctest step
 
@@ -283,6 +283,22 @@ commit trains `--no-verify`.
 |---|---|---|---|
 | `paths` | `["src"]` | Scan roots passed to pyrefly. | Your source lives elsewhere. |
 | `blocking` | `false` | Fail the commit on a type error (else non-blocking WARN). | Your type baseline is clean and you want it enforced. |
+
+**Which interpreter pyrefly checks against.** The step passes pyrefly no
+interpreter, so pyrefly finds one by its own discovery — and may find the
+wrong environment: a stale `.venv` in a *parent* directory of the repo,
+for instance. The symptom is `missing-import` errors for packages that are
+installed in the environment you actually work in, on modules your change
+never touched, and `VIRTUAL_ENV` / `CONDA_PREFIX` have been seen not to
+override the discovery. Pin the
+interpreter with pyrefly's own setting, `python-interpreter-path`, in
+`pyrefly.toml` or `[tool.pyrefly]` (`pyrefly dump-config` prints
+`Using interpreter: …` to confirm which one it picked). A path is
+machine-specific, so it belongs in a local edit you do not commit, not in
+the shared config — unless the repo deliberately pins its interpreter.
+For a committed setting, pyrefly's portable forms are
+`fallback-python-interpreter-name` (an executable name looked up on
+`PATH`) and `conda-environment` (an environment name).
 
 The `doc_consistency` step (`verify-forge-doc-consistency`, enabled the
 same way) has no config table — it checks that every `[project.scripts]`
@@ -355,6 +371,7 @@ speed/coverage trade-off: [`forge-docs/smart-test.md`](smart-test.md).
 | `full_run_max_age_hours` | `48` | Max age of the tracked `.forge-full-run` stamp before the cadence acts (per `cadence_mode`). | Your truly-all cadence should run more or less often. |
 | `cadence_mode` | `commit` | Who carries the truly-all cadence: `commit` (stale stamp escalates the commit), `advisory` (warn only; run keeps its own `blocking` semantics), `external` (a scheduled CI job owns it; warn at 2x the window). | CI is your testing fleet — see the smart-test doc's "Who carries the cadence". |
 | `nonpython_ignore` | built-in list | fnmatch globs for changed non-Python paths that cannot affect tests; anything else escalates the run to full (safe fallback). | You have non-Python paths the default list doesn't cover. |
+| `safe_fallback` | `escalate` | What a changed non-Python path outside `nonpython_ignore` does: `escalate` (run the full suite), `warn` (log every such path and keep the selected depth), `off` (ignore them; one warning says so). A changed conftest outside the test roots always escalates. An unknown value escalates with a warning. | Full-suite escalations cost more than the under-selection risk you accept — see the smart-test doc's "Safe fallback". |
 | `commit_directive_re` | `\[(?:depth-(?P<n>[0-2])\|(?P<full>full))\]` | Regex for `--from-commit-message` to read a depth directive from `HEAD`'s message (named groups `n` / `full`). | Your CI tags commits with a different directive syntax. |
 
 ## `[tool.forge.telemetry]` — resource profiling

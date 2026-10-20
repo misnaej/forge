@@ -60,7 +60,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from forge.config import resolve_tool_roots
+from forge.config import path_under_roots, resolve_tool_roots
 from forge.git_utils import code_health_dir, configure_cli_logging, repo_root
 from forge.smart_test.coverage import load_export
 
@@ -124,6 +124,19 @@ class Duration:
     seconds: float
     phase: str
     nodeid: str
+
+
+@dataclass(frozen=True)
+class CoverageScope:
+    """Which source roots a coverage export is scoped to, and its repo root.
+
+    Attributes:
+        source_roots: Repo-relative source roots to scope statements to.
+        repo_root: Repo root absolute export paths are anchored to, or None.
+    """
+
+    source_roots: list[str]
+    repo_root: Path | None = None
 
 
 def parse_durations(text: str) -> list[Duration]:
@@ -336,28 +349,11 @@ def seconds_by_base(durations: list[Duration]) -> dict[str, float]:
     return totals
 
 
-def _in_source_roots(filename: str, source_roots: list[str]) -> bool:
-    """Return whether a coverage file entry lies under a source root.
-
-    Args:
-        filename: A ``files`` key from the coverage export.
-        source_roots: Repo-relative source roots to scope to.
-
-    Returns:
-        ``True`` when the path sits under one of *source_roots*. An
-        empty root list scopes to everything — a repo whose layout
-        forge cannot resolve still gets a ranking rather than silence.
-    """
-    if not source_roots:
-        return True
-    posix = Path(filename).as_posix()
-    return any(
-        posix.startswith(f"{root}/") or f"/{root}/" in posix for root in source_roots
-    )
-
-
 def unique_statements(
-    data: dict[str, object], source_roots: list[str]
+    data: dict[str, object],
+    source_roots: list[str],
+    *,
+    repo_root: Path | None = None,
 ) -> tuple[dict[str, int], set[str]]:
     """Count statements covered by exactly one test function.
 
@@ -365,7 +361,13 @@ def unique_statements(
         data: A parsed ``coverage json --show-contexts`` document.
         source_roots: Repo-relative source roots to scope the statement
             universe to, so boilerplate in test files and other
-            instrumented paths cannot pad a test's unique count.
+            instrumented paths cannot pad a test's unique count. An empty
+            list scopes to everything — a repo whose layout forge cannot
+            resolve still gets a ranking rather than silence.
+        repo_root: Repo root that absolute export paths (coverage writes
+            them unless ``relative_files = true``) are anchored to; an
+            absolute path outside it, or with no root given, is out of
+            scope (:func:`forge.config.path_under_roots`).
 
     Returns:
         ``({base nodeid: unique statement count}, every base nodeid the
@@ -382,7 +384,9 @@ def unique_statements(
     for fname, info in (files if isinstance(files, dict) else {}).items():
         if not isinstance(info, dict):
             continue
-        in_scope = _in_source_roots(str(fname), source_roots)
+        in_scope = path_under_roots(
+            str(fname), source_roots, empty=True, repo_root=repo_root
+        )
         contexts = info.get("contexts")
         for ctx_list in (contexts if isinstance(contexts, dict) else {}).values():
             if not isinstance(ctx_list, list):
@@ -446,7 +450,7 @@ def _worth_row(
 def format_coverage_ranking(
     durations: list[Duration],
     data: dict[str, object],
-    source_roots: list[str],
+    scope: CoverageScope,
     *,
     top: int,
     truncated: bool,
@@ -460,7 +464,7 @@ def format_coverage_ranking(
     Args:
         durations: Parsed durations from the pytest log.
         data: A parsed ``coverage json --show-contexts`` document.
-        source_roots: Repo-relative source roots to scope statements to.
+        scope: The source roots and repo root the export is scoped to.
         top: Maximum rows to render.
         truncated: Whether pytest capped the durations section, making
             every summed duration a lower bound.
@@ -470,7 +474,9 @@ def format_coverage_ranking(
         export carries no per-test contexts to rank by; or a one-line
         no-data notice when the log yielded no durations to rank.
     """
-    unique, seen = unique_statements(data, source_roots)
+    unique, seen = unique_statements(
+        data, scope.source_roots, repo_root=scope.repo_root
+    )
     if not seen:
         return (
             "Coverage worth: the export records no per-test contexts — "
@@ -538,21 +544,22 @@ def durations_truncated(text: str) -> bool:
     return limit is not None and shown >= limit
 
 
-def _source_roots() -> list[str]:
-    """Return the roots to scope counted statements to.
+def _coverage_scope() -> tuple[list[str], Path | None]:
+    """Return the roots to scope counted statements to, and the repo they are in.
 
     Returns:
-        The configured source roots, or ``[]`` when the repo root
+        ``(source roots, repo root)``, or ``([], None)`` when the repo root
         cannot be resolved — :func:`forge.git_utils.repo_root` exits on
         a non-repo directory, and this reporter promises to exit ``0``
         even there. An empty list counts every instrumented file, which
         over-counts rather than silently reporting nothing.
     """
     try:
-        return resolve_tool_roots(repo_root(), "slow_tests_report")
+        root = repo_root()
     except SystemExit:
         logger.warning("not a git repo — counting statements in every file.")
-        return []
+        return [], None
+    return resolve_tool_roots(root, "slow_tests_report"), root
 
 
 def _default_log() -> Path:
@@ -672,6 +679,7 @@ def main() -> int:
         )
     if args.coverage_json:
         data = load_export(Path(args.coverage_json))
+        roots, root = _coverage_scope() if data is not None else ([], None)
         blocks.append(
             f"Coverage worth: no usable coverage export at {args.coverage_json} "
             "— ranking skipped."
@@ -679,7 +687,7 @@ def main() -> int:
             else format_coverage_ranking(
                 durations,
                 data,
-                _source_roots(),
+                CoverageScope(roots, root),
                 top=args.top,
                 truncated=durations_truncated(source),
             )

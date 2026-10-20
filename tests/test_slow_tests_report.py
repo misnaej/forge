@@ -5,15 +5,16 @@ from __future__ import annotations
 import io
 import json
 import logging
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
 from forge import slow_tests_report
 from forge.git_utils import code_health_dir
 from forge.slow_tests_report import (
+    CoverageScope,
     Duration,
-    _source_roots,
+    _coverage_scope,
     durations_truncated,
     format_baseline_delta,
     format_coverage_ranking,
@@ -25,10 +26,6 @@ from forge.slow_tests_report import (
     seconds_by_base,
     unique_statements,
 )
-
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 SINGLE_SECTION = """\
@@ -622,8 +619,21 @@ def test_unique_statements_absolute_path_matches_source_root() -> None:
     Coverage emits absolute paths unless ``relative_files=true`` is set —
     scoping must not silently drop every entry for a repo without it.
     """
-    unique, _ = unique_statements(COVERAGE_MIXED_OWNERSHIP_EXPORT, ["src"])
+    unique, _ = unique_statements(
+        COVERAGE_MIXED_OWNERSHIP_EXPORT, ["src"], repo_root=Path("/abs/repo")
+    )
     assert unique["tests/test_m.py::test_absolute_path"] == 1
+
+
+def test_unique_statements_absolute_path_without_repo_root_is_out_of_scope() -> None:
+    """Without a repo root an absolute export path cannot be anchored, so it is dropped.
+
+    Guards the over-match the old ``"/src/" in path`` test had: a file
+    under any directory named ``src`` anywhere on disk counted as source.
+    """
+    unique, seen = unique_statements(COVERAGE_MIXED_OWNERSHIP_EXPORT, ["src"])
+    assert "tests/test_m.py::test_absolute_path" not in unique
+    assert "tests/test_m.py::test_absolute_path" in seen
 
 
 def test_unique_statements_scoped_out_test_still_recorded_in_seen() -> None:
@@ -728,7 +738,11 @@ def test_format_coverage_ranking_tiers_ratio_then_too_fast_then_no_data() -> Non
     back to dict-insertion order.
     """
     report = format_coverage_ranking(
-        RANKING_DURATIONS, COVERAGE_RANKING_EXPORT, ["src"], top=10, truncated=False
+        RANKING_DURATIONS,
+        COVERAGE_RANKING_EXPORT,
+        CoverageScope(["src"]),
+        top=10,
+        truncated=False,
     )
     rows = report.splitlines()
     idx = {
@@ -760,7 +774,11 @@ def test_format_coverage_ranking_tiers_ratio_then_too_fast_then_no_data() -> Non
 def test_format_coverage_ranking_respects_top_and_reports_of_total() -> None:
     """``top=2`` keeps only the two lowest-worth rows and reports "2 of 6"."""
     report = format_coverage_ranking(
-        RANKING_DURATIONS, COVERAGE_RANKING_EXPORT, ["src"], top=2, truncated=False
+        RANKING_DURATIONS,
+        COVERAGE_RANKING_EXPORT,
+        CoverageScope(["src"]),
+        top=2,
+        truncated=False,
     )
     assert "top 2 of 6" in report
     assert "test_zero" in report
@@ -774,7 +792,11 @@ def test_format_coverage_ranking_respects_top_and_reports_of_total() -> None:
 def test_format_coverage_ranking_truncated_note_present_when_true() -> None:
     """``truncated=True`` appends the lower-bound-seconds NOTE line."""
     report = format_coverage_ranking(
-        RANKING_DURATIONS, COVERAGE_RANKING_EXPORT, ["src"], top=10, truncated=True
+        RANKING_DURATIONS,
+        COVERAGE_RANKING_EXPORT,
+        CoverageScope(["src"]),
+        top=10,
+        truncated=True,
     )
     assert "NOTE" in report
     assert "lower bounds" in report
@@ -783,7 +805,11 @@ def test_format_coverage_ranking_truncated_note_present_when_true() -> None:
 def test_format_coverage_ranking_truncated_note_absent_when_false() -> None:
     """``truncated=False`` omits the NOTE line entirely."""
     report = format_coverage_ranking(
-        RANKING_DURATIONS, COVERAGE_RANKING_EXPORT, ["src"], top=10, truncated=False
+        RANKING_DURATIONS,
+        COVERAGE_RANKING_EXPORT,
+        CoverageScope(["src"]),
+        top=10,
+        truncated=False,
     )
     assert "NOTE" not in report
 
@@ -806,7 +832,9 @@ def test_format_coverage_ranking_skip_when_no_per_test_contexts(
             of the two shapes that produce it (key absent, or present but
             every context list is the empty-string import-time marker).
     """
-    report = format_coverage_ranking([], data, [], top=25, truncated=False)
+    report = format_coverage_ranking(
+        [], data, CoverageScope([]), top=25, truncated=False
+    )
     assert "no per-test contexts" in report
     assert len(report.splitlines()) == 1
 
@@ -816,7 +844,9 @@ def test_format_coverage_ranking_no_timing_data_when_seen_but_no_durations() -> 
     data: dict[str, object] = {
         "files": {"src/pkg/m.py": {"contexts": {"1": ["t.py::test_x|run"]}}}
     }
-    report = format_coverage_ranking([], data, [], top=25, truncated=False)
+    report = format_coverage_ranking(
+        [], data, CoverageScope([]), top=25, truncated=False
+    )
     assert "no timing data to rank" in report
 
 
@@ -990,7 +1020,7 @@ def test_main_coverage_json_missing_export_degrades_gracefully(
 
 
 # ---------------------------------------------------------------------------
-# _source_roots
+# _coverage_scope
 # ---------------------------------------------------------------------------
 
 
@@ -999,10 +1029,21 @@ def _exit_as_if_no_git_repo() -> None:
     raise SystemExit(1)
 
 
-def test_source_roots_degrades_to_empty_list_when_repo_root_exits(
+def test_coverage_scope_returns_roots_and_repo_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """With a resolvable repo the scope pairs the roots with that repo root."""
+    monkeypatch.setattr("forge.slow_tests_report.repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        "forge.slow_tests_report.resolve_tool_roots", lambda *_a, **_k: ["src"]
+    )
+    assert _coverage_scope() == (["src"], tmp_path)
+
+
+def test_coverage_scope_degrades_to_empty_scope_when_repo_root_exits(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A ``repo_root()`` that exits (no git repo) degrades to ``[]``, not a crash.
+    """A ``repo_root()`` that exits outside a git repo degrades to ``([], None)``.
 
     ``repo_root()`` calls ``sys.exit(1)`` outside a git repo; this
     reporter's always-exit-0 contract must hold on the ``--coverage-json``
@@ -1011,5 +1052,5 @@ def test_source_roots_degrades_to_empty_list_when_repo_root_exits(
     """
     monkeypatch.setattr("forge.slow_tests_report.repo_root", _exit_as_if_no_git_repo)
     with caplog.at_level(logging.WARNING):
-        assert _source_roots() == []
+        assert _coverage_scope() == ([], None)
     assert "not a git repo" in caplog.text

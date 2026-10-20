@@ -1159,6 +1159,173 @@ def test_main_depth1_nonpython_change_escalates_to_full(
     assert recorded[0]["coverage"] is True
 
 
+def _escalation(
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    cfg: dict[str, object],
+    *,
+    non_python: set[str],
+    changed: set[str] | None = None,
+) -> bool:
+    """Run ``_escalate_to_full`` against a stubbed unmappable change set.
+
+    Args:
+        repo: Repo root handed to the function.
+        monkeypatch: Used to stub ``changed_non_python_files``.
+        cfg: Smart-test configuration dict.
+        non_python: What the stub reports as unmappable non-Python changes.
+        changed: The changed paths handed in; defaults to none.
+
+    Returns:
+        The escalation verdict.
+    """
+    monkeypatch.setattr(
+        cli, "changed_non_python_files", lambda _r, _ref, **_kw: set(non_python)
+    )
+    return cli._escalate_to_full(repo, "main", changed or set(), cfg)
+
+
+def test_safe_fallback_default_escalates_on_unmappable_non_python(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no ``safe_fallback`` set, an unmappable non-Python change escalates."""
+    assert _escalation(tmp_path, monkeypatch, {}, non_python={"a.rst"}) is True
+
+
+def test_safe_fallback_escalate_without_unmappable_change_does_not_escalate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Escalation needs a trigger: no unmappable change means no full run."""
+    assert _escalation(tmp_path, monkeypatch, {}, non_python=set()) is False
+
+
+def test_safe_fallback_warn_logs_paths_and_does_not_escalate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``warn`` keeps the selected depth but names every unselected path.
+
+    SCENARIO: two unmappable non-Python changes under ``safe_fallback = "warn"``.
+    MOCK SETUP: cli.changed_non_python_files → the two paths.
+    EXPECTED BEHAVIOR: no escalation; a warning lists both paths.
+    """
+    with caplog.at_level(logging.WARNING, logger="forge.smart_test.cli"):
+        result = _escalation(
+            tmp_path,
+            monkeypatch,
+            {"safe_fallback": "warn"},
+            non_python={"a.rst", "b.cfg"},
+        )
+    assert result is False
+    assert "a.rst" in caplog.text
+    assert "b.cfg" in caplog.text
+
+
+def test_safe_fallback_off_logs_one_warning_line_and_does_not_escalate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``off`` ignores non-Python changes but warns, so CI logs show it did so."""
+    with caplog.at_level(logging.INFO, logger="forge.smart_test.cli"):
+        result = _escalation(
+            tmp_path, monkeypatch, {"safe_fallback": "off"}, non_python={"a.rst"}
+        )
+    assert result is False
+    records = [r for r in caplog.records if "Safe fallback off" in r.getMessage()]
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+
+
+def test_safe_fallback_invalid_value_escalates_with_warning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A typo must never silently weaken the fallback: it escalates and says why."""
+    with caplog.at_level(logging.WARNING, logger="forge.smart_test.cli"):
+        result = _escalation(
+            tmp_path, monkeypatch, {"safe_fallback": "wran"}, non_python={"a.rst"}
+        )
+    assert result is True
+    assert "'wran'" in caplog.text
+    assert "using 'escalate'" in caplog.text
+
+
+def test_safe_fallback_non_string_value_escalates_with_warning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A TOML ``true`` is not a mode: it escalates and warns, never weakens."""
+    with caplog.at_level(logging.WARNING, logger="forge.smart_test.cli"):
+        result = _escalation(
+            tmp_path, monkeypatch, {"safe_fallback": True}, non_python={"a.rst"}
+        )
+    assert result is True
+    assert "using 'escalate'" in caplog.text
+
+
+@pytest.mark.parametrize("mode", ["warn", "off"])
+def test_safe_fallback_does_not_excuse_an_unscanned_conftest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    """A repo-root conftest rewires fixtures for unseen tests; no mode excuses it.
+
+    Args:
+        mode: The ``safe_fallback`` value under test.
+    """
+    result = _escalation(
+        tmp_path,
+        monkeypatch,
+        {"safe_fallback": mode},
+        non_python=set(),
+        changed={"conftest.py"},
+    )
+    assert result is True
+
+
+def test_main_safe_fallback_warn_from_pyproject_does_not_escalate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``safe_fallback = "warn"`` in a real pyproject keeps ``--depth 1`` bounded.
+
+    SCENARIO: as ``test_main_depth1_nonpython_change_escalates_to_full`` but
+    the repo's pyproject sets ``[tool.forge.smart_test].safe_fallback = "warn"``.
+    MOCK SETUP: cli.changed_non_python_files → one unmappable change;
+    cli.changed_python_files → empty; cli.run_pytest records its calls.
+    EXPECTED BEHAVIOR: no run_pytest call carries ``label="full"``.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.smart_test]\nsafe_fallback = "warn"\n'
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["forge-smart-test", "--depth", "1"])
+    monkeypatch.setattr(cli, "resolve_base_ref", lambda _r, _b: "main")
+    monkeypatch.setattr(cli, "changed_python_files", lambda _r, _ref: set())
+    monkeypatch.setattr(
+        cli, "changed_non_python_files", lambda _r, _ref, **_kw: {"unmappable.rst"}
+    )
+    labels: list[str] = []
+
+    def _fake(
+        _root: object,
+        _paths: list[str],
+        *,
+        label: str = "",
+        **_kw: object,
+    ) -> tuple[int, str]:
+        labels.append(label)
+        return 0, "ok"
+
+    monkeypatch.setattr(cli, "run_pytest", _fake)
+
+    assert cli.main() == 0
+    assert "full" not in labels
+
+
 @pytest.mark.parametrize("trigger", ["root_commit", "unscanned_conftest"])
 def test_main_unsafe_diff_escalates_depth0_to_full(
     tmp_path: Path,

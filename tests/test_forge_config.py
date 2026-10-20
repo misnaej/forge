@@ -183,3 +183,18 @@ def test_forge_config_list_includes_exclude_key() -> None:
         k for k in forge_config.CONFIG_KEYS if k.path == ("tool", "forge", "exclude")
     )
     assert "vendor" in exclude_key.description or "generated" in exclude_key.description
+
+
+def test_forge_config_registers_smart_test_safe_fallback_key() -> None:
+    """``safe_fallback`` is declared with the ``escalate`` default and is listed.
+
+    An undeclared key would be invisible to ``forge-config --list`` and
+    the unknown-key audit, so a consumer could not discover the setting.
+    """
+    key = next(
+        k
+        for k in forge_config.CONFIG_KEYS
+        if k.path == ("tool", "forge", "smart_test", "safe_fallback")
+    )
+    assert key.default == "escalate"
+    assert "safe_fallback" in "\n".join(forge_config.build_report({}))

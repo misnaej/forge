@@ -39,6 +39,17 @@ full pass. Config reference:
   `[tool.forge.smart_test].nonpython_ignore` (default: `*.md`, the plugin
   manifest, `.plan/*`, `.gitignore`, the stamp itself) are exempt. A change
   the graph does not understand is never silently under-selected.
+  The guarantee holds under the default `safe_fallback = "escalate"`; a
+  repo can trade it away knowingly. `"warn"` keeps the selected depth and
+  logs every unmappable path, so the under-selection is visible but not
+  prevented; `"off"` ignores them, with one warning saying the fallback
+  is off. Both apply wherever the selector runs, CI included; the 48-hour
+  truly-all run still happens. The narrower hatch is `nonpython_ignore`, which exempts named
+  globs; `nonpython_ignore = ["*"]` exempts every non-Python path, the
+  same effect as `"off"` but silent. Neither setting reaches a
+  changed conftest outside the test roots, which always escalates: it is
+  Python that rewires fixtures for tests the graph cannot see, so no
+  narrower run is honest about it.
 - **Conftests reach their tests.** A `conftest.py` is a dependency of
   every test in its folder and below, so editing it — or code it
   imports — selects that subtree at depth 0. A changed conftest outside
