@@ -395,6 +395,14 @@
   "positions": "gh pr create --title x; echo --help\n",
   "words": "gh pr create --title x; echo --help\n"
  },
+ "env -S \"git\" reset --hard": {
+  "positions": "env -S git reset --hard\n",
+  "words": "env -S git reset --hard\n"
+ },
+ "\"$G\" reset --hard": {
+  "positions": "_ reset --hard\n",
+  "words": "$G reset --hard\n"
+ },
  "git commit -m -h": {
   "positions": "git commit -m -h\n",
   "words": "git commit -m -h\n"
@@ -654,5 +662,53 @@
  "git 'push' origin 'feat'": {
   "positions": "git push origin feat\n",
   "words": "git push origin feat\n"
+ },
+ "find . -exec git reset {} \\;": {
+  "positions": "find . -exec ;git reset {} _\n",
+  "words": "find . -exec ;git reset {} _\n"
+ },
+ "find . -execdir git push -f {} \\;": {
+  "positions": "find . -execdir ;git push -f {} _\n",
+  "words": "find . -execdir ;git push -f {} _\n"
+ },
+ "find . -ok git clean -fd {} \\;": {
+  "positions": "find . -ok ;git clean -fd {} _\n",
+  "words": "find . -ok ;git clean -fd {} _\n"
+ },
+ "find . -okdir git reset {} \\;": {
+  "positions": "find . -okdir ;git reset {} _\n",
+  "words": "find . -okdir ;git reset {} _\n"
+ },
+ "find . -exec echo 'git reset' \\;": {
+  "positions": "find . -exec ;echo _ _\n",
+  "words": "find . -exec ;echo git reset _\n"
+ },
+ "find . -name x -exec grep foo {} \\;": {
+  "positions": "find . -name x -exec ;grep foo {} _\n",
+  "words": "find . -name x -exec ;grep foo {} _\n"
+ },
+ "env -S 'git reset --hard'": {
+  "positions": "env -S ;git reset --hard;\n",
+  "words": "env -S ;git reset --hard;\n"
+ },
+ "env -S git push -f": {
+  "positions": "env -S git push -f\n",
+  "words": "env -S git push -f\n"
+ },
+ "echo env -S 'git status'": {
+  "positions": "echo env -S _\n",
+  "words": "echo env -S git status\n"
+ },
+ "sort -S 1G file": {
+  "positions": "sort -S 1G file\n",
+  "words": "sort -S 1G file\n"
+ },
+ "sudo -S ls": {
+  "positions": "sudo -S ls\n",
+  "words": "sudo -S ls\n"
+ },
+ "git log --format='%H -exec x'": {
+  "positions": "git log --format=_\n",
+  "words": "git log --format=%H -exec x\n"
  }
 }

@@ -20,34 +20,35 @@ if [ ! -r "$ANCHOR_LIB" ]; then
 fi
 source "$ANCHOR_LIB"
 # Fail CLOSED on a lib that predates a helper this hook calls.
-if ! declare -F guard_begin command_positions guard_unredir guard_chunks > /dev/null; then
+if ! declare -F guard_begin command_positions guard_unredir guard_chunks > /dev/null \
+    || [ -z "${_GUARD_PREFIX:-}" ] || [ -z "${GUARD_WRAPPERS:-}" ]; then
     echo "BLOCKED: the guard anchor lib at $ANCHOR_LIB lacks a helper this hook needs (older or damaged plugin copy) — refusing the command rather than running unguarded." >&2
     exit 2
 fi
 guard_begin
 
-# Command-position anchor, adapted from the family idiom in
-# block_raw_git.sh / block_force_push.sh / block_git_rebase.sh with ONE
-# deliberate addition: `xargs` in the wrapper list. The git hooks accept
-# the xargs slip-through (block_install_deps.sh stance); here a piped
-# `find .plan | xargs rm` was blocked before this anchor existed and
-# deletion is irreversible, so dropping that coverage would be a silent
-# safety regression. The anchor keeps `rm`/`unlink` quoted inside prose
-# (issue bodies, commit messages) from firing. Accepted slip-throughs:
-# the same command-position-anchor limitations as the rest of the family
-# (shell keywords, trap/nohup/time wrappers, indirect variables,
-# interpreter one-liners; `eval`, `bash -c` and backticks ARE covered by
-# the shared command-positions view) — a guardrail against
-# honest mistakes, not an adversarial boundary.
-# The wrapper group also tolerates flag tokens (`xargs -0 rm`,
-# `sudo -n rm`) — without it, any flag breaks the wrapper chain and the
-# verb escapes the anchor. The delete is found on the shared
-# command-positions view (git_anchor.sh), so `rm` quoted in prose never
-# fires while `bash -c "rm …"` and `eval rm …` do. A redirection word
-# before the verb (`2>&1 rm …`, GUARD_REDIR in git_anchor.sh) is read
-# past like a wrapper word, and `rm` or a wrapper launched by path
-# (`/bin/rm`, `/usr/bin/sudo rm`) is still `rm` (GUARD_BINPATH).
-RM_ANCHOR='(^|[;&|(])[[:space:]]*(([[:alnum:]_]+=[^[:space:]]+|'"${GUARD_BINPATH}"'(command|env|exec|builtin|sudo|xargs)|-[^[:space:]]+|'"${GUARD_REDIR}"')[[:space:]]+)*'"${GUARD_BINPATH}"'(rm|unlink)([[:space:]]|$)'
+# Command-position anchor: the shared command-prefix run every guard uses
+# (_GUARD_PREFIX in git_anchor.sh) in front of `rm` / `unlink`, so a word
+# learned there is learned here — `VAR=val`, wrappers (`sudo`, `env`,
+# `nice`, `time`, `nohup`, `timeout 5`, `xargs`, …) with their options
+# and an option's value (`sudo -u root rm`, `xargs -0 rm`), compound
+# keywords, and redirection words (`2>&1 rm …`). `xargs` matters most
+# here: a piped `find .plan | xargs rm` carries its target upstream of the
+# verb, and deletion is irreversible. `rm` or a wrapper launched by path
+# (`/bin/rm`, `/usr/bin/sudo rm`) is still `rm` (GUARD_BINPATH). The
+# delete is found on the shared command-positions view (git_anchor.sh), so
+# `rm` quoted in prose (issue bodies, commit messages) never fires while
+# `bash -c "rm …"`, `eval rm …` and `find … -exec rm …` do — the last
+# only when the protected file is named on the line: `find .plan -exec
+# rm {} \;` names it nowhere, so it is an accepted slip-through below.
+# Accepted slip-throughs — a guardrail against honest mistakes, not an
+# adversarial boundary: the command-position limits of the whole family
+# (indirect variables, interpreter one-liners), and deletes that do not
+# run `rm` or `unlink` at all — `busybox rm`, `find … -delete`, `shred`,
+# `truncate`, and emptying the file with a redirection (`: > …`) — and
+# a delete whose target is generated rather than named (`find .plan
+# -exec rm {} \;`).
+RM_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"'(rm|unlink)([[:space:]]|$)'
 if ! command_positions "$COMMAND" | grep -qE "${RM_ANCHOR}"; then
     exit 0
 fi

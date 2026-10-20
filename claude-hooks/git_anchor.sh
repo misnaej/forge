@@ -19,11 +19,15 @@
 # GIT_ANCHOR matches a real `git <subcommand>` invocation at line-start or
 # after a shell separator (`;` `&` `|` `(`). It tolerates:
 # - a leading run of `VAR=val` assignments, `command`/`env`/`exec`/
-#   `builtin`/`sudo`/`nohup`/`nice`/`time` wrappers (incl. wrapper flag
-#   tokens like `sudo -n`) and the shell words that start a command inside
-#   a compound (`then`, `do`, `else`, `elif`, `{`, `!`), and redirection
-#   words (GUARD_REDIR, below), so `GIT_DIR=x git ...`,
-#   `if …; then git …; fi` and `2>&1 git …` can't slip the gate;
+#   `builtin`/`sudo`/`doas`/`nohup`/`nice`/`time`/`timeout`/`setsid`/
+#   `ionice`/`stdbuf`/`taskset`/`chrt`/`xargs` wrappers — with their
+#   options, each optionally followed by one value word (`sudo -n`,
+#   `sudo -u root`, `env -C /tmp`), and the one positional argument the
+#   positional ones take (`timeout 5`, `timeout -k 3 5`) — the shell words
+#   that start a command inside a compound (`then`, `do`, `else`, `elif`,
+#   `{`, `!`), and redirection words (GUARD_REDIR, below), so
+#   `GIT_DIR=x git ...`, `if …; then git …; fi` and `2>&1 git …` can't
+#   slip the gate (rationale at _GUARD_PREFIX, below);
 # - a directory path in front of the tool or wrapper name (GUARD_BINPATH,
 #   below), so `/usr/bin/git …`, `./git …` and `/usr/bin/env git …` are
 #   the same invocation as `git …`. A different one-word name that merely
@@ -50,7 +54,13 @@
 # where the shell would actually start a command.
 #
 # Known accepted residuals (documented, deliberately out of scope):
-# `${IFS}` splicing and variable indirection (`$GIT push`), `xargs git`,
+# `${IFS}` splicing, a substitution with a blank inside it as the command
+# word (`$(which git) push`; an unquoted `$G` there is GIT_UNKNOWN_ANCHOR,
+# below, which the destructive and force-push guards block; the other
+# guards do not — its quoted form is listed further down), wrappers
+# outside the prefix list (`flock`, `su -c`, `runuser`, `parallel`,
+# `watch`, `unshare`, `nsenter`, `systemd-run`, `script -c`), an `env -S`
+# payload attached to its option (`env -S'…'`, `--split-string='…'`),
 # a backslash-newline continuation BETWEEN the words of an anchor,
 # wrappers nested more than one level deep with escaped inner quotes,
 # a non-heredoc script piped into a shell (`echo "…" | bash`; a heredoc
@@ -58,9 +68,8 @@
 # from a script FILE (`python x.py`) or from a verb assembled at runtime
 # (inline interpreter code that names git — `python -c "…git…"`, a heredoc
 # script — is refused by block_raw_git.sh as a tripwire, not a
-# boundary), git aliases (`git -c alias.x='!…' x`), wrappers that take
-# a separate argument (`sudo -u root`, `timeout 5`, `xargs`,
-# `find -exec`), other git verbs that overwrite files or move refs
+# boundary), git aliases (inline `git -c alias.x='!…' x` and configured
+# ones), other git verbs that overwrite files or move refs
 # (`read-tree -u`, `checkout-index -f`, `branch -f`),
 # payloads assembled from several arguments or positional parameters
 # (`bash -c 'git "$@"' _ push -f`, `ssh h git push '-f'`, issue #738),
@@ -100,12 +109,48 @@ GUARD_REDIR='(([0-9]+|[{][[:alnum:]_]+[}])?(<<<|<<-?|<>|>>|>[|]|>&|<&|&>>|&>|<|>
 # (rationale in the header above).
 GUARD_BINPATH='([^[:space:];&|()<>]*[/])?'
 # The command-prefix run (VAR=val, wrapper and compound words — each
-# wrapper optionally path-qualified — wrapper flag tokens, redirections)
+# wrapper optionally path-qualified — wrapper options, redirections)
 # and git's global-option run, shared by the
 # anchors so a word learned once is learned everywhere.
-_GUARD_PREFIX='(([[:alnum:]_]+=[^[:space:]]+|'"${GUARD_BINPATH}"'(command|env|exec|builtin|sudo|nohup|nice|time)|then|do|else|elif|[{!]|-[^[:space:]]+|'"${GUARD_REDIR}"')[[:space:]]+)*'
+#
+# A wrapper option may take one following value word (`sudo -u root`,
+# `env -C /tmp`, `nice -n 5`) — gh's own parsing rule (GH_OPTS, below),
+# not a list of which options take one. The match is existential, so the
+# option is also read without a value wherever that is what lets the
+# command word be found: reading too much can only widen what a guard
+# blocks. The accepted cost is a false block when a value-less wrapper
+# option is followed by a program that itself runs the tool
+# (`sudo -E somecmd git reset --hard` reads as `sudo -E somecmd` then git).
+# The wrappers that take a positional argument before the command
+# (`timeout 5`, `taskset 0x1`, `chrt 10`, `ionice 3`, `stdbuf …`) may also
+# skip one plain word after their options (`timeout -k 3 5 git …`).
+# GUARD_WRAPPERS is the one list of wrapper names: the command-positions
+# scanner receives it too, to tell a run `env -S` from a mentioned one.
+GUARD_WRAPPERS='command|env|exec|builtin|sudo|nohup|nice|time|timeout|setsid|ionice|stdbuf|taskset|chrt|doas|xargs'
+_GUARD_PREFIX='(([[:alnum:]_]+=[^[:space:]]+|'"${GUARD_BINPATH}"'('"${GUARD_WRAPPERS}"')|'"${GUARD_BINPATH}"'(timeout|ionice|stdbuf|taskset|chrt)([[:space:]]+-[^[:space:]]+([[:space:]]+[^[:space:]]+)?)*[[:space:]]+[^[:space:]]+|then|do|else|elif|[{!]|-[^[:space:]]+([[:space:]]+[^[:space:]]+)?|'"${GUARD_REDIR}"')[[:space:]]+)*'
 _GUARD_GIT_OPTS='((-c|-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][^[:space:]]*[[:space:]]+|'"${GUARD_REDIR}"'[[:space:]]+)*'
 GIT_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"'git[[:space:]]+'"${_GUARD_GIT_OPTS}"
+# GIT_UNKNOWN_ANCHOR is GIT_ANCHOR with the command word replaced by a
+# word that starts with `$` and holds no `/` (spelled as the characters
+# it may hold, since a bare `/` is barred here), or a whole `${…}`
+# expansion, whose `/` belongs to the expansion (`${G:-/usr/bin/git}`,
+# `${G//x/y}`) — `$G`, `${G}`, `${G:-git}`,
+# `$1`, `$@` — or, in the command-positions view, a quoted span the view
+# could not decode to a plain word (`"$G"` reads as `_` there), standing
+# where git would (`$G reset --hard`, `sudo "$G" clean -fd`). A word
+# with a `/` after its variable (`$HOME/bin/tool reset`) names a path and
+# is not matched — but quoted (`"$HOME/bin/tool" reset`) it is the `_` of
+# an undecodable span, and blocks like any quoted program word holding a
+# `$` or a blank (`"a b" stash`): an accepted false block;
+# neither is a command substitution (residual above). What such a word
+# runs is unknowable to a hook, so a guard that matches it followed by a
+# verb it blocks treats the invocation as unknowable and blocks. It is a
+# separate constant, never part of _GUARD_PREFIX: block_raw_ruff cuts its
+# prefix out of GIT_ANCHOR, and every other tool's anchor shares that
+# prefix. `[$]`, not a backslash, for the same awk -v and sed reasons as
+# GUARD_REDIR.
+# shellcheck disable=SC2034  # consumed by sourcing hooks
+GIT_UNKNOWN_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}"'([$]([{][^}[:space:]]*[}]|[][[:alnum:]_{}:#%@*!?=+.,~^-]*)|_)[[:space:]]+'"${_GUARD_GIT_OPTS}"
 
 # GH_ANCHOR is the same shape for `gh`: a real invocation at line-start
 # (leading whitespace included — the hand-rolled `^gh` patterns this
@@ -458,8 +503,26 @@ function heredoc_open(s, i, before,   n, k, ch, j, rl) {
 # (a separator, `(`, `)`, or the `<` of a heredoc / here-string opener),
 # which is also why a match can never start before it — except the `<<<`
 # here-string, which is why the base moves only after the previous word
-# has been checked. pws marks where the previous word began; hsh / hssh
-# record a shell name / `ssh` in the current chain.
+# has been checked. pws marks where the previous word began; hsh / hssh /
+# hev record a shell name / `ssh` / `env` in the current chain.
+#
+# Two more previous words start something. `-exec`, `-execdir`, `-ok` and
+# `-okdir` (options of find, but read wherever they appear: over-reading
+# only widens what a guard sees) make the next word a command start,
+# marked with a `;` like the word after `eval` (wt 4) — but unlike the
+# arguments of `eval`, the words after it are arguments of that command, so a
+# quoted one is not re-scanned (`-exec echo "git reset" ;` mentions git,
+# it does not run it). `-S` (any short cluster ending in it) or
+# `--split-string` after an `env` that is being run — the first word of
+# the chain is env or a wrapper, so `echo env -S` only mentions it — makes
+# a QUOTED next word a
+# payload, re-scanned like a `bash -c` payload (wt 5) — env splits it into
+# the command it runs; that word alone, since the words after it are its
+# arguments. Only a word holding a blank is a payload: a quoted single
+# word (`env -S "git" reset --hard`) is the program name, read as an
+# ordinary word, so its arguments stay in view. An unquoted `env -S git …` needs no unwrapping: the shared
+# prefix reads `-S` as a wrapper option. `sort -S 1G` and `sudo -S` have
+# no `env` before them, so nothing changes there.
 #
 # Redirections are read past, never through: the previous word and the
 # chain are checked on unredir() copies (same length, so cb / pws offsets
@@ -470,16 +533,16 @@ function heredoc_open(s, i, before,   n, k, ch, j, rl) {
 # psh marks that a shell `-c` payload was found: every later word of the
 # simple command is then re-scanned as a payload too (options may follow
 # `-c`), until a separator clears it with pa.
-function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k, j, w, line, sb, e, ansi, dec, vis, kv, ch, h, cmp, pc, bd, pa, wt, qs, cb, pws, pw, hsh, hssh, psh, isr, rt, prr, lw, mpw, spw, st, lt) {
+function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k, j, w, line, sb, e, ansi, dec, vis, kv, ch, h, cmp, pc, bd, pa, wt, qs, cb, pws, pw, hsh, hssh, hev, psh, isr, rt, prr, lw, mpw, spw, st, lt) {
     n = length(s); out = ""; depth = 0; dollar = 0; nh = 0; bd = 0; pa = 0; st = i
-    cb = 0; pws = 0; hsh = 0; hssh = 0; psh = 0; rt = 0; prr = 0; lw = ""
+    cb = 0; pws = 0; hsh = 0; hssh = 0; hev = 0; psh = 0; rt = 0; prr = 0; lw = ""
     while (i <= n) {
         c = substr(s, i, 1)
         pc = (i == 1) ? "\n" : substr(s, i - 1, 1)
         if (rt && index(" \t<>", c)) { pws = length(out); rt = 0 }
         if (index(";&|\n()", c) && !redir_amp(s, i, c, pc)) {
             pa = 0; psh = 0; rt = 0; prr = 0; lw = ""
-            cb = length(out); pws = cb + 1; hsh = 0; hssh = 0
+            cb = length(out); pws = cb + 1; hsh = 0; hssh = 0; hev = 0
         }
         if (!index(" \t\n;&|()<>", c) && index(" \t<", pc)) {
             qs = (c == "\047" || c == "\"" || (c == "$" && index("\047\"", substr(s, i + 1, 1))))
@@ -494,23 +557,28 @@ function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k
             wt = 0
             if (!isr && ((hsh && spw ~ /^-[A-Za-z]*c[A-Za-z]*$/) || spw ~ /<<<$/ || spw ~ RE_EVALW || (qs && hssh)))
                 wt = wtype(unredir(substr(out, cb + 1)))
+            if (!isr && wt == 0) {
+                if (spw ~ RE_EXECW) wt = 4
+                else if (qs && hev && spw ~ RE_ENVSW && pword(s, i) ~ /[ \t]/) wt = 5
+            }
             # Order matters: the base moves past pw only after the check
             # above, or a `bash <<<` chain would be cut before it is read.
-            if (match(mpw, /[\n;&|()<>][^\n;&|()<>]*$/)) { cb = pws + RSTART; hsh = 0; hssh = 0 }
+            if (match(mpw, /[\n;&|()<>][^\n;&|()<>]*$/)) { cb = pws + RSTART; hsh = 0; hssh = 0; hev = 0 }
             if (spw ~ RE_HEADW) hsh = 1
             if (spw ~ RE_SSHW) hssh = 1
+            if (spw ~ RE_ENVW && unredir(substr(out, cb + 1)) ~ RE_ENVHEAD) hev = 1
             pws = length(out); rt = isr
             if (!isr && wt == 0) {
                 if (psh && !(c == "#" && is_comment(s, i, pc, bd, mode))) wt = 1
                 else if (pa && qs) wt = 2
             }
-            if (wt == 1 || (wt && qs)) {
+            if (wt != 4 && (wt == 1 || (wt && qs))) {
                 w = pword(s, i); out = out rescan(w); i = WPOS
-                cb = length(out); pws = cb; hsh = 0; hssh = 0; lw = ""; prr = 0
+                cb = length(out); pws = cb; hsh = 0; hssh = 0; hev = 0; lw = ""; prr = 0
                 if (wt == 1) psh = 1
-                pa = (wt >= 2); dollar = 0; continue
+                pa = (wt == 2 || wt == 3); dollar = 0; continue
             }
-            if (wt == 2) { out = out ";"; cb = length(out); pws = cb; hsh = 0; hssh = 0; lw = ""; prr = 0 }
+            if (wt == 2 || wt == 4) { out = out ";"; cb = length(out); pws = cb; hsh = 0; hssh = 0; hev = 0; lw = ""; prr = 0 }
         }
         # At an unescaped word start (an even run of backslashes before pc),
         # a quoted word that decodes to one plain word is emitted as that
@@ -637,6 +705,13 @@ BEGIN {
     RE_HEADW = B SHELLS "$"
     RE_SSHW = B SSHH "$"
     RE_EVALW = B "eval$"
+    RE_EXECW = "^-(exec|execdir|ok|okdir)$"
+    RE_ENVW = B "([^ \t\n;&|()<>]*/)?env$"
+    RE_ENVSW = "^(-[A-Za-z]*S|--split-string)$"
+    # The first word of the chain (past assignments and compound keywords) is
+    # env itself or a wrapper that runs a command, so `env` is being run.
+    ASSIGN = "[A-Za-z_][A-Za-z0-9_]*=[^ \t]*[ \t]+"
+    RE_ENVHEAD = "^[ \t\n;&|()]*((then|do|else|elif|[{!])[ \t]+)*(" ASSIGN ")*([^ \t\n;&|()<>]*/)?(" WRAPPERS ")([ \t]|$)"
 }
 { src = (NR == 1) ? $0 : src "\n" $0 }
 END { printf "%s\n", scan(src, 1, 0) }
@@ -726,7 +801,7 @@ command_positions() {
         esac
         shift
     done
-    view=$(printf '%s\n' "$1" | LC_ALL=C awk -v KEEP="$keep" "$_GUARD_CMDPOS_AWK" 2>/dev/null) || view="$1"
+    view=$(printf '%s\n' "$1" | LC_ALL=C awk -v KEEP="$keep" -v WRAPPERS="$GUARD_WRAPPERS" "$_GUARD_CMDPOS_AWK" 2>/dev/null) || view="$1"
     if [ "$noredir" = 1 ]; then
         view=$(guard_unredir "$view")
     fi

@@ -67,7 +67,8 @@ source "$ANCHOR_LIB"
 # Fail CLOSED on a lib that predates a helper this hook calls: an
 # undefined function returns 127 inside an `if`, which reads as "not
 # found" and would allow the command.
-if ! declare -F guard_begin command_positions guard_help_only invoked guard_chunks > /dev/null; then
+if ! declare -F guard_begin command_positions guard_help_only invoked guard_chunks > /dev/null \
+    || [ -z "${_GUARD_PREFIX:-}" ] || [ -z "${GUARD_WRAPPERS:-}" ]; then
     echo "BLOCKED: the guard anchor lib at $ANCHOR_LIB lacks a helper this hook needs (older or damaged plugin copy) — refusing the command rather than running unguarded." >&2
     exit 2
 fi
@@ -118,14 +119,14 @@ CMDPOS=$(command_positions --no-redir "$COMMAND")
 WORDS=$(command_positions --words --no-redir "$COMMAND")
 # The command boundary every rule below starts from (see the header), then
 # the shared command-prefix run from git_anchor.sh — `VAR=val`, wrapper
-# words (`sudo`, `env`, `nice`, …, each optionally path-qualified),
-# compound keywords and redirection words — then an optional directory
-# path before the manager itself (`/usr/bin/pip`). The views are blanked,
-# so a leading redirection arrives as whitespace after the boundary; the
-# redirection term is left for the heredoc and here-string openers
-# (`<<<x pip install`), which the blanking keeps. Accepted slip-through: a
-# wrapper option that takes a value (`sudo -u user pip install`), the same
-# limit as the git guards.
+# words (`sudo`, `env`, `nice`, `timeout 5`, …, each optionally
+# path-qualified, with their options and an option's value, so
+# `sudo -u user pip install` is seen), compound keywords and redirection
+# words — then an optional directory path before the manager itself
+# (`/usr/bin/pip`). The views are blanked, so a leading redirection
+# arrives as whitespace after the boundary; the redirection term is left
+# for the heredoc and here-string openers (`<<<x pip install`), which the
+# blanking keeps.
 CMD_PFX='(^|[;&|(){}!])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"
 # `invoked <regex>` (git_anchor.sh) reads CMDPOS above.
 
@@ -145,7 +146,8 @@ CMD_PFX='(^|[;&|(){}!])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"
 # Dash flags may sit between a manager and its verb (`pip -q install`,
 # `pip --user uninstall`) here and in every rule below; a flag that takes
 # a separate value (`pip --cache-dir d install`) is an accepted
-# slip-through, like a wrapper option that takes one.
+# slip-through (unlike a wrapper option that takes one, which the shared
+# prefix reads).
 MGR_FLAGS='([[:space:]]+-[^[:space:]]+)*'
 if invoked "${CMD_PFX}"'(conda|mamba|micromamba|pipenv|uv|poetry|pixi)[[:space:]]+run\b' &&
     echo "$WORDS" | grep -qE "${CMD_PFX}"'(conda|mamba|micromamba|pipenv|uv|poetry|pixi)[[:space:]]+run\b[^;&|]*\b((python[0-9.]*[[:space:]]+-m[[:space:]]+)?pip[0-9.]*'"${MGR_FLAGS}"'[[:space:]]+(install|uninstall)|(conda|mamba|micromamba)'"${MGR_FLAGS}"'[[:space:]]+(install|uninstall|create|remove|update|upgrade|env[[:space:]]+(create|update|remove))|uv'"${MGR_FLAGS}"'[[:space:]]+(add|sync|lock|remove|(pip|tool|python)[[:space:]]+(install|uninstall|sync|upgrade))|pipenv'"${MGR_FLAGS}"'[[:space:]]+(install|sync|lock|update|uninstall)|poetry'"${MGR_FLAGS}"'[[:space:]]+(add|install|update|lock|remove))\b' &&
@@ -216,7 +218,8 @@ fi
 
 # pip / conda — anchored to command start or after a shell separator so a
 # substring inside a quoted body (e.g. an issue body mentioning `pip
-# install`) doesn't trigger. (Accepted slip-through: `xargs pip install`.)
+# install`) doesn't trigger; `xargs pip install` and `find … -exec pip
+# install` are commands too.
 # Removing a package changes the environment as surely as adding one, so
 # the removal verbs block too. mamba and micromamba are conda's drop-in
 # front ends and share its opt-out name.

@@ -52,7 +52,6 @@ guard_begin
 #
 # Accepted residuals (documented, deliberately out of scope — a tripwire
 # for the routes agents take, not a sandbox):
-# - `xargs ruff check` and `find … -exec ruff check`;
 # - ruff run from an interpreter subprocess or a script file;
 # - variable indirection and `${IFS}` splicing (`$R check`);
 # - ruff verbs other than check/format (`ruff rule`, `ruff clean`, …);

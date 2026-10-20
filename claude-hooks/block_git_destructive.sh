@@ -34,6 +34,11 @@
 #   closed when the hook cannot check. A new name or a fast-forward stays
 #   allowed.
 # - `git stash` in every form except `list` / `show`.
+# - Any of those verbs (`reset`, `clean`, `checkout`, `restore`, `stash`,
+#   `switch`) after a variable in the command-word slot (`$G reset`,
+#   `sudo $G clean -fd`): the hook cannot tell what the variable runs, so
+#   every form blocks, read-only ones too (`$G stash list`) — a false
+#   block that costs only spelling `git` literally.
 #
 # No agent bypass — not even forge:git-commit-push. A human who truly
 # needs one of these runs it themselves with `! git …`.
@@ -60,7 +65,8 @@ source "$ANCHOR_LIB"
 # Fail CLOSED on a lib that predates a helper this hook calls: an
 # undefined function returns 127 inside an `if`, which reads as "not
 # found" and would allow the command.
-if ! declare -F guard_begin command_positions guard_git_invocations guard_help_only > /dev/null; then
+if ! declare -F guard_begin command_positions guard_git_invocations guard_help_only > /dev/null \
+    || [ -z "${GIT_UNKNOWN_ANCHOR:-}" ]; then
     echo "BLOCKED: the guard anchor lib at $ANCHOR_LIB lacks a helper this hook needs (older or damaged plugin copy) — refusing the command rather than running unguarded." >&2
     exit 2
 fi
@@ -96,6 +102,20 @@ _guarded() {
     GUARDED_CACHE+="0 $1"$'\n'
     return 1
 }
+
+# A variable standing where git would (`$G reset --hard`, `sudo $G clean
+# -fd`, GIT_UNKNOWN_ANCHOR in git_anchor.sh) followed by a verb this hook
+# guards: what the word runs, and so whether the invocation destroys
+# anything, is unknowable here, so it blocks. Every form of those verbs
+# blocks this way — `$G stash list` and `$G checkout main` included — an
+# accepted false block: spelling git as `git` costs nothing. So is a
+# wrapper option whose value is a variable (`sudo -u $USER reset` reads
+# `$USER` as the command word). The verb must end its word, so `$EDITOR checkout.txt` is not one.
+GIT_UNKNOWN_VERBS='(reset|clean|checkout|restore|stash|switch)([[:space:];&|)]|$)'
+if echo "$CMDPOS" | grep -qE "${GIT_UNKNOWN_ANCHOR}${GIT_UNKNOWN_VERBS}" \
+    && ! guard_help_only "$CMDPOS" "${GIT_UNKNOWN_ANCHOR}${GIT_UNKNOWN_VERBS}"; then
+    _block "<variable> reset|clean|checkout|restore|stash|switch" "A variable stands where the program name would be, so the hook cannot tell whether it runs git, or what that invocation would destroy. Spell the program name literally (\`git …\`) so the command can be judged."
+fi
 
 # `git reset` — every form. The blanket ban subsumes the --hard/--merge
 # block that previously lived in block_git_reset_hard.sh (retired).
