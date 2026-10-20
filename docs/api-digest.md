@@ -1060,7 +1060,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 - `class IssueFiles` — One open issue reduced to what grouping needs.
 - `_track_labels(issue: Issue, report: Report) -> tuple[str, ...]` _(internal)_ — Return *issue*'s well-formed ``track:`` labels, noting any malformed one.
-- `_issue_files(issue: Issue, is_writer: WriterCheck, report: Report) -> IssueFiles | None` _(internal)_ — Reduce *issue* to its files and track labels, recording notes.
+- `_issue_files(issue: Issue, is_writer: WriterCheck, report: Report, *, quiet: bool = False) -> IssueFiles | None` _(internal)_ — Reduce *issue* to its files and track labels, recording notes.
 - `_select(issues: Sequence[Issue], numbers: Sequence[int], report: Report) -> list[Issue]` _(internal)_ — Return the listed issues the caller named (all when none), refusing others.
 - `_report_pairs(files: Sequence[IssueFiles], report: Report, focus: frozenset[int]) -> None` _(internal)_ — Record every pair of issues naming a common file.
 - `_report_prs(files: Sequence[IssueFiles], prs: Sequence[OpenPR], report: Report, focus: frozenset[int]) -> None` _(internal)_ — Record every open PR changing a file an issue names.

@@ -125,6 +125,46 @@ def test_tracks_focus_reports_only_lines_involving_the_focused_issue() -> None:
     assert report.exit_code == ps.EXIT_FINDING
 
 
+def test_tracks_focus_notes_only_the_focus_issue_but_never_quiets_an_unknown() -> None:
+    """Behavior: note/track lines are the focus issue's alone; unknowns stay loud.
+
+    The other open issues name no file, take their paths from the body, or
+    carry track labels, each of which would add a note in an unfocused
+    run. Overlap and shared lines involving the focus issue still print,
+    and an unresolvable plan author on a non-focus issue still surfaces.
+    """
+    body_only = Issue(5, "Touch `src/q/e.py`", (), "2026-09-10T07:00:00Z", ())
+    unresolvable_plan = Comment(
+        6, f"{ps.PLAN_MARKER}\n\nEdit `src/r/f.py`.", "2026-09-14T20:00:00Z", "ghost"
+    )
+    unresolvable = Issue(
+        6, "Requires: nothing", (), "2026-09-10T07:00:00Z", (unresolvable_plan,)
+    )
+    gh = FakeGitHub(
+        open_listing=[
+            make_open_issue(1, "src/x/a.py", labels=("track:alpha",)),
+            make_open_issue(2, "src/x/a.py", labels=("track:beta",)),
+            make_open_issue(3),
+            body_only,
+            unresolvable,
+        ],
+        open_prs=[],
+        permissions=PLAN_PERMISSIONS,
+    )
+
+    report = pt.check_tracks(gh, focus=[1])
+
+    assert report_lines(report, "track:") == ["track: #1 carries track:alpha"]
+    assert [line for line in report_lines(report, "note:") if "#1" not in line] == []
+    assert not any(
+        f"#{n} names no file" in line for n in (3, 5) for line in report.lines
+    )
+    assert report_lines(report, "overlap:")[0].startswith("overlap: #1 and #2")
+    assert "src/x/a.py" in report_lines(report, "shared:")[0]
+    assert report.exit_code == ps.EXIT_UNKNOWN
+    assert any(line.startswith("unknown:") and "#6" in line for line in report.lines)
+
+
 def test_tracks_focus_on_an_issue_that_is_not_open_is_refused() -> None:
     """Behavior: a focus number outside the open listing is unknown, never clean."""
     report = pt.check_tracks(_chain_listing(), focus=[99])

@@ -141,14 +141,19 @@ def _track_labels(issue: Issue, report: Report) -> tuple[str, ...]:
 
 
 def _issue_files(
-    issue: Issue, is_writer: WriterCheck, report: Report
+    issue: Issue, is_writer: WriterCheck, report: Report, *, quiet: bool = False
 ) -> IssueFiles | None:
     """Reduce *issue* to its files and track labels, recording notes.
+
+    *quiet* drops the per-issue notes but never an unknown: a focused
+    run compares the focus issues against every open issue, and notes
+    about the others would bury the few lines placement reads.
 
     Args:
         issue: Open issue from the listing (comments included).
         is_writer: Plan-author access check.
         report: Report to write into.
+        quiet: Whether to leave out this issue's notes.
 
     Returns:
         The reduced issue, or None when its plan is unknown.
@@ -156,17 +161,18 @@ def _issue_files(
     lookup = authenticated_plan(issue.comments, is_writer)
     if not record_lookup(lookup, issue.number, report):
         return None
+    notes = Report() if quiet else report
     paths, from_body = plan_paths(lookup.plan, issue.body)
-    tracks = _track_labels(issue, report)
+    tracks = _track_labels(issue, notes)
     if not paths:
-        report.note(f"note: #{issue.number} names no file; place it by judgment")
+        notes.note(f"note: #{issue.number} names no file; place it by judgment")
     elif from_body:
-        report.note(
+        notes.note(
             f"note: #{issue.number} paths come from the issue body, "
             "not an authenticated plan"
         )
     if tracks:
-        report.note(f"track: #{issue.number} carries {', '.join(tracks)}")
+        notes.note(f"track: #{issue.number} carries {', '.join(tracks)}")
     return IssueFiles(
         issue.number, frozenset(paths), tracks, plan_ready=PLAN_READY in issue.labels
     )
@@ -375,7 +381,15 @@ def check_tracks(
     files = [
         reduced
         for issue in selected
-        if (reduced := _issue_files(issue, is_writer, report)) is not None
+        if (
+            reduced := _issue_files(
+                issue,
+                is_writer,
+                report,
+                quiet=bool(focused) and issue.number not in focused,
+            )
+        )
+        is not None
     ]
     report.note(f"issues: {len(files)} checked; open PRs: {len(prs)}")
     _report_pairs(files, report, focused)
