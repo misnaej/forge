@@ -190,6 +190,8 @@ def _recommendation(inputs: ComposeInputs) -> str:
         # The classifier's full reasons are printed by `compose` instead:
         # here they would spend most of the wrap-up's word budget.
         return LIGHT_CODE_RECOMMENDATION
+    # light-release keeps the slot: whether a release is ready is the
+    # author's judgment, not the classifier's.
     return slot("recommendation")
 
 

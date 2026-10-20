@@ -740,9 +740,10 @@ def classify(root: Path, base: str, pr_number: int | None) -> PrPlan:
     release_refusal = _light_release_refusal(root, base, paths)
     if release_refusal is None:
         reasons.append(
-            "light-release: the diff is a release assembly (any of: manifest "
-            "version bump, CHANGELOG.md, consumed fragments); only the changelog prose "
-            "needs reading, so docs-types-checker runs and design/security are "
+            "light-release: the diff is a release assembly (made only of: "
+            "manifest version bump, CHANGELOG.md, consumed fragments); only the "
+            "changelog prose needs reading, so docs-types-checker runs and "
+            "design/security are "
             "skipped — the publish gate re-runs this classifier fail-closed "
             "(wrapup-mode: light-release)"
         )
