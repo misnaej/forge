@@ -9391,6 +9391,18 @@ _TRIAGE_AGENTS = ("forge:issue-triage", "issue-triage")
 # The marker is read from the module /sentinel authenticates against, so a
 # reworded marker fails here instead of leaving the hook matching the old one.
 _PAYLOAD = f"{PLAN_MARKER} scope: fix the parser"
+# Here-string operands bash rewrites before gh reads them: only one plain
+# single-quoted literal is read as sent.
+_NON_LITERAL_HERE_STRINGS = (
+    '"$B"',
+    "$B",
+    "'{\"a\":1}'$X'x'",
+    '"{${X}}"',
+    '"$(cat b)"',
+    "$'{\\x73tate}'",
+    "'a'$'b'",
+    "`cat b`",
+)
 
 _PLAN_LABEL_WRITES = [
     pytest.param("gh issue edit 5 --add-label plan-ready", id="edit-add-label"),
@@ -9505,6 +9517,26 @@ _PLAN_LABEL_WRITES = [
     pytest.param(
         "gh api repos/o/r/issues --input - <<< '{\"lab''els\":[\"plan-ready\"]}'",
         id="here-string-spliced-quotes",
+    ),
+    *(
+        pytest.param(f"{prefix} <<< {operand}", id=f"here-string-{kind}-{n}")
+        for kind, prefix in (
+            ("issue", "gh api repos/o/r/issues --input -"),
+            ("comment", "gh issue comment 5 --body-file -"),
+        )
+        for n, operand in enumerate(_NON_LITERAL_HERE_STRINGS)
+    ),
+    # A glob in a field name, method or endpoint expands after the hook reads it.
+    *(
+        pytest.param(command, id=f"glob-{n}")
+        for n, command in enumerate(
+            (
+                "gh api -X PATCH repos/o/r/issues/5 -f lab?ls=plan-ready",
+                "gh api -X P?TCH repos/o/r/issues/5/labels -f x=1",
+                "gh api -X PATCH repos/o/r/issues/5/label? -f x=1",
+                "gh api repos/o/r/issues/[5]/labels -f x=1",
+            )
+        )
     ),
     *(
         pytest.param(
@@ -9818,6 +9850,14 @@ def test_plan_mint_reads_the_body_file(
             "gh api repos/{owner}/{repo}/issues/5 -X PATCH -f title=t",
             id="gh-placeholders-unquoted",
         ),
+        pytest.param(
+            "gh issue comment 5 --body-file - <<< 'perf report'",
+            id="literal-here-string-body",
+        ),
+        pytest.param(
+            "gh api -X POST 'repos/o/r/issues/5/comments?x=1' -f body=y",
+            id="query-string-endpoint",
+        ),
         pytest.param("gh issue edit --help", id="help"),
         pytest.param(
             'echo "gh issue edit 5 --add-label plan-ready"', id="quoted-mention"
@@ -10026,13 +10066,36 @@ _ISSUE_CLOSE = "block_issue_close.sh"
             id="here-string-spliced-state",
         ),
         pytest.param(
-            'gh api -X PATCH repos/o/r/issues/5 --input - <<< \'{"ti""tle":"x"}\'',
-            id="here-string-spliced-double-quotes",
+            'gh api -X PATCH repos/o/r/issues/5 --input - <<< "{\\"state\\":1}"',
+            id="here-string-double-quoted",
         ),
         pytest.param(
             'gh api repos/o/r/issues/5 --jq "$(x)"; '
             "gh api -X PATCH repos/o/r/pulls/3 -f state=closed",
             id="accepted-merged-false-block",
+        ),
+        *(
+            pytest.param(f"{prefix} <<< {operand}", id=f"here-string-{kind}-{n}")
+            for kind, prefix in (
+                ("rest", "gh api -X PATCH repos/o/r/issues/5 --input -"),
+                ("graphql", "gh api graphql --input /dev/stdin"),
+            )
+            for n, operand in enumerate(_NON_LITERAL_HERE_STRINGS)
+        ),
+        *(
+            pytest.param(command, id=f"glob-{n}")
+            for n, command in enumerate(
+                (
+                    "gh api -X PATCH repos/o/r/issues/5 -f sta?e=closed",
+                    "gh api -X PATCH repos/o/r/issues/5 -f st*=closed",
+                    "gh api -X PATCH repos/o/r/issues/5 -f s[t]ate=closed",
+                    "gh api -X P?TCH repos/o/r/issues/5",
+                    "gh api -X PATCH repos/o/r/issue?/5 -f title=x",
+                    "gh api -X PATCH repos/o/r/issues/* -f title=x",
+                    "gh api -X PATCH repos/o/r/issues/5? -f title=x",
+                    "gh api -X PATCH repos/o/r/[i]ssues/5 -f title=x",
+                )
+            )
         ),
         *(
             pytest.param(
@@ -10171,6 +10234,19 @@ def test_issue_close_reads_an_input_file(
         pytest.param(
             "gh api repos/{owner}/{repo}/issues/5 -X PATCH -f title=x",
             id="gh-placeholders-unquoted",
+        ),
+        pytest.param(
+            "gh api -X PATCH 'repos/o/r/issues/5?x=1' -f title=x",
+            id="query-string-endpoint",
+        ),
+        # Inside one single-quoted literal `""` is plain text, read as sent.
+        pytest.param(
+            'gh api -X PATCH repos/o/r/issues/5 --input - <<< \'{"ti""tle":"x"}\'',
+            id="here-string-literal-double-quotes",
+        ),
+        pytest.param(
+            "gh api -X PATCH repos/o/r/issues/5 -f 'labels[]=bug'",
+            id="array-field-key",
         ),
         pytest.param(
             'gh api -X PATCH repos/o/r/issues/5 --input - <<< \'{"title":"x"}\'',

@@ -14,23 +14,43 @@
 # bypassing agent hooks):
 #     ! gh issue close 9
 #
-# Known residuals: a forge CLI or interpreter script calling gh from its
-# own subprocess (the emergency-ledger CLI closes its own ledger issue
-# that way, by design); a query or body piped from another program
-# (`… | gh api --input -`); a body or query encoded so `state` or the
-# mutation name never appears literally (a JSON `\u00XX` escape is
-# refused; other encodings are not seen), or built from an expansion
-# after its first word (the --words view cannot tell it from a GraphQL
-# `$variable`); a command name held in a variable
-# (`G=gh; $G issue close 5`, as in block_pr_merge.sh); `gh alias`.
-# `gh pr close` is a PR, not an issue, and out of scope.
+# Reading rules: a call's words run from its `gh` to the next `gh` call
+# (with a `$(` and several calls, also to the end of the command); any
+# write method anywhere in them wins; a value built at run time (`$X`,
+# `$(…)`, a backtick), an unquoted `{…}` brace expansion (gh's
+# `{owner}`/`{repo}`/`{branch}` excepted), or a `*`, `?` or bracket glob
+# in a method, endpoint or field name counts as unknown — a `?` starting
+# a `name=value` query string after the path is fine; an `--input -`
+# here-string is read only when it is one plain single-quoted literal.
 #
-# Accepted false block: when a command holds a `$(` and more than one gh
-# call, a merged segment judges every call after the first as one, so
-# one call's `state` field can meet another call's issue endpoint
-# (`gh api repos/o/r/issues/5 --jq "$(x)"; gh api -X PATCH
-# repos/o/r/pulls/3 -f state=closed` is refused). Splitting the command
-# avoids it; reading less would let a nested gh call hide a close.
+# Known residuals (a hook reads the Bash command an agent types, nothing
+# more):
+# - calls it never sees: a forge CLI or interpreter script calling gh
+#   from its own subprocess (the emergency-ledger CLI closes its own
+#   ledger issue that way, by design); a GitHub MCP server or any other
+#   non-Bash tool; `gh alias`; a command assembled at run time
+#   (`G=gh; $G issue close 5`, `eval "$CMD"`), as in block_pr_merge.sh;
+# - text it cannot read as sent: a query or body piped from another
+#   program (`… | gh api --input -`), judged only by the command text; a
+#   body or query encoded so `state` or the mutation name never appears
+#   literally (a JSON `\u00XX` escape is refused; base64 and other
+#   encodings are not seen); an expansion inside an unquoted heredoc
+#   (`<<EOF`), whose body is judged as typed; an expansion inside a
+#   GraphQL query after its first word (the --words view cannot tell it
+#   from a GraphQL `$variable`); an --input or query file rewritten after
+#   this hook read it.
+# `gh pr close` is a PR, not an issue, and out of scope. A PR's
+# `Closes #N` closes issues when the user merges it, by design.
+#
+# Accepted false blocks: a quoted `?`, `*` or `[…]` in a method, endpoint
+# path or field name looks the same as an unquoted one and is refused; a
+# here-string that is not one plain single-quoted literal is refused even
+# when harmless; and when a command holds a `$(` and more than one gh
+# call, a merged segment judges every call after the first as one, so one
+# call's `state` field can meet another call's issue endpoint (`gh api
+# repos/o/r/issues/5 --jq "$(x)"; gh api -X PATCH repos/o/r/pulls/3 -f
+# state=closed` is refused). Splitting the command avoids it; reading
+# less would let a nested gh call hide a close.
 set -e
 INPUT=$(cat)
 COMMAND=$(jq -r '.tool_input.command // empty' <<< "$INPUT")
@@ -166,6 +186,46 @@ _braced() {
     [[ "$v" == *'{'* ]]
 }
 
+# A bracket expression that globs: `[` with at least one member before
+# its `]` (`[y]`, `[]]`); `key[]` alone is literal.
+RE_BRACKET='\[[!^]?(\]|[^]])[^]]*\]'
+
+# _globbed <value> — the value may glob into words the hook never sees: a
+# `*`, a `?` or a bracket expression. Quoted, these look the same in the
+# --words view, so a quoted one is refused too.
+_globbed() {
+    [[ "$1" == *'*'* || "$1" == *'?'* || "$1" =~ $RE_BRACKET ]]
+}
+
+# _ep_globbed <endpoint> — as _globbed, except that the first `?` may
+# start a query string (`issues?state=open`, `issues/5?x=1`) when one
+# with a `name=value` follows it.
+_ep_globbed() {
+    local path=${1%%\?*} query
+    [[ "$path" == *'*'* || "$path" =~ $RE_BRACKET ]] && return 0
+    [[ "$1" == *'?'* ]] || return 1
+    query=${1#*\?}
+    [[ "$query" == *=* ]] || return 0
+    _globbed "$query"
+}
+
+# _herestrings_plain — every `<<<` operand in the raw command is one plain
+# single-quoted literal, read by the hook exactly as it is sent: no
+# double quotes, `$`, `$'…'`, backtick, `\` or second quote next to it.
+_herestrings_plain() {
+    local rest="$COMMAND" op body
+    while [[ "$rest" == *'<<<'* ]]; do
+        rest=${rest#*<<<}
+        op=${rest#"${rest%%[![:space:]]*}"}
+        [[ "$op" == "'"* ]] || return 1
+        body=${op#\'}
+        [[ "$body" == *"'"* ]] || return 1
+        rest=${body#*\'}
+        case "$rest" in "" | [[:space:]]* | [\;\&\|\)\<\>]*) ;; *) return 1 ;; esac
+    done
+    return 0
+}
+
 # _endpoints <word…> — set EPS to each call's endpoint: the first
 # positional word after each `api`, skipping options and their values.
 _endpoints() {
@@ -209,12 +269,8 @@ _file_body() {
 # `"state"`). A here-string that splices quotes (`''`, `""`) after `<<<`
 # is read with certainty by neither, so it is refused.
 _stdin_text() {
-    local after
-    if [[ "$COMMAND" == *'<<<'* ]]; then
-        after=${COMMAND#*<<<}
-        if [[ "$after" == *"''"* || "$after" == *'""'* ]]; then
-            _refuse " (the --input here-string splices quotes, so the hook cannot read it)"
-        fi
+    if ! _herestrings_plain; then
+        _refuse " (the --input here-string is not one plain single-quoted literal, so the hook cannot read it)"
     fi
     ST="$COMMAND"$'\n'"$WORDS"
 }
@@ -281,7 +337,7 @@ while IFS= read -r seg; do
             case "${m^^}" in
                 POST | PUT | PATCH) write=1 ;;
                 DELETE) write=1; delete=1 ;;
-                *) { _unknowable "$m" || _braced "$m"; } && { write=1; unknown_method=1; } ;;
+                *) { _unknowable "$m" || _braced "$m" || _globbed "$m"; } && { write=1; unknown_method=1; } ;;
             esac
         fi
     done
@@ -294,7 +350,7 @@ while IFS= read -r seg; do
     graphql=0
     issue=0
     for ep in "${EPS[@]}"; do
-        { _unknowable "$ep" || _braced "$ep"; } && _refuse " (an API write whose endpoint the hook cannot read)"
+        { _unknowable "$ep" || _braced "$ep" || _ep_globbed "$ep"; } && _refuse " (an API write whose endpoint the hook cannot read)"
         [ "$ep" = graphql ] && graphql=1
         [[ "$ep" =~ $RE_ISSUE ]] && issue=1
     done
@@ -344,6 +400,7 @@ while IFS= read -r seg; do
                 _refuse " (a field name the hook cannot read may set the state)"
                 ;;
         esac
+        _globbed "$key" && _refuse " (a field name that may glob may set the state)"
     done
     # A request body from --input: a file is read; stdin is judged by the
     # raw command text (a heredoc or here-string holds it there).

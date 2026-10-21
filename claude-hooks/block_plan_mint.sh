@@ -43,20 +43,43 @@
 # issue-triage-forge wrapper, which only delegates. A human runs the
 # command directly with `! <command>`.
 #
-# Known residuals (a hook reads the command an agent types, nothing
-# more): a Python or other interpreter script, or a forge CLI, making the
-# call from its own subprocess; a body encoded or computed so the marker
-# never appears literally (a JSON `\u00XX` escape in an --input or query
-# file is refused; other encodings are not seen), or spliced across
-# expansions, including an expansion inside a GraphQL query after its
-# first word (the --words view cannot tell it from a GraphQL `$variable`);
-# a file rewritten
-# after this hook read it (`gen > p.md; gh issue comment 1 -F p.md` reads
-# the old p.md); a command name held in a variable (`G=gh; $G issue
-# edit …`, as in block_pr_merge.sh); `gh alias`; `gh label clone`; and
-# agent_type spoofing
-# through a local `.claude/agents/issue-triage.md`. The guard proves which
-# agent typed a command, never that a human validated the plan.
+# Reading rules: a call's words run from its `gh` to the next `gh` call
+# (with a `$(` and several calls, also to the end of the command); any
+# write method anywhere in them wins; a value built at run time (`$X`,
+# `$(…)`, a backtick), an unquoted `{…}` brace expansion, or a `*`, `?`
+# or bracket glob in a label, method, endpoint or field name counts as
+# unknown; an `--input -` here-string is read only when it is one plain
+# single-quoted literal.
+#
+# Known residuals (a hook reads the Bash command an agent types, nothing
+# more):
+# - calls it never sees: a Python or other interpreter script, or a forge
+#   CLI, calling gh from its own subprocess; a GitHub MCP server or any
+#   other non-Bash tool; `gh alias`; a command assembled at run time
+#   (`G=gh; $G issue edit …`, `eval "$CMD"`), as in block_pr_merge.sh;
+#   `gh label clone`; a label applied by a GitHub workflow or issue
+#   template rather than by the agent's own call;
+# - text it cannot read as sent: a body encoded so the marker never
+#   appears literally (a JSON `\u00XX` escape in an --input or query file
+#   is refused; base64 and other encodings are not seen); an expansion
+#   inside an unquoted heredoc (`<<EOF`), whose body is judged as typed;
+#   an expansion inside a GraphQL query after its first word (the --words
+#   view cannot tell it from a GraphQL `$variable`); a file rewritten
+#   after this hook read it (`gen > p.md; gh issue comment 1 -F p.md`
+#   reads the old p.md);
+# - A3 for issue-triage itself: triage is trusted with bodies the hook
+#   cannot read (a `$VAR`, a pipe, a non-literal here-string), so a
+#   sign-off hidden in one is not seen;
+# - agent_type spoofing through a local `.claude/agents/issue-triage.md`.
+# The guard proves which agent typed a command, never that a human
+# validated the plan.
+#
+# Accepted false blocks: a quoted `?`, `*` or `[…]` in a label or field
+# name looks the same as an unquoted one and is refused; a here-string
+# that is not one plain single-quoted literal is refused even when
+# harmless; with a `$(` and several gh calls, the merged segment can join
+# one call's label field to another call's issue endpoint; a sign-off
+# phrase used harmlessly ("validated by CI") is refused.
 set -e
 INPUT=$(cat)
 COMMAND=$(jq -r '.tool_input.command // empty' <<< "$INPUT")
@@ -191,6 +214,46 @@ _braced() {
     [[ "$v" == *'{'* ]]
 }
 
+# A bracket expression that globs: `[` with at least one member before
+# its `]` (`[y]`, `[]]`); `key[]` alone is literal.
+RE_BRACKET='\[[!^]?(\]|[^]])[^]]*\]'
+
+# _globbed <value> — the value may glob into words the hook never sees: a
+# `*`, a `?` or a bracket expression. Quoted, these look the same in the
+# --words view, so a quoted one is refused too.
+_globbed() {
+    [[ "$1" == *'*'* || "$1" == *'?'* || "$1" =~ $RE_BRACKET ]]
+}
+
+# _ep_globbed <endpoint> — as _globbed, except that the first `?` may
+# start a query string (`issues?state=open`, `issues/5?x=1`) when one
+# with a `name=value` follows it.
+_ep_globbed() {
+    local path=${1%%\?*} query
+    [[ "$path" == *'*'* || "$path" =~ $RE_BRACKET ]] && return 0
+    [[ "$1" == *'?'* ]] || return 1
+    query=${1#*\?}
+    [[ "$query" == *=* ]] || return 0
+    _globbed "$query"
+}
+
+# _herestrings_plain — every `<<<` operand in the raw command is one plain
+# single-quoted literal, read by the hook exactly as it is sent: no
+# double quotes, `$`, `$'…'`, backtick, `\` or second quote next to it.
+_herestrings_plain() {
+    local rest="$COMMAND" op body
+    while [[ "$rest" == *'<<<'* ]]; do
+        rest=${rest#*<<<}
+        op=${rest#"${rest%%[![:space:]]*}"}
+        [[ "$op" == "'"* ]] || return 1
+        body=${op#\'}
+        [[ "$body" == *"'"* ]] || return 1
+        rest=${body#*\'}
+        case "$rest" in "" | [[:space:]]* | [\;\&\|\)\<\>]*) ;; *) return 1 ;; esac
+    done
+    return 0
+}
+
 # _endpoints <word…> — set EPS to each call's endpoint: the first
 # positional word after each `api`, skipping options and their values.
 _endpoints() {
@@ -269,6 +332,8 @@ _body_file() {
         - | /dev/stdin)
             if [ "$HAS_HEREDOC" != 1 ]; then
                 UNKNOWN="the comment body is read from a pipe the hook cannot see"
+            elif ! _herestrings_plain; then
+                UNKNOWN="the body here-string is not one plain single-quoted literal, so the hook cannot read it"
             elif [ "${2:-}" = json ] && _encoded "$COMMAND"; then
                 UNKNOWN="the --input body is JSON-escaped (\\u00XX), so the hook cannot read it"
             fi
@@ -447,7 +512,7 @@ if invoked "${GH_ANCHOR}api\b"; then
                 explicit=1
                 case "${m^^}" in
                     POST | PUT | PATCH) write=1 ;;
-                    *) { _unknowable "$m" || _braced "$m"; } && write=1 ;;
+                    *) { _unknowable "$m" || _braced "$m" || _globbed "$m"; } && write=1 ;;
                 esac
             fi
         done
@@ -462,7 +527,7 @@ if invoked "${GH_ANCHOR}api\b"; then
         comment_seg=0
         issue_seg=0
         for ep in "${EPS[@]}"; do
-            { _unknowable "$ep" || _braced "$ep"; } && ep_unknown=1
+            { _unknowable "$ep" || _braced "$ep" || _ep_globbed "$ep"; } && ep_unknown=1
             [ "$ep" = graphql ] && graphql=1
             [[ "$ep" =~ $RE_LABELS ]] && label_seg=1
             [[ "$ep" =~ $RE_COMMENTS ]] && comment_seg=1
@@ -499,8 +564,8 @@ if invoked "${GH_ANCHOR}api\b"; then
             for input in "${inputs[@]}"; do
                 case "$input" in
                     - | /dev/stdin)
-                        if [ "$HAS_HEREDOC" = 1 ]; then
-                            text="$text"$'\n'"$COMMAND"
+                        if [ "$HAS_HEREDOC" = 1 ] && _herestrings_plain; then
+                            text="$text"$'\n'"$COMMAND"$'\n'"$WORDS"
                         else
                             query_unknown=1
                         fi
@@ -542,6 +607,11 @@ if invoked "${GH_ANCHOR}api\b"; then
                     "" | *"$N"* | *'$'* | *'('* | *'`'* | *'{'*)
                         LABEL_WRITE="an API issue write whose field name the hook cannot read"
                         ;;
+                    *)
+                        if _globbed "$key"; then
+                            LABEL_WRITE="an API issue write whose field name may glob"
+                        fi
+                        ;;
                 esac
             done
             for input in "${inputs[@]}"; do
@@ -551,9 +621,8 @@ if invoked "${GH_ANCHOR}api\b"; then
                         # view (a here-string's quotes are resolved there).
                         if LC_ALL=C grep -qiE "labels" <<< "$COMMAND"$'\n'"$WORDS"; then
                             LABEL_WRITE="setting issue labels through the API"
-                        elif [[ "$COMMAND" == *'<<<'* ]] \
-                            && [[ "${COMMAND#*<<<}" == *"''"* || "${COMMAND#*<<<}" == *'""'* ]]; then
-                            LABEL_WRITE="an API issue write whose --input here-string splices quotes the hook cannot read"
+                        elif ! _herestrings_plain; then
+                            LABEL_WRITE="an API issue write whose --input here-string is not one plain single-quoted literal"
                         elif [ "$HAS_HEREDOC" != 1 ]; then
                             LABEL_WRITE="an API issue write whose --input body is piped where the hook cannot read it"
                         elif _encoded "$COMMAND"; then
