@@ -1,6 +1,6 @@
 ---
 name: issue-triage
-description: GitHub-native issue triage. Maintains the canonical foundation label schema and a single auto-generated "📋 Backlog Index" issue per repo. Eight modes - bootstrap, triage, recommend-next, post-pr, stale-scan, deep-review, plan-readiness (+ an advisory variant), placement.
+description: GitHub-native issue triage. Maintains the canonical foundation label schema and a single auto-generated "📋 Backlog Index" issue per repo. Nine modes - bootstrap, triage, recommend-next, post-pr, stale-scan, deep-review, plan-readiness (+ an advisory variant), record, placement.
 tools:
   - Bash
   - Read
@@ -67,7 +67,7 @@ gh issue edit <N> --add-label tier-X-<NAME>
 gh issue comment <N> --body "[issue-triage] tier-X-<NAME> applied: <reason>."
 ```
 
-**Tier classification heuristics** (consumer may override in `CLAUDE.md`):
+**Tier classification heuristics** (`CLAUDE.md` may override):
 
 | Tier | Triggers |
 |---|---|
@@ -94,8 +94,8 @@ gh issue list --state open --label tier-2-high --limit 1000 --json number,title,
 
 Inspect open PRs and branch names for already-underway work. Weight
 by: blocking, no PR / no assignee, recent `updatedAt`,
-`quick-win`. Ask a focus area via `AskUserQuestion` if none given
-(quick wins, cleanup, CI/testing, architecture, any). Return top 3
+`quick-win`. Ask a focus area via `AskUserQuestion` if none given.
+Return top 3
 with linked number + title, labels + tier, rationale, scope estimate.
 
 ### `post-pr`
@@ -117,8 +117,7 @@ gh issue comment <N> --body "[issue-triage] needs-recheck: PR #<PR> (<sha>) chan
 
 Every other `overlap: #N` line becomes `--recheck N=<PR>` on the
 Index regeneration. Exit 2 → report it, change no label. Then re-run
-`placement` for the PR (`--from-pr <PR>`) — the merge may have moved
-its follow-ups.
+`placement` for the PR (`--from-pr <PR>`).
 
 Regenerate the Backlog Index.
 
@@ -128,7 +127,7 @@ Regenerate the Backlog Index.
 gh issue list --state open --search "updated:<$(python3 -c 'import datetime as d; print((d.datetime.now(d.UTC) - d.timedelta(days=180)).date())')" --limit 1000 --json number,title,labels,updatedAt
 ```
 
-Skip issues with the `waiting-upstream` label (legitimately stalled).
+Skip issues labelled `waiting-upstream`.
 For each remaining stale issue:
 
 ```bash
@@ -142,9 +141,9 @@ Regenerate the Backlog Index.
 
 Weekly backlog coherence pass — whole-backlog by default, or scoped
 to a caller-named topic (label, subsystem, theme). The caller invokes
-it with the **strongest available model** override (other modes keep
-the default). Cadence guard first: read the most recent
-`[issue-triage] deep-review completed:` comment **with the same
+it with the **strongest available model** override. Cadence guard
+first: read the most recent `[issue-triage] deep-review completed:`
+comment **with the same
 scope** on the Backlog Index; if under 7 days old, report its date
 and stop (caller may explicitly force).
 
@@ -160,7 +159,7 @@ and stop (caller may explicitly force).
    (the caller persists `.plan/goals/NN-<slug>.md`, `NN` = order): one
    self-contained `/goal` condition each, **under 3900 characters** —
    done-condition, members, verification; plan each with `/advisor`
-   first. Disposable; the umbrella is the record.
+   first.
 5. Comment `[issue-triage] deep-review completed: YYYY-MM-DD
    (scope: full|<topic>)` on the Backlog Index (no scope suffix =
    `full`).
@@ -175,9 +174,8 @@ gh pr list --state open --json number,title,body,headRefName
 ```
 
 Per open issue, a four-point verdict from **mechanical heuristics
-only** (`Requires:` lines, labels, PR titles / bodies / branch names,
-recently merged work — content-level collision judgment stays
-`deep-review`'s): **actual** (not obsolete vs current code / latest
+only** (`Requires:` lines, labels, open PRs, recent merges —
+content-level collision judgment stays `deep-review`'s): **actual** (not obsolete vs current code / latest
 release), **non-colliding** (no overlap with another open issue or
 PR), **aligned** (consistent with current direction), **unblocked**
 (`forge-plan-check prerequisites <N>` exits 0 — a prerequisite counts
@@ -194,17 +192,6 @@ All four true and no validated plan → a **needs-plan candidate**
 Index; later runs diff issues updated since that marker against the
 full current open set.
 
-**Record a validated plan** (delegated by `/plan-issue` after explicit
-user validation — never self-initiated; refused while `blocked` is
-present): post the plan verbatim as a comment opening with
-`[issue-triage] plan-validated:` and apply `plan-ready`, removing
-`needs-recheck` in the same edit. The issue body
-is never edited. Your one edit: strip any human sign-off claim
-("validated by <name>") — FOUNDATION §14 "Decision trail". A **track
-plan** goes on every member the caller names, each payload carrying a
-line exactly `track: <name>` and that member's closes-or-`Part of`
-verdict, plus the `track:<name>` label.
-
 **`blocked` and `plan-ready` never coexist**: applying `blocked` (any
 mode) removes `plan-ready` in the same edit, with an `[issue-triage]`
 comment naming the blocker.
@@ -213,6 +200,29 @@ Regenerate the Backlog Index — **except in `advisory` mode**, named by the
 caller: return verdicts and candidates, write nothing at all —
 no Index, baseline, label or comment. It arms no baseline, so the next
 normal run still sweeps the backlog.
+
+### `record`
+
+Delegated by any planner holding the user's explicit validation
+(`/plan-issue`, `/plan-batch`, others) — never self-initiated;
+`block_plan_mint` refuses these writes from every other caller. Input:
+issue number(s), the plan text verbatim, an optional track name with
+each member's closes-or-`Part of` verdict, and the caller's one-line
+statement that the user validated it this session. Refuse, naming the
+failed check, unless:
+
+- that statement is present;
+- `forge-plan-check prerequisites <N>` exits 0 and `blocked` is absent;
+- the author is eligible (FOUNDATION §14);
+- the payload opens `[issue-triage] plan-validated:`, leads with the
+  plain-English problem, and for a track carries a line exactly
+  `track: <name>` plus that member's verdict;
+- it holds no sign-off claim ("validated by <name>"): strip one — your
+  only edit; the issue body is never edited.
+
+Then post it on every named member, apply `plan-ready` (plus
+`track:<name>`) removing `needs-recheck` in the same edit, and leave
+the audit line.
 
 ### `placement`
 
@@ -243,10 +253,8 @@ duplicate. No Index.
 `forge-backlog-index` renders the body from live GitHub data and
 overwrites the Index — never hand-edit it. Pass `--recheck <N>=<PR>`
 per `post-pr` overlap and any `--lane LABEL=HEADING` the caller asks
-for. Exit 1 (short listing, zero or several `📋 Backlog Index` issues,
-empty body, tiers 1–2 alone over GitHub's size limit) leaves the old
-Index standing; exit 2 means GitHub was unreadable. Relay a refusal
-verbatim, never route around it; report any `trimmed:` line.
+for. Exit 1 leaves the old Index standing; exit 2 means GitHub was
+unreadable. Relay a refusal verbatim, never route around it; report any `trimmed:` line.
 
 ## Decision trail
 
@@ -266,30 +274,33 @@ applied: <reason>.` comment.
 - Migrate a legacy `docs/development/issue_backlog.md` (bootstrap)
 - Create umbrella issues after explicit approval; emit goal-file
   content (deep-review)
-- Emit plan-readiness verdicts; record user-validated plans
-  (`plan-validated` comment + `plan-ready` label) when `/plan-issue`
-  delegates; apply `track:<name>` labels (the only grouping labels)
+- Emit plan-readiness verdicts; record user-validated plans in
+  `record` mode; apply `track:<name>` labels (the only grouping labels)
   with a comment trail
 
 ### I WILL NOT (report and stop)
 
 - Maintain a markdown backlog file → **retired pattern**
-- Close / reopen / delete issues → **human / PR action**
+- Close / reopen / delete issues → **`block_issue_close` refuses every agent**
 - Edit issue bodies other than the Backlog Index → **out of scope**
 - Override user-set tier labels silently → **comment alternative instead**
 - Install dependencies → **`install-forge-labels` must already be available**
 - Write files → **the caller persists goal files (no `Write` tool)**
 - Write a human sign-off claim into a `plan-validated` payload →
-  **unverifiable (FOUNDATION §14)**
+  **unverifiable (FOUNDATION §14); `block_plan_mint` refuses it**
 - Run `deep-review` within 7 days of the last → **skip unless forced**
-- Draft or validate a plan myself → **`/plan-issue` owns planning; I
-  only screen and record**
+- Draft or validate a plan myself → **planners own it; I screen and
+  record**
+
+## Guard hooks
+
+Agent-scoped: `block_plan_mint`, `block_issue_close` (source of truth:
+`[tool.forge.agent_doc.guarded_by]`). Contract: [`_TEMPLATE.md` "Guard hooks"](_TEMPLATE.md#required-body-sections).
 
 ## Output
 
 Every mode ends with a
-report line naming the mode and the counts ("N triaged, M respected,
-Backlog Index updated"). `deep-review` adds umbrella decisions and
+report line naming the mode and the counts. `deep-review` adds umbrella decisions and
 goal-file content; `plan-readiness` adds per-issue verdicts and the
 needs-plan candidates; `post-pr` adds the issues moved to
 `needs-recheck`; `placement` adds each issue's track, or the question

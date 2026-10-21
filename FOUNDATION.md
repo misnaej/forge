@@ -281,6 +281,12 @@ gate.
   this (blocks `gh pr merge` and the equivalent API merges — REST
   `.../pulls/N/merge` and the GraphQL merge, auto-merge and enqueue mutations); users
   merge via `! gh pr merge ...`.
+- **NEVER close, reopen, delete or transfer issues autonomously.** Whether
+  an issue is done is the user's decision — a PR closes what it delivers
+  through its close keywords when the user merges it. `block_issue_close`
+  enforces this with **no bypass**, issue-triage included (blocks `gh issue
+  close|reopen|delete|transfer` and the equivalent REST state writes and
+  GraphQL mutations); users act via `! gh issue close ...`.
 - **NEVER delete a protected remote branch** (`base_branch`).
   Irreversible, and since an agent runs with the user's credentials it *bypasses*
   server-side deletion rulesets. `block_branch_deletion` enforces this with **no
@@ -1126,7 +1132,8 @@ and its premise re-checked mechanically at pickup and on every merge
 (`forge-plan-check drift` / `overlap`) — that is what makes unattended
 execution safe — safe *given the chain is followed*, which is why the
 one-owner rule below (only `issue-triage` records, and only on delegation
-from `/plan-issue`) is load-bearing rather than tidy.
+from a planner holding the user's validation) is load-bearing rather
+than tidy.
 
 **Only a contributor's issue is plannable.** Anyone can open an issue,
 and a plan is the one artifact that turns issue text into work an
@@ -1189,7 +1196,8 @@ Every label change leaves a comment prefixed `[issue-triage]` — auditable,
 reversible, no silent state. Two comment kinds, deliberately distinct: the
 bare prefix marks short **audit lines**; a comment opening
 `[issue-triage] plan-validated:` is the **execution payload** `/sentinel`
-runs — posted only by `issue-triage` on delegation from `/plan-issue`,
+runs — posted only by `issue-triage`, in its `record` mode on delegation
+from a planner (`/plan-issue`, `/plan-batch`),
 alongside the `plan-ready` label. The issue body is never edited.
 `/sentinel` leaves its own trail with the `[sentinel]` prefix — `taken
 up — branch <name>, <date>` at pickup, `PR #N opened` at the wrap-up —
@@ -1212,6 +1220,17 @@ what the three do and do not attest: that the payload came from a
 credential with write access, never that a particular human read it.
 Adding an unverifiable fourth claim does not close that gap — it
 disguises it. The recorder strips it.
+
+**"Posted only by `issue-triage`" is enforced, within a hook's reach.**
+The `block_plan_mint` hook refuses every other caller — the main thread
+included — that applies `plan-ready` or writes a `plan-validated:`
+payload, and refuses a payload carrying a sign-off claim from anyone. A
+planner delegates instead to issue-triage's `record` mode, which checks
+the plan mechanically before marking it. The limit is honest: a hook
+reads the command an agent types, never a script's or a CLI's own
+subprocess calls, and it proves which agent typed it, not that a human
+validated anything. So no forge CLI may add `plan-ready` or post a
+`plan-validated:` payload — that route would pass every hook unseen.
 
 ---
 

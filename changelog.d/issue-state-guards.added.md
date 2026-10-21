@@ -1,0 +1,6 @@
+bump: minor
+
+- A new `block_plan_mint` hook stops any agent other than issue-triage — the main session included — from marking an issue `plan-ready` or posting or editing the `[issue-triage] plan-validated:` comment that `/sentinel` executes unattended. A comment whose body the hook cannot read (piped, built from a variable or substitution, or a missing file) is refused for those callers too. A plan payload carrying a sign-off claim such as "validated by <name>" is refused from every caller, issue-triage included.
+- A new `block_issue_close` hook stops every agent, issue-triage included, from closing, reopening, deleting or transferring an issue, through `gh issue`, the REST API or GraphQL. Whether an issue is done is the user's call; run it yourself with `! gh issue close …`.
+- issue-triage has a documented `record` mode: any planner that has the user's explicit validation delegates the plan to it, and it checks prerequisites, eligibility and the payload's shape before posting it and applying `plan-ready`. `/plan-issue` and `/plan-batch` record through it.
+- Upgrade note: an agent workflow that labelled issues `plan-ready`, posted plan payloads or closed issues itself is now refused; delegate to issue-triage's `record` mode, or close the issue yourself.

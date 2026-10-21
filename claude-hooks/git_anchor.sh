@@ -7,6 +7,7 @@
 # block_git_rebase.sh, block_raw_git.sh, block_git_destructive.sh,
 # block_amend_pushed_commit.sh, block_protected_branches.sh,
 # block_no_verify.sh, block_claude_attribution.sh, block_pr_merge.sh,
+# block_issue_close.sh, block_plan_mint.sh,
 # block_unverified_pr_create.sh, warn_generated_conflicts.sh,
 # warn_stale_wrapup.sh) and the other locating guards
 # (block_install_deps.sh, block_raw_ruff.sh, block_branch_deletion.sh,

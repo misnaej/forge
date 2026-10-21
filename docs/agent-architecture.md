@@ -332,6 +332,8 @@ graph LR
   main_agent{{"Main agent<br/>orchestrator"}}
   human -->|drives| main_agent
   cli_install_forge_labels[("install-forge-labels<br/>CLI")]
+  hk_block_plan_mint[/"block_plan_mint<br/>hook"/]
+  hk_block_issue_close[/"block_issue_close<br/>hook"/]
   issue_triage["⚖️ issue-triage<br/>AI agent"]
   issue_triage_forge["⚖️ issue-triage-forge<br/>AI agent"]
   sk_next(["/next<br/>skill"])
@@ -354,9 +356,13 @@ graph LR
   sk_sentinel -->|executes plan-ready issues via| sk_pr
   sk_sentinel -->|empty-loop screen via| issue_triage
   issue_triage -->|invokes| cli_install_forge_labels
+  issue_triage -.->|guarded by| hk_block_plan_mint
+  issue_triage -.->|guarded by| hk_block_issue_close
   class human person
   class main_agent orchestrator
   class cli_install_forge_labels cli
+  class hk_block_plan_mint hook
+  class hk_block_issue_close hook
   class issue_triage agent
   class issue_triage mutator
   class issue_triage_forge agent

@@ -172,10 +172,9 @@ a decision the user needs.
 
 Explicit validation per `/plan-issue` Step 4, plus the one that only a
 concurrent run can get wrong: validation of a *different* issue in this
-batch is not validation of this one. Record through the
-existing path, `/plan-issue` Step 5: delegate to `forge:issue-triage`,
-which owns issue-state mutation (FOUNDATION §3) and posts the payload
-with no attribution line (FOUNDATION §14 "Decision trail").
+batch is not validation of this one. Record through issue-triage's
+`record` mode, as `/plan-issue` Step 5 does (the `block_plan_mint` hook
+enforces the delegation).
 
 A track plan is recorded on **every member issue**: the same plan, the
 same `track:<name>` label, the exact line `track: <name>`, and whether

@@ -45,6 +45,16 @@
           },
           {
             "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_issue_close.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_plan_mint.sh",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_unverified_pr_create.sh",
             "timeout": 5
           },

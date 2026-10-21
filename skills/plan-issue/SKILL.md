@@ -97,19 +97,17 @@ answers, or "looks fine so far" are not validation.
 
 ## Step 5: Record via `issue-triage`
 
-Issue-state mutation has one owner (FOUNDATION §3) — delegate, never
-run `gh` label/comment commands here:
+Issue-state mutation has one owner (FOUNDATION §3) — delegate to
+`issue-triage`'s `record` mode, never run `gh` label/comment commands
+here (the `block_plan_mint` hook refuses them from any other caller):
 
 ```
-Agent(subagent_type="forge:issue-triage", prompt="Record a validated
-plan for issue #<N>: post the plan below as a comment opening with
-`[issue-triage] plan-validated:` and apply the `plan-ready` label.
-<validated plan text>")
+Agent(subagent_type="forge:issue-triage", prompt="record mode for issue
+#<N>: <validated plan text>; the user explicitly validated this plan in
+this session")
 ```
 
-The plan text names no validator: `issue-triage` strips an attribution
-line rather than posting one, and FOUNDATION §14 "Decision trail" says
-what carries the sign-off instead.
+The plan text names no validator (FOUNDATION §14 "Decision trail").
 
 **The recorded payload leads with the same statement**, ahead of scope,
 approach, files and bump class. Whoever picks the work up reads this

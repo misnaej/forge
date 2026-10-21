@@ -164,6 +164,8 @@ enforcement:
 - block_protected_branches.sh: block direct pushes to the protected base branch (`[tool.forge].base_branch`)
 - block_no_verify.sh: block `--no-verify`
 - block_pr_merge.sh: block autonomous PR merges
+- block_issue_close.sh: block agents closing, reopening, deleting or transferring issues — CLI, REST and GraphQL forms (no bypass, issue-triage included)
+- block_plan_mint.sh: only issue-triage may apply `plan-ready` or post / edit a `plan-validated:` payload, and never with a sign-off claim; a non-triage issue comment whose body the hook cannot read is refused
 - block_protected_files.sh: protect foundation-owned files
 - check_commit_format.sh: enforce conventional commit format
 - check_foundation_sync.sh: verify FOUNDATION.md sync

@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from forge.git_utils import code_health_dir
+from forge.plan_staleness import PLAN_MARKER
 from tests.conftest import GIT_ENV, init_git_repo, init_single_track_repo
 
 
@@ -1414,6 +1415,8 @@ _GIT_GUARD_HOOKS = (
     "block_claude_attribution.sh",
     "block_pr_merge.sh",
     "block_unverified_pr_create.sh",
+    "block_plan_mint.sh",
+    "block_issue_close.sh",
 )
 
 
@@ -2055,6 +2058,8 @@ _GIT_GUARD_BLOCKING_COMMANDS = {
         'git commit -m "Co-Authored-By: Claude <noreply@anthropic.com>"'
     ),
     "block_pr_merge.sh": "gh pr merge 1 --squash",
+    "block_plan_mint.sh": "gh issue edit 1 --add-label plan-ready",
+    "block_issue_close.sh": "gh issue close 1",
     "block_unverified_pr_create.sh": "gh pr create --title x",
 }
 
@@ -6313,6 +6318,8 @@ def test_raw_wrapup_post_allows_an_empty_command() -> None:
     [
         pytest.param(_AMEND, id="amend_pushed_commit"),
         pytest.param(_RAW_WRAPUP_POST, id="raw_wrapup_post"),
+        pytest.param("block_plan_mint.sh", id="plan_mint"),
+        pytest.param("block_issue_close.sh", id="issue_close"),
     ],
 )
 def test_hook_registered_in_plugin_json_pre_tool_use(hook: str) -> None:
@@ -9249,3 +9256,408 @@ def test_load_continuation_is_silent_when_the_note_is_a_symlink(
         env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)},
     )
     assert (proc.returncode, proc.stdout) == (0, "")
+
+
+# --- block_plan_mint.sh: only issue-triage records a plan -------------------
+
+_PLAN_MINT = "block_plan_mint.sh"
+_TRIAGE_AGENTS = ("forge:issue-triage", "issue-triage")
+# The marker is read from the module /sentinel authenticates against, so a
+# reworded marker fails here instead of leaving the hook matching the old one.
+_PAYLOAD = f"{PLAN_MARKER} scope: fix the parser"
+
+_PLAN_LABEL_WRITES = [
+    pytest.param("gh issue edit 5 --add-label plan-ready", id="edit-add-label"),
+    pytest.param(
+        "gh issue edit 5 --add-label 'tier-2-high, Plan-Ready'", id="edit-list-case"
+    ),
+    pytest.param("gh issue edit 5 --add-label=plan-ready", id="edit-attached"),
+    pytest.param('gh issue edit 5 --add-label "$LABEL"', id="edit-unknowable"),
+    pytest.param("gh issue create --title t --label plan-ready", id="create-label"),
+    pytest.param("gh issue create --title t -l plan-ready", id="create-short"),
+    pytest.param("gh label create plan-ready --color 0e8a16", id="label-create"),
+    pytest.param("gh label edit old --name plan-ready", id="label-rename"),
+    pytest.param(
+        "gh api repos/o/r/issues/5/labels -f 'labels[]=needs-triage'",
+        id="rest-issue-labels",
+    ),
+    pytest.param(
+        "gh api -X PUT 'repos/{owner}/{repo}/issues/5/labels' --input l.json",
+        id="rest-put-quoted-endpoint",
+    ),
+    pytest.param(
+        "gh api -X PATCH repos/o/r/labels/x -f new_name=plan-ready",
+        id="rest-repo-label",
+    ),
+    *(
+        pytest.param(
+            f"gh api graphql -f query='mutation{{{name}(input:{{}}){{x}}}}'",
+            id=f"graphql-{name}",
+        )
+        for name in (
+            "addLabelsToLabelable",
+            "updateIssue",
+            "createIssue",
+            "updateLabel",
+            "createLabel",
+        )
+    ),
+    pytest.param(
+        'bash -c "gh issue edit 5 --add-label plan-ready"', id="wrapped-bash-c"
+    ),
+]
+
+_PLAN_PAYLOAD_WRITES = [
+    pytest.param(f"gh issue comment 5 --body '{_PAYLOAD}'", id="comment-body"),
+    pytest.param(f"gh issue comment 5 -b '{_PAYLOAD}'", id="comment-short"),
+    pytest.param(
+        f"gh issue comment 5 --edit-last --body '{_PAYLOAD}'", id="comment-edit-last"
+    ),
+    pytest.param(
+        "gh issue comment 5 --body '[Issue-Triage]''  plan-validated: x'",
+        id="comment-spliced-quotes",
+    ),
+    pytest.param(
+        f"gh issue comment 5 --body-file - <<'EOF'\n{_PAYLOAD}\nEOF",
+        id="body-file-stdin-heredoc",
+    ),
+    pytest.param(
+        f"gh issue comment 5 --body \"$(cat <<'EOF'\n{_PAYLOAD}\nEOF\n)\"",
+        id="body-cat-heredoc",
+    ),
+    pytest.param(
+        f"gh api repos/o/r/issues/5/comments -f body='{_PAYLOAD}'",
+        id="rest-comment-post",
+    ),
+    pytest.param(
+        f"gh api -X PATCH repos/o/r/issues/comments/9 -f body='{_PAYLOAD}'",
+        id="rest-comment-patch",
+    ),
+    pytest.param(
+        'gh api graphql -f query=\'mutation{addComment(input:{subjectId:"I",'
+        f'body:"{_PAYLOAD}"}}){{x}}}}\'',
+        id="graphql-addComment",
+    ),
+    pytest.param(
+        'gh api graphql -f query=\'mutation{updateIssueComment(input:{id:"C",'
+        f'body:"{_PAYLOAD}"}}){{x}}}}\'',
+        id="graphql-updateIssueComment",
+    ),
+    pytest.param(
+        f"bash -c \"gh issue comment 5 --body '{_PAYLOAD}'\"", id="wrapped-bash-c"
+    ),
+]
+
+# A body the hook cannot read could carry the payload.
+_PLAN_UNKNOWABLE_BODIES = [
+    pytest.param('gh issue comment 5 --body "$BODY"', id="variable"),
+    pytest.param('gh issue comment 5 --body "$(cat plan.md)"', id="substitution"),
+    pytest.param("cat p.md | gh issue comment 5 --body-file -", id="pipe"),
+    pytest.param("gh issue comment 5 --body-file missing.md", id="missing-file"),
+    pytest.param(
+        'gh api repos/o/r/issues/5/comments -f body="$BODY"', id="rest-variable"
+    ),
+    pytest.param("gh api graphql -F query=@missing.graphql", id="graphql-query-file"),
+]
+
+
+@pytest.mark.parametrize("command", _PLAN_LABEL_WRITES + _PLAN_PAYLOAD_WRITES)
+def test_plan_mint_blocks_the_main_thread_and_allows_issue_triage(
+    command: str,
+) -> None:
+    """Applying plan-ready or posting a plan payload is issue-triage's alone.
+
+    Args:
+        command: A label write or plan-payload write in one of its forms.
+    """
+    proc = _run_hook_proc(_PLAN_MINT, command)
+    assert proc.returncode == 2
+    assert "record mode" in proc.stderr
+    assert "forge:issue-triage" in proc.stderr
+    triage = HookOptions(agent_type="forge:issue-triage")
+    assert _run_hook(_PLAN_MINT, command, options=triage) == 0
+
+
+@pytest.mark.parametrize(
+    ("agent_type", "expected"),
+    [
+        pytest.param("forge:test-writer", 2, id="other-agent"),
+        pytest.param("issue-triage-forge", 2, id="wrapper-only-delegates"),
+        pytest.param("forge:issue-triage", 0, id="triage-qualified"),
+        pytest.param("issue-triage", 0, id="triage-bare"),
+    ],
+)
+@pytest.mark.parametrize(
+    "command",
+    [
+        "gh issue edit 5 --add-label plan-ready",
+        f"gh issue comment 5 --body '{_PAYLOAD}'",
+    ],
+)
+def test_plan_mint_exempts_exactly_the_issue_triage_agent(
+    agent_type: str, expected: int, command: str
+) -> None:
+    """Only the two issue-triage agent names are exempt; every other agent is not.
+
+    Args:
+        agent_type: The payload's `agent_type`.
+        expected: The verdict for that agent.
+        command: A label write or a payload write.
+    """
+    options = HookOptions(agent_type=agent_type)
+    assert _run_hook(_PLAN_MINT, command, options=options) == expected
+
+
+@pytest.mark.parametrize("command", _PLAN_UNKNOWABLE_BODIES)
+def test_plan_mint_refuses_an_unreadable_body_from_other_callers(
+    command: str, tmp_path: Path
+) -> None:
+    """A comment body the hook cannot read is refused, except for issue-triage.
+
+    Args:
+        command: An issue-comment write whose body is not readable.
+        tmp_path: Empty working directory, so named files are missing.
+    """
+    assert _run_hook(_PLAN_MINT, command, options=HookOptions(cwd=tmp_path)) == 2
+    triage = HookOptions(agent_type="forge:issue-triage", cwd=tmp_path)
+    assert _run_hook(_PLAN_MINT, command, options=triage) == 0
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        pytest.param("gh issue comment 5 --body-file marked.md", 2, id="marked"),
+        pytest.param("gh issue comment 5 -F marked.md", 2, id="marked-short"),
+        pytest.param(
+            "gh api -X PATCH repos/o/r/issues/comments/9 -F body=@marked.md",
+            2,
+            id="rest-field-file",
+        ),
+        pytest.param("gh issue comment 5 --body-file clean.md", 0, id="clean"),
+        pytest.param(
+            "cd sub && gh issue comment 5 --body-file clean.md", 2, id="after-cd"
+        ),
+    ],
+)
+def test_plan_mint_reads_the_body_file(
+    command: str, expected: int, tmp_path: Path
+) -> None:
+    """A body file is read from disk: a marked one is refused, a clean one passes.
+
+    A relative file after a directory change resolves somewhere the hook
+    cannot know, so it is refused rather than read from the wrong place.
+
+    Args:
+        command: An issue-comment write reading its body from a file.
+        expected: The verdict for the main thread.
+        tmp_path: Working directory holding the body files.
+    """
+    (tmp_path / "marked.md").write_text(f"{_PAYLOAD}\n", encoding="utf-8")
+    (tmp_path / "clean.md").write_text("perf report: 3 regressions\n", encoding="utf-8")
+    assert _run_hook(_PLAN_MINT, command, options=HookOptions(cwd=tmp_path)) == expected
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param(
+            "gh issue comment 5 --body '[sentinel] taken up — branch fix/x, "
+            "2026-10-21'",
+            id="sentinel-pickup",
+        ),
+        pytest.param("gh issue comment 5 --body '[sentinel] PR #7 opened'", id="pr"),
+        pytest.param(
+            "gh issue comment 5 --body "
+            "'plan: no authenticated plan-validated comment on #5'",
+            id="sentinel-hard-skip",
+        ),
+        pytest.param(
+            "gh issue comment 5 --body '[issue-triage] needs-recheck: PR #9 changed x'",
+            id="needs-recheck-audit-line",
+        ),
+        pytest.param(
+            "gh issue create --title t --label performance,needs-triage",
+            id="create-other-labels",
+        ),
+        pytest.param("gh issue edit 5 --add-label tier-2-high", id="tier"),
+        pytest.param("gh issue edit 5 --add-label stale", id="stale"),
+        pytest.param(
+            "gh issue edit 5 --remove-label plan-ready --add-label needs-recheck",
+            id="remove-plan-ready",
+        ),
+        pytest.param(
+            "gh issue edit 5 --add-label blocked --remove-label plan-ready",
+            id="blocked-removes-plan-ready",
+        ),
+        pytest.param(
+            f"gh pr comment 5 --body '{_PAYLOAD} Validated by Jean'", id="pr-comment"
+        ),
+        pytest.param(
+            'gh issue create --title t --body "$(forge-report)"', id="create-body"
+        ),
+        pytest.param("gh api -X DELETE repos/o/r/issues/5/labels/x", id="rest-delete"),
+        pytest.param("gh issue edit --help", id="help"),
+        pytest.param(
+            'echo "gh issue edit 5 --add-label plan-ready"', id="quoted-mention"
+        ),
+        pytest.param(
+            f"echo \"gh issue comment 5 --body '{_PAYLOAD}'\"",
+            id="quoted-payload-mention",
+        ),
+    ],
+)
+def test_plan_mint_leaves_ordinary_issue_work_alone(command: str) -> None:
+    """Sentinel trails, triage audit lines, other labels and PR comments still pass.
+
+    Args:
+        command: An ordinary main-thread issue or PR command.
+    """
+    assert _run_hook(_PLAN_MINT, command) == 0
+
+
+@pytest.mark.parametrize(
+    "sign_off",
+    ["Validated by Jean", "approved by the user", "Signed-off-by: J", "Sign-off: J"],
+)
+@pytest.mark.parametrize("agent_type", ["", "forge:issue-triage"])
+def test_plan_mint_refuses_a_signed_plan_payload_from_every_caller(
+    sign_off: str, agent_type: str, tmp_path: Path
+) -> None:
+    """A plan payload carrying a sign-off claim is refused, issue-triage included.
+
+    Args:
+        sign_off: A human attribution line.
+        agent_type: The caller.
+        tmp_path: Working directory holding the payload file.
+    """
+    (tmp_path / "plan.md").write_text(f"{_PAYLOAD}\n{sign_off}\n", encoding="utf-8")
+    options = HookOptions(agent_type=agent_type, cwd=tmp_path)
+    proc = _run_hook_proc(
+        _PLAN_MINT, "gh issue comment 5 --body-file plan.md", options=options
+    )
+    assert proc.returncode == 2
+    inline = f"gh issue comment 5 --body '{_PAYLOAD}\n{sign_off}'"
+    assert _run_hook(_PLAN_MINT, inline, options=options) == 2
+    if agent_type:
+        assert "sign-off claim" in proc.stderr
+
+
+def test_plan_mint_allows_a_clean_triage_payload(tmp_path: Path) -> None:
+    """issue-triage posting a payload with no sign-off claim passes."""
+    (tmp_path / "plan.md").write_text(f"{_PAYLOAD}\ntrack: x\n", encoding="utf-8")
+    options = HookOptions(agent_type="forge:issue-triage", cwd=tmp_path)
+    command = "gh issue comment 5 --body-file plan.md"
+    assert _run_hook(_PLAN_MINT, command, options=options) == 0
+
+
+# The hook reads only the command an agent types; a forge CLI calling gh
+# from its own subprocess is invisible to it, so no CLI may mint a plan.
+_PLAN_MARKER_MODULES = {"plan_staleness.py", "plan_tracks.py"}
+
+
+def test_no_forge_module_applies_labels_or_writes_the_plan_marker() -> None:
+    """No `src/forge` module adds labels, and only the plan readers name the marker."""
+    src = _HOOKS_DIR.parent / "src" / "forge"
+    label_writers = []
+    marker_users = []
+    for path in sorted(src.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        if "--add-label" in text or "addLabelsToLabelable" in text:
+            label_writers.append(path.name)
+        if (
+            "PLAN_MARKER" in text or "plan-validated" in text
+        ) and path.name not in _PLAN_MARKER_MODULES:
+            marker_users.append(path.name)
+    assert label_writers == []
+    assert marker_users == []
+
+
+# --- block_issue_close.sh: no agent changes an issue's state ----------------
+
+_ISSUE_CLOSE = "block_issue_close.sh"
+
+
+@pytest.mark.parametrize(
+    "agent_type", ["", "forge:issue-triage", "issue-triage", "forge:pr-manager"]
+)
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("gh issue close 5", id="close"),
+        pytest.param("gh issue reopen 5", id="reopen"),
+        pytest.param("gh issue delete 5 --yes", id="delete"),
+        pytest.param("gh issue transfer 5 o/other", id="transfer"),
+        pytest.param("gh -R o/r issue close 5 -c done", id="repo-flag"),
+        pytest.param("bash -c 'gh issue close 5'", id="wrapped"),
+        pytest.param(
+            "gh api -X PATCH repos/o/r/issues/5 -f state=closed", id="rest-state"
+        ),
+        pytest.param(
+            "gh api 'repos/{owner}/{repo}/issues/5' -X PATCH -f state=closed",
+            id="rest-quoted-endpoint",
+        ),
+        pytest.param(
+            "gh api -X PATCH repos/o/r/issues/5 --input - <<'EOF'\n"
+            '{"state": "closed"}\nEOF',
+            id="rest-input-heredoc",
+        ),
+        pytest.param("gh api -X DELETE repos/o/r/issues/5", id="rest-delete"),
+        *(
+            pytest.param(
+                f"gh api graphql -f query='mutation{{{name}(input:{{}}){{x}}}}'",
+                id=f"graphql-{name}",
+            )
+            for name in ("closeIssue", "reopenIssue", "deleteIssue", "transferIssue")
+        ),
+        pytest.param(
+            "gh api graphql -f query='mutation{updateIssue(input:{state:CLOSED}){x}}'",
+            id="graphql-updateIssue-state",
+        ),
+    ],
+)
+def test_issue_close_blocks_every_agent(command: str, agent_type: str) -> None:
+    """Every close / reopen / delete / transfer form is refused, issue-triage included.
+
+    Args:
+        command: An issue state change in one of its forms.
+        agent_type: The caller — no agent is exempt.
+    """
+    options = HookOptions(agent_type=agent_type)
+    assert _run_hook(_ISSUE_CLOSE, command, options=options) == 2
+
+
+def test_issue_close_reads_an_input_file(tmp_path: Path) -> None:
+    """An --input body is read: a state change is refused, a title edit passes."""
+    (tmp_path / "close.json").write_text('{"state": "closed"}', encoding="utf-8")
+    (tmp_path / "title.json").write_text('{"title": "x"}', encoding="utf-8")
+    options = HookOptions(cwd=tmp_path)
+    patch = "gh api -X PATCH repos/o/r/issues/5 --input"
+    assert _run_hook(_ISSUE_CLOSE, f"{patch} close.json", options=options) == 2
+    assert _run_hook(_ISSUE_CLOSE, f"{patch} title.json", options=options) == 0
+    assert _run_hook(_ISSUE_CLOSE, f"{patch} missing.json", options=options) == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("gh issue close --help", id="help"),
+        pytest.param("echo gh issue close 5", id="mention"),
+        pytest.param("gh issue view 5", id="view"),
+        pytest.param("gh pr close 5", id="pr-close"),
+        pytest.param("gh api repos/o/r/issues/5", id="rest-read"),
+        pytest.param(
+            "gh api -X PATCH repos/o/r/issues/5 -f title=x", id="rest-title-edit"
+        ),
+        pytest.param(
+            "gh api graphql -f query='mutation{deleteIssueComment(input:{}){x}}'",
+            id="graphql-delete-comment",
+        ),
+    ],
+)
+def test_issue_close_allows_other_issue_commands(command: str) -> None:
+    """Help, mentions, reads, PR closes and non-state edits pass.
+
+    Args:
+        command: A command that changes no issue's open/closed state.
+    """
+    assert _run_hook(_ISSUE_CLOSE, command) == 0
