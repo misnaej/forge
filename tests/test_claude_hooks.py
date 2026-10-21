@@ -8441,6 +8441,13 @@ _SCANNER_WORD_CASES = [
     pytest.param(
         _FORCE_PUSH, "bash -c 'git \"${*:1}\"' _ push -f", _ALLOW, id="pos-slice-star"
     ),
+    # A quoted slice the scanner cannot evaluate reads as every argument.
+    pytest.param(
+        _FORCE_PUSH, "sh -c '\"${@: -3}\"' x git push -f", _BLOCK, id="pos-slice-neg"
+    ),
+    pytest.param(
+        _FORCE_PUSH, "sh -c '\"${@:$x}\"' x git push -f", _BLOCK, id="pos-slice-var"
+    ),
 ]
 
 

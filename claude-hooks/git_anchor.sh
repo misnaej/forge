@@ -528,7 +528,9 @@ function squote(v,   Q, n) {
 # argument (`$N`, and `$0` too: a payload of `$0 "$@"` before the words
 # `git push -f` runs git). A slice `${@:N}` / `${@:N:L}` (and `${*:…}`)
 # takes the arguments from $N, counting $0 as bash does: quoted, each
-# single-quoted (`@`) or all as one word (`*`); unquoted, joined. The
+# single-quoted (`@`) or all as one word (`*`); unquoted, joined. A quoted
+# `${@…}` / `${*…}` whose operator is not a plain-number slice (`${@: -3}`,
+# `${@:$x}`) cannot be judged, so it reads as every argument. The
 # first reference is always substituted — its text is at most the command
 # itself, and it is the one that names what a lone `"$@"` payload runs; a
 # later one only while the text stays within JOINCAP, after which the
@@ -548,11 +550,11 @@ function pos_rescan(w, s, i,   P, m, k, n, c, d, j, e, body, v, A, na, tot, st, 
     n = length(w); k = 1; st = 1; na = 0; tot = 0
     while (k <= n) {
         c = substr(w, k, 1)
-        if (c == "\"" && match(substr(w, k, 24), /^"[$]([@*0-9]|[{]([@*]|[0-9]+)[}]|[{][@*]:[0-9]+(:[0-9]+)?[}])"/)) {
+        if (c == "\"" && match(substr(w, k, 64), /^"[$]([@*0-9]|[{]([@*]|[0-9]+)[}]|[{][@*][^}"]*[}])"/)) {
             e = k + RLENGTH; body = substr(w, k + 2, RLENGTH - 3); gsub(/[{}]/, "", body)
-            if (body ~ /:/) { pslice(body, m); v = (body ~ /^@/) ? joins(QP, PLO, PHI, " ") : squote(joins(P, PLO, PHI, " ")) }
-            else if (body == "@") v = qall
-            else if (body == "*") v = qstar
+            if (body ~ /^[@*]:[0-9]+(:[0-9]+)?$/) { pslice(body, m); v = (body ~ /^@/) ? joins(QP, PLO, PHI, " ") : squote(joins(P, PLO, PHI, " ")) }
+            else if (body ~ /^@/) v = qall
+            else if (body ~ /^[*]/) v = qstar
             else v = (body + 0 <= m) ? QP[body + 0] : "\047\047"
         } else if (c == "$") {
             d = substr(w, k + 1, 1)
