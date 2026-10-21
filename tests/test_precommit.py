@@ -30,6 +30,7 @@ import pytest
 from forge import (
     config,
     emergency,
+    gen_common,
     git_utils,
     install_claudemd,
     precommit,
@@ -4924,6 +4925,8 @@ def test_decide_regen_each_signal_regenerates(
         # The doc itself staged, or a merge, is the commit feeding the doc.
         ({"doc_staged": True}, "generate"),
         ({"merge": True}, "generate"),
+        # No signal at all: inputs unchanged since the last build.
+        ({}, "skip"),
     ],
 )
 def test_decide_regen_rebuild_without_staged_inputs_only_checks(
@@ -4936,12 +4939,6 @@ def test_decide_regen_rebuild_without_staged_inputs_only_checks(
         action: The action expected with no staged input.
     """
     assert _rg_decide(inputs_staged=False, **overrides).action == action
-
-
-def test_decide_regen_staged_inputs_alone_never_force_a_rebuild() -> None:
-    """Inputs unchanged since the last build skip however the commit is staged."""
-    assert _rg_decide(inputs_staged=True).action == "skip"
-    assert _rg_decide(inputs_staged=False).action == "skip"
 
 
 def test_decide_regen_first_match_wins_ordering() -> None:
@@ -5352,37 +5349,29 @@ def test_step_regen_docs_first_run_unfed_checks_both_and_records_in_sync(
 def test_step_regen_docs_first_run_drifted_unfed_doc_warns_and_touches_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """No record, nothing staged, docs out of date → WARN; tree and index untouched.
+    """No record, only an unrelated file staged, docs out of date → WARN.
 
-    SCENARIO: a clean committed repo with no build record; both checks fail.
+    SCENARIO: a committed repo with no build record and an unrelated
+        ``notes.txt`` staged; both checks fail.
     MOCK SETUP: generators stubbed via ``precommit._run``; ``--check`` fails.
     EXPECTED BEHAVIOR: non-blocking, not passed; each doc's advice names its
-        generator and says it was not regenerated; no write run, nothing
-        staged, no worktree change, no record.
+        generator and says it was not regenerated; no write run, the index
+        holds only ``notes.txt``, no record.
     """
     repo = _rg_repo(tmp_path)
     launched = _rg_stub_generators(monkeypatch, check_ok=False)
+    (repo / "notes.txt").write_text("hello\n")
+    _rg_git(repo, "add", "notes.txt")
     result = precommit.step_regen_docs(repo)
     assert not result.passed
     assert result.non_blocking
     assert all(launch.endswith("--check") for launch in launched)
     assert result.output.count("not regenerated because nothing in this commit") == 2
     assert "run `forge-gen-api-digest` and commit it on its own" in result.output
-    assert _rg_git(repo, "status", "--porcelain") == ""
-    assert _rg_record_bytes(repo) is None
-
-
-def test_step_regen_docs_unrelated_staged_file_without_record_only_checks(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """An unrelated staged file with no record runs checks and stages no doc."""
-    repo = _rg_repo(tmp_path)
-    launched = _rg_stub_generators(monkeypatch, check_ok=False)
-    (repo / "notes.txt").write_text("hello\n")
-    _rg_git(repo, "add", "notes.txt")
-    precommit.step_regen_docs(repo)
     assert sorted(launched) == [f"{_API_MODULE} --check", f"{_CLI_MODULE} --check"]
+    assert _rg_git(repo, "status", "--porcelain").split() == ["A", "notes.txt"]
     assert _rg_git(repo, "diff", "--cached", "--name-only").split() == ["notes.txt"]
+    assert _rg_record_bytes(repo) is None
 
 
 @pytest.mark.parametrize("change", ["delete", "rename-away"])
@@ -5429,7 +5418,11 @@ def test_step_regen_docs_cli_reference_check_on_stale_install_advises_refresh(
         return next(s for s in output.split("\n\n") if s.startswith(f"⚠️ {_CLI_DOC}"))
 
     # The generator itself reports a help it could not capture.
-    _rg_stub_generators(monkeypatch, check_ok=False, check_output="--help unavailable")
+    _rg_stub_generators(
+        monkeypatch,
+        check_ok=False,
+        check_output=gen_common.HELP_UNAVAILABLE_MARKER,
+    )
     advice = _cli_advice()
     assert "refresh the install" in advice
     assert "reinstall forge-scripts" in advice
@@ -5690,7 +5683,7 @@ def test_step_regen_docs_failed_help_capture_stages_nothing_and_hints_refresh(
 
     def _failing_cli(cmd: list[str], **_kw: object) -> tuple[bool, str]:
         if cmd[-1] == _CLI_MODULE:
-            return False, "--help unavailable for forge-foo (exit 1)"
+            return False, f"{gen_common.HELP_UNAVAILABLE_MARKER} for forge-foo (exit 1)"
         return True, ""
 
     monkeypatch.setattr(precommit, "_run", _failing_cli)

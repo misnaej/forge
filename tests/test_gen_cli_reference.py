@@ -17,6 +17,7 @@ from forge.gen_cli_reference import (
     main,
     render_reference,
 )
+from forge.gen_common import HELP_UNAVAILABLE_MARKER
 
 
 if TYPE_CHECKING:
@@ -49,12 +50,15 @@ def test_capture_help_returns_none_on_bad_module(
 
     Never a placeholder string: a placeholder is indistinguishable from
     real help once rendered, so the page would lose the section silently.
+    The message carries ``HELP_UNAVAILABLE_MARKER`` because ``precommit``
+    classifies a generator failure by searching its output for it.
     """
     entry = CliEntry(name="ghost-cli", module="forge.does_not_exist")
     with caplog.at_level(logging.ERROR):
         assert capture_help(entry) is None
     named = [r for r in caplog.records if "ghost-cli" in r.getMessage()]
     assert len(named) == 1
+    assert HELP_UNAVAILABLE_MARKER in named[0].getMessage()
 
 
 def test_capture_help_is_width_independent(

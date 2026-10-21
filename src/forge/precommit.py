@@ -2198,8 +2198,8 @@ def step_regen_docs(repo_root: Path) -> StepResult:
     checked (``--check``, nothing written or staged): in sync, the build
     is recorded; out of date, the step warns and names the command to
     regenerate it in a commit of its own, so a commit never carries a
-    generated file nothing in it changed. That check costs one generator
-    run on commits that would once have regenerated; it is accepted
+    generated file nothing in it changed. Checking costs one generator
+    run per needed rebuild the commit does not feed; it is accepted
     because forge's own commits almost always feed both docs, and a
     consumer keeps a CLI reference rarely.
 
