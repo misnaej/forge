@@ -9435,6 +9435,28 @@ _PLAN_LABEL_WRITES = [
         'gh api repos/o/r/issues --input - <<< \'{"labels":["plan-ready"]}\'',
         id="rest-issue-input-here-string",
     ),
+    pytest.param(
+        "gh api -X PATCH repos/o/r/issues/5 -f 'Labels[]=plan-ready'",
+        id="rest-issue-labels-case",
+    ),
+    pytest.param(
+        "gh api -X PATCH repos/o/r/issues/5 -F LABELS=plan-ready",
+        id="rest-issue-labels-upper",
+    ),
+    pytest.param(
+        'gh api -X PATCH repos/o/r/issues/5 -f title="$(date)" -f labels[]=plan-ready',
+        id="rest-field-after-substitution",
+    ),
+    pytest.param(
+        'gh issue edit 5 --title "$(a; b)" --add-label plan-ready',
+        id="edit-label-after-substitution",
+    ),
+    pytest.param('gh api -X POST "$E" -f body=x', id="rest-unknowable-endpoint"),
+    pytest.param(
+        'gh api -X "$M" repos/o/r/issues/5/labels -f labels[]=x',
+        id="rest-unknowable-method",
+    ),
+    pytest.param('gh api graphql -f query=" $Q"', id="graphql-unknowable-query"),
     *(
         pytest.param(
             f"gh api graphql -f query='mutation{{{name}(input:{{}}){{x}}}}'",
@@ -9600,6 +9622,28 @@ def test_plan_mint_refuses_an_unreadable_body_from_other_callers(
             2,
             id="rest-issue-input-pipe",
         ),
+        pytest.param(
+            "gh api repos/o/r/issues --input upper.json", 2, id="rest-issue-input-case"
+        ),
+        pytest.param(
+            "gh api repos/o/r/issues --input escaped.json",
+            2,
+            id="rest-issue-input-escaped",
+        ),
+        pytest.param(
+            "gh api repos/o/r/issues/5/comments --input escaped.json",
+            2,
+            id="rest-comment-input-escaped",
+        ),
+        pytest.param(
+            "gh api graphql -F query=@escaped.graphql", 2, id="graphql-query-escaped"
+        ),
+        pytest.param(
+            "gh api graphql --input labels.graphql.json", 2, id="graphql-input-file"
+        ),
+        pytest.param(
+            "gh api graphql --input viewer.graphql.json", 0, id="graphql-input-clean"
+        ),
     ],
 )
 def test_plan_mint_reads_the_body_file(
@@ -9620,6 +9664,20 @@ def test_plan_mint_reads_the_body_file(
         '{"labels": ["plan-ready"]}', encoding="utf-8"
     )
     (tmp_path / "title.json").write_text('{"title": "t"}', encoding="utf-8")
+    (tmp_path / "upper.json").write_text('{"LABELS": ["plan-ready"]}', encoding="utf-8")
+    # `a` is "a": GitHub decodes it, so the key reads `labels` there.
+    (tmp_path / "escaped.json").write_text(
+        '{"l\\u0061bels": ["plan-ready"]}', encoding="utf-8"
+    )
+    (tmp_path / "escaped.graphql").write_text(
+        "mutation{\\u0061ddLabelsToLabelable(input:{}){x}}", encoding="utf-8"
+    )
+    (tmp_path / "labels.graphql.json").write_text(
+        '{"query": "mutation{addLabelsToLabelable(input:{}){x}}"}', encoding="utf-8"
+    )
+    (tmp_path / "viewer.graphql.json").write_text(
+        '{"query": "query{viewer{login}}"}', encoding="utf-8"
+    )
     assert _run_hook(_PLAN_MINT, command, options=HookOptions(cwd=tmp_path)) == expected
 
 
@@ -9675,6 +9733,19 @@ def test_plan_mint_reads_the_body_file(
             'gh api repos/o/r/issues --input - <<< \'{"title":"t"}\'',
             id="rest-issue-input-here-string",
         ),
+        pytest.param('gh api "$E"', id="rest-get-variable-endpoint"),
+        pytest.param(
+            'gh api "repos/o/r/issues/$N/comments"', id="rest-get-variable-comments"
+        ),
+        pytest.param(
+            'gh api -X PATCH repos/o/r/issues/5 -f title="$(date)"',
+            id="rest-edit-substituted-title",
+        ),
+        pytest.param(
+            "gh issue create --title t --body \"$(cat <<'EOF'\nsee (1)\nEOF\n)\" "
+            "--label bug",
+            id="create-heredoc-body-other-label",
+        ),
         pytest.param("gh issue edit --help", id="help"),
         pytest.param(
             'echo "gh issue edit 5 --add-label plan-ready"', id="quoted-mention"
@@ -9704,6 +9775,9 @@ def test_plan_mint_leaves_ordinary_issue_work_alone(command: str) -> None:
         "Approved-by: J",
         "validated-by: J",
         "Endorsed-By: J",
+        "endorsed_by J",
+        "approvedby J",
+        "sign off by J",
         # Matched anywhere, so a harmless use is refused and reworded.
         "tests validated by CI",
     ],
@@ -9809,6 +9883,33 @@ _ISSUE_CLOSE = "block_issue_close.sh"
             id="graphql-input-here-string",
         ),
         pytest.param("gh api -X DELETE repos/o/r/issues/5", id="rest-delete"),
+        pytest.param(
+            "gh api -X PATCH repos/o/r/issues/5// -f state=closed",
+            id="rest-trailing-slashes",
+        ),
+        pytest.param(
+            'gh api -X PATCH repos/o/r/issues/5 -f title="$(a; b)" -f state=closed',
+            id="rest-field-after-substitution",
+        ),
+        pytest.param(
+            "(gh api -X DELETE repos/o/r/issues/5)", id="rest-delete-in-subshell"
+        ),
+        pytest.param(
+            'gh api -X PATCH "$E" -f state=closed', id="rest-unknowable-endpoint"
+        ),
+        pytest.param('gh api -X DELETE "$(ep)"', id="rest-substituted-endpoint"),
+        pytest.param('gh api -X "$M" repos/o/r/issues/5', id="rest-unknowable-method"),
+        pytest.param(
+            "gh api -X PATCH repos/o/r/issues/5 --input - <<< "
+            '\'{"st\\u0061te":"closed"}\'',
+            id="rest-input-escaped-here-string",
+        ),
+        pytest.param('gh api graphql -f query="$Q"', id="graphql-variable-query"),
+        pytest.param(
+            'gh api graphql -f query="$(cat q.graphql)"',
+            id="graphql-substituted-query",
+        ),
+        pytest.param('gh api graphql -f query=" $Q"', id="graphql-blank-then-variable"),
         *(
             pytest.param(
                 f"gh api graphql -f query='mutation{{{name}(input:{{}}){{x}}}}'",
@@ -9854,6 +9955,9 @@ def test_issue_close_blocks_every_agent(command: str, agent_type: str) -> None:
         pytest.param("gh api graphql -F query=@viewer.graphql", 0),
         pytest.param("gh api graphql -F query=@missing.graphql", 2),
         pytest.param("cd sub && gh api graphql -F query=@viewer.graphql", 2),
+        pytest.param("gh api -X PATCH repos/o/r/issues/5 --input escaped.json", 2),
+        pytest.param("gh api graphql --input escaped.graphql.json", 2),
+        pytest.param("gh api graphql -F query=@escaped.graphql", 2),
     ],
 )
 def test_issue_close_reads_an_input_file(
@@ -9870,6 +9974,16 @@ def test_issue_close_reads_an_input_file(
     """
     (tmp_path / "close.json").write_text('{"state": "closed"}', encoding="utf-8")
     (tmp_path / "title.json").write_text('{"title": "x"}', encoding="utf-8")
+    # `a` / `c` are "a" / "c": GitHub decodes them, the hook cannot.
+    (tmp_path / "escaped.json").write_text(
+        '{"st\\u0061te": "closed"}', encoding="utf-8"
+    )
+    (tmp_path / "escaped.graphql.json").write_text(
+        '{"query": "mutation{\\u0063loseIssue(input:{}){x}}"}', encoding="utf-8"
+    )
+    (tmp_path / "escaped.graphql").write_text(
+        "mutation{\\u0063loseIssue(input:{}){x}}", encoding="utf-8"
+    )
     (tmp_path / "close.graphql.json").write_text(
         '{"query": "mutation{closeIssue(input:{issueId:\\"I\\"}){x}}"}',
         encoding="utf-8",
@@ -9899,6 +10013,20 @@ def test_issue_close_reads_an_input_file(
         pytest.param(
             "gh api -X PATCH repos/o/r/issues/5/ -f title=x",
             id="rest-title-edit-trailing-slash",
+        ),
+        pytest.param(
+            "gh api -X PATCH repos/o/r/issues/5// -f title=x",
+            id="rest-title-edit-trailing-slashes",
+        ),
+        pytest.param(
+            'gh api -X PATCH repos/o/r/issues/5 -f title="$(date)"',
+            id="rest-substituted-title",
+        ),
+        pytest.param('gh api "$E"', id="rest-get-variable-endpoint"),
+        pytest.param('gh api "repos/o/r/issues/$N"', id="rest-get-variable-issue"),
+        pytest.param(
+            "gh api graphql -f query='query($id:ID!){node(id:$id){id}}' -f id=I",
+            id="graphql-query-with-variables",
         ),
         pytest.param(
             "gh api graphql -f query='mutation{deleteIssueComment(input:{}){x}}'",

@@ -17,7 +17,8 @@
 #   labels (whatever the label), a REST issue create or edit
 #   (`issues`, `issues/<N>`) carrying a `labels` field or an `--input`
 #   body that mentions `labels` (or a field name or body the hook cannot
-#   read), or a GraphQL label / issue mutation.
+#   read), a GraphQL label / issue mutation, or any API write whose
+#   endpoint or method is built at run time (`$E`, `$(…)`).
 # - A2 payload: a caller other than issue-triage may not write an issue
 #   comment carrying the plan-validated marker — `gh issue comment`
 #   (`--edit-last` included), REST issue-comment writes, GraphQL
@@ -28,8 +29,9 @@
 #   issue comment and is untouched.
 # - A3 signature, for every caller (issue-triage included): a
 #   plan-validated payload carrying a sign-off claim ("validated by",
-#   "approved by", "signed-off-by", "endorsed by", "sign-off:", and the
-#   hyphenated "approved-by" forms) is refused — a human attribution
+#   "approved by", "signed-off-by", "endorsed by", "sign-off:", with a
+#   space, hyphen, underscore or nothing between the words) is refused
+#   — a human attribution
 #   nothing can corroborate (FOUNDATION §14). It is refused, never
 #   rewritten. The phrase is matched anywhere in the payload, so a
 #   harmless use ("validated by CI") is refused too and is reworded.
@@ -44,7 +46,11 @@
 # Known residuals (a hook reads the command an agent types, nothing
 # more): a Python or other interpreter script, or a forge CLI, making the
 # call from its own subprocess; a body encoded or computed so the marker
-# never appears literally, or spliced across expansions; a file rewritten
+# never appears literally (a JSON `\u00XX` escape in an --input or query
+# file is refused; other encodings are not seen), or spliced across
+# expansions, including an expansion inside a GraphQL query after its
+# first word (the --words view cannot tell it from a GraphQL `$variable`);
+# a file rewritten
 # after this hook read it (`gen > p.md; gh issue comment 1 -F p.md` reads
 # the old p.md); a command name held in a variable (`G=gh; $G issue
 # edit …`, as in block_pr_merge.sh); `gh alias`; `gh label clone`; and
@@ -96,7 +102,7 @@ N="$GUARD_NEUTRAL"
 # The marker, as forge.plan_staleness.PLAN_MARKER spells it, read through
 # quoting: in the --words view a quoted blank is GUARD_NEUTRAL.
 MARK="\\[issue-triage\\][[:space:]${N}]*plan-validated"
-SIGNOFF="(validated|approved|endorsed)[[:space:]${N}-]+by|signed[[:space:]${N}-]+off[[:space:]${N}-]+by|sign-off[[:space:]${N}]*:"
+SIGNOFF="(validated|approved|endorsed)[[:space:]${N}_-]*by|sign(ed)?[[:space:]${N}_-]*off[[:space:]${N}_-]*by|sign-off[[:space:]${N}]*:"
 LABEL_MUTATIONS="(addLabelsToLabelable|updateIssue|createIssue|updateLabel|createLabel)([^[:alnum:]_]|$)"
 COMMENT_MUTATIONS="(addComment|updateIssueComment)([^[:alnum:]_]|$)"
 # Any `cd`/`pushd`/`popd` outside quotes moves where a relative body file
@@ -158,17 +164,99 @@ _read_file() {
     return 0
 }
 
-# _body_file <path> — a comment body read from <path> (`-` = stdin).
+# _encoded <text> — a JSON body carries a `\u00XX` escape, which gh sends
+# as-is and GitHub decodes: the marker or a label could hide behind it.
+_encoded() {
+    LC_ALL=C grep -qiE '\\u00' <<< "$1"
+}
+
+# _unknowable <value> — a value built at run time: an expansion (after
+# any quoted blanks), a substitution or a backtick. In the --words view a
+# single-quoted `$` is kept too, so only a leading one is judged.
+_unknowable() {
+    local v="$1"
+    while [[ "$v" == "$N"* ]]; do v=${v#"$N"}; done
+    case "$v" in '$'* | *'('* | *'`'*) return 0 ;; esac
+    return 1
+}
+
+# _endpoint <word…> — the call's endpoint: the first positional word
+# after `api`, skipping options and the values they take.
+_endpoint() {
+    local seen=0 skip=0 t
+    for t in "$@"; do
+        if [ "$skip" = 1 ]; then
+            skip=0
+            continue
+        fi
+        if [ "$seen" = 0 ]; then
+            [ "$t" = api ] && seen=1
+            continue
+        fi
+        case "$t" in
+            -X | --method | -f | --raw-field | -F | --field | -H | --header | --input \
+                | -q | --jq | -t | --template | --hostname | --cache | -p | --preview)
+                skip=1
+                ;;
+            -*) ;;
+            *)
+                printf '%s' "$t"
+                return 0
+                ;;
+        esac
+    done
+}
+
+# _segments <regex> <text> — each call <regex> finds in <text>, one per
+# line: from the match to the first `;` `&` `|` `)` or newline outside a
+# `(…)` group. The --words view keeps a substitution's `(…)`, so an
+# option after `"$(date)"` or `"$(a; b)"` still belongs to the call.
+_segments() {
+    local offs
+    offs=$(LC_ALL=C grep -obE "$1" <<< "$2" | cut -d: -f1 | tr '\n' ' ') || true
+    [ -n "$offs" ] || return 0
+    LC_ALL=C awk -v offs="$offs" '
+        { s = s (NR > 1 ? "\n" : "") $0 }
+        END {
+            n = split(offs, o, " ")
+            len = length(s)
+            for (k = 1; k <= n; k++) {
+                i = o[k] + 1
+                if (substr(s, i, 1) ~ /[;&|(]/) i++
+                start = i
+                depth = 0
+                for (; i <= len; i++) {
+                    c = substr(s, i, 1)
+                    if (c == "(") depth++
+                    else if (c == ")") { if (depth == 0) break; depth-- }
+                    else if (depth == 0 && (c == ";" || c == "&" || c == "|" || c == "\n")) break
+                }
+                out = substr(s, start, i - start)
+                gsub(/\n/, " ", out)
+                print out
+            }
+        }' <<< "$2"
+}
+
+# _body_file <path> [json] — a comment body read from <path> (`-` =
+# stdin); `json` marks an --input body, where a `\u` escape hides text.
 _body_file() {
     case "$1" in
         - | /dev/stdin)
-            [ "$HAS_HEREDOC" = 1 ] || UNKNOWN="the comment body is read from a pipe the hook cannot see"
+            if [ "$HAS_HEREDOC" != 1 ]; then
+                UNKNOWN="the comment body is read from a pipe the hook cannot see"
+            elif [ "${2:-}" = json ] && _encoded "$COMMAND"; then
+                UNKNOWN="the --input body is JSON-escaped (\\u00XX), so the hook cannot read it"
+            fi
             return 0
             ;;
     esac
     if ! _read_file "$1"; then
         UNKNOWN="the comment body file cannot be read by the hook"
         return 0
+    fi
+    if [ "${2:-}" = json ] && _encoded "$FT"; then
+        UNKNOWN="the --input body is JSON-escaped (\\u00XX), so the hook cannot read it"
     fi
     if LC_ALL=C grep -qiE "$MARK" <<< "$FT"; then
         FILE_MARK=1
@@ -228,12 +316,12 @@ if [ "$IS_TRIAGE" != 1 ] && invoked "${GH_ANCHOR}issue[[:space:]]+${GH_OPTS}(edi
                 LABEL_WRITE="adding the plan-ready label (or a label the hook cannot read)"
             fi
         done
-    done < <(LC_ALL=C grep -oE "${GH_ANCHOR}issue[[:space:]]+${GH_OPTS}(edit|create)\b[^;&|)]*" <<< "$WORDS")
+    done < <(_segments "${GH_ANCHOR}issue[[:space:]]+${GH_OPTS}(edit|create)\b" "$WORDS")
 fi
 
 # --- A1: gh label create / edit naming plan-ready -------------------------
 if [ "$IS_TRIAGE" != 1 ] && invoked "${GH_ANCHOR}label[[:space:]]+${GH_OPTS}(create|edit)\b"; then
-    if LC_ALL=C grep -oE "${GH_ANCHOR}label[[:space:]]+${GH_OPTS}(create|edit)\b[^;&|)]*" <<< "$WORDS" \
+    if _segments "${GH_ANCHOR}label[[:space:]]+${GH_OPTS}(create|edit)\b" "$WORDS" \
         | LC_ALL=C grep -qiE "(^|[[:space:]=${N}\"'])plan-ready([[:space:]${N}\"']|$)"; then
         LABEL_WRITE="creating or renaming a label to plan-ready"
     fi
@@ -256,7 +344,7 @@ if invoked "${GH_ANCHOR}issue[[:space:]]+${GH_OPTS}comment\b"; then
                 -F?*) _body_file "${t#-F}" ;;
             esac
         done
-    done < <(LC_ALL=C grep -oE "${GH_ANCHOR}issue[[:space:]]+${GH_OPTS}comment\b[^;&|)]*" <<< "$WORDS")
+    done < <(_segments "${GH_ANCHOR}issue[[:space:]]+${GH_OPTS}comment\b" "$WORDS")
 fi
 
 # --- gh api: REST and GraphQL writes --------------------------------------
@@ -289,7 +377,12 @@ if invoked "${GH_ANCHOR}api\b"; then
         if [ -z "$method" ]; then
             [ "$has_fields" = 1 ] && method=POST || method=GET
         fi
+        # A method built at run time may be a write.
+        _unknowable "$method" && method=POST
         case "$method" in POST | PUT | PATCH) ;; *) continue ;; esac
+        # An endpoint built at run time may be any of the writes below.
+        ep_unknown=0
+        _unknowable "$(_endpoint "${toks[@]}")" && ep_unknown=1
         # The text this call sends as code: the segment, plus any GraphQL
         # query read from a file.
         text="$seg"
@@ -304,7 +397,7 @@ if invoked "${GH_ANCHOR}api\b"; then
                 query=*)
                     q=${f#query=}
                     if [ "${kinds[k]}" = typed ] && [[ "$q" == @* ]]; then
-                        if _read_file "${q#@}"; then
+                        if _read_file "${q#@}" && ! _encoded "$FT"; then
                             text="$text"$'\n'"$FT"
                             if LC_ALL=C grep -qiE "$MARK" <<< "$FT"; then
                                 FILE_MARK=1
@@ -313,12 +406,32 @@ if invoked "${GH_ANCHOR}api\b"; then
                         else
                             query_unknown=1
                         fi
-                    elif [[ "$q" == '$'* ]] || [[ "$q" == *'('* ]] || [[ "$q" == *'`'* ]]; then
+                    elif _unknowable "$q"; then
                         query_unknown=1
                     fi
                     ;;
             esac
         done
+        # A GraphQL request sent whole as the --input body: a file is read,
+        # stdin is judged by the raw command (a heredoc holds it there).
+        if [ "$graphql" = 1 ] && [ -n "$input" ]; then
+            case "$input" in
+                - | /dev/stdin)
+                    if [ "$HAS_HEREDOC" = 1 ]; then
+                        text="$text"$'\n'"$COMMAND"
+                    else
+                        query_unknown=1
+                    fi
+                    ;;
+                *)
+                    if _read_file "$input" && ! _encoded "$FT"; then
+                        text="$text"$'\n'"$FT"
+                    else
+                        query_unknown=1
+                    fi
+                    ;;
+            esac
+        fi
         label_seg=0
         comment_seg=0
         if LC_ALL=C grep -qE "/labels([/?[:space:]${N}]|$)" <<< "$seg"; then
@@ -339,6 +452,10 @@ if invoked "${GH_ANCHOR}api\b"; then
         if [ "$label_seg" = 1 ] && [ "$IS_TRIAGE" != 1 ]; then
             LABEL_WRITE="writing issue labels through the API"
         fi
+        if [ "$ep_unknown" = 1 ]; then
+            comment_seg=1
+            [ "$IS_TRIAGE" = 1 ] || LABEL_WRITE="an API write whose endpoint the hook cannot read"
+        fi
         # An issue create (`issues`) or edit (`issues/<N>`) sets labels from
         # a `labels` field or body: refused when it carries one, or a field
         # name or body the hook cannot read.
@@ -347,7 +464,7 @@ if invoked "${GH_ANCHOR}api\b"; then
             for ((k = 0; k < ${#fields[@]}; k++)); do
                 key=${fields[k]%%=*}
                 case "$key" in
-                    labels*) LABEL_WRITE="setting issue labels through the API" ;;
+                    [Ll][Aa][Bb][Ee][Ll][Ss]*) LABEL_WRITE="setting issue labels through the API" ;;
                     "" | *"$N"* | *'$'* | *'('* | *'`'*)
                         LABEL_WRITE="an API issue write whose field name the hook cannot read"
                         ;;
@@ -356,17 +473,21 @@ if invoked "${GH_ANCHOR}api\b"; then
             case "$input" in
                 "") ;;
                 - | /dev/stdin)
-                    if LC_ALL=C grep -qE "labels" <<< "$COMMAND"; then
+                    if LC_ALL=C grep -qiE "labels" <<< "$COMMAND"; then
                         LABEL_WRITE="setting issue labels through the API"
                     elif [ "$HAS_HEREDOC" != 1 ]; then
                         LABEL_WRITE="an API issue write whose --input body is piped where the hook cannot read it"
+                    elif _encoded "$COMMAND"; then
+                        LABEL_WRITE="an API issue write whose --input body is JSON-escaped (\\u00XX)"
                     fi
                     ;;
                 *)
                     if ! _read_file "$input"; then
                         LABEL_WRITE="an API issue write whose --input body the hook cannot read"
-                    elif LC_ALL=C grep -qE "labels" <<< "$FT"; then
+                    elif LC_ALL=C grep -qiE "labels" <<< "$FT"; then
                         LABEL_WRITE="setting issue labels through the API"
+                    elif _encoded "$FT"; then
+                        LABEL_WRITE="an API issue write whose --input body is JSON-escaped (\\u00XX)"
                     fi
                     ;;
             esac
@@ -385,8 +506,10 @@ if invoked "${GH_ANCHOR}api\b"; then
                 _body_inline "$v"
             fi
         done
-        [ -n "$input" ] && _body_file "$input"
-    done < <(LC_ALL=C grep -oE "${GH_ANCHOR}api\b[^;&|)]*" <<< "$WORDS")
+        if [ -n "$input" ]; then
+            _body_file "$input" json
+        fi
+    done < <(_segments "${GH_ANCHOR}api\b" "$WORDS")
 fi
 
 if [ -n "$LABEL_WRITE" ]; then
