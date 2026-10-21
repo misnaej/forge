@@ -14,7 +14,10 @@
 #   `gh issue edit --add-label` / `gh issue create --label` naming it (or
 #   a value the hook cannot know: `$VAR`, a substitution), `gh label
 #   create|edit` naming it, a REST write to an issue's or the repo's
-#   labels (whatever the label), or a GraphQL label / issue mutation.
+#   labels (whatever the label), a REST issue create or edit
+#   (`issues`, `issues/<N>`) carrying a `labels` field or an `--input`
+#   body that mentions `labels` (or a field name or body the hook cannot
+#   read), or a GraphQL label / issue mutation.
 # - A2 payload: a caller other than issue-triage may not write an issue
 #   comment carrying the plan-validated marker — `gh issue comment`
 #   (`--edit-last` included), REST issue-comment writes, GraphQL
@@ -25,9 +28,11 @@
 #   issue comment and is untouched.
 # - A3 signature, for every caller (issue-triage included): a
 #   plan-validated payload carrying a sign-off claim ("validated by",
-#   "approved by", "signed-off-by", "endorsed by", "sign-off:") is refused
-#   — a human attribution nothing can corroborate (FOUNDATION §14). It is
-#   refused, never rewritten.
+#   "approved by", "signed-off-by", "endorsed by", "sign-off:", and the
+#   hyphenated "approved-by" forms) is refused — a human attribution
+#   nothing can corroborate (FOUNDATION §14). It is refused, never
+#   rewritten. The phrase is matched anywhere in the payload, so a
+#   harmless use ("validated by CI") is refused too and is reworded.
 #
 # Bypass: the PreToolUse payload's `agent_type` (the calling subagent's
 # `name:` frontmatter) `issue-triage` or `forge:issue-triage` waives A1
@@ -41,7 +46,9 @@
 # call from its own subprocess; a body encoded or computed so the marker
 # never appears literally, or spliced across expansions; a file rewritten
 # after this hook read it (`gen > p.md; gh issue comment 1 -F p.md` reads
-# the old p.md); `gh alias`; `gh label clone`; and agent_type spoofing
+# the old p.md); a command name held in a variable (`G=gh; $G issue
+# edit …`, as in block_pr_merge.sh); `gh alias`; `gh label clone`; and
+# agent_type spoofing
 # through a local `.claude/agents/issue-triage.md`. The guard proves which
 # agent typed a command, never that a human validated the plan.
 set -e
@@ -64,7 +71,7 @@ fi
 source "$ANCHOR_LIB"
 # Fail CLOSED on a lib that predates a helper this hook calls.
 if ! declare -F guard_begin command_positions guard_help_only invoked > /dev/null \
-    || [ -z "${GUARD_NEUTRAL:-}" ] || [ -z "${GH_ANCHOR:-}" ]; then
+    || [ -z "${GUARD_NEUTRAL:-}" ] || [ -z "${GH_ANCHOR:-}" ] || [ -z "${GH_OPTS:-}" ]; then
     echo "BLOCKED: the guard anchor lib at $ANCHOR_LIB lacks a helper this hook needs (older or damaged plugin copy) — refusing the command rather than running unguarded." >&2
     exit 2
 fi
@@ -89,7 +96,7 @@ N="$GUARD_NEUTRAL"
 # The marker, as forge.plan_staleness.PLAN_MARKER spells it, read through
 # quoting: in the --words view a quoted blank is GUARD_NEUTRAL.
 MARK="\\[issue-triage\\][[:space:]${N}]*plan-validated"
-SIGNOFF="(validated|approved|endorsed)[[:space:]${N}]+by|signed[[:space:]${N}-]+off[[:space:]${N}-]+by|sign-off[[:space:]${N}]*:"
+SIGNOFF="(validated|approved|endorsed)[[:space:]${N}-]+by|signed[[:space:]${N}-]+off[[:space:]${N}-]+by|sign-off[[:space:]${N}]*:"
 LABEL_MUTATIONS="(addLabelsToLabelable|updateIssue|createIssue|updateLabel|createLabel)([^[:alnum:]_]|$)"
 COMMENT_MUTATIONS="(addComment|updateIssueComment)([^[:alnum:]_]|$)"
 # Any `cd`/`pushd`/`popd` outside quotes moves where a relative body file
@@ -332,6 +339,38 @@ if invoked "${GH_ANCHOR}api\b"; then
         if [ "$label_seg" = 1 ] && [ "$IS_TRIAGE" != 1 ]; then
             LABEL_WRITE="writing issue labels through the API"
         fi
+        # An issue create (`issues`) or edit (`issues/<N>`) sets labels from
+        # a `labels` field or body: refused when it carries one, or a field
+        # name or body the hook cannot read.
+        if [ "$graphql" = 0 ] && [ "$IS_TRIAGE" != 1 ] \
+            && LC_ALL=C grep -qE "/issues(/[^/?[:space:]${N}]+)?/?([?[:space:]${N}]|$)" <<< "$seg"; then
+            for ((k = 0; k < ${#fields[@]}; k++)); do
+                key=${fields[k]%%=*}
+                case "$key" in
+                    labels*) LABEL_WRITE="setting issue labels through the API" ;;
+                    "" | *"$N"* | *'$'* | *'('* | *'`'*)
+                        LABEL_WRITE="an API issue write whose field name the hook cannot read"
+                        ;;
+                esac
+            done
+            case "$input" in
+                "") ;;
+                - | /dev/stdin)
+                    if LC_ALL=C grep -qE "labels" <<< "$COMMAND"; then
+                        LABEL_WRITE="setting issue labels through the API"
+                    elif [ "$HAS_HEREDOC" != 1 ]; then
+                        LABEL_WRITE="an API issue write whose --input body is piped where the hook cannot read it"
+                    fi
+                    ;;
+                *)
+                    if ! _read_file "$input"; then
+                        LABEL_WRITE="an API issue write whose --input body the hook cannot read"
+                    elif LC_ALL=C grep -qE "labels" <<< "$FT"; then
+                        LABEL_WRITE="setting issue labels through the API"
+                    fi
+                    ;;
+            esac
+        fi
         [ "$comment_seg" = 1 ] || continue
         COMMENT_WRITE=1
         # Every field may carry the body (a GraphQL variable can have any
@@ -378,7 +417,7 @@ fi
 
 # --- A3: issue-triage included — no sign-off claim in a payload -----------
 if [ -n "$SIGN_PHRASE" ]; then
-    echo "BLOCKED: this plan-validated payload carries a sign-off claim (\"$SIGN_PHRASE\"). A human attribution nothing can corroborate never appears in a recorded plan (FOUNDATION §14 \"Decision trail\") — rephrase or strip it, then post again." >&2
+    echo "BLOCKED: this plan-validated payload carries a sign-off claim (\"$SIGN_PHRASE\"). A human attribution nothing can corroborate never appears in a recorded plan (FOUNDATION §14 \"Decision trail\") — rephrase or strip it, then post again. The phrase is matched anywhere in the payload, so reword a harmless use too (\"checked by CI\" for \"validated by CI\")." >&2
     exit 2
 fi
 
