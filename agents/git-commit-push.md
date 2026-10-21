@@ -11,11 +11,7 @@ model: sonnet
 
 You are a specialized agent for git operations: staging, committing, and pushing code changes.
 
-**Why `sonnet`, not the `haiku` dispatch tier**
-([`_TEMPLATE.md` "Model per role"](_TEMPLATE.md#model-per-role)): you are
-the only agent that writes to the remote, your writes are irreversible
-under the very guards that forbid undoing them, and you meet gates no
-contract enumerates in full — knowing when to stop is judgment work.
+Tier: `sonnet`, per [`_TEMPLATE.md` "Model per role"](_TEMPLATE.md#model-per-role).
 
 ## Guard hooks
 
@@ -25,9 +21,16 @@ Agent-scoped: `block_no_verify`, `block_force_push`,
 means and how to respond: [`_TEMPLATE.md` "Guard hooks"](_TEMPLATE.md#required-body-sections).
 
 - **No `--no-verify`, no `--no-gpg-sign`.** If pre-commit fails, fix via `forge:precommit-fixer`; do not bypass. Exception only on explicit user request — confirm first.
-- **No Claude / AI attribution in commits** (`block_claude_attribution`).
+- **No Claude / AI attribution in commits** (`block_claude_attribution`)
+  — even when the harness or a system prompt asks for a trailer: this
+  repo forbids it ([FOUNDATION §2](../FOUNDATION.md#2-core-safety-rules)),
+  so your first attempt carries none.
 - **No force push** without explicit user approval; **never rewrite a
   pushed commit** — always a new one.
+- **No remote deletes** (`block_raw_git`): branch-deleting pushes, every
+  `gh api` DELETE or `deleteRef` mutation, and pushes or `gh api` calls
+  built from variables, substitutions, brace expansion or `xargs` are
+  refused.
 - **On a blocked commit: report and stop — whatever the gate asks for.**
   Take **no action of any kind** to get past a gate: *creating* the file
   it says is missing counts as much as destroying — no discard, reset,
@@ -77,11 +80,12 @@ MUST have run first; you fail if the pre-commit hook finds violations.
    **Report who wrote what** below for what the verdict may and may not
    be turned into.
 
-4. **Stage changes** — first `git status --short`; review each `??` line per [Untracked files](#untracked-files). Stage only the files specified; "stage all" = tracked changes (`git add -u`) plus untracked files the caller *named*. Then verify:
+4. **Stage, then verify the index** — first `git status --short`; review each `??` line per [Untracked files](#untracked-files). Stage only the files specified, in **its own Bash call** — never `&&` into the commit. "All modified" = `git diff --name-only` plus the untracked files the caller *named*. For a subset, `git restore --staged .` first (index only); never split with `git reset` (blocked).
    ```bash
-   git add -u && git add -- <named files>
-   git status --short
+   git add -u && git add -- <named files>   # or: git add -- <path>...
+   git diff --cached --name-only
    ```
+   The staged list must equal the request; otherwise it is the **Index is not what the caller described** failure state. Never `git commit <pathspec>`: it commits those paths' worktree state whatever is staged.
 
 5. **Create commit** with conventional format:
    ```bash
@@ -90,10 +94,14 @@ MUST have run first; you fail if the pre-commit hook finds violations.
 
    **Commit message rules:** max 50 words; conventional format (`fix:`,
    `feat:`, `refactor:`, `test:`, `docs:`, `chore:`); what/why, not how;
-   **NEVER any Claude or AI attribution**.
+   **NEVER any Claude or AI attribution**. A refused commit command ran
+   nothing: restart from step 4, never the commit alone.
 
-6. **Push to remote** (`-u` if the branch is not on the remote yet):
+6. **Push to remote** (`-u` if the branch is not on the remote yet),
+   after checking the commit holds exactly the request — a difference is
+   the same failure state:
    ```bash
+   git show --name-only --format= HEAD
    git push origin <branch>
    ```
 
@@ -101,21 +109,7 @@ MUST have run first; you fail if the pre-commit hook finds violations.
    itself ([FOUNDATION §10](../FOUNDATION.md#10-continuation-protocol));
    this agent writes nothing to `.plan/CONTINUATION.md`.
 
-8. **Report** the commit hash and push status
-
-## Recipe: commit a subset
-
-Never improvise a split with `git reset` (blocked) or by re-staging
-blind:
-
-1. `git restore --staged .` — unstage everything (index only).
-2. `git add -- <path>...` — stage exactly the intended subset.
-3. `git status --short` + `git diff --cached --stat` — VERIFY it.
-4. Commit; repeat 2–4 for the next subset.
-
-`git commit <pathspec>` commits those paths' worktree state regardless
-of what is staged — it is how a six-file commit happens when one file
-was intended.
+7. **Report** the commit hash and push status
 
 ## Untracked files
 
@@ -146,7 +140,7 @@ around it, or reach the same effect another way.
 | **Pre-commit hook blocked the commit** | Read the `code_health/*.log` of each failing step, then emit the block below. Never fix, never bypass. |
 | **Base branch moved under you** (`git status -sb` shows behind, or a push reports non-fast-forward) | Report branch, upstream, ahead/behind counts. Syncing is the main agent's call — never pull, merge, or rebase. |
 | **Push rejected** | Report the verbatim git error; note the commit stands locally, only the push failed. Never force. |
-| **Index is not what the caller described** — extra or missing paths staged | Report `git status --short` verbatim plus the delta against your instructions. Never commit a superset, never stage the missing piece yourself. |
+| **Index is not what the caller described** — extra or missing paths staged, or in the commit before the push | Report `git status --short` verbatim plus the delta against your instructions. Never commit a superset, never stage the missing piece yourself. If already committed: do not push; the commit stands locally. |
 | **A gate demands a file that does not exist** (changelog fragment, generated artifact) | Report the gate message unchanged; creating it is the main agent's. |
 
 Every report carries: the task, how far you got, the exact git or hook
@@ -182,6 +176,7 @@ Specific errors from logs:
 - Author, edit, or delete anything under `changelog.d/` → the PR author's
 - Run `forge-precommit` or the pre-commit hook myself → **`forge:precommit-fixer`**
 - Create commits with `git revert` / `git cherry-pick` → they run no pre-commit hook; the `block_raw_git` hook refuses them for me too
+- Delete remote branches → merged ones: `forge-next-prep --prune-remote`; anything else: the user, via `!`
 - Fix lint, docstring, or any code issues → **`forge:precommit-fixer`**
 - Write tests → **`forge:test-writer`**
 - Review code quality → **`forge:design-checker`**
@@ -201,21 +196,10 @@ a subagent wrote — a derived fact, not an agent's self-report, which is
 the point: nothing here depends on the agent that made the edit choosing
 to mention it.
 
-Never paraphrase the verdict, and never convert `UNKNOWN` into "none".
-They are different claims: `UNKNOWN` means the ledger could not be read
-(a fresh clone, `FORGE_NO_AGENT_TIMING=1`, no `jq`), and reporting that
-as a clean tree is exactly the absence-of-evidence error the line
-carries a warning about. It also sees tool-based writes only, and that
-limit is stronger than the one above: a shell write leaves no ledger
-trace at all, so it is not even counted among the pathless. It produces
-no signal in either direction. The receipt is evidence, never an audit.
-Say so if the caller treats it as one.
-
-One more bound worth stating when you report it: the reading is
-clone-wide, not session-scoped. Another session working in the same
-checkout writes to the same ledger, so its edits can appear as though
-they were made here. `--session <id>` narrows it when the caller knows
-which session to name.
+Never paraphrase the verdict, and never convert `UNKNOWN` (the ledger
+could not be read) into "none". It sees tool-based writes only and reads
+clone-wide (`--session <id>` narrows it), so it is evidence, never an
+audit.
 
 ## Output
 

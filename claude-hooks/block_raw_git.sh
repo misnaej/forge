@@ -17,11 +17,20 @@
 # push` — that is its job. The PreToolUse payload includes `agent_type`
 # (the `name:` frontmatter of the calling subagent, per
 # code.claude.com/docs/en/hooks); when it matches `git-commit-push` or
-# `forge:git-commit-push`, only the commit/push rule is waived. Every other
-# rule here — the fail-closed anchor-lib check, revert/cherry-pick, ref
+# `forge:git-commit-push`, only the commit/push rule is waived, and a
+# branch-deleting push — or any `gh api` DELETE or `deleteRef`
+# mutation, or a push or `gh api` call built at run time and so not
+# judgeable — stays refused even for that agent (deleting remote
+# branches is not its job; merged ones go to `forge-next-prep
+# --prune-remote`). That refusal is a tripwire, not a boundary; known
+# residuals: `git send-pack <remote> :ref` and a configured git alias
+# (`git config alias.*`, then its use) — both owned by the guard-coverage
+# work — and a gh run through a variable (`$GH api …`). Every other rule
+# here — the fail-closed anchor-lib check, revert/cherry-pick, ref
 # plumbing and inline interpreter git — applies to that agent like to
 # everyone: each creates commits or moves refs with no pre-commit hook,
-# which is exactly what that agent exists to prevent. Same scoped-bypass shape as block_protected_branches.sh.
+# which is exactly what that agent exists to prevent. Same scoped-bypass
+# shape as block_protected_branches.sh.
 set -e
 INPUT=$(cat)
 COMMAND=$(jq -r '.tool_input.command // empty' <<< "$INPUT")
@@ -53,6 +62,182 @@ CMDPOS=$(command_positions "$COMMAND")
 if [ "$IS_COMMIT_AGENT" != 1 ] && echo "$CMDPOS" | grep -qE "${GIT_ANCHOR}(commit|push)\b" \
     && ! guard_help_only "$CMDPOS" "${GIT_ANCHOR}(commit|push)\b"; then
     echo "BLOCKED: raw 'git commit' / 'git push' from Bash is forbidden by FOUNDATION §3 mandatory-delegation. Use the forge:git-commit-push agent — it runs pre-commit, signs the commit per the convention, and pushes with the right tracking flags." >&2
+    exit 2
+fi
+
+# A branch-deleting push from the commit agent. Its waiver above covers
+# committing and pushing work, not removing remote branches: a merged
+# branch is pruned by `forge-next-prep --prune-remote` (lease-pinned to
+# the merged tip), anything else is the user's call. Judged per
+# invocation over the --words view with redirections blanked, reading
+# only option tokens (a word starting with `-`) and refspecs: a long
+# delete option by every prefix git accepts as unique (`--de` …
+# `--delete`; `--d` is ambiguous with `--dry-run`), `--m` … `--mirror`
+# and `--pru` … `--prune` (either can delete any remote ref; `--p` and
+# `--pr` are ambiguous with `--porcelain` / `--progress` /
+# `--push-option`), each also as `=value`; a short cluster holding `d`
+# (`-d`, `-fd`); or a refspec with an empty source (`:feature`,
+# `+:feature`). A branch name containing `d` is a positional, never an
+# option.
+#
+# A push whose words hold a `$`, a backtick, a `{` (bash brace expansion:
+# `origin {,:}x` expands to a delete) or a command substitution
+# (`origin $x`, `origin $(cat f)`), one fed its words by `xargs`, and a
+# push whose git is itself a variable (`$g push`) cannot be judged: the
+# refspec only exists at run time, so those fail closed.
+PUSH_LONG_DELETE_RE='^--(de|del|dele|delet|delete|m|mi|mir|mirr|mirro|mirror|pru|prun|prune)(=.*)?$'
+
+# _push_tok_class <word> — classifies one push word read while options
+# are still being parsed. Returns 0 when it deletes, 1 for any other
+# option, 2 when it takes the next word as its value, 3 for `--` (end of
+# options), 4 for a positional (a remote or a refspec).
+_push_tok_class() {
+    case "$1" in
+        --) return 3 ;;
+        --repo | --receive-pack | --exec | --push-option) return 2 ;;
+    esac
+    [[ $1 =~ $PUSH_LONG_DELETE_RE ]] && return 0
+    case "$1" in
+        --*) return 1 ;;
+        -*d*) return 0 ;;
+        -*o) return 2 ;;
+        -*) return 1 ;;
+    esac
+    return 4
+}
+
+# _commit_agent_push_verdict — sets PUSH_VERDICT to `dynamic` (a push
+# that cannot be judged), `delete` (a branch-deleting push) or nothing.
+# Sets a variable rather than printing: no subshell per call.
+_commit_agent_push_verdict() {
+    local inv pre args tok skip endopt rc
+    local -a toks
+    PUSH_VERDICT=""
+    if echo "$CMDPOS" | grep -qE "${GIT_UNKNOWN_ANCHOR}push\b"; then
+        PUSH_VERDICT=dynamic
+        return 0
+    fi
+    while IFS= read -r inv; do
+        [ -n "$inv" ] || continue
+        pre="${inv%%	*}"
+        args="${inv#*	}"
+        if [[ $args == *[\$\`\{]* || $args == *@SUBST@* || $pre =~ (^|[[:space:]/])xargs([[:space:]]|$) ]]; then
+            PUSH_VERDICT=dynamic
+            return 0
+        fi
+        # `read -a`, not `toks=($args)`: no pathname expansion of a word
+        # such as `:feat*`, whatever the shell options.
+        read -ra toks <<< "$args"
+        skip=0
+        endopt=0
+        for tok in "${toks[@]}"; do
+            if [ "$skip" = 1 ]; then skip=0; continue; fi
+            rc=4
+            if [ "$endopt" = 0 ]; then
+                if _push_tok_class "$tok"; then rc=0; else rc=$?; fi
+            fi
+            case "$rc" in
+                0) PUSH_VERDICT=delete; return 0 ;;
+                1) continue ;;
+                2) skip=1; continue ;;
+                3) endopt=1; continue ;;
+            esac
+            case "$tok" in
+                :* | +:*) PUSH_VERDICT=delete; return 0 ;;
+            esac
+        done
+    done <<< "$(guard_git_invocations "$(command_positions --words --no-redir "$COMMAND")" push || true)"
+    return 0
+}
+# A `$g push` is judged even beside a help request: guard_help_only reads
+# only the literal-git invocations.
+if [ "$IS_COMMIT_AGENT" = 1 ] && {
+    echo "$CMDPOS" | grep -qE "${GIT_UNKNOWN_ANCHOR}push\b" \
+        || { echo "$CMDPOS" | grep -qE "${GIT_ANCHOR}push\b" && ! guard_help_only "$CMDPOS" "${GIT_ANCHOR}push\b"; }
+}; then
+    _commit_agent_push_verdict
+    case "$PUSH_VERDICT" in
+        dynamic)
+            echo "BLOCKED: the forge:git-commit-push agent pushes only what a hook can read. This push takes its words from a variable, a command substitution, a backtick or xargs (or runs git through a variable), so whether it deletes a remote branch is unknowable until it runs — refused rather than guessed. Spell the remote and branch literally (\`git push -u origin <branch>\`). A branch whose PR merged is pruned by \`forge-next-prep --prune-remote\`; anything else is the user's decision — a human runs it with: ! $COMMAND" >&2
+            exit 2
+            ;;
+        delete)
+            echo "BLOCKED: the forge:git-commit-push agent commits and pushes work; it does not delete remote branches. A branch whose PR merged is pruned by \`forge-next-prep --prune-remote\` (lease-pinned to the merged tip). Anything else is the user's decision — a human runs it with: ! $COMMAND" >&2
+            exit 2
+            ;;
+    esac
+fi
+
+# The same deletion through the GitHub API, for the commit agent. It has
+# no legitimate DELETE at all, so any real `gh api` call whose method is
+# DELETE is refused whatever the endpoint — which also covers a branch
+# path spelled percent-encoded (`%68eads`) or with doubled slashes. Also
+# refused: a call whose method or endpoint is built at run time (a
+# variable, a substitution, a backtick, a bash brace expansion such as
+# `{a,b}`; gh's own `{owner}` / `{repo}` placeholders are not one and
+# stay allowed), and any call naming the GraphQL `deleteRef` mutation, in
+# any case. Read per call from the --words view, so a quoted endpoint or
+# method still counts. The method is `-X` / `--method`, as a separate
+# word, attached (`-XDELETE`, `--method=delete`) or closing a short
+# cluster (`-iX`); gh's flag parser accepts no abbreviated long option.
+GH_API_VALUE_LONG_RE='^--(method|raw-field|field|header|jq|template|input|cache|preview|hostname)$'
+GH_API_DYNAMIC_RE='[$`(]|@SUBST@|\{[^}]*(,|\.\.)[^}]*\}'
+
+# _gh_api_call_verdict <segment> — 0 when the commit agent must not run
+# this `gh api` call, 1 otherwise.
+_gh_api_call_verdict() {
+    local tok method="" endpoint="" seen_api=0 want=""
+    local -a toks
+    [[ ${1^^} == *DELETEREF* ]] && return 0
+    read -ra toks <<< "$1"
+    for tok in "${toks[@]}"; do
+        if [ "$seen_api" = 0 ]; then
+            [ "$tok" = api ] && seen_api=1
+            continue
+        fi
+        if [ -n "$want" ]; then
+            [ "$want" = method ] && method="$tok"
+            want=""
+            continue
+        fi
+        case "$tok" in
+            --method=*) method="${tok#--method=}" ;;
+            --*=*) ;;
+            --*) [[ $tok =~ $GH_API_VALUE_LONG_RE ]] && want=value
+                 [ "$tok" = --method ] && want=method ;;
+            -*)
+                # A short cluster: `i` takes no value, every other gh api
+                # short flag takes one — the rest of the word, else the
+                # next word.
+                local cl="${tok#-}"
+                while [ "${cl:0:1}" = i ]; do cl="${cl:1}"; done
+                [ -n "$cl" ] || continue
+                if [ "${cl:0:1}" = X ]; then
+                    if [ -n "${cl:1}" ]; then method="${cl:1}"; else want=method; fi
+                elif [ -z "${cl:1}" ]; then
+                    want=value
+                fi
+                ;;
+            *) [ -z "$endpoint" ] && endpoint="$tok" ;;
+        esac
+    done
+    [ "$want" = method ] && return 0
+    [[ ${method^^} == DELETE ]] && return 0
+    [ -n "$method" ] && ! [[ $method =~ ^[A-Za-z]+$ ]] && return 0
+    [[ $endpoint =~ $GH_API_DYNAMIC_RE ]] && return 0
+    return 1
+}
+
+_commit_agent_gh_deletes() {
+    local seg
+    while IFS= read -r seg; do
+        [ -n "$seg" ] || continue
+        _gh_api_call_verdict "$seg" && return 0
+    done <<< "$(command_positions --words --no-redir "$COMMAND" | grep -oE "gh[[:space:]]+${GH_OPTS}api[^;&|]*" || true)"
+    return 1
+}
+if [ "$IS_COMMIT_AGENT" = 1 ] && echo "$CMDPOS" | grep -qE "${GH_ANCHOR}api\b" && _commit_agent_gh_deletes; then
+    echo "BLOCKED: the forge:git-commit-push agent does not delete remote branches, through git or through the GitHub API — so it runs no \`gh api\` DELETE and no \`deleteRef\` mutation at all, and no \`gh api\` call whose method or endpoint comes from a variable, a substitution or a brace expansion (a hook cannot tell what that call does). A branch whose PR merged is pruned by \`forge-next-prep --prune-remote\` (lease-pinned to the merged tip). Anything else is the user's decision — a human runs it with: ! $COMMAND" >&2
     exit 2
 fi
 

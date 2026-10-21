@@ -749,11 +749,13 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `tag_on_remote(repo_root: Path, tag: str) -> bool | None` — Ask ``origin`` whether it holds *tag*, never prompting or hanging.
 - `_is_git_env_override(name: str) -> bool` _(internal)_ — Return whether *name* overrides git's config or repository per process.
 - `git_env_overrides_removed() -> Iterator[None]` — Run the body with git's per-process environment overrides removed.
-- `class PushResult` — The outcome of :func:`push_branch` or :func:`push_tag`.
+- `class PushResult` — The outcome of a push through one of this module's push seams.
 - `_refuse_dash_or_plus(remote: str, ref: str, kind: str) -> PushResult | None` _(internal)_ — Return a refusal when *remote* or *ref* could parse as more than a name.
-- `_push_refspec(repo_root: Path, remote: str, refspec: str, *, set_upstream: bool = False) -> PushResult` _(internal)_ — Push one fully qualified *refspec* without ever prompting or hanging.
+- `_push_refspec(repo_root: Path, remote: str, refspec: str, *, set_upstream: bool = False, lease: str | None = None) -> PushResult` _(internal)_ — Push one fully qualified *refspec* without ever prompting or hanging.
 - `push_branch(repo_root: Path, branch: str, *, set_upstream: bool = False, remote: str = 'origin') -> PushResult` — Push *branch* to *remote* without ever prompting or hanging.
 - `push_tag(repo_root: Path, tag: str, *, remote: str = 'origin') -> PushResult` — Push *tag* to *remote* without ever prompting or hanging.
+- `_refuse_delete_target(branch: str, expected_sha: str, base_branch: str) -> PushResult | None` _(internal)_ — Return a refusal when *branch* / *expected_sha* are not a safe delete target.
+- `delete_remote_branch(repo_root: Path, branch: str, *, expected_sha: str, base_branch: str, remote: str = 'origin') -> PushResult` — Delete *branch* on *remote* only if it still points at *expected_sha*.
 - `behind_ahead(repo_root: Path, base_ref: str) -> tuple[int, int] | None` — Return how many commits HEAD is behind and ahead of *base_ref*.
 - `merge_tree_clean(repo_root: Path, left: str, right: str) -> bool | None` — Return whether merging *left* and *right* would be free of conflicts.
 - `unpushed_commit_count(repo_root: Path) -> int | None` — Return how many commits HEAD holds that its upstream does not.
@@ -952,9 +954,20 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_gone_branches(repo_root: Path) -> list[str]` _(internal)_ — Return local branch names whose tracking remote is ``[origin/...: gone]``.
 - `_prune_gone_branches(repo_root: Path) -> tuple[list[str], list[str]]` _(internal)_ — ``git branch -d`` every branch whose remote is gone.
 - `_log_prune_result(repo_root: Path) -> None` _(internal)_ — Prune stale local branches and log the outcome.
+- `class PrLookup` — What ``gh`` said about the PRs whose head is one branch.
+- `_gh_prs_for_head(repo_root: Path, branch: str) -> PrLookup` _(internal)_ — Ask ``gh`` for every PR (any state) whose head branch is *branch*.
+- `_gh_pr_list_failure(stderr: str) -> PrLookup` _(internal)_ — Classify a non-zero ``gh pr list`` exit.
+- `_parse_pr_list(stdout: str) -> PrLookup` _(internal)_ — Parse the JSON array ``gh pr list`` printed on success.
+- `_remote_heads(repo_root: Path) -> dict[str, str] | None` _(internal)_ — Return ``{branch: tip sha}`` for every branch on origin, read live.
+- `_origin_head_branch(repo_root: Path) -> str | None` _(internal)_ — Return the branch ``origin/HEAD`` points at, or ``None`` if unknown.
+- `class RemotePruneReport` — What ``--prune-remote`` did, per branch.
+- `_pr_verdict(prs: list[dict[str, object]], branch: str, base: str) -> tuple[Literal['open', 'unmerged', 'merged'], frozenset[str]]` _(internal)_ — Judge *branch* from its PRs.
+- `_prune_merged_remote_branches(repo_root: Path, base_branch: str, *, pr_lister: PrLister | None = None) -> RemotePruneReport` _(internal)_ — Delete origin branches whose same-repo PR merged and whose tip is unchanged.
+- `_delete_one(repo_root: Path, branch: str, sha: str, base_branch: str, report: RemotePruneReport) -> None` _(internal)_ — Delete *branch* on origin lease-pinned to *sha*, recording the outcome.
+- `_log_remote_prune_result(repo_root: Path, base_branch: str, *, pr_lister: PrLister | None = None) -> None` _(internal)_ — Prune merged remote branches and log the outcome.
 - `main() -> int` — Refresh main, optionally tag the release, prune stale local branches.
 - `_pull_ff_only(repo_root: Path, target_branch: str) -> bool` _(internal)_ — Fast-forward *target_branch* from origin, bounded and prompt-free.
-- `_tag_and_report(repo_root: Path, args: argparse.Namespace) -> int` _(internal)_ — Run the post-sync tail: optional tag, optional prune, advisory.
+- `_tag_and_report(repo_root: Path, args: argparse.Namespace) -> int` _(internal)_ — Run the post-sync tail: optional tag, optional prunes, advisory.
 
 ## `forge.pip_audit_json`
 

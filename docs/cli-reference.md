@@ -508,7 +508,8 @@ options:
 ## forge-next-prep
 
 ```text
-usage: forge-next-prep [-h] [--tag] [--no-prune-branches] [--no-sync]
+usage: forge-next-prep [-h] [--tag] [--no-prune-branches] [--prune-remote]
+                       [--no-sync]
 
 Prepare main for the next task: fetch + pull --ff-only, optionally tag the
 rolling-next release, prune stale local branches. Used by the /next skill.
@@ -519,6 +520,11 @@ options:
                        v* tag and push the tag (forge's rolling-next
                        workflow). Off by default.
   --no-prune-branches  Skip the stale-branch prune step.
+  --prune-remote       Delete origin branches whose same-repo PR merged into
+                       the base branch and whose tip is unchanged since
+                       (lease-pinned to the merged commit). Branches with an
+                       open PR, no merged PR, or a moved tip are reported and
+                       left alone. Off by default.
   --no-sync            Skip the fetch/checkout/pull steps and operate on the
                        current HEAD (tags are still fetched for the version
                        comparison). For CI tag jobs that check out the exact

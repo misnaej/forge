@@ -11,8 +11,10 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import logging
+import operator
 import os
 import subprocess
 from typing import TYPE_CHECKING
@@ -21,6 +23,7 @@ import pytest
 
 from forge import next_prep
 from forge.config import ForgeConfig
+from forge.git_utils import PushResult
 from tests.conftest import FakeProc
 
 
@@ -530,7 +533,7 @@ def test_tag_and_report_advises_on_pending_fragments(
     )
     (tmp_path / "changelog.d").mkdir()
     (tmp_path / "changelog.d" / "a.added.md").write_text("bump: minor\n- x\n")
-    args = argparse.Namespace(tag=False, no_prune_branches=True)
+    args = argparse.Namespace(tag=False, no_prune_branches=True, prune_remote=False)
     with caplog.at_level("INFO"):
         assert next_prep._tag_and_report(tmp_path, args) == 0
     assert "1 pending changelog fragment(s)" in caplog.text
@@ -554,7 +557,7 @@ def test_tag_and_report_logs_reason_when_no_tag(
         "_maybe_tag_release",
         lambda _root: next_prep.TagDecision(None, "manifest is parked"),
     )
-    args = argparse.Namespace(tag=True, no_prune_branches=True)
+    args = argparse.Namespace(tag=True, no_prune_branches=True, prune_remote=False)
     with caplog.at_level("INFO"):
         assert next_prep._tag_and_report(tmp_path, args) == 0
     assert "No release tag: manifest is parked" in caplog.text
@@ -579,7 +582,7 @@ def test_tag_and_report_fragment_advisory_silent(
     """
     if pyproject_text:
         (tmp_path / "pyproject.toml").write_text(pyproject_text)
-    args = argparse.Namespace(tag=False, no_prune_branches=True)
+    args = argparse.Namespace(tag=False, no_prune_branches=True, prune_remote=False)
     with caplog.at_level("INFO"):
         assert next_prep._tag_and_report(tmp_path, args) == 0
     assert "pending changelog fragment" not in caplog.text
@@ -636,3 +639,229 @@ def test_pull_ff_only_runs_with_network_env_over_the_process_env(
     assert env["GIT_TERMINAL_PROMPT"] == "0"
     assert env["GIT_SSH_COMMAND"] == "ssh -o BatchMode=yes"
     assert env["PATH"] == os.environ["PATH"]
+
+
+# Section: ``--prune-remote``. The live remote listing, origin/HEAD probe
+# and the delete seam are replaced as module attributes; the gh lookup is
+# the injectable ``pr_lister``.
+
+_TIP = "a" * 40
+_OTHER = "b" * 40
+
+
+def _pr(
+    state: str = "MERGED",
+    *,
+    oid: str = _TIP,
+    base: str = "main",
+    cross: bool = False,
+    head: str = "feature",
+) -> dict[str, object]:
+    """Build one ``gh pr list --json`` row for the branch ``feature``.
+
+    Args:
+        state: PR state (``MERGED`` / ``OPEN`` / ``CLOSED``).
+        oid: The PR's head commit.
+        base: The PR's base branch.
+        cross: Whether the head lives in a fork.
+        head: The PR's head branch name.
+
+    Returns:
+        The row.
+    """
+    return {
+        "number": 1,
+        "state": state,
+        "headRefName": head,
+        "headRefOid": oid,
+        "isCrossRepository": cross,
+        "baseRefName": base,
+        "mergedAt": "2026-01-01T00:00:00Z" if state == "MERGED" else None,
+    }
+
+
+def _lister(*prs: dict[str, object]) -> next_prep.PrLister:
+    """Return a PR lister that answers *prs* for every branch.
+
+    Args:
+        *prs: The rows to answer.
+
+    Returns:
+        The lister.
+    """
+    return lambda _root, _branch: next_prep.PrLookup(list(prs))
+
+
+@pytest.fixture
+def remote_with_feature(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
+    """Origin holds ``main`` and ``feature`` (tip ``_TIP``); deletes are recorded.
+
+    Returns:
+        The ``(branch, expected_sha)`` of every delete requested.
+    """
+    deletes: list[tuple[str, str]] = []
+
+    def _fake_delete(
+        _root: Path, branch: str, *, expected_sha: str, base_branch: str
+    ) -> PushResult:
+        assert base_branch == "main"
+        deletes.append((branch, expected_sha))
+        return PushResult(ok=True, returncode=0, stderr="")
+
+    monkeypatch.setattr(
+        next_prep, "_remote_heads", lambda _root: {"main": _OTHER, "feature": _TIP}
+    )
+    monkeypatch.setattr(next_prep, "_origin_head_branch", lambda _root: "main")
+    monkeypatch.setattr(next_prep, "delete_remote_branch", _fake_delete)
+    return deletes
+
+
+def test_prune_remote_deletes_merged_unchanged_branch(
+    tmp_path: Path, remote_with_feature: list[tuple[str, str]]
+) -> None:
+    """A same-repo PR merged into main at origin's tip → deleted, lease = tip."""
+    report = next_prep._prune_merged_remote_branches(
+        tmp_path, "main", pr_lister=_lister(_pr())
+    )
+    assert remote_with_feature == [("feature", _TIP)]
+    assert report.deleted == ["feature"]
+
+
+@pytest.mark.parametrize(
+    ("prs", "bucket"),
+    [
+        ((_pr(), _pr("OPEN")), "open_pr"),
+        ((_pr(base="release"),), "unmerged"),
+        ((_pr(oid=_OTHER),), "moved"),
+        ((_pr(cross=True),), "unmerged"),
+        ((_pr("CLOSED"),), "unmerged"),
+    ],
+    ids=["open-after-merged", "base-mismatch", "moved-tip", "cross-repo", "closed"],
+)
+def test_prune_remote_leaves_branch_that_is_not_safely_merged(
+    tmp_path: Path,
+    remote_with_feature: list[tuple[str, str]],
+    prs: tuple[dict[str, object], ...],
+    bucket: str,
+) -> None:
+    """Every not-safely-merged shape is reported in its bucket, never deleted.
+
+    Args:
+        prs: The PR rows gh answers for ``feature``.
+        bucket: The report list ``feature`` must land in.
+    """
+    report = next_prep._prune_merged_remote_branches(
+        tmp_path, "main", pr_lister=_lister(*prs)
+    )
+    assert remote_with_feature == []
+    assert getattr(report, bucket) == ["feature"]
+
+
+def test_prune_remote_result_at_limit_is_unknown(
+    tmp_path: Path, remote_with_feature: list[tuple[str, str]]
+) -> None:
+    """A lookup that fills the limit may hide an open PR → skipped as unknown."""
+    rows = [_pr()] * next_prep._GH_PR_LIST_LIMIT
+    report = next_prep._prune_merged_remote_branches(
+        tmp_path, "main", pr_lister=_lister(*rows)
+    )
+    assert remote_with_feature == []
+    assert functools.reduce(operator.iadd, report.unknown.values(), []) == ["feature"]
+
+
+def test_prune_remote_listing_failure_warns_and_deletes_nothing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    remote_with_feature: list[tuple[str, str]],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``git ls-remote`` failing is a warning, never "nothing to prune"."""
+    monkeypatch.setattr(next_prep, "_remote_heads", lambda _root: None)
+    with caplog.at_level("INFO"):
+        next_prep._log_remote_prune_result(tmp_path, "main", pr_lister=_lister(_pr()))
+    assert remote_with_feature == []
+    assert "could not be listed" in caplog.text
+    assert "nothing was deleted" in caplog.text
+
+
+def test_prune_remote_stale_lease_is_reported_and_exits_zero(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    remote_with_feature: list[tuple[str, str]],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A lease git rejects means the branch moved: reported, run still exits 0.
+
+    SCENARIO: the branch moved between ls-remote and the delete.
+    MOCK SETUP: the delete seam answers a stale-lease rejection; the
+        module's gh lookup is replaced so ``_tag_and_report`` runs as the
+        CLI would.
+    EXPECTED BEHAVIOR: exit 0 and a "moved since" warning naming it.
+    """
+    monkeypatch.setattr(
+        next_prep,
+        "delete_remote_branch",
+        lambda *_a, **_k: PushResult(
+            ok=False, returncode=1, stderr="! [rejected] (stale info)", stale_lease=True
+        ),
+    )
+    monkeypatch.setattr(next_prep, "_gh_prs_for_head", _lister(_pr()))
+    args = argparse.Namespace(tag=False, no_prune_branches=True, prune_remote=True)
+    with caplog.at_level("INFO"):
+        assert next_prep._tag_and_report(tmp_path, args) == 0
+    assert "moved since their PR merged: feature" in caplog.text
+
+
+def test_prune_remote_skips_with_one_warning_when_gh_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    remote_with_feature: list[tuple[str, str]],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No ``gh`` → every branch is unknown, one warning, nothing deleted."""
+    monkeypatch.setattr(
+        next_prep,
+        "_remote_heads",
+        lambda _root: {"main": _OTHER, "feature": _TIP, "other": _TIP},
+    )
+    monkeypatch.setattr(next_prep.shutil, "which", lambda _name: None)
+    with caplog.at_level("INFO"):
+        next_prep._log_remote_prune_result(tmp_path, "main")
+    assert remote_with_feature == []
+    assert caplog.text.count("gh is not installed") == 1
+    assert "feature, other" in caplog.text
+
+
+def test_prune_remote_never_lists_base_or_origin_head(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    remote_with_feature: list[tuple[str, str]],
+) -> None:
+    """The base branch and origin/HEAD's branch are never even looked up."""
+    monkeypatch.setattr(
+        next_prep,
+        "_remote_heads",
+        lambda _root: {"main": _OTHER, "trunk": _OTHER, "feature": _TIP},
+    )
+    monkeypatch.setattr(next_prep, "_origin_head_branch", lambda _root: "trunk")
+    asked: list[str] = []
+
+    def _recording(_root: Path, branch: str) -> next_prep.PrLookup:
+        asked.append(branch)
+        return next_prep.PrLookup([_pr()])
+
+    next_prep._prune_merged_remote_branches(tmp_path, "main", pr_lister=_recording)
+    assert asked == ["feature"]
+
+
+def test_prune_remote_flag_off_makes_no_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without ``--prune-remote`` the remote is never listed."""
+
+    def _boom(_root: Path) -> None:
+        pytest.fail("remote listed without --prune-remote")
+
+    monkeypatch.setattr(next_prep, "_remote_heads", _boom)
+    args = argparse.Namespace(tag=False, no_prune_branches=True, prune_remote=False)
+    assert next_prep._tag_and_report(tmp_path, args) == 0

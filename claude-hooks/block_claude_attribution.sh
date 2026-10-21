@@ -43,5 +43,6 @@ fi
 # narrower than the Python list).
 if echo "$COMMAND" | grep -qiE 'co-authored-by.*(claude|anthropic)|generated (with|by) .{0,4}claude|🤖 generated|assisted by ai|ai-generated|with claude code|authored by claude'; then
     echo "BLOCKED: Claude attribution is forbidden in commits and PRs. Remove any Co-Authored-By, 'Generated with Claude', or AI references." >&2
+    echo "The whole command was refused — nothing in it ran, including anything chained before it with &&, ;, |. Remove the attribution line and re-run the whole command, or stage in a separate call first." >&2
     exit 2
 fi

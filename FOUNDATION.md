@@ -290,7 +290,10 @@ gate.
   `gh api repos/{owner}/{repo}/rules/branches/{branch}` and
   `.../rulesets` — never conclude "unprotected" from a 404 on the legacy
   `/branches/{branch}/protection` endpoint alone (it 404s for
-  ruleset-protected branches too; §1 "Absence of evidence").
+  ruleset-protected branches too; §1 "Absence of evidence"). Pruning merged
+  feature branches is `forge-next-prep --prune-remote`'s job (lease-pinned to
+  the merged tip); the commit agent's branch-deleting pushes are refused by
+  `block_raw_git`.
 - **No backwards-compatibility shims** unless explicitly requested — no `OldName =
   NewName`, no deprecation warnings, no re-exports of moved modules. Clean breaks
   by default.

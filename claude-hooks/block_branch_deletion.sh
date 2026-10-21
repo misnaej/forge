@@ -3,9 +3,10 @@
 # (base_branch, default `main`).
 #
 # Why this exists separately from block_raw_git / block_protected_branches:
-#   - block_raw_git blocks raw `git push` from Bash, BUT the
-#     forge:git-commit-push agent bypasses it — so a delete-push could
-#     still get through that agent. This hook has NO bypass.
+#   - block_raw_git refuses raw `git push` from Bash and refuses a
+#     branch-deleting push from the forge:git-commit-push agent too, but
+#     every agent-type rule there is scoped to who is calling. This hook
+#     guards the protected branch whoever calls, with NO bypass.
 #   - block_raw_git is git-only; `gh api -X DELETE .../branches/...` is a
 #     gh call it never sees. This hook covers the gh-api delete path too.
 #   - Server-side rulesets that "restrict deletions" do NOT stop a
@@ -103,7 +104,7 @@ GH_API_RE="gh[[:space:]]+${GH_OPTS}api"
 # block. Prints `<branch><TAB><reason>` for the first deletion found.
 #
 # A push's words are read the way git reads them: long options by any
-# prefix git accepts (`--del`, `--mir`, `--pru`), `--opt=value`, short
+# prefix git accepts (`--del`, `--m`, `--pru`), `--opt=value`, short
 # clusters (`-fd` deletes), the value of `-o`/`--repo`/`--receive-pack`/
 # `--exec`/`--push-option`, and `--` ending the options. Then:
 #   - `--mirror` / `--prune`: can delete any remote ref — blocked;
@@ -145,7 +146,7 @@ BEGIN { NP = split(PROTECTED, P, /[[:space:]]+/); found = 0 }
                 name = t; val = ""; hasval = 0
                 if (index(t, "=")) { name = substr(t, 1, index(t, "=") - 1); val = substr(t, index(t, "=") + 1); hasval = 1 }
                 if (name ~ /^--(de|del|dele|delet|delete)$/) { del = 1; if (val != "") POS[++np] = val; continue }
-                if (name ~ /^--(mi|mir|mirr|mirro|mirror|pru|prun|prune)$/) { mir = 1; continue }
+                if (name ~ /^--(m|mi|mir|mirr|mirro|mirror|pru|prun|prune)$/) { mir = 1; continue }
                 if (!hasval && name ~ /^--(repo|receive-pack|exec|push-option)$/) skip = 1
                 continue
             }

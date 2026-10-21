@@ -1274,18 +1274,26 @@ def git_env_overrides_removed() -> Iterator[None]:
 
 @dataclass(frozen=True)
 class PushResult:
-    """The outcome of :func:`push_branch` or :func:`push_tag`.
+    """The outcome of a push through one of this module's push seams.
+
+    The seams are :func:`push_branch`, :func:`push_tag` and
+    :func:`delete_remote_branch`.
 
     Attributes:
         ok: Whether the push succeeded.
         returncode: Git's exit code, or ``None`` when git did not finish
             (timed out, could not start, or the arguments were refused).
         stderr: Git's error output, or why the push never ran.
+        stale_lease: ``True`` only for a :func:`delete_remote_branch` that
+            git rejected with its lease text (``stale info``): the remote
+            branch no longer pointed at the expected commit, so it moved and
+            was left alone. Any other rejection leaves it ``False``.
     """
 
     ok: bool
     returncode: int | None
     stderr: str
+    stale_lease: bool = False
 
 
 def _refuse_dash_or_plus(remote: str, ref: str, kind: str) -> PushResult | None:
@@ -1313,30 +1321,53 @@ def _refuse_dash_or_plus(remote: str, ref: str, kind: str) -> PushResult | None:
 
 
 def _push_refspec(
-    repo_root: Path, remote: str, refspec: str, *, set_upstream: bool = False
+    repo_root: Path,
+    remote: str,
+    refspec: str,
+    *,
+    set_upstream: bool = False,
+    lease: str | None = None,
 ) -> PushResult:
     """Push one fully qualified *refspec* without ever prompting or hanging.
 
-    The single push execution path behind :func:`push_branch` and
-    :func:`push_tag`: one set of guards, so a ref kind added later cannot
-    acquire a weaker one. It runs with :func:`network_git_env` and a
-    bounded timeout, and returns failure instead of raising so each caller
-    decides what a failed push means. Git's per-process config and
-    repository overrides are dropped from the push's environment (see
-    :func:`git_env_overrides_removed`); the caller is responsible for
-    refusing names that could parse as options or force refspecs, before
-    they are built into *refspec*.
+    The single push execution path behind :func:`push_branch`,
+    :func:`push_tag` and :func:`delete_remote_branch`: one set of guards,
+    so a ref kind added later cannot acquire a weaker one. It runs with
+    :func:`network_git_env` and a bounded timeout, and returns failure
+    instead of raising so each caller decides what a failed push means.
+    Git's per-process config and repository overrides are dropped from the
+    push's environment (see :func:`git_env_overrides_removed`); the caller
+    is responsible for refusing names that could parse as options or force
+    refspecs, before they are built into *refspec*.
+
+    *lease* exists for :func:`delete_remote_branch` alone, which is the
+    only caller that passes it: a lease on a pushed (non-delete) refspec
+    would be a force-push guard, and no forge CLI force-pushes. It is
+    never combined with ``-u`` — there is nothing to track once a ref is
+    deleted — and that combination is refused without running git.
 
     Args:
         repo_root: Git repo root.
         remote: Remote name.
         refspec: The ``<src>:<dst>`` refspec to push.
         set_upstream: Pass ``-u`` so the pushed ref is tracked.
+        lease: ``<ref>:<sha>`` for ``--force-with-lease``, delete-only.
 
     Returns:
         The outcome.
     """
-    argv = ["git", "push", *(["-u"] if set_upstream else []), remote, refspec]
+    if lease is not None and set_upstream:
+        return PushResult(
+            ok=False, returncode=None, stderr="refused a lease combined with -u"
+        )
+    argv = [
+        "git",
+        "push",
+        *(["-u"] if set_upstream else []),
+        *([f"--force-with-lease={lease}"] if lease is not None else []),
+        remote,
+        refspec,
+    ]
     env = {
         name: value
         for name, value in os.environ.items()
@@ -1437,6 +1468,103 @@ def push_tag(repo_root: Path, tag: str, *, remote: str = "origin") -> PushResult
     if refusal is not None:
         return refusal
     return _push_refspec(repo_root, remote, f"refs/tags/{tag}:refs/tags/{tag}")
+
+
+_FULL_SHA_RE = re.compile(r"[0-9a-f]{40}([0-9a-f]{24})?")
+
+
+def _refuse_delete_target(
+    branch: str, expected_sha: str, base_branch: str
+) -> PushResult | None:
+    """Return a refusal when *branch* / *expected_sha* are not a safe delete target.
+
+    Args:
+        branch: Remote branch the caller wants deleted.
+        expected_sha: The commit the caller believes the branch points at.
+        base_branch: The repo's protected base branch.
+
+    Returns:
+        A failed :class:`PushResult` naming the reason, else ``None``.
+    """
+    reason = None
+    if branch == base_branch:
+        reason = f"refused to delete the base branch {branch!r}"
+    elif (
+        not branch
+        or branch == "HEAD"
+        or branch.startswith("refs/")
+        or ".." in branch
+        or re.search(r"[\s:*?\[]", branch)
+    ):
+        reason = f"refused a branch name that is not a plain branch: {branch!r}"
+    elif not _FULL_SHA_RE.fullmatch(expected_sha):
+        reason = f"refused an expected sha that is not a full id: {expected_sha!r}"
+    if reason is None:
+        return None
+    return PushResult(ok=False, returncode=None, stderr=reason)
+
+
+def delete_remote_branch(
+    repo_root: Path,
+    branch: str,
+    *,
+    expected_sha: str,
+    base_branch: str,
+    remote: str = "origin",
+) -> PushResult:
+    """Delete *branch* on *remote* only if it still points at *expected_sha*.
+
+    The one seam for a forge CLI that removes a remote branch — used by
+    ``forge-next-prep --prune-remote`` for branches whose PR merged. It
+    pushes the delete refspec ``:refs/heads/<branch>`` with
+    ``--force-with-lease=refs/heads/<branch>:<expected_sha>``.
+
+    A delete refspec is not a force: it carries no ``+`` and no
+    ``--force``, and rewrites no history. The lease is a compare-and-swap
+    guard, not a force — git refuses the delete when the remote branch has
+    moved past the commit the caller verified, so work pushed after the
+    merge survives. A lease rejection — git's ``stale info`` — is classified
+    here (:attr:`PushResult.stale_lease`) so callers report "moved since
+    merge, left alone"; every other rejection, such as a server-side hook
+    declining the delete, stays a plain failure. The base-branch and name
+    checks live in this seam, not only in a Claude Code hook, because a
+    hook sees the command an agent types and never a CLI's own
+    subprocesses.
+
+    Args:
+        repo_root: Git repo root.
+        branch: Remote branch name to delete (without ``refs/heads/``).
+        expected_sha: Full commit id the branch must still point at.
+        base_branch: The protected base branch, which is never deleted.
+        remote: Remote name.
+
+    Returns:
+        The outcome. Refused without running git when *remote* or
+        *branch* starts with ``-`` or ``+``; when *branch* is the base
+        branch; when *branch* is empty, ``HEAD``, starts with ``refs/``, or
+        contains ``:``, ``..``, a glob character (``*`` ``?`` ``[``) or
+        whitespace; or when *expected_sha* is not a full 40- or 64-digit
+        lowercase hex object id.
+    """
+    refusal = _refuse_dash_or_plus(remote, branch, "branch") or _refuse_delete_target(
+        branch, expected_sha, base_branch
+    )
+    if refusal is not None:
+        return refusal
+    ref = f"refs/heads/{branch}"
+    result = _push_refspec(repo_root, remote, f":{ref}", lease=f"{ref}:{expected_sha}")
+    if result.ok or result.returncode is None:
+        return result
+    # Only git's lease text means "moved since merge": any other rejection
+    # (`! [remote rejected] … (protected branch hook declined)`) is a plain
+    # failure the caller must not report as a branch that merely moved.
+    stale = "stale info" in result.stderr
+    return PushResult(
+        ok=False,
+        returncode=result.returncode,
+        stderr=result.stderr,
+        stale_lease=stale,
+    )
 
 
 def behind_ahead(repo_root: Path, base_ref: str) -> tuple[int, int] | None:
