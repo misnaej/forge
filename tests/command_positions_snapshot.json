@@ -1,31 +1,31 @@
 {
  "grep -nE \"conda (env )?(create|update|install)|mamba|pip install\" setup.sh": {
   "positions": "grep -nE _ setup.sh\n",
-  "words": "grep -nE conda _env _?_create_update_install__mamba_pip install setup.sh\n"
+  "words": "grep -nE conda\u001f\u001fenv\u001f\u001f?\u001fcreate\u001fupdate\u001finstall\u001f\u001fmamba\u001fpip\u001finstall setup.sh\n"
  },
  "grep -nE \"help|dry-run|gh pr create|grep -qE\" claude-hooks/block_unverified_pr_create.sh": {
   "positions": "grep -nE _ claude-hooks/block_unverified_pr_create.sh\n",
-  "words": "grep -nE help_dry-run_gh pr create_grep -qE claude-hooks/block_unverified_pr_create.sh\n"
+  "words": "grep -nE help\u001fdry-run\u001fgh\u001fpr\u001fcreate\u001fgrep\u001f-qE claude-hooks/block_unverified_pr_create.sh\n"
  },
  "echo 'note (pip install x) not real'": {
   "positions": "echo _\n",
-  "words": "echo note _pip install x_ not real\n"
+  "words": "echo note\u001f\u001fpip\u001finstall\u001fx\u001f\u001fnot\u001freal\n"
  },
  "git log --grep='(pip install'": {
   "positions": "git log --grep=_\n",
-  "words": "git log --grep=_pip install\n"
+  "words": "git log --grep=\u001fpip\u001finstall\n"
  },
  "gh pr comment 1 --body 'run (pip install foo)'": {
   "positions": "gh pr comment 1 --body _\n",
-  "words": "gh pr comment 1 --body run _pip install foo_\n"
+  "words": "gh pr comment 1 --body run\u001f\u001fpip\u001finstall\u001ffoo\u001f\n"
  },
  "python3 -c \"print('(git push --force)')\"": {
   "positions": "python3 -c _\n",
-  "words": "python3 -c print_'_git push --force_'_\n"
+  "words": "python3 -c print\u001f'\u001fgit\u001fpush\u001f--force\u001f'\u001f\n"
  },
  "gh issue comment 1 --body \"see (git push --force) and git commit\"": {
   "positions": "gh issue comment 1 --body _\n",
-  "words": "gh issue comment 1 --body see _git push --force_ and git commit\n"
+  "words": "gh issue comment 1 --body see\u001f\u001fgit\u001fpush\u001f--force\u001f\u001fand\u001fgit\u001fcommit\n"
  },
  "cat > f.md <<'EOF'\ngit commit -m x\nEOF": {
   "positions": "cat > f.md <<_\n",
@@ -37,19 +37,19 @@
  },
  "gh issue comment 1 --body \"the fix is to run\npixi reinstall <package>, which rebuilds\"": {
   "positions": "gh issue comment 1 --body _\n",
-  "words": "gh issue comment 1 --body the fix is to run_pixi reinstall _package_, which rebuilds\n"
+  "words": "gh issue comment 1 --body the\u001ffix\u001fis\u001fto\u001frun\u001fpixi\u001freinstall\u001f\u001fpackage\u001f,\u001fwhich\u001frebuilds\n"
  },
  "git commit -m \"x; ruff check .\"": {
   "positions": "git commit -m _\n",
-  "words": "git commit -m x_ ruff check .\n"
+  "words": "git commit -m x\u001f\u001fruff\u001fcheck\u001f.\n"
  },
  "gh issue comment 1 --body \"x; rm -rf .plan/\"": {
   "positions": "gh issue comment 1 --body _\n",
-  "words": "gh issue comment 1 --body x_ rm -rf .plan/\n"
+  "words": "gh issue comment 1 --body x\u001f\u001frm\u001f-rf\u001f.plan/\n"
  },
  "gh issue comment 1 --body \"x; git clean -fd\"": {
   "positions": "gh issue comment 1 --body _\n",
-  "words": "gh issue comment 1 --body x_ git clean -fd\n"
+  "words": "gh issue comment 1 --body x\u001f\u001fgit\u001fclean\u001f-fd\n"
  },
  "pixi reinstall pkg": {
   "positions": "pixi reinstall pkg\n",
@@ -100,12 +100,12 @@
   "words": "git push --force; echo --help\n"
  },
  "eval 'git commit -m x'": {
-  "positions": "eval ;git commit -m x;\n",
-  "words": "eval ;git commit -m x;\n"
+  "positions": "eval ;git commit -m x;;git commit -m x;\n",
+  "words": "eval ;git commit -m x;;git commit -m x;\n"
  },
  "ssh host \"git push origin x\"": {
-  "positions": "ssh host ;git push origin x;\n",
-  "words": "ssh host ;git push origin x;\n"
+  "positions": "ssh host ;git push origin x;;git push origin x;\n",
+  "words": "ssh host ;git push origin x;;git push origin x;\n"
  },
  "bash <<'EOF'\ngit commit -m x\nEOF": {
   "positions": "bash <<_\ngit commit -m x\n",
@@ -168,8 +168,8 @@
   "words": "echo ${x:-a #b}; git push -f\n"
  },
  "echo a\\ #x; git push -f": {
-  "positions": "echo a #x; git push -f\n",
-  "words": "echo a #x; git push -f\n"
+  "positions": "echo a_#x; git push -f\n",
+  "words": "echo a\u001f#x; git push -f\n"
  },
  "echo $((1<<X))\ngit push -f\nX": {
   "positions": "echo $((1<<X))\ngit push -f\nX\n",
@@ -317,7 +317,7 @@
  },
  "git commit -m 'say \"hi' --amend -m 'there\"'": {
   "positions": "git commit -m _ --amend -m _\n",
-  "words": "git commit -m say \"hi --amend -m there\"\n"
+  "words": "git commit -m say\u001f\"hi --amend -m there\"\n"
  },
  "git commit \\--amend": {
   "positions": "git commit --amend\n",
@@ -329,7 +329,7 @@
  },
  "git commit -m $'it\\'s ok' --amend": {
   "positions": "git commit -m $_ --amend\n",
-  "words": "git commit -m $it's ok --amend\n"
+  "words": "git commit -m $it's\u001fok --amend\n"
  },
  "git commit --a\\\nmend": {
   "positions": "git commit --amend\n",
@@ -349,7 +349,7 @@
  },
  "git commit -m \"use --amend later\"": {
   "positions": "git commit -m _\n",
-  "words": "git commit -m use --amend later\n"
+  "words": "git commit -m use\u001f--amend\u001flater\n"
  },
  "GIT_DIR=/tmp/x git commit --amend": {
   "positions": "GIT_DIR=/tmp/x git commit --amend\n",
@@ -481,7 +481,7 @@
  },
  "cat <<<'git push -f'": {
   "positions": "cat <<<_\n",
-  "words": "cat <<<git push -f\n"
+  "words": "cat <<<git\u001fpush\u001f-f\n"
  },
  "bash <<<'git push -f'": {
   "positions": "bash <<<;git push -f;\n",
@@ -500,12 +500,12 @@
   "words": "bash -o posix -c ;git push -f;\n"
  },
  "ssh -o BatchMode=yes host 'git push -f'": {
-  "positions": "ssh -o BatchMode=yes host ;git push -f;\n",
-  "words": "ssh -o BatchMode=yes host ;git push -f;\n"
+  "positions": "ssh -o BatchMode=yes host ;git push -f;;git push -f;\n",
+  "words": "ssh -o BatchMode=yes host ;git push -f;;git push -f;\n"
  },
  "eval 'git push -f'": {
-  "positions": "eval ;git push -f;\n",
-  "words": "eval ;git push -f;\n"
+  "positions": "eval ;git push -f;;git push -f;\n",
+  "words": "eval ;git push -f;;git push -f;\n"
  },
  "sudo bash -lc \"git push --force\"": {
   "positions": "sudo bash -lc ;git push --force;\n",
@@ -520,8 +520,8 @@
   "words": "bash -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -c ;git push -f;\n"
  },
  "ssh -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes host 'git push -f'": {
-  "positions": "ssh -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes host ;git push -f;\n",
-  "words": "ssh -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes host ;git push -f;\n"
+  "positions": "ssh -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes host ;git push -f;;git push -f;\n",
+  "words": "ssh -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes -o BatchMode=yes host ;git push -f;;git push -f;\n"
  },
  "sh -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix <<EOF\ngit push -f\nEOF": {
   "positions": "sh -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix -o posix <<_\ngit push -f\n",
@@ -544,12 +544,12 @@
   "words": "bash -c 2> /dev/null ;git push -f;\n"
  },
  "ssh h 2>&1 'git push -f'": {
-  "positions": "ssh h 2>&1 ;git push -f;\n",
-  "words": "ssh h 2>&1 ;git push -f;\n"
+  "positions": "ssh h 2>&1 ;git push -f;;git push -f;\n",
+  "words": "ssh h 2>&1 ;git push -f;;git push -f;\n"
  },
  "/usr/bin/ssh host 'git push -f'": {
-  "positions": "/usr/bin/ssh host ;git push -f;\n",
-  "words": "/usr/bin/ssh host ;git push -f;\n"
+  "positions": "/usr/bin/ssh host ;git push -f;;git push -f;\n",
+  "words": "/usr/bin/ssh host ;git push -f;;git push -f;\n"
  },
  "bash 2>/dev/null <<'EOF'\ngit push -f\nEOF": {
   "positions": "bash 2>/dev/null <<_\ngit push -f\n",
@@ -561,15 +561,15 @@
  },
  "bash -c 'echo hi' & echo 'git push -f'": {
   "positions": "bash -c ;echo hi; & echo _\n",
-  "words": "bash -c ;echo hi; & echo git push -f\n"
+  "words": "bash -c ;echo hi; & echo git\u001fpush\u001f-f\n"
  },
  "a &>/dev/null; echo 'git push -f'": {
   "positions": "a &>/dev/null; echo _\n",
-  "words": "a &>/dev/null; echo git push -f\n"
+  "words": "a &>/dev/null; echo git\u001fpush\u001f-f\n"
  },
  "bash -c 'echo hi' >'git push -f'": {
   "positions": "bash -c ;echo hi; >_\n",
-  "words": "bash -c ;echo hi; >git push -f\n"
+  "words": "bash -c ;echo hi; >git\u001fpush\u001f-f\n"
  },
  "gh 'pr' merge 9": {
   "positions": "gh pr merge 9\n",
@@ -649,15 +649,15 @@
  },
  "git commit -m 'git push -f'": {
   "positions": "git commit -m _\n",
-  "words": "git commit -m git push -f\n"
+  "words": "git commit -m git\u001fpush\u001f-f\n"
  },
  "gh pr create --body \"gh pr merge 9\"": {
   "positions": "gh pr create --body _\n",
-  "words": "gh pr create --body gh pr merge 9\n"
+  "words": "gh pr create --body gh\u001fpr\u001fmerge\u001f9\n"
  },
  "gh 'pr merge' 9": {
   "positions": "gh _ 9\n",
-  "words": "gh pr merge 9\n"
+  "words": "gh pr\u001fmerge 9\n"
  },
  "git 'push' origin 'feat'": {
   "positions": "git push origin feat\n",
@@ -665,27 +665,27 @@
  },
  "find . -exec git reset {} \\;": {
   "positions": "find . -exec ;git reset {} _\n",
-  "words": "find . -exec ;git reset {} _\n"
+  "words": "find . -exec ;git reset {} \u001f\n"
  },
  "find . -execdir git push -f {} \\;": {
   "positions": "find . -execdir ;git push -f {} _\n",
-  "words": "find . -execdir ;git push -f {} _\n"
+  "words": "find . -execdir ;git push -f {} \u001f\n"
  },
  "find . -ok git clean -fd {} \\;": {
   "positions": "find . -ok ;git clean -fd {} _\n",
-  "words": "find . -ok ;git clean -fd {} _\n"
+  "words": "find . -ok ;git clean -fd {} \u001f\n"
  },
  "find . -okdir git reset {} \\;": {
   "positions": "find . -okdir ;git reset {} _\n",
-  "words": "find . -okdir ;git reset {} _\n"
+  "words": "find . -okdir ;git reset {} \u001f\n"
  },
  "find . -exec echo 'git reset' \\;": {
   "positions": "find . -exec ;echo _ _\n",
-  "words": "find . -exec ;echo git reset _\n"
+  "words": "find . -exec ;echo git\u001freset \u001f\n"
  },
  "find . -name x -exec grep foo {} \\;": {
   "positions": "find . -name x -exec ;grep foo {} _\n",
-  "words": "find . -name x -exec ;grep foo {} _\n"
+  "words": "find . -name x -exec ;grep foo {} \u001f\n"
  },
  "env -S 'git reset --hard'": {
   "positions": "env -S ;git reset --hard;\n",
@@ -697,7 +697,7 @@
  },
  "echo env -S 'git status'": {
   "positions": "echo env -S _\n",
-  "words": "echo env -S git status\n"
+  "words": "echo env -S git\u001fstatus\n"
  },
  "sort -S 1G file": {
   "positions": "sort -S 1G file\n",
@@ -709,6 +709,114 @@
  },
  "git log --format='%H -exec x'": {
   "positions": "git log --format=_\n",
-  "words": "git log --format=%H -exec x\n"
+  "words": "git log --format=%H\u001f-exec\u001fx\n"
+ },
+ "git -C 'a b' push -f": {
+  "positions": "git -C _ push -f\n",
+  "words": "git -C a\u001fb push -f\n"
+ },
+ "git -C a\\ b push -f": {
+  "positions": "git -C a_b push -f\n",
+  "words": "git -C a\u001fb push -f\n"
+ },
+ "git \\\n'push' -f": {
+  "positions": "git push -f\n",
+  "words": "git push -f\n"
+ },
+ "g\\\n'it' push -f": {
+  "positions": "git push -f\n",
+  "words": "git push -f\n"
+ },
+ "g\\\nit push -f": {
+  "positions": "git push -f\n",
+  "words": "git push -f\n"
+ },
+ "eval 'git' 'push -f'": {
+  "positions": "eval ;git; ;push -f;;git push -f;\n",
+  "words": "eval ;git; ;push -f;;git push -f;\n"
+ },
+ "eval eval 'git push' -f": {
+  "positions": "eval ;eval ;git push; -f;eval ;git push -f;\n",
+  "words": "eval ;eval ;git push; -f;eval ;git push -f;\n"
+ },
+ "ssh h git push -f": {
+  "positions": "ssh h git push -f;git push -f;\n",
+  "words": "ssh h git push -f;git push -f;\n"
+ },
+ "ssh -p 22 h git push -f": {
+  "positions": "ssh -p 22 h git push -f;git push -f;\n",
+  "words": "ssh -p 22 h git push -f;git push -f;\n"
+ },
+ "ssh -o X=y -- h git push -f": {
+  "positions": "ssh -o X=y -- h git push -f;git push -f;\n",
+  "words": "ssh -o X=y -- h git push -f;git push -f;\n"
+ },
+ "ssh h -l u git push -f": {
+  "positions": "ssh h -l u git push -f;git push -f;\n",
+  "words": "ssh h -l u git push -f;git push -f;\n"
+ },
+ "ssh $O h git push -f": {
+  "positions": "ssh $O h git push -f;h git push -f;;git push -f;;push -f;\n",
+  "words": "ssh $O h git push -f;h git push -f;;git push -f;;push -f;\n"
+ },
+ "bash -c '\"$@\"' _ git push -f": {
+  "positions": "bash -c ;_; ;_; ;git; ;push; ;-f;;git push -f;\n",
+  "words": "bash -c ;$@; ;_; ;git; ;push; ;-f;;git push -f;\n"
+ },
+ "bash -c 'git \"$@\"' _ push -f": {
+  "positions": "bash -c ;git _; ;_; ;push; ;-f;;git push -f;\n",
+  "words": "bash -c ;git $@; ;_; ;push; ;-f;;git push -f;\n"
+ },
+ "bash -c 'git $1 $2' _ push -f": {
+  "positions": "bash -c ;git $1 $2; ;_; ;push; ;-f;;git push -f;\n",
+  "words": "bash -c ;git $1 $2; ;_; ;push; ;-f;;git push -f;\n"
+ },
+ "perl -e \"system(q(git push))\"": {
+  "positions": "perl -e _\n",
+  "words": "perl -e system\u001fq\u001fgit\u001fpush\u001f\u001f\n"
+ },
+ "perl -e 'print q{git push}'": {
+  "positions": "perl -e _\n",
+  "words": "perl -e print\u001fq\u001fgit\u001fpush\u001f\n"
+ },
+ "deno eval 'git push'": {
+  "positions": "deno eval ;git push;;git push;\n",
+  "words": "deno eval ;git push;;git push;\n"
+ },
+ "FOO='a b' git push -f": {
+  "positions": "FOO=_ git push -f\n",
+  "words": "FOO=a\u001fb git push -f\n"
+ },
+ "\"${G}\" push -f": {
+  "positions": "_ push -f\n",
+  "words": "${G} push -f\n"
+ },
+ "\"${G:-a b}\" push -f": {
+  "positions": "_ push -f\n",
+  "words": "${G:-a\u001fb} push -f\n"
+ },
+ "echo $'a\\ b'": {
+  "positions": "echo $_\n",
+  "words": "echo $a\u001fb\n"
+ },
+ "git commit -m 'x -n'": {
+  "positions": "git commit -m _\n",
+  "words": "git commit -m x\u001f-n\n"
+ },
+ "git push origin 'x -f'": {
+  "positions": "git push origin _\n",
+  "words": "git push origin x\u001f-f\n"
+ },
+ "git checkout -- 'a;b'": {
+  "positions": "git checkout -- _\n",
+  "words": "git checkout -- a\u001fb\n"
+ },
+ "> 'a b' git push -f": {
+  "positions": "> _ git push -f\n",
+  "words": "> a\u001fb git push -f\n"
+ },
+ "bash -c > 'a b' 'git push -f'": {
+  "positions": "bash -c > _ ;git push -f;\n",
+  "words": "bash -c > a\u001fb ;git push -f;\n"
  }
 }

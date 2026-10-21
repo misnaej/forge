@@ -3929,7 +3929,11 @@ def test_destructive_branch_reset_unknown_long_option_blocks_and_says_so(
             "long option the hook does not know",
             id="option",
         ),
-        pytest.param('git switch -C "a b" c', "holds a blank", id="views"),
+        pytest.param(
+            'git switch -C "a b" c',
+            "quoted or escaped blank or separator",
+            id="quoted-blank",
+        ),
         pytest.param(
             " && ".join(f"git checkout -B n{i} main" for i in range(9)),
             "more than 8 branch resets",
@@ -8003,6 +8007,9 @@ def test_help_exemption_does_not_leak(hook: str, command: str) -> None:
 
 _SNAPSHOT_PATH = Path(__file__).with_name("command_positions_snapshot.json")
 _SNAPSHOT_ENV = "FORGE_UPDATE_SNAPSHOT"
+# GUARD_NEUTRAL (git_anchor.sh): the --words view's stand-in for a blank or
+# separator inside a quoted or escaped word.
+_NEUTRAL = "\x1f"
 
 # Commands from the amend quote-desync tests, the help-case tables, and the
 # quoting shapes found in review (inline there, so restated here).
@@ -8118,6 +8125,35 @@ _SNAPSHOT_EXTRA_COMMANDS = [
     "sort -S 1G file",
     "sudo -S ls",
     "git log --format='%H -exec x'",
+    # One shell word stays one word in both views; line continuations join;
+    # eval, ssh and positional arguments are read joined.
+    "git -C 'a b' push -f",
+    "git -C a\\ b push -f",
+    "git \\\n'push' -f",
+    "g\\\n'it' push -f",
+    "g\\\nit push -f",
+    "eval 'git' 'push -f'",
+    "eval eval 'git push' -f",
+    "ssh h git push -f",
+    "ssh -p 22 h git push -f",
+    "ssh -o X=y -- h git push -f",
+    "ssh h -l u git push -f",
+    "ssh $O h git push -f",
+    "bash -c '\"$@\"' _ git push -f",
+    "bash -c 'git \"$@\"' _ push -f",
+    "bash -c 'git $1 $2' _ push -f",
+    'perl -e "system(q(git push))"',
+    "perl -e 'print q{git push}'",
+    "deno eval 'git push'",
+    "FOO='a b' git push -f",
+    '"${G}" push -f',
+    '"${G:-a b}" push -f',
+    "echo $'a\\ b'",
+    "git commit -m 'x -n'",
+    "git push origin 'x -f'",
+    "git checkout -- 'a;b'",
+    "> 'a b' git push -f",
+    "bash -c > 'a b' 'git push -f'",
 ]
 
 
@@ -8200,8 +8236,9 @@ def test_command_positions_no_redir_prints_a_blanked_target_group_back() -> None
 def test_command_positions_no_redir_keeps_a_quoted_redirection_inert() -> None:
     """A quoted ``2>&1`` is an argument, so the scanner leaves its inert form.
 
-    Only the ``--words`` view keeps quoted words; the default view blanks
-    the whole span to ``_``.
+    Only the ``--words`` view keeps quoted words, its ``>`` and ``&``
+    neutralised to the GUARD_NEUTRAL byte; the default view blanks the
+    whole span to ``_``.
     """
     script = 'source "$1/git_anchor.sh"; command_positions --words --no-redir "$2"'
     view = subprocess.run(
@@ -8210,7 +8247,7 @@ def test_command_positions_no_redir_keeps_a_quoted_redirection_inert() -> None:
         text=True,
         check=True,
     ).stdout
-    assert "2__1" in view
+    assert f"2{_NEUTRAL}{_NEUTRAL}1" in view
 
 
 def _compute_snapshot() -> dict[str, dict[str, str]]:
@@ -8240,8 +8277,14 @@ def test_command_positions_snapshot_is_unchanged() -> None:
         )
         return
     expected = json.loads(_SNAPSHOT_PATH.read_text(encoding="utf-8"))
+
+    def shown(value: object) -> str:
+        # The neutral byte as a visible glyph, so a reviewer sees where it is.
+        return repr(value).replace("\\x1f", "␟")
+
     diffs = [
-        f"{command!r}\n  expected: {expected.get(command)!r}\n  actual:   {views!r}"
+        f"{command!r}\n  expected: {shown(expected.get(command))}"
+        f"\n  actual:   {shown(views)}"
         for command, views in actual.items()
         if expected.get(command) != views
     ]
@@ -8277,6 +8320,10 @@ _QUOTING_CASES = [
     pytest.param("'git' push -f", _BLOCK, id="quoted-command-word"),
     pytest.param("g'it' push -f", _BLOCK, id="split-quoted-command-word"),
     pytest.param("echo 'git' push -f", _ALLOW, id="quoted-word-as-argument"),
+    pytest.param("git \\\n'push' -f", _BLOCK, id="continuation-before-quoted-verb"),
+    pytest.param("g\\\n'it' push -f", _BLOCK, id="continuation-inside-quoted-word"),
+    pytest.param("g\\\nit push -f", _BLOCK, id="continuation-inside-plain-word"),
+    pytest.param("echo \\\n'git' push -f", _ALLOW, id="continuation-before-argument"),
 ]
 
 
@@ -8294,6 +8341,385 @@ def test_quoting_constructs_agree_between_plain_and_wrapped_paths(
     wrapped = _run_hook("block_force_push.sh", f"bash -c {shlex.quote(case)}")
 
     assert plain == wrapped == expected
+
+
+def test_both_scanner_views_count_the_same_words() -> None:
+    """Every shell word is one word in the command-positions and --words views.
+
+    Were a quoted or escaped blank to split a word in the --words view
+    only, a guard reading values there would read the wrong ones (`git -C
+    'a b' push -f` would hide the push). Pinned over the whole snapshot
+    corpus.
+    """
+
+    def words(view: str) -> int:
+        # Split on the shell's blanks only: Python's str.split() would also
+        # split on the GUARD_NEUTRAL byte, which is no blank to the guards.
+        blanked = view.replace("\t", " ").replace("\n", " ")
+        return len([w for w in blanked.split(" ") if w])
+
+    mismatched = [
+        command
+        for command, views in json.loads(
+            _SNAPSHOT_PATH.read_text(encoding="utf-8")
+        ).items()
+        if words(views["positions"]) != words(views["words"])
+    ]
+    assert not mismatched
+
+
+def test_words_view_keeps_an_ansi_c_escaped_blank_inside_its_word() -> None:
+    r"""``$'a\\ b'`` is one word in the --words view, its blank the neutral byte.
+
+    The blank sits inside ANSI-C quoting behind a backslash, so neither the
+    quote nor the escape may let it split the word.
+    """
+    view = _scanner_view("echo $'a\\ b'", words=True).rstrip("\n")
+
+    assert view.split(" ") == ["echo", f"$a{_NEUTRAL}b"]
+
+
+# The shapes the scanner once read differently from the shell: a quoted or
+# escaped blank inside one word, a line continuation inside or before a
+# word, and text the shell assembles from several words (eval, ssh, the
+# positional parameters of a shell `-c` payload). Each row is one guard's
+# verdict; the allowed rows pin that reading words whole does not widen
+# what a guard blocks beyond the command the shell runs.
+_FIXER = HookOptions(agent_type="forge:precommit-fixer")
+_SCANNER_WORD_CASES = [
+    # A quoted or escaped blank is part of its word.
+    pytest.param(_FORCE_PUSH, "git -C 'a b' push -f", _BLOCK, id="quoted-dir"),
+    pytest.param(_FORCE_PUSH, "git -C a\\ b push -f", _BLOCK, id="escaped-dir"),
+    pytest.param(_FORCE_PUSH, "FOO='a b' git push -f", _BLOCK, id="quoted-assign"),
+    pytest.param(_FORCE_PUSH, "> 'a b' git push -f", _BLOCK, id="quoted-redir"),
+    pytest.param(
+        _FORCE_PUSH, "bash -c > 'a b' 'git push -f'", _BLOCK, id="quoted-redir-payload"
+    ),
+    pytest.param(_FORCE_PUSH, '"${G}" push -f', _BLOCK, id="quoted-braced-var"),
+    pytest.param(_FORCE_PUSH, '"${G:-git}" push -f', _BLOCK, id="quoted-default-var"),
+    pytest.param(
+        _FORCE_PUSH, '"${G:-a b}" push -f', _BLOCK, id="quoted-spaced-default"
+    ),
+    # Quoted blank is one word — reviewed reduction (the old scanner split
+    # the word and blocked; git receives the one refspec `x -f`).
+    pytest.param(_FORCE_PUSH, "git push origin 'x -f'", _ALLOW, id="quoted-refspec"),
+    pytest.param(
+        "block_no_verify.sh",
+        "git -C 'a b' commit --no-verify -m x",
+        _BLOCK,
+        id="no-verify-quoted-dir",
+    ),
+    # Quoted blank is one word — reviewed reduction (`-n` is message text).
+    pytest.param(
+        "block_no_verify.sh", "git commit -m 'x -n'", _ALLOW, id="no-verify-in-message"
+    ),
+    pytest.param(
+        _PROTECTED,
+        "git -C 'a b' push origin HEAD:main",
+        _BLOCK,
+        id="protected-quoted-dir",
+    ),
+    # Quoted blank is one word — reviewed reduction (the refspec is `x main`,
+    # no push to main).
+    pytest.param(
+        _PROTECTED, "git push origin 'x main'", _ALLOW, id="protected-quoted-refspec"
+    ),
+    pytest.param(
+        "block_raw_git.sh",
+        'perl -e "system(q(git push))"',
+        _BLOCK,
+        id="interp-quoted-parens",
+    ),
+    pytest.param(
+        "block_raw_git.sh", "perl -e 'print q{git push}'", _BLOCK, id="interp-braces"
+    ),
+    pytest.param(
+        "block_raw_git.sh",
+        'perl -e "print q{git push}"',
+        _BLOCK,
+        id="interp-braces-in-double-quotes",
+    ),
+    pytest.param(
+        "block_raw_git.sh", 'python -c "import git_utils"', _ALLOW, id="interp-no-git"
+    ),
+    pytest.param(
+        "block_raw_git.sh",
+        "deno eval \"console.log('git')\"",
+        _BLOCK,
+        id="deno-eval",
+    ),
+    pytest.param(
+        "block_raw_git.sh", "deno eval 'console.log(1)'", _ALLOW, id="deno-eval-no-git"
+    ),
+    pytest.param(
+        "block_pr_merge.sh",
+        "gh api graphql -f query='mutation{ mergePullRequest(input:{}){x} }'",
+        _BLOCK,
+        id="graphql-merge-quoted",
+    ),
+    # Quoted blank is one word — reviewed reduction (`.plan x` is a sibling
+    # path, not `.plan`).
+    pytest.param(
+        "block_continuation_delete.sh",
+        "rm -r '.plan x'",
+        _ALLOW,
+        id="rm-quoted-sibling",
+    ),
+    pytest.param(
+        "block_continuation_delete.sh", 'rm -r ".plan"', _BLOCK, id="rm-quoted-plan"
+    ),
+    pytest.param(
+        "block_continuation_delete.sh",
+        "echo .plan | xargs rm -r",
+        _BLOCK,
+        id="rm-through-xargs",
+    ),
+    # `uv sync` blocks whatever its flags (only pixi reads --frozen), so a
+    # quoted `--frozen x` — one word, not the flag — must not lift it.
+    pytest.param(
+        "block_install_deps.sh", "uv sync '--frozen x'", _BLOCK, id="uv-quoted-frozen"
+    ),
+    # A line continuation adds nothing to the word it sits in or before.
+    pytest.param(_FORCE_PUSH, "git \\\n'push' -f", _BLOCK, id="continuation-verb"),
+    pytest.param(_FORCE_PUSH, "g\\\n'it' push -f", _BLOCK, id="continuation-word"),
+    pytest.param(
+        "block_raw_git.sh", "git \\\n'commit' -m x", _BLOCK, id="continuation-commit"
+    ),
+    # eval joins its arguments.
+    pytest.param(_FORCE_PUSH, "eval 'git' 'push -f'", _BLOCK, id="eval-split"),
+    pytest.param(_FORCE_PUSH, "eval eval 'git push' -f", _BLOCK, id="eval-nested"),
+    pytest.param(_FORCE_PUSH, "eval 2>&1 git 'push -f'", _BLOCK, id="eval-redirected"),
+    pytest.param(_FORCE_PUSH, "eval -- 'git push' -f", _BLOCK, id="eval-dash-dash"),
+    pytest.param(_FORCE_PUSH, "eval 'echo hi'", _ALLOW, id="eval-harmless"),
+    pytest.param(
+        "block_raw_git.sh", "eval git 'commit -m x'", _BLOCK, id="eval-split-commit"
+    ),
+    pytest.param(
+        _PROTECTED, "eval git push origin 'HEAD:main'", _BLOCK, id="eval-protected"
+    ),
+    # ssh joins the words after the host into the remote command.
+    pytest.param(_FORCE_PUSH, "ssh h git push -f", _BLOCK, id="ssh-words"),
+    pytest.param(_FORCE_PUSH, "ssh -p 22 h git push -f", _BLOCK, id="ssh-valued-opt"),
+    pytest.param(_FORCE_PUSH, "ssh -p22 h git push -f", _BLOCK, id="ssh-attached"),
+    pytest.param(_FORCE_PUSH, "ssh -46v h git push -f", _BLOCK, id="ssh-cluster"),
+    pytest.param(_FORCE_PUSH, "ssh -o X=y -- h git push -f", _BLOCK, id="ssh-dashes"),
+    pytest.param(_FORCE_PUSH, "ssh h -l u git push -f", _BLOCK, id="ssh-after-host"),
+    pytest.param(_FORCE_PUSH, "ssh $O h git push -f", _BLOCK, id="ssh-variable-opts"),
+    pytest.param(_FORCE_PUSH, "ssh h git push '-f'", _BLOCK, id="ssh-quoted-flag"),
+    pytest.param(_FORCE_PUSH, "true; ssh h git push -f", _BLOCK, id="ssh-after-sep"),
+    pytest.param(_FORCE_PUSH, "ssh -p 22 h ls", _ALLOW, id="ssh-harmless"),
+    pytest.param(
+        _FORCE_PUSH, "ssh h git push origin main", _ALLOW, id="ssh-plain-push"
+    ),
+    pytest.param(
+        _FORCE_PUSH, "ssh h 'echo git push -f'", _ALLOW, id="ssh-echo-mention"
+    ),
+    pytest.param("block_raw_git.sh", "ssh h git commit -m x", _BLOCK, id="ssh-commit"),
+    pytest.param(
+        "block_no_verify.sh", "ssh h git commit -n -m x", _BLOCK, id="ssh-no-verify"
+    ),
+    pytest.param(
+        _PROTECTED, "ssh h git push origin HEAD:main", _BLOCK, id="ssh-protected"
+    ),
+    # A shell `-c` payload reads the words after it as $0, $1, …
+    pytest.param(_FORCE_PUSH, "bash -c '\"$@\"' _ git push -f", _BLOCK, id="pos-all"),
+    pytest.param(
+        _FORCE_PUSH, "bash -c 'git \"$@\"' _ push -f", _BLOCK, id="pos-all-after-git"
+    ),
+    pytest.param(_FORCE_PUSH, "bash -c 'git $1 $2' _ push -f", _BLOCK, id="pos-nums"),
+    pytest.param(
+        _FORCE_PUSH, 'bash -c \'git "$1" "$2"\' _ push -f', _BLOCK, id="pos-quoted"
+    ),
+    pytest.param(_FORCE_PUSH, "bash -c 'git ${1} -f' _ push", _BLOCK, id="pos-braced"),
+    pytest.param(_FORCE_PUSH, "sh -c '$*' _ git push -f", _BLOCK, id="pos-star"),
+    pytest.param(_FORCE_PUSH, "sh -c '$0 \"$@\"' git push -f", _BLOCK, id="pos-zero"),
+    pytest.param(_FORCE_PUSH, "bash -c 'echo \"$1\"' _ x", _ALLOW, id="pos-harmless"),
+    # A slice `${@:N}` takes the arguments from $N ($0 counted).
+    pytest.param(
+        _FORCE_PUSH, "bash -c 'git \"${@:1}\"' _ push -f", _BLOCK, id="pos-slice"
+    ),
+    pytest.param(
+        _FORCE_PUSH, "sh -c '\"${@:0}\"' git push -f", _BLOCK, id="pos-slice-0"
+    ),
+    pytest.param(
+        _FORCE_PUSH, "bash -c 'git ${@:1:2}' _ push -f x", _BLOCK, id="pos-slice-len"
+    ),
+    pytest.param(
+        _FORCE_PUSH, "bash -c 'git \"${@:2}\"' _ push -f", _ALLOW, id="pos-slice-past"
+    ),
+    pytest.param(
+        _FORCE_PUSH, "bash -c 'git \"${*:1}\"' _ push -f", _ALLOW, id="pos-slice-star"
+    ),
+    # A quoted slice the scanner cannot evaluate reads as every argument.
+    pytest.param(
+        _FORCE_PUSH, "sh -c '\"${@: -3}\"' x git push -f", _BLOCK, id="pos-slice-neg"
+    ),
+    pytest.param(
+        _FORCE_PUSH, "sh -c '\"${@:$x}\"' x git push -f", _BLOCK, id="pos-slice-var"
+    ),
+]
+
+
+@pytest.mark.parametrize(("hook", "command", "expected"), _SCANNER_WORD_CASES)
+def test_guards_read_each_shell_word_whole_and_assembled_text_joined(
+    hook: str, command: str, expected: int
+) -> None:
+    """SCENARIO: a guard reads a word, and a joined command, as the shell does.
+
+    Args:
+        hook: Guard hook under test.
+        command: The shell command it judges.
+        expected: Its verdict (2 blocks, 0 allows).
+    """
+    assert _run_hook(hook, command) == expected
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        pytest.param("forge-precommit", _ALLOW, id="precommit"),
+        pytest.param("pytest tests/a.py::x", _ALLOW, id="pytest-node"),
+        pytest.param("pytest 'tests/a b.py::x'", _ALLOW, id="pytest-quoted-node"),
+        pytest.param("forge-smart-test --depth 0", _ALLOW, id="smart-test"),
+        pytest.param("'forge-precommit x'", _BLOCK, id="quoted-command-word"),
+    ],
+)
+def test_fixer_recon_reads_a_quoted_word_whole(command: str, expected: int) -> None:
+    """A quoted command word holding a blank is one word, outside the allowlist.
+
+    Args:
+        command: A command the precommit-fixer agent runs.
+        expected: Its verdict (2 blocks, 0 allows).
+    """
+    assert _run_hook("block_fixer_recon.sh", command, options=_FIXER) == expected
+
+
+@pytest.mark.parametrize(
+    ("name", "command"),
+    [
+        pytest.param("a;b", "git checkout -- 'a;b'", id="quoted-separator"),
+        pytest.param("a b", "git checkout -- 'a b'", id="quoted-blank"),
+        pytest.param("a b", "git checkout -- a\\ b", id="escaped-blank"),
+        pytest.param("a;b", "git restore 'a;b'", id="restore-quoted-separator"),
+    ],
+)
+def test_destructive_restore_of_a_quoted_path_keeps_the_work(
+    name: str, command: str, restore_repo: Path
+) -> None:
+    """A restore naming a modified path through quotes or escapes is refused.
+
+    Read as `a_b`, or as the two paths `a` and `b`, the restore would be
+    judged against paths that do not exist and allowed — and the modified
+    file overwritten. The command is run for real only if the hook allows
+    it, so a wrong allow shows up as the lost work.
+
+    Args:
+        name: The tracked file the command restores, modified first.
+        command: The restore, naming *name* quoted or escaped.
+    """
+    (restore_repo / name).write_text("one\n")
+    _git(restore_repo, "add", "-A")
+    _git(restore_repo, "commit", "-q", "-m", "add the spaced file")
+    (restore_repo / name).write_text("edited\n")
+
+    verdict = _restore_exit(restore_repo, command)
+    if verdict == 0:
+        subprocess.run(
+            ["bash", "-c", command], cwd=restore_repo, env=GIT_ENV, check=False
+        )
+
+    assert (restore_repo / name).read_text() == "edited\n"
+    assert verdict == _BLOCK
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("git -C 'a b' checkout -- f", id="quoted"),
+        pytest.param("git -C a\\ b checkout -- f", id="escaped"),
+    ],
+)
+def test_destructive_restore_in_a_spaced_directory_is_unknowable(
+    command: str, tmp_path: Path
+) -> None:
+    """A `-C` directory holding a quoted or escaped blank is unknowable, so it blocks.
+
+    Args:
+        command: A restore of a modified file in the repo at ``a b``, run
+            from the directory holding that repo.
+    """
+    repo = tmp_path / "a b"
+    repo.mkdir()
+    init_git_repo(repo)
+    (repo / "f").write_text("one\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "base")
+    (repo / "f").write_text("edited\n")
+
+    verdict = _run_hook(_DESTRUCTIVE, command, options=HookOptions(cwd=tmp_path))
+    if verdict == 0:
+        subprocess.run(["bash", "-c", command], cwd=tmp_path, env=GIT_ENV, check=False)
+
+    assert (repo / "f").read_text() == "edited\n"
+    assert verdict == _BLOCK
+
+
+def test_destructive_hook_fails_closed_when_lib_lacks_guard_neutral(
+    tmp_path: Path,
+) -> None:
+    """A lib copy that predates GUARD_NEUTRAL makes the destructive hook block.
+
+    Without it the hook cannot tell a quoted path from the path git gets,
+    so it must refuse rather than judge. The control run on an intact copy
+    pins that the block comes from the missing definition.
+    """
+    lib_text = (_HOOKS_DIR / _GIT_ANCHOR_LIB).read_text()
+    kept = [
+        line
+        for line in lib_text.splitlines(keepends=True)
+        if not line.startswith("GUARD_NEUTRAL=")
+    ]
+    assert len(kept) < len(lib_text.splitlines()), "no definition line was dropped"
+    for name, text in (("old", "".join(kept)), ("intact", lib_text)):
+        directory = tmp_path / name
+        directory.mkdir()
+        (directory / _GIT_ANCHOR_LIB).write_text(text)
+        (directory / _DESTRUCTIVE).write_bytes((_HOOKS_DIR / _DESTRUCTIVE).read_bytes())
+
+    def run(name: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", str(tmp_path / name / _DESTRUCTIVE)],
+            input=json.dumps({"tool_input": {"command": "git status"}}),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    broken = run("old")
+    assert broken.returncode == _BLOCK
+    assert "damaged plugin copy" in broken.stderr
+    assert run("intact").returncode == _ALLOW
+
+
+# Padded shapes for the joined readings (eval / ssh / positional words),
+# each sized past the scanner's cap it targets (JOINCAP 16384 bytes for one
+# assembled text, BUDGET 65536 for all of them): a 24-36 KB joined eval or
+# ssh text, a plain `eval` chain that must cost no joins, and payloads
+# whose substituted text (200 KB, 1 MB) runs the guard into its watchdog
+# when the caps are lifted. Timed by the speed test further down.
+_JOINED_PADDED_CASES = [
+    pytest.param("eval " + "'xyz' " * 6000 + "; git push -f", id="padded-eval"),
+    pytest.param("ssh h " + "x " * 12000 + "; git push -f", id="padded-ssh"),
+    pytest.param("eval " * 7000 + "git push -f", id="nested-eval"),
+    pytest.param(
+        "bash -c '" + "$@" * 100 + "' _ " + "x" * 2000 + "; git push -f",
+        id="many-positional-refs",
+    ),
+    pytest.param(
+        "bash -c '" + "$1 " * 1000 + "' _ " + "y" * 1000 + " ; git push -f",
+        id="long-positional-argument",
+    ),
+]
 
 
 # The scanner once read only the last 240 characters to spot a wrapper; the
@@ -8727,20 +9153,25 @@ def test_wrapper_shapes_reach_every_guard(hook: str, command: str) -> None:
             "bash -c " + "-x " * 16500 + "'git push -f'",
             id="options-after-c-padded-to-50kb",
         ),
+        *_JOINED_PADDED_CASES,
     ],
 )
-def test_scanner_stays_fast_on_50kb_of_redirections_or_options(command: str) -> None:
-    """Redirection padding and post-``-c`` options are scanned in linear time.
+def test_scanner_stays_fast_on_padded_commands(command: str) -> None:
+    """Padding, post-``-c`` options and joined readings are scanned in linear time.
+
+    A guard that runs out of time is killed by its watchdog and blocks, so
+    the verdict alone cannot show a slow scan; the bound does. It sits
+    under the 4 s deadline yet loose for a loaded runner.
 
     Args:
-        command: A ~50 KB command ending in a wrapped force push.
+        command: A padded command ending in a (possibly wrapped) force push.
     """
     start = time.monotonic()
     verdict = _run_hook(_FORCE_PUSH, command)
     elapsed = time.monotonic() - start
 
     assert verdict == _BLOCK
-    assert elapsed < 10
+    assert elapsed < 3.0
 
 
 @pytest.mark.parametrize(

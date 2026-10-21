@@ -66,7 +66,7 @@ source "$ANCHOR_LIB"
 # undefined function returns 127 inside an `if`, which reads as "not
 # found" and would allow the command.
 if ! declare -F guard_begin command_positions guard_git_invocations guard_help_only > /dev/null \
-    || [ -z "${GIT_UNKNOWN_ANCHOR:-}" ]; then
+    || [ -z "${GIT_UNKNOWN_ANCHOR:-}" ] || [ -z "${GUARD_NEUTRAL:-}" ]; then
     echo "BLOCKED: the guard anchor lib at $ANCHOR_LIB lacks a helper this hook needs (older or damaged plugin copy) — refusing the command rather than running unguarded." >&2
     exit 2
 fi
@@ -206,7 +206,8 @@ fi
 # `--conflict`) stays allowed for paths that are actually in conflict —
 # on any other path those flags overwrite it like a plain restore.
 # When the hook cannot tell what a path names or where the command runs — a glob, `$`, `~`, pathspec magic, a
-# quoted path with spaces, an earlier `cd`, `env -C`/`sudo -D`,
+# quoted or escaped blank or separator in a path (GUARD_NEUTRAL, below),
+# an earlier `cd`, `env -C`/`sudo -D`,
 # `--git-dir`/`--work-tree`/`--namespace` or a `GIT_*` relocation —
 # it blocks: a false block costs a `!`, a wrong allow costs someone's
 # work.
@@ -331,18 +332,28 @@ $0 == "" || $0 == "\n" { next }
 # backslash, pathspec magic (`:`) or a command substitution, or climbs out
 # of the repository; conflict-only paths are exempt under a conflict flag.
 #
+# A word holding GUARD_NEUTRAL (git_anchor.sh) is unknowable wherever its
+# value is handed to git — any argument of a restore, a branch-reset name
+# or start point, a `-C` directory: the --words view puts that byte where
+# a quoted or escaped blank or separator stood, so the word is one word as
+# git receives it, but not the text git receives (`'a;b'` reads `a␟b`,
+# which names no file). has_neutral() is that one test.
+#
 # _INVOCATION_AWK — the part every invocation parser here shares, prepended
 # to each program: option abbreviations, the directory an invocation runs
 # in, and the two-view reader. Each program reads two files: the
 # command-positions view first, then the --words view; they must yield
-# the same invocations, each with the same word count, or a quoted word
-# held a blank and the words are not what git receives (fail closed).
+# the same invocations, each with the same word count. Both views keep a
+# quoted word as one word, so a difference means the views were not built
+# from the same reading of the command, and the hook fails closed.
 # The directory comes from ENVIRON["CWD"] (the payload cwd) and each
 # `-C`; CHDIR (any `cd` / `pushd` / `popd` in the command) makes it
 # unknowable. A user's `-c` options never reach a probe: probes run plain
 # `git -C <dir>`, and a `-c` naming a worktree setting is unknowable.
 _INVOCATION_AWK='
 function abbrev(t, long, min) { return length(t) >= min && substr(long, 1, length(t)) == t }
+# The word holds GUARD_NEUTRAL (NEUT, passed with -v): its value is unknowable.
+function has_neutral(t) { return index(t, NEUT) > 0 }
 # The directory one invocation runs in, or "" when it cannot be known.
 # Words before the `git` word belong to wrappers: an `env` or `sudo` that
 # changes directory or root there (`env -C <d>` / `--chdir`, `sudo -D <d>`
@@ -374,7 +385,7 @@ function inv_dir(pre,   n, P, i, t, o, dir, next1, nextc, g, w) {
         t = P[i]
         if (t == "") continue
         if (next1) {
-            if (t ~ /[$]|@SUBST@/ || t ~ /^~/) return ""
+            if (t ~ /[$]|@SUBST@/ || t ~ /^~/ || has_neutral(t)) return ""
             dir = (t ~ /^\//) ? t : dir "/" t
             next1 = 0; continue
         }
@@ -386,7 +397,7 @@ function inv_dir(pre,   n, P, i, t, o, dir, next1, nextc, g, w) {
         if (t == "-c") { nextc = 1; continue }
         if (t ~ /^-C./) {
             t = substr(t, 3)
-            if (t ~ /[$]|@SUBST@/ || t ~ /^~/) return ""
+            if (t ~ /[$]|@SUBST@/ || t ~ /^~/ || has_neutral(t)) return ""
             dir = (t ~ /^\//) ? t : dir "/" t
             continue
         }
@@ -425,6 +436,7 @@ function unknown() { print "UNKNOWN"; bad = 1; exit }
     for (i = 1; i <= NW; i++) {
         t = W[i]
         if (t == "") continue
+        if (has_neutral(t)) unknown()
         if (dd) { A[++na] = t; continue }
         if (VERB == "restore" && src) { src = 0; continue }
         if (t == "--") { dd = 1; continue }
@@ -492,7 +504,7 @@ RESTORE_JUDGE_AWK='
 # records from the parse.
 # An absolute pathspec is not resolved against the repository here, so it
 # is unknowable too — git accepts one inside the work tree.
-function meta(p) { return p ~ /@SUBST@|[$*?[{\\]/ || p ~ /^[~:\/]/ }
+function meta(p) { return p ~ /@SUBST@|[$*?[{\\]/ || p ~ /^[~:\/]/ || index(p, NEUT) > 0 }
 # The repo-relative path a pathspec names ("" for the whole repo); sets
 # RESOLVED_OK to 0 when it climbs out of the repository.
 function resolve(prefix, p,   n, S, i, out) {
@@ -619,18 +631,18 @@ _restore_state() {
 # _restore_blocked <verb> — true when any <verb> invocation holds work, or
 # when one cannot be read. The --words view supplies the arguments; the
 # command-positions view (one `_` per quoted span) must yield the same
-# invocations with the same number of words, or a quoted path held spaces
-# and the words are not the paths git receives — fail closed.
+# invocations with the same number of words (_INVOCATION_AWK), and a path
+# holding GUARD_NEUTRAL is unknowable — fail closed.
 _restore_blocked() {
     local verb="$1" records verdict
-    records=$(CWD="$PAYLOAD_CWD" LC_ALL=C awk -v VERB="$verb" -v CHDIR="$CMDPOS_CHDIR" \
+    records=$(CWD="$PAYLOAD_CWD" LC_ALL=C awk -v VERB="$verb" -v CHDIR="$CMDPOS_CHDIR" -v NEUT="$GUARD_NEUTRAL" \
         "$RESTORE_PARSE_AWK" \
         <(guard_git_invocations "$CMDPOS" "$verb") \
         <(guard_git_invocations "$WORDS" "$verb")) || return 0
     case "$records" in *UNKNOWN*) return 0 ;; esac
     [ -n "$records" ] || return 1
     verdict=$({ _restore_state "$records"; printf '%s\n' "$records" | grep -E $'^(J|C)\t'; } \
-        | LC_ALL=C awk "$RESTORE_JUDGE_AWK") || return 0
+        | LC_ALL=C awk -v NEUT="$GUARD_NEUTRAL" "$RESTORE_JUDGE_AWK") || return 0
     [ "$verdict" = BLOCK ]
 }
 
@@ -668,12 +680,13 @@ BR_MAX=8
 BRANCH_RESET_PARSE_AWK="${_INVOCATION_AWK}"'
 # UNKNOWN carries the cause, for the refusal: dir (where it runs), opaque
 # (a name or start point), option (an option it cannot classify), views
-# (a quoted word with blanks), many (more than MAX resets).
+# (the two views disagree), many (more than MAX resets).
 function unknown(why) { print "UNKNOWN\t" why; bad = 1; exit }
 # A word whose value as git receives it is unknowable here: a variable or
 # command substitution, a glob or backslash bash may still expand, a
-# leading `~`, or a brace expansion.
-function opaque(t) { return t ~ /[$*?[\\]|@SUBST@/ || t ~ /^~/ || t ~ /[{][^}]*(,|[.][.])[^}]*[}]/ }
+# leading `~`, a brace expansion, or a quoted or escaped blank or
+# separator (has_neutral).
+function opaque(t) { return t ~ /[$*?[\\]|@SUBST@/ || t ~ /^~/ || t ~ /[{][^}]*(,|[.][.])[^}]*[}]/ || has_neutral(t) }
 # What a long option (without its `=value`) is to git, which accepts any
 # prefix of a long option: "reset" (`--force-create`, its value the
 # name), "val" (takes the next word unless `=` is given), "none", or "?"
@@ -773,7 +786,7 @@ _branch_reset_blocked() {
     local verb="$1" flag="$2" new records kind dir name start tip base rc
     new=$([ "$verb" = switch ] && echo -c || echo -b)
     BR_LABEL="git $verb $flag"
-    records=$(CWD="$PAYLOAD_CWD" LC_ALL=C awk -v VERB="$verb" -v CHDIR="$CMDPOS_CHDIR" -v MAX="$BR_MAX" \
+    records=$(CWD="$PAYLOAD_CWD" LC_ALL=C awk -v VERB="$verb" -v CHDIR="$CMDPOS_CHDIR" -v MAX="$BR_MAX" -v NEUT="$GUARD_NEUTRAL" \
         "$BRANCH_RESET_PARSE_AWK" \
         <(guard_git_invocations "$CMDPOS" "$verb") \
         <(guard_git_invocations "$WORDS" "$verb")) || records=UNKNOWN
@@ -785,9 +798,9 @@ _branch_reset_blocked() {
             # names that one, not every cause there is.
             case $'\n'"$records" in
                 *$'\n'UNKNOWN$'\t'dir*) BR_WHY="$cannot the directory it runs in cannot be known (an earlier \`cd\`/\`pushd\`, \`env -C\` or \`sudo -D\`, \`--git-dir\`/\`--work-tree\`/\`--namespace\`, a \`GIT_*\` relocation variable, or a \`-C\` value holding a variable)." ;;
-                *$'\n'UNKNOWN$'\t'opaque*) BR_WHY="$cannot the branch name or start point is not literal (a variable or substitution, a glob, a backslash, a leading \`~\` or a brace expansion)." ;;
+                *$'\n'UNKNOWN$'\t'opaque*) BR_WHY="$cannot the branch name or start point is not literal (a variable or substitution, a glob, a backslash, a leading \`~\`, a brace expansion, or a quoted or escaped blank or separator)." ;;
                 *$'\n'UNKNOWN$'\t'option*) BR_WHY="$cannot it holds a long option the hook does not know for \`git $verb\`, which may take the word read as the start point." ;;
-                *$'\n'UNKNOWN$'\t'views*) BR_WHY="$cannot a quoted word holds a blank, so the words are not the ones git receives." ;;
+                *$'\n'UNKNOWN$'\t'views*) BR_WHY="$cannot its words could not be read consistently, so they may not be the ones git receives." ;;
                 *$'\n'UNKNOWN$'\t'many*) BR_WHY="$cannot the command holds more than $BR_MAX branch resets." ;;
                 *) BR_WHY="$cannot the command could not be read." ;;
             esac
