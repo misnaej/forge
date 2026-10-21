@@ -9483,6 +9483,29 @@ _PLAN_LABEL_WRITES = [
     pytest.param(
         "gh issue edit 5 --add-label plan-ready; echo done", id="separator-after-label"
     ),
+    # Brace and glob expansion happen after the hook reads the command.
+    *(
+        pytest.param(command, id=f"expansion-{n}")
+        for n, command in enumerate(
+            (
+                "gh issue edit 5 --add-label={plan-ready,}",
+                "gh issue edit 5 --add-label plan-{ready,x}",
+                "gh issue edit 5 --add-label plan-rea{d,}y",
+                "gh label create {plan-ready,}",
+                "gh issue edit 5 -l?*",
+                "gh issue edit 5 --add-label plan-read[y]",
+                "gh api -X PATCH repos/o/r/issues/5 -f{labels[]=plan-ready,} x=y",
+                "gh api -X {PATCH,} repos/o/r/issues/5/labels -f labels[]=x",
+            )
+        )
+    ),
+    pytest.param("gh label edit old -n plan-ready", id="label-rename-short"),
+    pytest.param("gh label edit old -n=plan-ready", id="label-rename-short-eq"),
+    pytest.param("gh label edit old -nplan-ready", id="label-rename-short-attached"),
+    pytest.param(
+        "gh api repos/o/r/issues --input - <<< '{\"lab''els\":[\"plan-ready\"]}'",
+        id="here-string-spliced-quotes",
+    ),
     *(
         pytest.param(
             f"gh api graphql -f query='mutation{{{name}(input:{{}}){{x}}}}'",
@@ -9790,6 +9813,11 @@ def test_plan_mint_reads_the_body_file(
             "gh api -X GET repos/o/r/issues/5; echo state=closed", id="get-then-echo"
         ),
         pytest.param("gh label create bug; echo plan-ready", id="label-create-echo"),
+        pytest.param("gh label edit old -n new-name", id="label-rename-other"),
+        pytest.param(
+            "gh api repos/{owner}/{repo}/issues/5 -X PATCH -f title=t",
+            id="gh-placeholders-unquoted",
+        ),
         pytest.param("gh issue edit --help", id="help"),
         pytest.param(
             'echo "gh issue edit 5 --add-label plan-ready"', id="quoted-mention"
@@ -9980,6 +10008,32 @@ _ISSUE_CLOSE = "block_issue_close.sh"
             "gh api -X PATCH repos/o/r/issues/5 -f state=closed; echo done",
             id="separator-after-state",
         ),
+        pytest.param(
+            "gh api repos/o/r/issues/5 -f{state=closed,} x=y", id="brace-field-flag"
+        ),
+        pytest.param(
+            "gh api repos/o/r/issues/5 --field={state=closed,}", id="brace-field-key"
+        ),
+        pytest.param(
+            "gh api -X {PATCH,} repos/o/r/issues/5 -f title=x", id="brace-method"
+        ),
+        pytest.param(
+            "gh api -X PATCH repos/o/r/issues/{5,} -f title=x", id="brace-endpoint"
+        ),
+        pytest.param(
+            "gh api -X PATCH repos/o/r/issues/5 --input - <<< "
+            "'{\"sta''te\":\"closed\"}'",
+            id="here-string-spliced-state",
+        ),
+        pytest.param(
+            'gh api -X PATCH repos/o/r/issues/5 --input - <<< \'{"ti""tle":"x"}\'',
+            id="here-string-spliced-double-quotes",
+        ),
+        pytest.param(
+            'gh api repos/o/r/issues/5 --jq "$(x)"; '
+            "gh api -X PATCH repos/o/r/pulls/3 -f state=closed",
+            id="accepted-merged-false-block",
+        ),
         *(
             pytest.param(
                 f"gh api graphql -f query='mutation{{{name}(input:{{}}){{x}}}}'",
@@ -10113,6 +10167,19 @@ def test_issue_close_reads_an_input_file(
         pytest.param(
             "gh api graphql -f query='mutation{deleteIssueComment(input:{}){x}}'",
             id="graphql-delete-comment",
+        ),
+        pytest.param(
+            "gh api repos/{owner}/{repo}/issues/5 -X PATCH -f title=x",
+            id="gh-placeholders-unquoted",
+        ),
+        pytest.param(
+            'gh api -X PATCH repos/o/r/issues/5 --input - <<< \'{"title":"x"}\'',
+            id="here-string-title",
+        ),
+        pytest.param(
+            "gh api -X PATCH repos/o/r/issues/5 --input - <<'EOF'\n"
+            '{"title": ""}\nEOF',
+            id="heredoc-empty-string",
         ),
     ],
 )

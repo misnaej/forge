@@ -180,6 +180,17 @@ _unknowable() {
     return 1
 }
 
+# _braced <value> — the value holds an unquoted `{` (a quoted one is the
+# neutral byte in the --words view), so bash may brace-expand it
+# (`{PATCH,}`) into words the hook never sees. gh's own `{owner}` /
+# `{repo}` / `{branch}` placeholders are not expansions.
+_braced() {
+    local v=${1//\{owner\}/}
+    v=${v//\{repo\}/}
+    v=${v//\{branch\}/}
+    [[ "$v" == *'{'* ]]
+}
+
 # _endpoints <word…> — set EPS to each call's endpoint: the first
 # positional word after each `api`, skipping options and their values.
 _endpoints() {
@@ -296,7 +307,10 @@ _body_inline() {
 # holds a value the hook cannot know.
 _label_values() {
     local v="$1" item
-    case "$v" in *'$'* | *'('* | *'`'*) return 0 ;; esac
+    # An unquoted `{` brace-expands and `[` `*` `?` glob into names the
+    # hook never sees (`plan-{ready,x}`, `plan-read[y]`); quoted, the
+    # last three look the same here, so a label holding one is refused.
+    case "$v" in *'$'* | *'('* | *'`'* | *'{'* | *'['* | *'*'* | *'?'*) return 0 ;; esac
     v=${v//"$N"/,}
     v=${v//\"/}
     v=${v//\'/}
@@ -348,8 +362,9 @@ if [ "$IS_TRIAGE" != 1 ] && invoked "${GH_ANCHOR}label[[:space:]]+${GH_OPTS}(cre
                     want=1
                     continue
                     ;;
-                --name) val=${toks[i + 1]:-} ;;
-                --name=*) val=${t#*=} ;;
+                --name | -n) val=${toks[i + 1]:-} ;;
+                --name=* | -n=*) val=${t#*=} ;;
+                -n?*) val=${t#-n} ;;
                 -c | --color | -d | --description | -R | --repo)
                     i=$((i + 1))
                     continue
@@ -432,7 +447,7 @@ if invoked "${GH_ANCHOR}api\b"; then
                 explicit=1
                 case "${m^^}" in
                     POST | PUT | PATCH) write=1 ;;
-                    *) _unknowable "$m" && write=1 ;;
+                    *) { _unknowable "$m" || _braced "$m"; } && write=1 ;;
                 esac
             fi
         done
@@ -447,7 +462,7 @@ if invoked "${GH_ANCHOR}api\b"; then
         comment_seg=0
         issue_seg=0
         for ep in "${EPS[@]}"; do
-            _unknowable "$ep" && ep_unknown=1
+            { _unknowable "$ep" || _braced "$ep"; } && ep_unknown=1
             [ "$ep" = graphql ] && graphql=1
             [[ "$ep" =~ $RE_LABELS ]] && label_seg=1
             [[ "$ep" =~ $RE_COMMENTS ]] && comment_seg=1
@@ -524,7 +539,7 @@ if invoked "${GH_ANCHOR}api\b"; then
                 key=${fields[k]%%=*}
                 case "$key" in
                     [Ll][Aa][Bb][Ee][Ll][Ss]*) LABEL_WRITE="setting issue labels through the API" ;;
-                    "" | *"$N"* | *'$'* | *'('* | *'`'*)
+                    "" | *"$N"* | *'$'* | *'('* | *'`'* | *'{'*)
                         LABEL_WRITE="an API issue write whose field name the hook cannot read"
                         ;;
                 esac
@@ -532,8 +547,13 @@ if invoked "${GH_ANCHOR}api\b"; then
             for input in "${inputs[@]}"; do
                 case "$input" in
                     - | /dev/stdin)
-                        if LC_ALL=C grep -qiE "labels" <<< "$COMMAND"; then
+                        # Raw (a heredoc is literal there) and the --words
+                        # view (a here-string's quotes are resolved there).
+                        if LC_ALL=C grep -qiE "labels" <<< "$COMMAND"$'\n'"$WORDS"; then
                             LABEL_WRITE="setting issue labels through the API"
+                        elif [[ "$COMMAND" == *'<<<'* ]] \
+                            && [[ "${COMMAND#*<<<}" == *"''"* || "${COMMAND#*<<<}" == *'""'* ]]; then
+                            LABEL_WRITE="an API issue write whose --input here-string splices quotes the hook cannot read"
                         elif [ "$HAS_HEREDOC" != 1 ]; then
                             LABEL_WRITE="an API issue write whose --input body is piped where the hook cannot read it"
                         elif _encoded "$COMMAND"; then

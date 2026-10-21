@@ -24,6 +24,13 @@
 # `$variable`); a command name held in a variable
 # (`G=gh; $G issue close 5`, as in block_pr_merge.sh); `gh alias`.
 # `gh pr close` is a PR, not an issue, and out of scope.
+#
+# Accepted false block: when a command holds a `$(` and more than one gh
+# call, a merged segment judges every call after the first as one, so
+# one call's `state` field can meet another call's issue endpoint
+# (`gh api repos/o/r/issues/5 --jq "$(x)"; gh api -X PATCH
+# repos/o/r/pulls/3 -f state=closed` is refused). Splitting the command
+# avoids it; reading less would let a nested gh call hide a close.
 set -e
 INPUT=$(cat)
 COMMAND=$(jq -r '.tool_input.command // empty' <<< "$INPUT")
@@ -148,6 +155,17 @@ _unknowable() {
     return 1
 }
 
+# _braced <value> — the value holds an unquoted `{` (a quoted one is the
+# neutral byte in the --words view), so bash may brace-expand it
+# (`{PATCH,}`, `-f{state=closed,}`) into words the hook never sees. gh's
+# own `{owner}` / `{repo}` / `{branch}` placeholders are not expansions.
+_braced() {
+    local v=${1//\{owner\}/}
+    v=${v//\{repo\}/}
+    v=${v//\{branch\}/}
+    [[ "$v" == *'{'* ]]
+}
+
 # _endpoints <word…> — set EPS to each call's endpoint: the first
 # positional word after each `api`, skipping options and their values.
 _endpoints() {
@@ -185,6 +203,22 @@ _file_body() {
     return 0
 }
 
+# _stdin_text — set ST to the text an `--input -` body can come from: the
+# raw command (a heredoc body is literal there) and the --words view (a
+# here-string's quotes are resolved there, so `'{"sta''te":…}'` reads
+# `"state"`). A here-string that splices quotes (`''`, `""`) after `<<<`
+# is read with certainty by neither, so it is refused.
+_stdin_text() {
+    local after
+    if [[ "$COMMAND" == *'<<<'* ]]; then
+        after=${COMMAND#*<<<}
+        if [[ "$after" == *"''"* || "$after" == *'""'* ]]; then
+            _refuse " (the --input here-string splices quotes, so the hook cannot read it)"
+        fi
+    fi
+    ST="$COMMAND"$'\n'"$WORDS"
+}
+
 # `gh issue close|reopen|delete|transfer` at a real invocation position,
 # found on the command-positions view (git_anchor.sh): a quoted mention
 # never fires, `bash -c "gh issue close 1"` does; a help request changes
@@ -204,6 +238,7 @@ if ! echo "$CMDPOS" | grep -qE "${GH_ANCHOR}api\b"; then
     exit 0
 fi
 N="$GUARD_NEUTRAL"
+WORDS=$(command_positions --words --no-redir "$COMMAND")
 RE_ISSUE="issues/[^/?${N}]+/*([?${N}]|$)"
 while IFS= read -r seg; do
     seg=${seg#$'\002'}
@@ -246,7 +281,7 @@ while IFS= read -r seg; do
             case "${m^^}" in
                 POST | PUT | PATCH) write=1 ;;
                 DELETE) write=1; delete=1 ;;
-                *) _unknowable "$m" && { write=1; unknown_method=1; } ;;
+                *) { _unknowable "$m" || _braced "$m"; } && { write=1; unknown_method=1; } ;;
             esac
         fi
     done
@@ -259,7 +294,7 @@ while IFS= read -r seg; do
     graphql=0
     issue=0
     for ep in "${EPS[@]}"; do
-        _unknowable "$ep" && _refuse " (an API write whose endpoint the hook cannot read)"
+        { _unknowable "$ep" || _braced "$ep"; } && _refuse " (an API write whose endpoint the hook cannot read)"
         [ "$ep" = graphql ] && graphql=1
         [[ "$ep" =~ $RE_ISSUE ]] && issue=1
     done
@@ -271,8 +306,9 @@ while IFS= read -r seg; do
         for input in "${inputs[@]}"; do
             case "$input" in
                 - | /dev/stdin)
-                    _graphql_closes "$COMMAND" && _refuse " through the GraphQL API"
-                    _encoded "$COMMAND" && _refuse " (the --input query is JSON-escaped, so the hook cannot read it)"
+                    _stdin_text
+                    _graphql_closes "$ST" && _refuse " through the GraphQL API"
+                    _encoded "$ST" && _refuse " (the --input query is JSON-escaped, so the hook cannot read it)"
                     ;;
                 *)
                     _file_body "$input" "--input query"
@@ -304,7 +340,7 @@ while IFS= read -r seg; do
         key=${fields[k]%%=*}
         case "$key" in
             state) _refuse " through the REST API" ;;
-            "" | *"$N"* | *'$'* | *'('* | *'`'*)
+            "" | *"$N"* | *'$'* | *'('* | *'`'* | *'{'*)
                 _refuse " (a field name the hook cannot read may set the state)"
                 ;;
         esac
@@ -314,8 +350,9 @@ while IFS= read -r seg; do
     for input in "${inputs[@]}"; do
         case "$input" in
             - | /dev/stdin)
-                LC_ALL=C grep -qE "state" <<< "$COMMAND" && _refuse " through the REST API"
-                _encoded "$COMMAND" && _refuse " (the --input body is JSON-escaped, so the hook cannot read it)"
+                _stdin_text
+                LC_ALL=C grep -qE "state" <<< "$ST" && _refuse " through the REST API"
+                _encoded "$ST" && _refuse " (the --input body is JSON-escaped, so the hook cannot read it)"
                 ;;
             *)
                 _file_body "$input" "--input body"
@@ -323,6 +360,6 @@ while IFS= read -r seg; do
                 ;;
         esac
     done
-done < <(_segments "${GH_ANCHOR}api\b" "$(command_positions --words --no-redir "$COMMAND")")
+done < <(_segments "${GH_ANCHOR}api\b" "$WORDS")
 
 exit 0
