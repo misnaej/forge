@@ -526,12 +526,21 @@ function squote(v,   Q, n) {
 # quoted string, or `${…}` with an operator — the raw text: the arguments
 # joined with blanks (`$@` `$*`, which never include $0) or the one
 # argument (`$N`, and `$0` too: a payload of `$0 "$@"` before the words
-# `git push -f` runs git). The
+# `git push -f` runs git). A slice `${@:N}` / `${@:N:L}` (and `${*:…}`)
+# takes the arguments from $N, counting $0 as bash does: quoted, each
+# single-quoted (`@`) or all as one word (`*`); unquoted, joined. The
 # first reference is always substituted — its text is at most the command
 # itself, and it is the one that names what a lone `"$@"` payload runs; a
 # later one only while the text stays within JOINCAP, after which the
 # rest of the payload is kept as written and the whole is emitted
 # unscanned (jrescan).
+#
+# pslice() sets PLO..PHI, the arguments slice body (`@:N` or `@:N:L`,
+# braces dropped) names out of $0..$m.
+function pslice(body, m,   B, n) {
+    n = split(body, B, ":"); PLO = B[2] + 0; PHI = (n > 2) ? PLO + B[3] - 1 : m
+    if (PHI > m) PHI = m
+}
 function pos_rescan(w, s, i,   P, m, k, n, c, d, j, e, body, v, A, na, tot, st, QP, raw, qall, qstar, num) {
     cmd_words(s, i); m = CN - 1
     for (k = 1; k <= CN; k++) { P[k - 1] = CW[k]; QP[k - 1] = squote(CW[k]) }
@@ -539,9 +548,10 @@ function pos_rescan(w, s, i,   P, m, k, n, c, d, j, e, body, v, A, na, tot, st, 
     n = length(w); k = 1; st = 1; na = 0; tot = 0
     while (k <= n) {
         c = substr(w, k, 1)
-        if (c == "\"" && match(substr(w, k, 24), /^"[$]([@*0-9]|[{]([@*]|[0-9]+)[}])"/)) {
+        if (c == "\"" && match(substr(w, k, 24), /^"[$]([@*0-9]|[{]([@*]|[0-9]+)[}]|[{][@*]:[0-9]+(:[0-9]+)?[}])"/)) {
             e = k + RLENGTH; body = substr(w, k + 2, RLENGTH - 3); gsub(/[{}]/, "", body)
-            if (body == "@") v = qall
+            if (body ~ /:/) { pslice(body, m); v = (body ~ /^@/) ? joins(QP, PLO, PHI, " ") : squote(joins(P, PLO, PHI, " ")) }
+            else if (body == "@") v = qall
             else if (body == "*") v = qstar
             else v = (body + 0 <= m) ? QP[body + 0] : "\047\047"
         } else if (c == "$") {
@@ -550,7 +560,8 @@ function pos_rescan(w, s, i,   P, m, k, n, c, d, j, e, body, v, A, na, tot, st, 
             else if (d ~ /[0-9]/) { num = d + 0; v = (num <= m) ? P[num] : ""; e = k + 2 }
             else if (d == "{" && (j = index(substr(w, k + 2), "}")) > 0) {
                 body = substr(w, k + 2, j - 1); e = k + 2 + j
-                if (body ~ /^[0-9]+$/) v = (body + 0 <= m) ? P[body + 0] : ""
+                if (body ~ /^[@*]:[0-9]+(:[0-9]+)?$/) { pslice(body, m); v = joins(P, PLO, PHI, " ") }
+                else if (body ~ /^[0-9]+$/) v = (body + 0 <= m) ? P[body + 0] : ""
                 else if (body ~ /^#?([@*]|[0-9])/) v = raw
                 else { k++; continue }
             } else { k++; continue }
@@ -1003,6 +1014,9 @@ END { printf "%s\n", scan(src, 1, 0) }
 #     terminates the guard's child processes, then the guard itself. Its
 #     output goes to /dev/null: a background job holding the hook's stdout
 #     would make Claude Code wait for it after every command.
+# The cap is sized for a typical machine: on a slow or loaded one, a
+# crafted command near it can take the guard close to the deadline, and
+# past it the watchdog blocks — a false block, never an allow.
 GUARD_MAX_CHARS=131072
 GUARD_DEADLINE_S=4
 # _guard_kill_tree <pid> <spare pid> — signal (TERM, or GUARD_KILL_SIGNAL)

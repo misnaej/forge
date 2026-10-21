@@ -8259,6 +8259,17 @@ def test_both_scanner_views_count_the_same_words() -> None:
     assert not mismatched
 
 
+def test_words_view_keeps_an_ansi_c_escaped_blank_inside_its_word() -> None:
+    r"""``$'a\\ b'`` is one word in the --words view, its blank the neutral byte.
+
+    The blank sits inside ANSI-C quoting behind a backslash, so neither the
+    quote nor the escape may let it split the word.
+    """
+    view = _scanner_view("echo $'a\\ b'", words=True).rstrip("\n")
+
+    assert view.split(" ") == ["echo", f"$a{_NEUTRAL}b"]
+
+
 # The shapes the scanner once read differently from the shell: a quoted or
 # escaped blank inside one word, a line continuation inside or before a
 # word, and text the shell assembles from several words (eval, ssh, the
@@ -8280,6 +8291,8 @@ _SCANNER_WORD_CASES = [
     pytest.param(
         _FORCE_PUSH, '"${G:-a b}" push -f', _BLOCK, id="quoted-spaced-default"
     ),
+    # Quoted blank is one word — reviewed reduction (the old scanner split
+    # the word and blocked; git receives the one refspec `x -f`).
     pytest.param(_FORCE_PUSH, "git push origin 'x -f'", _ALLOW, id="quoted-refspec"),
     pytest.param(
         "block_no_verify.sh",
@@ -8287,6 +8300,7 @@ _SCANNER_WORD_CASES = [
         _BLOCK,
         id="no-verify-quoted-dir",
     ),
+    # Quoted blank is one word — reviewed reduction (`-n` is message text).
     pytest.param(
         "block_no_verify.sh", "git commit -m 'x -n'", _ALLOW, id="no-verify-in-message"
     ),
@@ -8296,6 +8310,8 @@ _SCANNER_WORD_CASES = [
         _BLOCK,
         id="protected-quoted-dir",
     ),
+    # Quoted blank is one word — reviewed reduction (the refspec is `x main`,
+    # no push to main).
     pytest.param(
         _PROTECTED, "git push origin 'x main'", _ALLOW, id="protected-quoted-refspec"
     ),
@@ -8332,6 +8348,8 @@ _SCANNER_WORD_CASES = [
         _BLOCK,
         id="graphql-merge-quoted",
     ),
+    # Quoted blank is one word — reviewed reduction (`.plan x` is a sibling
+    # path, not `.plan`).
     pytest.param(
         "block_continuation_delete.sh",
         "rm -r '.plan x'",
@@ -8347,6 +8365,8 @@ _SCANNER_WORD_CASES = [
         _BLOCK,
         id="rm-through-xargs",
     ),
+    # `uv sync` blocks whatever its flags (only pixi reads --frozen), so a
+    # quoted `--frozen x` — one word, not the flag — must not lift it.
     pytest.param(
         "block_install_deps.sh", "uv sync '--frozen x'", _BLOCK, id="uv-quoted-frozen"
     ),
@@ -8405,6 +8425,22 @@ _SCANNER_WORD_CASES = [
     pytest.param(_FORCE_PUSH, "sh -c '$*' _ git push -f", _BLOCK, id="pos-star"),
     pytest.param(_FORCE_PUSH, "sh -c '$0 \"$@\"' git push -f", _BLOCK, id="pos-zero"),
     pytest.param(_FORCE_PUSH, "bash -c 'echo \"$1\"' _ x", _ALLOW, id="pos-harmless"),
+    # A slice `${@:N}` takes the arguments from $N ($0 counted).
+    pytest.param(
+        _FORCE_PUSH, "bash -c 'git \"${@:1}\"' _ push -f", _BLOCK, id="pos-slice"
+    ),
+    pytest.param(
+        _FORCE_PUSH, "sh -c '\"${@:0}\"' git push -f", _BLOCK, id="pos-slice-0"
+    ),
+    pytest.param(
+        _FORCE_PUSH, "bash -c 'git ${@:1:2}' _ push -f x", _BLOCK, id="pos-slice-len"
+    ),
+    pytest.param(
+        _FORCE_PUSH, "bash -c 'git \"${@:2}\"' _ push -f", _ALLOW, id="pos-slice-past"
+    ),
+    pytest.param(
+        _FORCE_PUSH, "bash -c 'git \"${*:1}\"' _ push -f", _ALLOW, id="pos-slice-star"
+    ),
 ]
 
 
@@ -8464,7 +8500,6 @@ def test_destructive_restore_of_a_quoted_path_keeps_the_work(
     Args:
         name: The tracked file the command restores, modified first.
         command: The restore, naming *name* quoted or escaped.
-        restore_repo: Repo the file is committed in.
     """
     (restore_repo / name).write_text("one\n")
     _git(restore_repo, "add", "-A")
@@ -8494,8 +8529,8 @@ def test_destructive_restore_in_a_spaced_directory_is_unknowable(
     """A `-C` directory holding a quoted or escaped blank is unknowable, so it blocks.
 
     Args:
-        command: A restore of a modified file in the repo at ``a b``.
-        tmp_path: Directory the hook runs in, holding that repo.
+        command: A restore of a modified file in the repo at ``a b``, run
+            from the directory holding that repo.
     """
     repo = tmp_path / "a b"
     repo.mkdir()
@@ -8521,9 +8556,6 @@ def test_destructive_hook_fails_closed_when_lib_lacks_guard_neutral(
     Without it the hook cannot tell a quoted path from the path git gets,
     so it must refuse rather than judge. The control run on an intact copy
     pins that the block comes from the missing definition.
-
-    Args:
-        tmp_path: Directory holding the hook and its lib copies.
     """
     lib_text = (_HOOKS_DIR / _GIT_ANCHOR_LIB).read_text()
     kept = [
@@ -8553,39 +8585,25 @@ def test_destructive_hook_fails_closed_when_lib_lacks_guard_neutral(
     assert run("intact").returncode == _ALLOW
 
 
-@pytest.mark.parametrize(
-    "command",
-    [
-        pytest.param("eval " + "x " * 20000 + "; git push -f", id="padded-eval"),
-        pytest.param("ssh h " + "x " * 20000 + "; git push -f", id="padded-ssh"),
-        pytest.param("eval " * 10000 + "git push -f", id="nested-eval"),
-        pytest.param(
-            "bash -c '" + "$@" * 2000 + "' _ " + "x" * 30000 + "; git push -f",
-            id="many-positional-refs",
-        ),
-        pytest.param(
-            "bash -c '" + "$1 " * 5000 + "' _ " + "y" * 20000 + " ; git push -f",
-            id="long-positional-argument",
-        ),
-    ],
-)
-def test_joined_readings_stay_inside_the_deadline(command: str) -> None:
-    """Joining eval / ssh / positional words stays linear on a padded command.
-
-    Each join is read once per simple command and every re-scan is charged
-    to one byte budget, so padding cannot run a guard past its deadline —
-    and a timed-out guard allows the command. The bound is well inside the
-    4 s deadline yet loose for a loaded runner.
-
-    Args:
-        command: A padded command that still ends in a force push.
-    """
-    start = time.monotonic()
-    verdict = _run_hook(_FORCE_PUSH, command)
-    elapsed = time.monotonic() - start
-
-    assert verdict == _BLOCK
-    assert elapsed < 2.0
+# Padded shapes for the joined readings (eval / ssh / positional words),
+# each sized past the scanner's cap it targets (JOINCAP 16384 bytes for one
+# assembled text, BUDGET 65536 for all of them): a 24-36 KB joined eval or
+# ssh text, a plain `eval` chain that must cost no joins, and payloads
+# whose substituted text (200 KB, 1 MB) runs the guard into its watchdog
+# when the caps are lifted. Timed by the speed test further down.
+_JOINED_PADDED_CASES = [
+    pytest.param("eval " + "'xyz' " * 6000 + "; git push -f", id="padded-eval"),
+    pytest.param("ssh h " + "x " * 12000 + "; git push -f", id="padded-ssh"),
+    pytest.param("eval " * 7000 + "git push -f", id="nested-eval"),
+    pytest.param(
+        "bash -c '" + "$@" * 100 + "' _ " + "x" * 2000 + "; git push -f",
+        id="many-positional-refs",
+    ),
+    pytest.param(
+        "bash -c '" + "$1 " * 1000 + "' _ " + "y" * 1000 + " ; git push -f",
+        id="long-positional-argument",
+    ),
+]
 
 
 # The scanner once read only the last 240 characters to spot a wrapper; the
@@ -9019,20 +9037,25 @@ def test_wrapper_shapes_reach_every_guard(hook: str, command: str) -> None:
             "bash -c " + "-x " * 16500 + "'git push -f'",
             id="options-after-c-padded-to-50kb",
         ),
+        *_JOINED_PADDED_CASES,
     ],
 )
-def test_scanner_stays_fast_on_50kb_of_redirections_or_options(command: str) -> None:
-    """Redirection padding and post-``-c`` options are scanned in linear time.
+def test_scanner_stays_fast_on_padded_commands(command: str) -> None:
+    """Padding, post-``-c`` options and joined readings are scanned in linear time.
+
+    A guard that runs out of time is killed by its watchdog and blocks, so
+    the verdict alone cannot show a slow scan; the bound does. It sits
+    under the 4 s deadline yet loose for a loaded runner.
 
     Args:
-        command: A ~50 KB command ending in a wrapped force push.
+        command: A padded command ending in a (possibly wrapped) force push.
     """
     start = time.monotonic()
     verdict = _run_hook(_FORCE_PUSH, command)
     elapsed = time.monotonic() - start
 
     assert verdict == _BLOCK
-    assert elapsed < 10
+    assert elapsed < 3.0
 
 
 @pytest.mark.parametrize(
