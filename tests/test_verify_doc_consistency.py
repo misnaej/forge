@@ -133,6 +133,26 @@ def test_provenance_gate_names_flags_stale_token(tmp_path: Path) -> None:
     assert "skills/pr/SKILL.md" in findings[0]
 
 
+def test_provenance_gate_names_ignores_private_helper_keeps_stale_step(
+    tmp_path: Path,
+) -> None:
+    """A `_`-prefixed helper in provenance prose is never read as a step name.
+
+    `_run_gen_check` sits beside the gate names in precommit.py and used to
+    be flagged as stale on every run; a genuinely stale `old_gate_check` in
+    the same window must still be caught.
+    """
+    _write(
+        tmp_path / "skills" / "pr" / "SKILL.md",
+        "Provenance gates run foundation_md_check, cli_reference_check and "
+        "api_digest_check through `_run_gen_check`; old_gate_check is gone.\n",
+    )
+    findings = vdc._check_provenance_gate_names(tmp_path)
+    assert len(findings) == 1
+    assert "'old_gate_check'" in findings[0]
+    assert "_run_gen_check" not in findings[0]
+
+
 def test_provenance_gate_names_ignores_step_prefixed_function_reference(
     tmp_path: Path,
 ) -> None:

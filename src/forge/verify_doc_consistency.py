@@ -16,7 +16,8 @@ any repo):
   ``pr_delta.PROVENANCE_GATE_STEPS`` appears in each prose surface that
   hand-names the gates (the files in :data:`_PROVENANCE_PROSE_FILES`),
   and no ``*_check`` token named in those files' provenance prose is
-  absent from the constant (a stale name).
+  absent from the constant (a stale name). A token starting with an
+  underscore is a private helper, never a step name, and is ignored.
 
 Scope is deliberately conservative for v1: the one robust, no-NLP,
 no-maintenance check. Name-list/count checks that depend on prose
@@ -84,7 +85,9 @@ def _check_cli_coverage(repo_root: Path) -> list[str]:
 
 
 # Step-name-shaped token, matched only inside provenance-adjacent prose.
-_CHECK_TOKEN_RE = re.compile(r"\b[a-z0-9_]+_check\b")
+# It must start with a letter: a leading underscore marks a private helper
+# (`_run_gen_check`), never a step name.
+_CHECK_TOKEN_RE = re.compile(r"\b[a-z][a-z0-9_]*_check\b")
 # Lines this close to a "provenance" mention count as provenance prose.
 # Sized to span forge-docs/configuration.md's gate bullet list, whose last
 # token sits 9 lines below its "provenance gates" anchor line.

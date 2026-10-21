@@ -4565,6 +4565,46 @@ def test_step_regen_docs_warns_even_when_non_interactive(
     assert "forge-foo" in result.output
 
 
+def test_env_sync_and_regen_docs_agree_on_stale_install_non_interactive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both steps flag the same stale install in an agent-style session.
+
+    An agent session is non-interactive but not CI. env_sync once gated on
+    the tty predicate and stood down there while regen_docs warned, so the
+    two disagreed about the same install.
+
+    SCENARIO: ``[project.scripts]`` declares ``mycli`` and ``new-cli``; the
+        install registers only ``mycli``; no CI marker; no tty.
+    MOCK SETUP: ``forge.config.console_script_modules`` → ``{"mycli": …}``
+        (the one seam both steps read through); ``is_non_interactive`` →
+        True; generators stubbed via ``precommit._run``.
+    EXPECTED BEHAVIOR: env_sync fails naming ``new-cli``, and regen_docs
+        warns naming ``new-cli`` too.
+    """
+    for name in _CI_MARKERS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(precommit, "is_non_interactive", lambda: True)
+    _write_project_scripts_pyproject(tmp_path, "consumer", {"mycli": "", "new-cli": ""})
+    monkeypatch.setattr(
+        config, "console_script_modules", lambda _name=None: {"mycli": "pkg"}
+    )
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "cli-reference.md").write_text("old\n")
+    monkeypatch.setattr(precommit, "_run", lambda _cmd, **_kw: (True, ""))
+    monkeypatch.setattr(precommit, "stage_modified_paths", lambda *_a: [])
+
+    env_sync = precommit.step_env_sync(tmp_path)
+    regen = precommit.step_regen_docs(tmp_path)
+
+    assert not env_sync.passed
+    assert "new-cli" in env_sync.output
+    assert not regen.passed
+    assert "install is stale" in regen.output
+    assert "new-cli" in regen.output
+
+
 # ---------------------------------------------------------------------------
 # Group 2b: step_regen_docs partial-commit guard (real git repos — the
 # guard reads the actual worktree via `git diff --name-only`, so a fake
@@ -4763,20 +4803,31 @@ def _rg_repo(tmp_path: Path, *, name: str = "consumer", commit: bool = True) -> 
 
 
 def _rg_stub_generators(
-    monkeypatch: pytest.MonkeyPatch, *, ok: bool = True
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    ok: bool = True,
+    check_ok: bool | None = None,
+    check_output: str = "out of sync",
 ) -> list[str]:
-    """Stub the generators.
+    """Stub the generators, in both write and ``--check`` mode.
 
     Args:
         monkeypatch: Fixture used to patch the generator launcher.
         ok: Whether the stubbed generators succeed.
+        check_ok: Whether a ``--check`` run passes; defaults to *ok*.
+        check_output: What a failing ``--check`` run prints.
 
     Returns:
-        The live list of module names launched.
+        The live list of launches: the module name for a write run,
+        ``"<module> --check"`` for a check run.
     """
     launched: list[str] = []
+    check_passes = ok if check_ok is None else check_ok
 
     def _fake_run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        if cmd[-1] == "--check":
+            launched.append(f"{cmd[-2]} --check")
+            return check_passes, "" if check_passes else check_output
         launched.append(cmd[-1])
         return ok, "" if ok else "crash"
 
@@ -4819,6 +4870,7 @@ def _rg_decide(**overrides: object) -> regen_docs.RegenDecision:
         "doc_blob": "b1",
         "merge": False,
         "doc_staged": False,
+        "inputs_staged": True,
     }
     kwargs.update(overrides)
     return regen_docs.decide_regen(
@@ -4831,7 +4883,7 @@ def _rg_decide(**overrides: object) -> regen_docs.RegenDecision:
 def test_decide_regen_skips_when_everything_matches() -> None:
     """All signals agree with the record → skip, with the documented reason."""
     decision = _rg_decide()
-    assert decision.regenerate is False
+    assert decision.action == "skip"
     assert decision.reason == "inputs unchanged since last build"
     assert decision.rel == _API_DOC
     assert decision.cli == "forge-gen-api-digest"
@@ -4858,8 +4910,38 @@ def test_decide_regen_each_signal_regenerates(
         fragment: Text the decision reason must contain.
     """
     decision = _rg_decide(**overrides)
-    assert decision.regenerate is True
+    assert decision.action == "generate"
     assert fragment in decision.reason
+
+
+@pytest.mark.parametrize(
+    ("overrides", "action"),
+    [
+        ({"recorded": None}, "check"),
+        ({"current": {**_RG_CURRENT, "forge_version": "2.0"}}, "check"),
+        ({"doc_blob": "b2"}, "check"),
+        ({"current": {**_RG_CURRENT, "inputs": "bbb"}}, "check"),
+        # The doc itself staged, or a merge, is the commit feeding the doc.
+        ({"doc_staged": True}, "generate"),
+        ({"merge": True}, "generate"),
+    ],
+)
+def test_decide_regen_rebuild_without_staged_inputs_only_checks(
+    overrides: dict[str, object], action: str
+) -> None:
+    """A rebuild the commit does not feed is a check, never a regeneration.
+
+    Args:
+        overrides: Decision inputs overriding the unchanged baseline.
+        action: The action expected with no staged input.
+    """
+    assert _rg_decide(inputs_staged=False, **overrides).action == action
+
+
+def test_decide_regen_staged_inputs_alone_never_force_a_rebuild() -> None:
+    """Inputs unchanged since the last build skip however the commit is staged."""
+    assert _rg_decide(inputs_staged=True).action == "skip"
+    assert _rg_decide(inputs_staged=False).action == "skip"
 
 
 def test_decide_regen_first_match_wins_ordering() -> None:
@@ -5040,15 +5122,19 @@ def _rg_stale_cli_repo(
             otherwise the doc does not exist at ``HEAD``.
 
     Returns:
-        The repo root.
+        The repo root. It is forge's own repo with a ``src/forge`` edit
+        staged, so the commit feeds the cli-reference and it regenerates.
     """
-    repo = _rg_repo(tmp_path)
+    repo = _rg_repo(tmp_path, name=regen_docs.FORGE_DIST_NAME)
     if documented_at_head:
         (repo / _CLI_DOC).write_text(_CLI_AT_HEAD)
     else:
         (repo / _CLI_DOC).unlink()
     _rg_git(repo, "add", "-A")
     _rg_git(repo, "commit", "-q", "-m", "document clis")
+    (repo / "src" / "forge").mkdir()
+    (repo / "src" / "forge" / "m.py").write_text("a = 1\n")
+    _rg_git(repo, "add", "-A")
 
     def _fake_run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
         if cmd[-1] == _CLI_MODULE:
@@ -5070,15 +5156,15 @@ def test_step_regen_docs_stale_install_dropping_sections_blocks_and_holds_doc(
     and the regenerated doc keeps only forge-foo.
     MOCK SETUP: a real git repo; precommit._run → writes the shortened doc
     for the cli-reference generator; missing_console_scripts → one script.
-    EXPECTED BEHAVIOR: result blocks (not non_blocking); the index is
-    unchanged; the worktree file stays modified; the message names the lost
+    EXPECTED BEHAVIOR: result blocks (not non_blocking); the doc is not
+    staged; the worktree file stays modified; the message names the lost
     section, the generator and the refresh hint.
     """
     repo = _rg_stale_cli_repo(tmp_path, monkeypatch, "# CLI\n\n## forge-foo\nfoo\n")
     result = precommit.step_regen_docs(repo)
     assert not result.non_blocking
     assert not result.passed
-    assert _rg_git(repo, "diff", "--cached", "--name-only") == ""
+    assert _CLI_DOC not in _rg_git(repo, "diff", "--cached", "--name-only")
     assert _CLI_DOC in _rg_git(repo, "diff", "--name-only")
     assert (repo / _CLI_DOC).read_text() == "# CLI\n\n## forge-foo\nfoo\n"
     assert "forge-bar" in result.output
@@ -5248,18 +5334,112 @@ def test_cli_reference_heading_regex_matches_generator_shape() -> None:
     assert "forge-precommit" in headings
 
 
-def test_step_regen_docs_first_run_regenerates_both_and_records(
+def test_step_regen_docs_first_run_unfed_checks_both_and_records_in_sync(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """No record yet → both generators run, each line says why, a record lands."""
+    """No record, nothing staged → both docs only checked; in sync, a record lands."""
     repo = _rg_repo(tmp_path)
     launched = _rg_stub_generators(monkeypatch)
     result = precommit.step_regen_docs(repo)
-    assert sorted(launched) == [_API_MODULE, _CLI_MODULE]
+    assert sorted(launched) == [f"{_API_MODULE} --check", f"{_CLI_MODULE} --check"]
     assert not result.skipped
-    assert result.output.count("regenerated — ") == 2
+    assert result.passed
+    assert result.output.count("checked only (this commit does not feed it)") == 2
     assert "no record" in result.output
-    assert _rg_record_bytes(repo) is not None
+    assert set(regen_docs.load_record(repo)) == {_API_DOC, _CLI_DOC}
+
+
+def test_step_regen_docs_first_run_drifted_unfed_doc_warns_and_touches_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No record, nothing staged, docs out of date → WARN; tree and index untouched.
+
+    SCENARIO: a clean committed repo with no build record; both checks fail.
+    MOCK SETUP: generators stubbed via ``precommit._run``; ``--check`` fails.
+    EXPECTED BEHAVIOR: non-blocking, not passed; each doc's advice names its
+        generator and says it was not regenerated; no write run, nothing
+        staged, no worktree change, no record.
+    """
+    repo = _rg_repo(tmp_path)
+    launched = _rg_stub_generators(monkeypatch, check_ok=False)
+    result = precommit.step_regen_docs(repo)
+    assert not result.passed
+    assert result.non_blocking
+    assert all(launch.endswith("--check") for launch in launched)
+    assert result.output.count("not regenerated because nothing in this commit") == 2
+    assert "run `forge-gen-api-digest` and commit it on its own" in result.output
+    assert _rg_git(repo, "status", "--porcelain") == ""
+    assert _rg_record_bytes(repo) is None
+
+
+def test_step_regen_docs_unrelated_staged_file_without_record_only_checks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unrelated staged file with no record runs checks and stages no doc."""
+    repo = _rg_repo(tmp_path)
+    launched = _rg_stub_generators(monkeypatch, check_ok=False)
+    (repo / "notes.txt").write_text("hello\n")
+    _rg_git(repo, "add", "notes.txt")
+    precommit.step_regen_docs(repo)
+    assert sorted(launched) == [f"{_API_MODULE} --check", f"{_CLI_MODULE} --check"]
+    assert _rg_git(repo, "diff", "--cached", "--name-only").split() == ["notes.txt"]
+
+
+@pytest.mark.parametrize("change", ["delete", "rename-away"])
+def test_step_regen_docs_staged_removal_of_an_input_feeds_the_doc(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    """Deleting an input, or renaming it out of the roots, regenerates the digest.
+
+    Neither path is in the index any more, so only the staged path itself
+    can show the commit feeds the doc.
+
+    Args:
+        change: How the input leaves the doc's roots.
+    """
+    repo = _rg_repo(tmp_path)
+    # A second module keeps the source root in existence once a.py leaves.
+    (repo / "src" / "pkg" / "keep.py").write_text('"""Keep."""\n')
+    _rg_git(repo, "add", "-A")
+    _rg_git(repo, "commit", "-q", "-m", "second module")
+    launched = _rg_stub_generators(monkeypatch)
+    precommit.step_regen_docs(repo)
+    launched.clear()
+    if change == "delete":
+        _rg_git(repo, "rm", "-q", "src/pkg/a.py")
+    else:
+        _rg_git(repo, "mv", "src/pkg/a.py", "scripts/a.py")
+    result = precommit.step_regen_docs(repo)
+    assert launched == [_API_MODULE]
+    assert "regenerated — sources changed" in result.output
+
+
+def test_step_regen_docs_cli_reference_check_on_stale_install_advises_refresh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A check that fails on a stale install says refresh, never regenerate.
+
+    Regenerating the CLI reference from a stale install drops sections, so
+    the "regenerate and commit it on its own" advice would be harmful there.
+    """
+    repo = _rg_repo(tmp_path)
+
+    def _cli_advice() -> str:
+        output = precommit.step_regen_docs(repo).output
+        return next(s for s in output.split("\n\n") if s.startswith(f"⚠️ {_CLI_DOC}"))
+
+    # The generator itself reports a help it could not capture.
+    _rg_stub_generators(monkeypatch, check_ok=False, check_output="--help unavailable")
+    advice = _cli_advice()
+    assert "refresh the install" in advice
+    assert "reinstall forge-scripts" in advice
+    assert "commit it on its own" not in advice
+    # Or the install is missing a declared console script.
+    _rg_stub_generators(monkeypatch, check_ok=False)
+    monkeypatch.setattr(precommit, "missing_console_scripts", lambda _r: ["forge-new"])
+    advice = _cli_advice()
+    assert "refresh the install" in advice
+    assert "commit it on its own" not in advice
 
 
 def test_step_regen_docs_unchanged_second_run_skips_everything(
@@ -5327,18 +5507,23 @@ def test_step_regen_docs_detects_source_committed_bypassing_the_step(
     """A change that landed without the step running is caught next time.
 
     The record names the inputs at the last build, not the last commit, so a
-    commit made with the step disabled still reads as "changed".
+    commit made with the step disabled still reads as "changed". This commit
+    does not feed the digest, so it is checked and warned about, not
+    regenerated into an unrelated commit.
     """
     repo = _rg_repo(tmp_path)
     launched = _rg_stub_generators(monkeypatch)
     precommit.step_regen_docs(repo)
-    launched.clear()
     (repo / "src" / "pkg" / "a.py").write_text('"""Bypassed."""\n')
     _rg_git(repo, "add", "-A")
     _rg_git(repo, "commit", "-q", "-m", "bypass the step")
+    launched = _rg_stub_generators(monkeypatch, check_ok=False)
     result = precommit.step_regen_docs(repo)
-    assert launched == [_API_MODULE]
-    assert "changed" in result.output
+    assert launched == [f"{_API_MODULE} --check"]
+    assert "out of date (sources changed)" in result.output
+    assert result.non_blocking
+    assert not result.passed
+    assert _rg_git(repo, "status", "--porcelain") == ""
 
 
 def test_step_regen_docs_hand_edited_staged_doc_is_regenerated(
@@ -5371,10 +5556,14 @@ def test_step_regen_docs_merge_in_progress_regenerates(
     assert "merge in progress" in result.output
 
 
-def test_step_regen_docs_forge_version_change_regenerates(
+def test_step_regen_docs_forge_version_change_checks_and_rerecords(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A record written by another forge version is not trusted."""
+    """A record from another forge version is not trusted: both docs re-verified.
+
+    Nothing staged feeds either doc, so both are checked rather than
+    regenerated; in sync, the record is rewritten for the current version.
+    """
     repo = _rg_repo(tmp_path)
     launched = _rg_stub_generators(monkeypatch)
     precommit.step_regen_docs(repo)
@@ -5384,8 +5573,13 @@ def test_step_regen_docs_forge_version_change_regenerates(
         entry["forge_version"] = "0.0.0-other"
     regen_docs.save_record(repo, record)
     launched.clear()
-    precommit.step_regen_docs(repo)
-    assert sorted(launched) == [_API_MODULE, _CLI_MODULE]
+    result = precommit.step_regen_docs(repo)
+    assert sorted(launched) == [f"{_API_MODULE} --check", f"{_CLI_MODULE} --check"]
+    assert "forge 0.0.0-other → " in result.output
+    assert all(
+        e["forge_version"] != "0.0.0-other"
+        for e in regen_docs.load_record(repo).values()
+    )
 
 
 def test_step_regen_docs_generator_failure_leaves_record_untouched(
@@ -5435,7 +5629,7 @@ def test_step_regen_docs_partial_commit_guard_leaves_record_untouched(
     assert _rg_record_bytes(repo) == recorded
 
 
-def test_step_regen_docs_corrupt_record_regenerates(
+def test_step_regen_docs_corrupt_record_rebuilds_like_no_record(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """An unreadable record behaves like no record at all."""
@@ -5447,8 +5641,67 @@ def test_step_regen_docs_corrupt_record_regenerates(
     path.write_text("{corrupt")
     launched.clear()
     result = precommit.step_regen_docs(repo)
-    assert sorted(launched) == [_API_MODULE, _CLI_MODULE]
+    assert sorted(launched) == [f"{_API_MODULE} --check", f"{_CLI_MODULE} --check"]
     assert "no record" in result.output
+
+
+def test_step_regen_docs_staged_input_regenerates_and_stages_the_doc(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A staged input regenerates the doc, and the rewritten doc is staged.
+
+    MOCK SETUP: ``precommit._run`` → the api-digest generator rewrites the
+        doc; ``--check`` runs are recorded but never expected.
+    """
+    repo = _rg_repo(tmp_path)
+    _rg_stub_generators(monkeypatch)
+    precommit.step_regen_docs(repo)
+
+    def _writing_run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        assert cmd[-1] != "--check", cmd
+        if cmd[-1] == _API_MODULE:
+            (repo / _API_DOC).write_text("api v2\n")
+        return True, ""
+
+    monkeypatch.setattr(precommit, "_run", _writing_run)
+    (repo / "src" / "pkg" / "a.py").write_text('"""A2."""\n')
+    _rg_git(repo, "add", "src/pkg/a.py")
+    result = precommit.step_regen_docs(repo)
+    assert "Re-staged: docs/api-digest.md" in result.output
+    staged = _rg_git(repo, "diff", "--cached", "--name-only").split()
+    assert sorted(staged) == [_API_DOC, "src/pkg/a.py"]
+    assert _API_DOC in regen_docs.load_record(repo)
+
+
+def test_step_regen_docs_failed_help_capture_stages_nothing_and_hints_refresh(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cli-reference generator that cannot capture some help changes nothing.
+
+    SCENARIO: forge's own repo, a ``src/forge`` edit staged (the commit
+        feeds the CLI reference); the generator exits 1 reporting a help it
+        could not capture, writing nothing.
+    MOCK SETUP: ``precommit._run`` → api-digest succeeds, cli-reference
+        fails with the generator's "--help unavailable" line.
+    EXPECTED BEHAVIOR: non-blocking WARN; the CLI reference is neither
+        rewritten nor staged nor recorded; the warning names the refresh.
+    """
+    repo = _rg_stale_cli_repo(tmp_path, monkeypatch, "unused", missing=())
+
+    def _failing_cli(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        if cmd[-1] == _CLI_MODULE:
+            return False, "--help unavailable for forge-foo (exit 1)"
+        return True, ""
+
+    monkeypatch.setattr(precommit, "_run", _failing_cli)
+    result = precommit.step_regen_docs(repo)
+    assert result.non_blocking
+    assert not result.passed
+    assert (repo / _CLI_DOC).read_text() == _CLI_AT_HEAD
+    assert _CLI_DOC not in _rg_git(repo, "diff", "--cached", "--name-only")
+    assert _CLI_DOC not in regen_docs.load_record(repo)
+    assert "./dev/setup.sh" in result.output
+    assert "some CLI help could not be captured" in result.output
 
 
 # ---------------------------------------------------------------------------

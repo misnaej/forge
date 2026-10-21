@@ -20,11 +20,18 @@ Usage:
     # Verify docs/cli-reference.md is in sync
     forge-gen-cli-reference --check
 
+A CLI whose ``--help`` cannot be captured (it exits non-zero or prints
+nothing — usually a stale install) is never recorded as documentation:
+in either mode the run names each such CLI, writes nothing and exits 1,
+so a committed page cannot silently lose a section while every check
+reports it in sync.
+
 Exit Codes:
     0: The doc was written (default mode), or it is already in sync
        (``--check`` mode).
     1: ``--check`` detected drift between the generated content and the
-       committed ``docs/cli-reference.md`` (the file is left untouched).
+       committed ``docs/cli-reference.md``, or (either mode) at least one
+       CLI's ``--help`` could not be captured. The file is left untouched.
 """
 
 from __future__ import annotations
@@ -37,7 +44,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from typing import NamedTuple
 
-from forge.gen_common import check_doc_drift
+from forge.gen_common import HELP_UNAVAILABLE_MARKER, check_doc_drift
 from forge.git_utils import (
     FORGE_DIST_NAME,
     configure_cli_logging,
@@ -78,6 +85,24 @@ class CliEntry(NamedTuple):
     module: str
 
 
+class RenderedReference(NamedTuple):
+    """The rendered CLI reference, and the CLIs whose help was unavailable.
+
+    A NamedTuple rather than an exception: captures run inside a parallel
+    ``pool.map``, where raising on the first failure would abort the rest
+    and hide which other CLIs also failed.
+
+    Attributes:
+        text: The complete markdown document, or ``""`` when *unavailable*
+            is non-empty — a page missing a section must never be written.
+        unavailable: Names of the CLIs whose ``--help`` could not be
+            captured, in entry order.
+    """
+
+    text: str
+    unavailable: list[str]
+
+
 def discover_clis(distribution: str = DISTRIBUTION) -> list[CliEntry]:
     """Discover the console-script CLIs shipped by a distribution.
 
@@ -99,7 +124,7 @@ def discover_clis(distribution: str = DISTRIBUTION) -> list[CliEntry]:
     return sorted(entries, key=lambda entry: entry.name)
 
 
-def capture_help(entry: CliEntry) -> str:
+def capture_help(entry: CliEntry) -> str | None:
     """Capture the ``--help`` output of a single CLI.
 
     Invokes ``python -m <module> --help`` with the current interpreter
@@ -107,13 +132,15 @@ def capture_help(entry: CliEntry) -> str:
     ``PATH``. The subprocess environment pins ``COLUMNS`` to
     :data:`CLI_REFERENCE_COLUMNS` so argparse's HelpFormatter produces
     byte-identical output regardless of the caller's terminal width.
+    A failed capture is logged here, once, with the exit code; callers
+    only count it.
 
     Args:
         entry: The CLI to capture help for.
 
     Returns:
-        The stripped ``--help`` output, or a short placeholder line when
-        the CLI exits non-zero or produces no output.
+        The stripped ``--help`` output, or ``None`` when the CLI exits
+        non-zero or produces no output.
     """
     proc = subprocess.run(
         [sys.executable, "-m", entry.module, "--help"],
@@ -124,24 +151,26 @@ def capture_help(entry: CliEntry) -> str:
     )
     output = (proc.stdout or proc.stderr).strip()
     if proc.returncode != 0 or not output:
-        logger.warning(
-            "Could not capture --help for %s (exit %d)",
+        logger.error(
+            "%s for %s (exit %d)",
+            HELP_UNAVAILABLE_MARKER,
             entry.name,
             proc.returncode,
         )
-        return f"(--help unavailable for {entry.name})"
+        return None
     return output
 
 
-def render_reference(entries: list[CliEntry]) -> str:
+def render_reference(entries: list[CliEntry]) -> RenderedReference:
     """Render the full CLI reference markdown document.
 
     Args:
         entries: The CLIs to document, in the order they should appear.
 
     Returns:
-        The complete markdown content for ``docs/cli-reference.md``,
-        ending with a single trailing newline.
+        The markdown content for ``docs/cli-reference.md`` (ending with a
+        single trailing newline) and the CLIs whose help was unavailable;
+        the text is empty whenever any help was unavailable.
     """
     lines = [
         "# CLI Reference",
@@ -164,14 +193,22 @@ def render_reference(entries: list[CliEntry]) -> str:
     # so the document is byte-identical to a sequential run.
     with ThreadPoolExecutor(max_workers=min(16, len(entries) or 1)) as pool:
         helps = list(pool.map(capture_help, entries))
-    for entry, help_text in zip(entries, helps, strict=True):
+    captured = [help_text for help_text in helps if help_text is not None]
+    if len(captured) != len(entries):
+        unavailable = [
+            entry.name
+            for entry, help_text in zip(entries, helps, strict=True)
+            if help_text is None
+        ]
+        return RenderedReference(text="", unavailable=unavailable)
+    for entry, help_text in zip(entries, captured, strict=True):
         lines.append(f"## {entry.name}")
         lines.append("")
         lines.append("```text")
         lines.append(help_text)
         lines.append("```")
         lines.append("")
-    return "\n".join(lines).rstrip("\n") + "\n"
+    return RenderedReference(text="\n".join(lines).rstrip("\n") + "\n", unavailable=[])
 
 
 def main() -> int:
@@ -179,7 +216,8 @@ def main() -> int:
 
     Returns:
         Exit code: ``0`` when the doc was written or is in sync, ``1``
-        when ``--check`` detected drift or a missing doc.
+        when ``--check`` detected drift or a missing doc, or when any
+        CLI's ``--help`` could not be captured (nothing is written).
     """
     parser = argparse.ArgumentParser(
         prog="forge-gen-cli-reference",
@@ -195,19 +233,31 @@ def main() -> int:
     root = repo_root()
     entries = discover_clis()
     logger.info("Discovered %d forge CLIs.", len(entries))
-    generated = render_reference(entries)
+    rendered = render_reference(entries)
+    if rendered.unavailable:
+        # Each CLI was already named by capture_help; this line says what
+        # it means for the doc and what to do about it.
+        logger.error(
+            "%s left untouched: --help could not be captured for %d CLI(s) "
+            "above, and a page without their sections would read as complete. "
+            "A stale or broken install is the usual cause — refresh the "
+            "install and run again.",
+            DOC_RELPATH,
+            len(rendered.unavailable),
+        )
+        return 1
 
     if args.check:
         return check_doc_drift(
             root,
             DOC_RELPATH,
-            generated,
+            rendered.text,
             "forge-gen-cli-reference",
         )
 
     doc_path = root / DOC_RELPATH
     doc_path.parent.mkdir(parents=True, exist_ok=True)
-    doc_path.write_text(generated)
+    doc_path.write_text(rendered.text)
     logger.info("Wrote %s (%d CLIs).", DOC_RELPATH, len(entries))
     return 0
 
