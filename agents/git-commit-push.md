@@ -27,8 +27,10 @@ means and how to respond: [`_TEMPLATE.md` "Guard hooks"](_TEMPLATE.md#required-b
   so your first attempt carries none.
 - **No force push** without explicit user approval; **never rewrite a
   pushed commit** — always a new one.
-- **No remote branch deletes** (`block_raw_git`): branch-deleting pushes,
-  `gh api` DELETEs and pushes built from variables or `xargs` are refused.
+- **No remote deletes** (`block_raw_git`): branch-deleting pushes, every
+  `gh api` DELETE or `deleteRef` mutation, and pushes or `gh api` calls
+  built from variables, substitutions, brace expansion or `xargs` are
+  refused.
 - **On a blocked commit: report and stop — whatever the gate asks for.**
   Take **no action of any kind** to get past a gate: *creating* the file
   it says is missing counts as much as destroying — no discard, reset,

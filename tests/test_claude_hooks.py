@@ -2285,6 +2285,28 @@ def test_raw_git_env_prefix_still_bypassable_slips_agent_bypass() -> None:
             2,
             id="gh-api-delete-branch",
         ),
+        pytest.param("git push origin {,:}x", 2, id="dynamic-brace"),
+        pytest.param("git push origin x {:,}y", 2, id="dynamic-brace-second"),
+        pytest.param(
+            "gh api -X DELETE repos/o/r/git/refs/tags/v1", 2, id="gh-api-delete-tag"
+        ),
+        pytest.param(
+            "gh api -X DELETE repos/o/r/git/refs/%68eads/foo",
+            2,
+            id="gh-api-delete-percent-encoded",
+        ),
+        pytest.param('gh api -X DELETE "$URL"', 2, id="gh-api-dynamic-endpoint"),
+        pytest.param(
+            "gh api -X $M repos/o/r/git/refs/heads/x", 2, id="gh-api-dynamic-method"
+        ),
+        pytest.param(
+            'gh api graphql -f query=\'mutation{deleteRef(input:{refId:"x"})'
+            "{clientMutationId}}'",
+            2,
+            id="gh-api-graphql-deleteref",
+        ),
+        pytest.param("gh api repos/o/r/pulls", 0, id="gh-api-get"),
+        pytest.param("gh api repos/{owner}/{repo}/pulls", 0, id="gh-api-placeholders"),
         pytest.param("git push -u origin feature-d", 0, id="branch-with-d"),
         pytest.param("git push origin HEAD", 0, id="plain-push"),
     ],
