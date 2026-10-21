@@ -1983,6 +1983,68 @@ def test_merge_base_with_head_empty_when_merge_base_fails(tmp_path: Path) -> Non
 
 
 # ---------------------------------------------------------------------------
+# fork_point_time
+# ---------------------------------------------------------------------------
+
+
+def test_fork_point_time_is_the_merge_base_commit_time(tmp_path: Path) -> None:
+    """A branch ahead of main dates its fork by the merge-base's committer time.
+
+    The merge-base is committed at a pinned date and the branch commit a
+    day later, so a regression reading HEAD's time instead would differ.
+    """
+    _init_git_repo(tmp_path)
+    fork_env = {
+        **_GIT_ENV,
+        "GIT_COMMITTER_DATE": "@1700000000 +0000",
+        "GIT_AUTHOR_DATE": "@1700000000 +0000",
+    }
+    subprocess.run(
+        ["git", "commit", "-q", "--allow-empty", "-m", "fork point"],
+        cwd=tmp_path,
+        env=fork_env,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/x"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "--allow-empty", "-m", "feature work"],
+        cwd=tmp_path,
+        env={**fork_env, "GIT_COMMITTER_DATE": "@1700086400 +0000"},
+        check=True,
+    )
+    assert git_utils.fork_point_time(tmp_path, "main") == 1_700_000_000
+
+
+def test_fork_point_time_none_when_base_unresolvable(tmp_path: Path) -> None:
+    """A base branch that does not exist gives no fork time, not an exception."""
+    _init_git_repo(tmp_path)
+    assert git_utils.fork_point_time(tmp_path, "no-such-branch") is None
+
+
+def test_fork_point_time_none_without_a_merge_base(tmp_path: Path) -> None:
+    """An orphan branch shares no history with main, so there is no fork time."""
+    _init_git_repo(tmp_path)
+    subprocess.run(
+        ["git", "checkout", "-q", "--orphan", "feat/x"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "commit", "-q", "--allow-empty", "-m", "unrelated history"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    assert git_utils.fork_point_time(tmp_path, "main") is None
+
+
+# ---------------------------------------------------------------------------
 # merge_in_progress
 # ---------------------------------------------------------------------------
 

@@ -766,6 +766,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_open_pr_base_branch(root: Path) -> str | None` _(internal)_ — Return the base branch of the open PR for the checked-out branch, if any.
 - `resolve_pr_base_ref(root: Path | None, base_branch: str) -> str | None` — Return the ref this branch's PR actually lands on, falling back to the base.
 - `merge_base_with_head(root: Path | None, base_branch: str) -> str` — Return the merge-base SHA of ``HEAD`` and the resolved base ref.
+- `fork_point_time(root: Path | None, base_branch: str) -> int | None` — Return when this branch left its base: the merge-base's commit time.
 - `get_tree_sha(repo_root: Path, ref: str) -> str | None` — Return the git **tree** SHA of *ref*, or ``None`` when unresolvable.
 - `write_tree(repo_root: Path) -> str | None` — Return the tree SHA of the current **index** via ``git write-tree``.
 - `_stamp_excluded_paths(repo_root: Path) -> list[str]` _(internal)_ — Return the repo-relative log directories a tree stamp leaves out.
@@ -961,9 +962,16 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `class AuditRun` — One completed pip-audit invocation.
 - `run_json(root: Path) -> AuditRun | None` — Run pip-audit once in JSON mode against *root*'s environment.
 - `_dict_list(obj: dict, key: str) -> list[dict]` _(internal)_ — Return ``obj[key]`` filtered to ``dict`` entries, or ``[]``.
+- `class Advisory` — One vulnerability pip-audit reported against one dependency.
+  - `ids(self) -> frozenset[str]` — Return every ID this advisory answers to — the primary plus aliases.
+- `advisories(data: dict) -> list[Advisory]` — Return one :class:`Advisory` per reported vulnerability, in report order.
 - `ids_from_data(data: dict) -> set[str]` — Collect the advisory / CVE IDs from parsed pip-audit JSON.
 - `has_vulns(data: dict) -> bool` — Report whether any scanned dependency carries a vulnerability.
 - `render_report(data: dict) -> str` — Render parsed pip-audit JSON as the human-readable step-log body.
+- `read_sidecar(repo_root: Path) -> dict | None` — Return the sidecar's parsed scan, or ``None`` when it cannot be trusted.
+- `_scan_time_value(value: object) -> float | None` _(internal)_ — Return *value* as epoch seconds, or ``None`` when it is not a usable time.
+- `sidecar_scanned_at(repo_root: Path) -> float | None` — Return when the last CVE scan ran, the one reader every age check uses.
+- `scan_postdates_fork(scanned_at: float | None, forked_at: int | None) -> bool` — Whether a scan ran after the branch left its base.
 
 ## `forge.plan_check_cli`
 
@@ -1113,6 +1121,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_existing_pr(branch: str) -> list[int] | None` _(internal)_ — List open PRs whose head is *branch*.
 - `_publish_emergency(root: Path, branch: str, cmd: list[str]) -> int` _(internal)_ — Run ``gh pr create`` under a claimed bypass, then commit or release it.
 - `_read_verified_wrapup(root: Path, branch: str) -> tuple[str | None, str | None]` _(internal)_ — Read the wrap-up and confirm it verifies this checkout's HEAD.
+- `_cve_scan_refusal(root: Path, base: str) -> str | None` _(internal)_ — Refuse a branch with no trustworthy CVE scan since it left *base*.
 - `_gate(root: Path, branch: str, base: str) -> tuple[str | None, bool]` _(internal)_ — Return why publication is refused, and whether it is an emergency.
 - `_warn_unlisted_closes(body_file: str) -> None` _(internal)_ — Warn when the body would close an issue forge's summary does not list.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Build the argument parser.
@@ -1306,8 +1315,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `step_cli_reference_check(repo_root: Path) -> StepResult` — Run ``forge-gen-cli-reference --check`` — cli-reference drift guard (opt-in).
 - `step_foundation_md_check(repo_root: Path) -> StepResult` — Verify ``FOUNDATION.md`` reproduces the installed foundation (opt-in).
 - `_count_pip_audit_advisories(output: str) -> int` _(internal)_ — Count advisory ID occurrences in a ``pip-audit`` text-mode output.
-- `_scan_time_value(value: object) -> float | None` _(internal)_ — Return *value* as epoch seconds, or ``None`` when it is not a usable time.
-- `_sidecar_scanned_at(repo_root: Path) -> float | None` _(internal)_ — Return when the last CVE scan ran, the one reader every age check uses.
 - `_pip_audit_scan_age_hours(repo_root: Path) -> float | None` _(internal)_ — Return how long ago the last CVE scan ran.
 - `_reuse_reason_hours(cfg: dict, age: float) -> str | None` _(internal)_ — Return why an hours-cadence scan may be reused, or ``None`` to scan.
 - `_reuse_reason_branch(repo_root: Path) -> str | None` _(internal)_ — Return why a branch-cadence scan may be reused, or ``None`` to scan.
@@ -1315,7 +1322,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `step_pip_audit(repo_root: Path) -> StepResult` — Run ``pip-audit --skip-editable`` and report findings as non-blocking.
 - `_reused_pip_audit(repo_root: Path, *, blocking: bool) -> StepResult | None` _(internal)_ — Return the previous scan's result when this commit may reuse it.
 - `_pip_audit_result(data: dict, *, blocking: bool, notice: str = '') -> StepResult` _(internal)_ — Build the pip_audit result from parsed scan data.
-- `_read_audit_sidecar(repo_root: Path) -> dict | None` _(internal)_ — Return the sidecar's parsed scan, or ``None`` when it cannot be trusted.
 - `_write_audit_sidecar(repo_root: Path, data: dict) -> None` _(internal)_ — Persist pip-audit's parsed JSON to the shared sidecar.
 - `step_cve_usage(repo_root: Path) -> StepResult` — Run ``verify-forge-cve-usage`` — the usage-scoped second stage on pip_audit.
 - `step_cli_wiring(repo_root: Path) -> StepResult` — Run ``verify-forge-cli-wiring`` — assert every script has a real caller.
@@ -1331,7 +1337,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `step_regen_docs(repo_root: Path) -> StepResult` — Regenerate the otherwise-unwired generated docs and re-stage them.
 - `_cli_reference_lost_sections(repo_root: Path) -> list[str]` _(internal)_ — Return the CLI sections ``HEAD`` documents that the worktree doc lacks.
 - `_held_cli_reference(repo_root: Path, *, stale: bool, built: list[str]) -> str` _(internal)_ — Decide whether a stale-install cli-reference must be held back.
-- `_install_refresh_hint(repo_root: Path) -> str` _(internal)_ — Name the command that refreshes this repo's install.
+- `install_refresh_hint(repo_root: Path) -> str` — Name the command that refreshes this repo's install.
 - `_vendored_documented_hashes(repo_root: Path) -> dict[str, str]` _(internal)_ — Parse ``VENDORED.md`` into a ``{filename: sha256}`` map.
 - `_sha256_file(path: Path) -> str` _(internal)_ — Return *path*'s SHA-256 hex digest, read in 64 KiB chunks.
 - `step_vendored_integrity(repo_root: Path) -> StepResult` — Verify each vendored ``data/*.js`` blob matches its ``VENDORED.md`` hash.
@@ -1701,14 +1707,20 @@ A compact index of this codebase's symbols — every top-level function and clas
 > _verify-forge-cve-usage — second-stage CVE filter on top of pip-audit._
 
 - `class Finding` — One matched vulnerable-usage occurrence.
+- `class Coverage` — Which reported advisories the pattern map let the scan check.
 - `load_patterns(root: Path) -> dict[str, dict[str, object]] | None` — Load the consumer's ``cve_usage_patterns.toml`` map.
+- `_load_audit_data(root: Path, audit_json: Path | None) -> dict | None` _(internal)_ — Return pip-audit's parsed report, from the sidecar or a live run.
 - `active_cve_ids(root: Path, audit_json: Path | None = None) -> set[str] | None` — Return the advisory / CVE IDs pip-audit currently reports.
+- `_usable_patterns(entry: dict[str, object]) -> list[re.Pattern[str]]` _(internal)_ — Return an entry's patterns that can actually be searched for, compiled.
+- `coverage(patterns: dict[str, dict[str, object]], advisories: list[pip_audit_json.Advisory]) -> Coverage` — Split the reported advisories into the ones the map can check and the rest.
 - `_iter_source_lines(root: Path) -> Iterable[tuple[str, int, str]]` _(internal)_ — Yield ``(repo_relative_path, line_no, text)`` for every source line.
 - `scan(root: Path, patterns: dict[str, dict[str, object]], active: set[str]) -> list[Finding]` — Grep the source for the patterns of every active, mapped CVE.
-- `_render(findings: list[Finding]) -> str` _(internal)_ — Render findings as the ``code_health/cve_usage.log`` body.
+- `_advisory_label(advisory: pip_audit_json.Advisory) -> str` _(internal)_ — Name an advisory for the report: its primary ID, else its first alias.
+- `_render(findings: list[Finding], cov: Coverage) -> str` _(internal)_ — Render the ``code_health/cve_usage.log`` body.
 - `inactive_cves(patterns: dict[str, dict[str, object]], active: set[str]) -> list[tuple[str, str]]` — Return mapped CVE IDs that pip-audit is *not* currently reporting.
 - `_render_inactive(dormant: list[tuple[str, str]]) -> str` _(internal)_ — Render the ``--list-inactive`` report body.
 - `_run_list_inactive(root: Path, audit_json: Path | None) -> int` _(internal)_ — Print dormant mapped CVEs; never mutates the map. Always exits 0.
+- `_run_check(root: Path, audit_json: Path | None) -> int` _(internal)_ — Run the usage check and log its report; the body of :func:`main`.
 - `main() -> int` — CLI entry point.
 
 ## `forge.verify_doc_consistency`

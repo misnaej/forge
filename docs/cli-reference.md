@@ -1036,8 +1036,9 @@ options:
 usage: verify-forge-cve-usage [-h] [--audit-json PATH] [--list-inactive]
 
 Second-stage CVE filter: report only CVEs whose vulnerable code path is
-actually used. Reads cve_usage_patterns.toml; skips cleanly when absent or
-pip-audit is unavailable.
+actually used, and name every reported CVE no pattern checks. Reads
+cve_usage_patterns.toml; does not run when it is absent or pip-audit is
+unavailable.
 
 options:
   -h, --help         show this help message and exit

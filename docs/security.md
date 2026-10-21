@@ -17,7 +17,7 @@ Four concrete mechanisms ship with forge:
 | Mechanism | What it does | Where |
 |---|---|---|
 | `block_protected_files` Claude Code hook | Blocks edits to known secret files (`.env`, `.hf_token`, etc.) before they reach git | `${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_protected_files.sh` |
-| `pip_audit` pre-commit step | Scans dependencies for known CVEs once per branch by default, and always at PR finalization, which forces it (non-blocking warning; `[tool.forge.pip_audit].cadence` sets the rhythm) | `forge-precommit` sequence |
+| `pip_audit` pre-commit step | Scans dependencies for known CVEs once per branch by default, and always at PR finalization, which forces it (non-blocking warning; `[tool.forge.pip_audit].cadence` sets the rhythm). `forge-pr-create` refuses to publish a branch with no scan since it left its base — in every wrap-up mode, emergency included — unless the repo disables the step | `forge-precommit` sequence, `forge-pr-create` |
 | FOUNDATION §2 rules | "No secrets in code or commits"; "No private organizational names in code, docs, or examples" | [`FOUNDATION.md`](../FOUNDATION.md) |
 | `forge:security-checker` agent | Reviews PRs for dangerous patterns, secrets, dependency issues, agent prompt safety | `agents/security-checker.md` |
 
@@ -25,8 +25,14 @@ Four concrete mechanisms ship with forge:
 > scanned once, at its start, and a CVE published for an already-installed package
 > after that is not reported until something forces a scan. Set
 > `[tool.forge.pip_audit].cadence = "hours"` for a time bound, or `"always"` for the
-> old every-commit behaviour. Nothing in the pre-commit sequence enforces the
-> finalization scan; the `/pr` skill performs it.
+> old every-commit behaviour. The pre-commit sequence does not enforce the
+> finalization scan; `forge-pr-create` does, by refusing a branch whose
+> `code_health/pip_audit.json` records no scan since the branch forked (or no
+> trustworthy scan time at all). The refusal names the fix:
+> `FORGE_PIP_AUDIT_FORCE=1 forge-precommit --only pip_audit`. The check is a
+> freshness check against the fork point, not an attestation: it does not notice
+> dependency pins changed later on the branch, and it trusts the local,
+> gitignored sidecar like every other `code_health/` gate.
 
 Everything else in this document is **policy + guidance** that
 consumer repos and reviewers apply manually.
@@ -63,6 +69,11 @@ Forge enforces:
   packages against the PyPI advisory DB. Reports CVEs as a yellow
   `WARN` (non-blocking by design — failures shouldn't refuse the
   commit; consumers escalate via CI if desired).
+- **`cve_usage` step** (opt-in by a `cve_usage_patterns.toml` map) —
+  greps the source for the vulnerable usage of each reported CVE the
+  map has a pattern for. Its log says how many of the reported CVEs it
+  checked and names every one it did not; any unchecked CVE renders
+  `WARN`, never a clean pass.
 
 What consumers do:
 

@@ -15,20 +15,25 @@
 # here. The emergency sentinel is NOT faked: tests write a real sentinel
 # (claims live in the sentinel) in the ephemeral repo, so
 # claim/commit/release run for real and
-# only the `gh` binary is scripted.
+# only the `gh` binary is scripted. The CVE-scan gate is not faked either:
+# `_run_main` writes a real `pip_audit.json` sidecar stamped now (after
+# every commit the test made), and the scan-gate cases write their own
+# stamp or none, so the fork-point lookup and the sidecar read run for real.
 """
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
 
-from forge import emergency, pr_create
+from forge import emergency, pip_audit_json, pr_create
 from forge.emergency_state import armed_state
 from forge.git_utils import code_health_dir
 from tests.conftest import GIT_ENV, commit_all, init_git_repo
@@ -103,7 +108,26 @@ def _stub_gh(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
     return calls
 
 
-def _run_main(monkeypatch: pytest.MonkeyPatch, repo: Path, *extra_args: str) -> int:
+def _write_scan(repo: Path, scanned_at: float) -> None:
+    """Write a real pip-audit sidecar recording a scan at *scanned_at*.
+
+    Args:
+        repo: Repo whose `code_health/` receives the sidecar.
+        scanned_at: Epoch seconds the scan is recorded as having run.
+    """
+    sidecar = code_health_dir(repo) / pip_audit_json.SIDECAR_NAME
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
+    sidecar.write_text(
+        json.dumps({"dependencies": [], pip_audit_json.SCANNED_AT_KEY: scanned_at})
+    )
+
+
+def _run_main(
+    monkeypatch: pytest.MonkeyPatch,
+    repo: Path,
+    *extra_args: str,
+    fresh_scan: bool = True,
+) -> int:
     """Point `forge-pr-create` at *repo* and run it with a minimal argv.
 
     Args:
@@ -111,10 +135,16 @@ def _run_main(monkeypatch: pytest.MonkeyPatch, repo: Path, *extra_args: str) -> 
         repo: Checkout `repo_root()` should resolve to.
         *extra_args: Additional argv tokens appended after the required
             `--base`/`--title`/`--body-file` trio.
+        fresh_scan: Record a CVE scan made now, after every commit the test
+            built, so the scan-freshness gate passes and the case under
+            test is what decides. ``False`` leaves the sidecar as the test
+            wrote it.
 
     Returns:
         `pr_create.main()`'s exit code.
     """
+    if fresh_scan:
+        _write_scan(repo, time.time())
     monkeypatch.setattr(pr_create, "repo_root", lambda: repo)
     monkeypatch.setattr(
         sys,
@@ -642,14 +672,17 @@ def test_emergency_publish_with_no_parseable_url_holds_the_claim(
     assert any(emergency.RECOVERY_HINT in m and "#44" in m for m in messages)
 
 
-@pytest.mark.parametrize("refusal", ["passthrough", "wrapup-names-other-sha"])
+@pytest.mark.parametrize(
+    "refusal", ["passthrough", "wrapup-names-other-sha", "no-cve-scan"]
+)
 def test_emergency_refusal_before_publish_never_claims_the_bypass(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, refusal: str
 ) -> None:
     """A refusal that precedes publication leaves the armed bypass untouched.
 
-    SCENARIO: armed sentinel, then either a disallowed passthrough flag or
-    a wrap-up naming a different commit.
+    SCENARIO: armed sentinel, then a disallowed passthrough flag, a
+    wrap-up naming a different commit, or no CVE scan on the branch — an
+    emergency defers the review ceremony, never the scan's freshness.
     MOCK SETUP: scripted `gh`; any `gh` call is recorded.
     EXPECTED BEHAVIOR: exit 2, `gh` never called, no claim, still armed.
 
@@ -661,10 +694,11 @@ def test_emergency_refusal_before_publish_never_claims_the_bypass(
     extra: list[str] = []
     if refusal == "passthrough":
         extra = ["--", "--fill"]
-    else:
+    elif refusal == "wrapup-names-other-sha":
         _write_wrapup(repo, "0" * 40, mode_line="wrapup-mode: emergency")
 
-    assert _run_main(monkeypatch, repo, *extra) == 2
+    fresh_scan = refusal != "no-cve-scan"
+    assert _run_main(monkeypatch, repo, *extra, fresh_scan=fresh_scan) == 2
 
     assert calls == []
     assert not (repo / emergency._CLAIM_LOCK).exists()
@@ -868,3 +902,161 @@ def test_only_the_wrap_up_header_verifies_not_a_quoted_stamp(
 
     assert _run_main(monkeypatch, repo) == 2
     assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# CVE-scan freshness gate
+# ---------------------------------------------------------------------------
+
+_FORCE_SCAN_HINT = "FORGE_PIP_AUDIT_FORCE=1 forge-precommit --only pip_audit"
+
+
+def _feature_branch_repo(tmp_path: Path, *, mode_line: str | None = None) -> Path:
+    """Build a checkout one commit ahead of `main`, its wrap-up verifying HEAD.
+
+    Args:
+        tmp_path: Pytest's per-test temporary directory.
+        mode_line: Optional `wrapup-mode: ...` line for the wrap-up.
+
+    Returns:
+        The checkout root.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    init_git_repo(repo)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feature/x"], cwd=repo, env=GIT_ENV, check=True
+    )
+    (repo / "file.txt").write_text("x")
+    commit_all(repo, "feature work")
+    _write_wrapup(repo, _head_sha(repo), mode_line=mode_line)
+    return repo
+
+
+def _fork_time(repo: Path) -> int:
+    """Return the commit time of `main`, the feature branch's fork point.
+
+    Args:
+        repo: Checkout built by :func:`_feature_branch_repo`.
+
+    Returns:
+        Epoch seconds.
+    """
+    return int(
+        subprocess.run(
+            ["git", "show", "-s", "--format=%ct", "main"],
+            cwd=repo,
+            env=GIT_ENV,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    )
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_text"),
+    [
+        pytest.param("no-sidecar", _FORCE_SCAN_HINT, id="no-sidecar"),
+        pytest.param("scan-before-fork", _FORCE_SCAN_HINT, id="scan-before-fork"),
+        pytest.param("scan-in-fork-second", _FORCE_SCAN_HINT, id="scan-in-fork-second"),
+        pytest.param("future-dated-scan", _FORCE_SCAN_HINT, id="future-dated-scan"),
+        pytest.param("fork-unresolvable", "git fetch origin main", id="no-fork-point"),
+        pytest.param("config-typo", "unknown step name", id="config-typo"),
+    ],
+)
+def test_pr_create_refuses_without_a_cve_scan_since_the_fork(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    *,
+    case: str,
+    expected_text: str,
+) -> None:
+    """A branch with no trustworthy scan since it left its base is not published.
+
+    SCENARIO: a verified full wrap-up, but the sidecar is missing, holds a
+        scan from before (or in the same second as) the fork, is
+        future-dated; or the fork point cannot be found; or a step-name
+        typo makes the step selection unreadable.
+    MOCK SETUP: real git repo and real sidecar file; only `gh` is scripted.
+    EXPECTED BEHAVIOR: exit 2, no `gh` call, and the refusal names the fix.
+
+    Args:
+        case: Which untrustworthy state to build.
+        expected_text: Text the refusal message must carry.
+    """
+    repo = _feature_branch_repo(tmp_path)
+    fork = _fork_time(repo)
+    if case == "scan-before-fork":
+        _write_scan(repo, fork - 3600)
+    elif case == "scan-in-fork-second":
+        _write_scan(repo, float(fork))
+    elif case == "future-dated-scan":
+        _write_scan(repo, time.time() + pip_audit_json.FUTURE_TOLERANCE_S + 600)
+    elif case == "fork-unresolvable":
+        _write_scan(repo, time.time())
+        subprocess.run(
+            ["git", "branch", "-q", "-D", "main"], cwd=repo, env=GIT_ENV, check=True
+        )
+    elif case == "config-typo":
+        _write_scan(repo, time.time())
+        (repo / "pyproject.toml").write_text(
+            '[tool.forge.precommit]\ndisable = ["pip_audt"]\n'
+        )
+    calls = _stub_gh(monkeypatch)
+
+    with caplog.at_level("ERROR", logger=pr_create.__name__):
+        assert _run_main(monkeypatch, repo, fresh_scan=False) == 2
+
+    assert calls == []
+    assert any(expected_text in r.getMessage() for r in caplog.records)
+
+
+def test_pr_create_publishes_with_a_scan_after_the_fork(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A scan recorded after the branch left `main` lets the branch publish."""
+    repo = _feature_branch_repo(tmp_path)
+    _write_scan(repo, _fork_time(repo) + 60)
+    calls = _stub_gh(monkeypatch)
+
+    assert _run_main(monkeypatch, repo, fresh_scan=False) == 0
+    assert len(calls) == 1
+
+
+def test_pr_create_exempts_a_repo_that_disabled_pip_audit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A repo whose step selection does not run the scan has none to demand."""
+    repo = _feature_branch_repo(tmp_path)
+    (repo / "pyproject.toml").write_text(
+        '[tool.forge.precommit]\ndisable = ["pip_audit"]\n'
+    )
+    calls = _stub_gh(monkeypatch)
+
+    assert _run_main(monkeypatch, repo, fresh_scan=False) == 0
+    assert len(calls) == 1
+
+
+def test_pr_create_gates_a_light_wrapup_on_the_cve_scan(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An earned light escape skips reporters, not the scan's freshness.
+
+    MOCK SETUP: `pr_create.classify` agrees with the declared light mode,
+        so only the missing scan can refuse.
+    """
+    repo = _feature_branch_repo(tmp_path, mode_line="wrapup-mode: light")
+    monkeypatch.setattr(
+        pr_create,
+        "classify",
+        lambda _root, _base, _pr: SimpleNamespace(mode="light-code"),
+    )
+    calls = _stub_gh(monkeypatch)
+
+    with caplog.at_level("ERROR", logger=pr_create.__name__):
+        assert _run_main(monkeypatch, repo, fresh_scan=False) == 2
+
+    assert calls == []
+    assert any(_FORCE_SCAN_HINT in r.getMessage() for r in caplog.records)

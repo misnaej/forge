@@ -512,9 +512,10 @@ advisories with the suggested pin; they never edit pins.
   the escape hatch when the PR should be visible earlier. A genuine
   emergency uses **`forge-emergency`** — one human-armed, ledger-backed
   `wrapup-mode: emergency` publication that defers only the verification
-  ceremony (never a §2 hook, and of the pre-commit battery only the
-  steps that already self-skip in CI — the rest still run, because CI
-  would re-run them anyway) and owes retroactive
+  ceremony (never a §2 hook, never the publish-time check that the
+  branch had a CVE scan since it forked, and of the pre-commit battery
+  only the steps that already self-skip in CI — the rest still run,
+  because CI would re-run them anyway) and owes retroactive
   verification after delivery; agents arm it only on explicit user
   instruction.
 - **Verification starts itself.** The moment a branch's implementation

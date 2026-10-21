@@ -32,6 +32,7 @@ from forge import (
     emergency,
     git_utils,
     install_claudemd,
+    pip_audit_json,
     precommit,
     regen_docs,
     verify_test_naming,
@@ -1190,6 +1191,64 @@ def test_step_cve_usage_non_blocking_warn_on_findings(
     assert not result.skipped
 
 
+@pytest.mark.parametrize(
+    ("cli_passed", "cli_output", "expect_skipped"),
+    [
+        pytest.param(
+            True,
+            "(pip-audit not on PATH — skipped)\n"
+            f"{pip_audit_json.CVE_USAGE_SKIP_MARKER}\n",
+            True,
+            id="marker-line-skips",
+        ),
+        pytest.param(
+            False,
+            "Checked 0 of 1 reported CVEs against cve_usage_patterns.toml — "
+            "no match among the ones checked.\n\n"
+            "No usable pattern for: PYSEC-1 (skipped-pkg) — NOT checked.\n",
+            False,
+            id="word-in-package-name-is-a-real-run",
+        ),
+        pytest.param(
+            False,
+            f"⚠️  CVE-1 (x) — src/a.py:3  {pip_audit_json.CVE_USAGE_SKIP_MARKER}\n",
+            False,
+            id="marker-inside-a-longer-line-is-a-real-run",
+        ),
+    ],
+)
+def test_step_cve_usage_skip_is_read_from_the_marker_line_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    cli_passed: bool,
+    cli_output: str,
+    expect_skipped: bool,
+) -> None:
+    """Only the CLI's whole marker line marks a run skipped — never a word in it.
+
+    SCENARIO: the CLI output contains "skipped" or the marker inside other
+    text (a package named ``skipped-pkg``), or the marker as its own line.
+    MOCK SETUP: precommit._run returns the canned CLI result.
+    EXPECTED BEHAVIOR: skipped only for the marker line; a real run that
+    left a CVE unchecked stays a non-blocking WARN.
+
+    Args:
+        tmp_path: Temporary repo root holding the pattern map.
+        monkeypatch: Pytest fixture for mocking.
+        cli_passed: Whether the CLI exited 0.
+        cli_output: The CLI's combined output.
+        expect_skipped: Whether the step should report a skip.
+    """
+    (tmp_path / "cve_usage_patterns.toml").write_text("['CVE-1']\npackage='x'\n")
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/x")
+    monkeypatch.setattr(precommit, "_run", lambda *_a, **_kw: (cli_passed, cli_output))
+    result = precommit.step_cve_usage(tmp_path)
+    assert result.skipped is expect_skipped
+    assert result.passed is cli_passed
+    assert result.non_blocking
+
+
 def test_count_pip_audit_advisories_counts_pysec_and_ghsa_ids() -> None:
     """_count_pip_audit_advisories tallies PYSEC and GHSA advisory IDs."""
     output = (
@@ -1279,7 +1338,7 @@ def test_pip_audit_scan_age_hours_future_dated_returns_none(tmp_path: Path) -> N
     negative "hours ago" that reads as impossibly fresh; treating it as
     unknown instead falls back to the safe direction — scan.
     """
-    sidecar = git_utils.code_health_dir(tmp_path) / precommit.PIP_AUDIT_SIDECAR_NAME
+    sidecar = git_utils.code_health_dir(tmp_path) / pip_audit_json.SIDECAR_NAME
     sidecar.parent.mkdir(parents=True, exist_ok=True)
     sidecar.write_text("{}", encoding="utf-8")
     future = time.time() + 3600
@@ -1289,7 +1348,7 @@ def test_pip_audit_scan_age_hours_future_dated_returns_none(tmp_path: Path) -> N
 
 def test_pip_audit_scan_age_hours_fresh_stamp_computes_hours(tmp_path: Path) -> None:
     """A stamp N hours old reports age_hours ≈ N — the reuse decision's input."""
-    sidecar = git_utils.code_health_dir(tmp_path) / precommit.PIP_AUDIT_SIDECAR_NAME
+    sidecar = git_utils.code_health_dir(tmp_path) / pip_audit_json.SIDECAR_NAME
     sidecar.parent.mkdir(parents=True, exist_ok=True)
     sidecar.write_text(_scan_payload(), encoding="utf-8")
     mtime = time.time() - 2 * 3600
@@ -1308,7 +1367,7 @@ def _write_scan_sidecar(repo: Path, text: str) -> Path:
     Returns:
         The sidecar path.
     """
-    sidecar = git_utils.code_health_dir(repo) / precommit.PIP_AUDIT_SIDECAR_NAME
+    sidecar = git_utils.code_health_dir(repo) / pip_audit_json.SIDECAR_NAME
     sidecar.parent.mkdir(parents=True, exist_ok=True)
     sidecar.write_text(text, encoding="utf-8")
     return sidecar
@@ -1331,7 +1390,7 @@ def test_sidecar_scanned_at_payload_wins_over_mtime(tmp_path: Path) -> None:
     scanned = time.time() - 5 * 3600
     sidecar = _write_scan_sidecar(tmp_path, _scan_payload(scanned_at=scanned))
     os.utime(sidecar, (time.time(), time.time()))
-    assert precommit._sidecar_scanned_at(tmp_path) == pytest.approx(scanned)
+    assert pip_audit_json.sidecar_scanned_at(tmp_path) == pytest.approx(scanned)
 
 
 def test_sidecar_scanned_at_falls_back_to_mtime_without_field(tmp_path: Path) -> None:
@@ -1339,12 +1398,12 @@ def test_sidecar_scanned_at_falls_back_to_mtime_without_field(tmp_path: Path) ->
     sidecar = _write_scan_sidecar(tmp_path, _scan_payload())
     mtime = time.time() - 3600
     os.utime(sidecar, (mtime, mtime))
-    assert precommit._sidecar_scanned_at(tmp_path) == pytest.approx(mtime, abs=1)
+    assert pip_audit_json.sidecar_scanned_at(tmp_path) == pytest.approx(mtime, abs=1)
 
 
 def test_sidecar_scanned_at_missing_sidecar_is_none(tmp_path: Path) -> None:
     """No sidecar at all is unknown, which callers treat as "scan"."""
-    assert precommit._sidecar_scanned_at(tmp_path) is None
+    assert pip_audit_json.sidecar_scanned_at(tmp_path) is None
 
 
 @pytest.mark.parametrize("mtime_offset_s", [-600, 3600], ids=["past-mtime", "future"])
@@ -1359,7 +1418,7 @@ def test_sidecar_scanned_at_corrupt_payload_is_none_whatever_the_mtime(
     sidecar = _write_scan_sidecar(tmp_path, "{not json")
     mtime = time.time() + mtime_offset_s
     os.utime(sidecar, (mtime, mtime))
-    assert precommit._sidecar_scanned_at(tmp_path) is None
+    assert pip_audit_json.sidecar_scanned_at(tmp_path) is None
 
 
 def test_sidecar_scanned_at_future_mtime_without_field_is_none(
@@ -1367,9 +1426,9 @@ def test_sidecar_scanned_at_future_mtime_without_field_is_none(
 ) -> None:
     """An old-format sidecar whose mtime is future-dated is rejected too."""
     sidecar = _write_scan_sidecar(tmp_path, _scan_payload())
-    future = time.time() + precommit._PIP_AUDIT_FUTURE_TOLERANCE_S + 600
+    future = time.time() + pip_audit_json.FUTURE_TOLERANCE_S + 600
     os.utime(sidecar, (future, future))
-    assert precommit._sidecar_scanned_at(tmp_path) is None
+    assert pip_audit_json.sidecar_scanned_at(tmp_path) is None
 
 
 def test_sidecar_scanned_at_future_dated_payload_is_none(tmp_path: Path) -> None:
@@ -1377,18 +1436,18 @@ def test_sidecar_scanned_at_future_dated_payload_is_none(tmp_path: Path) -> None
 
     A future stamp would otherwise suppress scans indefinitely.
     """
-    future = time.time() + precommit._PIP_AUDIT_FUTURE_TOLERANCE_S + 600
+    future = time.time() + pip_audit_json.FUTURE_TOLERANCE_S + 600
     _write_scan_sidecar(tmp_path, _scan_payload(scanned_at=future))
-    assert precommit._sidecar_scanned_at(tmp_path) is None
+    assert pip_audit_json.sidecar_scanned_at(tmp_path) is None
 
 
 def test_sidecar_scanned_at_slightly_ahead_within_tolerance_is_kept(
     tmp_path: Path,
 ) -> None:
     """Ordinary clock skew inside the tolerance does not discard a real scan."""
-    ahead = time.time() + precommit._PIP_AUDIT_FUTURE_TOLERANCE_S / 2
+    ahead = time.time() + pip_audit_json.FUTURE_TOLERANCE_S / 2
     _write_scan_sidecar(tmp_path, _scan_payload(scanned_at=ahead))
-    assert precommit._sidecar_scanned_at(tmp_path) == pytest.approx(ahead)
+    assert pip_audit_json.sidecar_scanned_at(tmp_path) == pytest.approx(ahead)
 
 
 @pytest.mark.parametrize(
@@ -1421,7 +1480,7 @@ def test_sidecar_scanned_at_unusable_present_value_is_none_not_mtime(
     )
     mtime = time.time() - 1800
     os.utime(sidecar, (mtime, mtime))
-    assert precommit._sidecar_scanned_at(tmp_path) is None
+    assert pip_audit_json.sidecar_scanned_at(tmp_path) is None
 
 
 def test_pip_audit_scan_age_hours_uses_payload_time_after_mtime_reset(
@@ -1469,12 +1528,10 @@ def test_reuse_reason_branch_without_sidecar_scans(
     """With a resolvable fork point but no sidecar, branch cadence scans, no crash.
 
     SCENARIO: the fork commit resolves; nothing was ever scanned.
-    MOCK SETUP: precommit.merge_base_with_head → a fixed SHA;
-    precommit.run_git → a fixed commit timestamp.
+    MOCK SETUP: precommit.fork_point_time → a fixed commit timestamp.
     EXPECTED BEHAVIOR: ``None`` (scan) rather than a FileNotFoundError.
     """
-    monkeypatch.setattr(precommit, "merge_base_with_head", lambda _r, _b: "deadbeef")
-    monkeypatch.setattr(precommit, "run_git", lambda *_a, **_k: "1700000000")
+    monkeypatch.setattr(precommit, "fork_point_time", lambda _r, _b: 1_700_000_000)
     assert precommit._reuse_reason_branch(tmp_path) is None
 
 
@@ -1486,8 +1543,7 @@ def test_reuse_reason_branch_uses_payload_time_not_mtime(
     MOCK SETUP: as ``test_reuse_reason_branch_without_sidecar_scans``.
     """
     fork = 1_700_000_000
-    monkeypatch.setattr(precommit, "merge_base_with_head", lambda _r, _b: "deadbeef")
-    monkeypatch.setattr(precommit, "run_git", lambda *_a, **_k: str(fork))
+    monkeypatch.setattr(precommit, "fork_point_time", lambda _r, _b: fork)
     sidecar = _write_scan_sidecar(tmp_path, _scan_payload(scanned_at=fork - 3600))
     os.utime(sidecar, (time.time(), time.time()))
     assert precommit._reuse_reason_branch(tmp_path) is None
@@ -1498,7 +1554,7 @@ def test_pip_audit_reuse_reason_cadence_always_never_skips(tmp_path: Path) -> No
     (tmp_path / "pyproject.toml").write_text(
         '[tool.forge.pip_audit]\ncadence = "always"\n'
     )
-    sidecar = git_utils.code_health_dir(tmp_path) / precommit.PIP_AUDIT_SIDECAR_NAME
+    sidecar = git_utils.code_health_dir(tmp_path) / pip_audit_json.SIDECAR_NAME
     sidecar.parent.mkdir(parents=True, exist_ok=True)
     sidecar.write_text("{}", encoding="utf-8")
     assert precommit._pip_audit_reuse_reason(tmp_path) is None
@@ -1542,7 +1598,7 @@ def test_pip_audit_reuse_reason_cadence_hours(
         f'[tool.forge.pip_audit]\ncadence = "hours"\n'
         f"max_age_hours = {max_age_hours_cfg}\n"
     )
-    sidecar = git_utils.code_health_dir(tmp_path) / precommit.PIP_AUDIT_SIDECAR_NAME
+    sidecar = git_utils.code_health_dir(tmp_path) / pip_audit_json.SIDECAR_NAME
     sidecar.parent.mkdir(parents=True, exist_ok=True)
     sidecar.write_text(_scan_payload(), encoding="utf-8")
     mtime = time.time() - sidecar_age_hours * 3600
@@ -1559,6 +1615,7 @@ def test_pip_audit_reuse_reason_cadence_hours(
     ("sidecar_offset_s", "expect_skip"),
     [
         pytest.param(-3600, False, id="older-than-fork-scans"),
+        pytest.param(0, False, id="fork-second-scans"),
         pytest.param(3600, True, id="newer-than-fork-skips"),
     ],
 )
@@ -1573,9 +1630,9 @@ def test_pip_audit_reuse_reason_cadence_branch(
 
     SCENARIO: the sidecar's mtime straddles the fork-point commit's
     timestamp.
-    MOCK SETUP: precommit.merge_base_with_head → a fixed fork SHA;
-    precommit.run_git → a fixed `git show -s --format=%ct` timestamp for
-    that SHA — both plain functions, no real git repo needed.
+    MOCK SETUP: precommit.fork_point_time → a fixed fork-commit timestamp
+    (its git lookup has its own tests in test_git_utils), so no real git
+    repo is needed.
     EXPECTED BEHAVIOR: a sidecar older than the fork commit means no scan
     has happened on this branch yet (scan); newer means one already has
     (skip).
@@ -1587,17 +1644,11 @@ def test_pip_audit_reuse_reason_cadence_branch(
         expect_skip: Whether to expect the scan to be skipped.
     """
     fork_committed_at = 1_700_000_000
+    monkeypatch.setattr(
+        precommit, "fork_point_time", lambda _root, _base: fork_committed_at
+    )
 
-    def _fake_merge_base(_root: object, _base_branch: str) -> str:
-        return "deadbeef"
-
-    def _fake_run_git(*_args: str, **_kwargs: object) -> str:
-        return str(fork_committed_at)
-
-    monkeypatch.setattr(precommit, "merge_base_with_head", _fake_merge_base)
-    monkeypatch.setattr(precommit, "run_git", _fake_run_git)
-
-    sidecar = git_utils.code_health_dir(tmp_path) / precommit.PIP_AUDIT_SIDECAR_NAME
+    sidecar = git_utils.code_health_dir(tmp_path) / pip_audit_json.SIDECAR_NAME
     sidecar.parent.mkdir(parents=True, exist_ok=True)
     sidecar.write_text(_scan_payload(), encoding="utf-8")
     sidecar_mtime = fork_committed_at + sidecar_offset_s
@@ -1617,7 +1668,7 @@ def test_pip_audit_reuse_reason_unknown_cadence_scans(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
         '[tool.forge.pip_audit]\ncadence = "fortnightly"\n'
     )
-    sidecar = git_utils.code_health_dir(tmp_path) / precommit.PIP_AUDIT_SIDECAR_NAME
+    sidecar = git_utils.code_health_dir(tmp_path) / pip_audit_json.SIDECAR_NAME
     sidecar.parent.mkdir(parents=True, exist_ok=True)
     sidecar.write_text("{}", encoding="utf-8")
     assert precommit._pip_audit_reuse_reason(tmp_path) is None
@@ -1633,7 +1684,7 @@ def test_pip_audit_reuse_reason_env_override_forces_scan(
     cadence config is even read.
     """
     monkeypatch.setenv(precommit._PIP_AUDIT_FORCE_ENV, "1")
-    sidecar = git_utils.code_health_dir(tmp_path) / precommit.PIP_AUDIT_SIDECAR_NAME
+    sidecar = git_utils.code_health_dir(tmp_path) / pip_audit_json.SIDECAR_NAME
     sidecar.parent.mkdir(parents=True, exist_ok=True)
     sidecar.write_text("{}", encoding="utf-8")
     assert precommit._pip_audit_reuse_reason(tmp_path) is None
@@ -1653,7 +1704,7 @@ def _seed_reusable_audit_sidecar(
         '[tool.forge.pip_audit]\ncadence = "hours"\nmax_age_hours = 24\n'
         f"blocking = {str(blocking).lower()}\n"
     )
-    sidecar = git_utils.code_health_dir(tmp_path) / precommit.PIP_AUDIT_SIDECAR_NAME
+    sidecar = git_utils.code_health_dir(tmp_path) / pip_audit_json.SIDECAR_NAME
     sidecar.parent.mkdir(parents=True, exist_ok=True)
     sidecar.write_text(json.dumps(data), encoding="utf-8")
 
@@ -1773,7 +1824,7 @@ def test_step_pip_audit_unusable_sidecar_scans(
         monkeypatch: Pytest fixture for mocking.
         sidecar_kind: Which kind of unusable sidecar to create.
     """
-    sidecar = git_utils.code_health_dir(tmp_path) / precommit.PIP_AUDIT_SIDECAR_NAME
+    sidecar = git_utils.code_health_dir(tmp_path) / pip_audit_json.SIDECAR_NAME
     sidecar.parent.mkdir(parents=True, exist_ok=True)
     if sidecar_kind == "unreadable":
         sidecar.mkdir()
@@ -5157,11 +5208,11 @@ def test_install_refresh_hint_names_dev_setup_only_in_forge_repo(
     for repo, name in ((forge_repo, regen_docs.FORGE_DIST_NAME), (consumer, "other")):
         repo.mkdir()
         (repo / "pyproject.toml").write_text(f'[project]\nname = "{name}"\n')
-    assert "./dev/setup.sh" in precommit._install_refresh_hint(forge_repo)
-    other = precommit._install_refresh_hint(consumer)
+    assert "./dev/setup.sh" in precommit.install_refresh_hint(forge_repo)
+    other = precommit.install_refresh_hint(consumer)
     assert "./dev/setup.sh" not in other
     assert "pip install" not in other
-    assert "pip install" not in precommit._install_refresh_hint(forge_repo)
+    assert "pip install" not in precommit.install_refresh_hint(forge_repo)
 
 
 def _stale_install_message(
