@@ -19,6 +19,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# The phrase forge-gen-cli-reference logs for each CLI whose --help could
+# not be captured. Shared here so forge-precommit can recognise that
+# failure in the generator's output without importing the generator (its
+# import configures CLI logging).
+HELP_UNAVAILABLE_MARKER = "--help unavailable"
+
 
 def check_doc_drift(
     root: Path,

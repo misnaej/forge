@@ -662,9 +662,10 @@ A compact index of this codebase's symbols — every top-level function and clas
 > _Generate the forge CLI reference doc from each console script's ``--help``._
 
 - `class CliEntry` — A single forge console-script CLI.
+- `class RenderedReference` — The rendered CLI reference, and the CLIs whose help was unavailable.
 - `discover_clis(distribution: str = DISTRIBUTION) -> list[CliEntry]` — Discover the console-script CLIs shipped by a distribution.
-- `capture_help(entry: CliEntry) -> str` — Capture the ``--help`` output of a single CLI.
-- `render_reference(entries: list[CliEntry]) -> str` — Render the full CLI reference markdown document.
+- `capture_help(entry: CliEntry) -> str | None` — Capture the ``--help`` output of a single CLI.
+- `render_reference(entries: list[CliEntry]) -> RenderedReference` — Render the full CLI reference markdown document.
 - `main() -> int` — Generate or verify the forge CLI reference doc.
 
 ## `forge.gen_commit_types`
@@ -1334,7 +1335,10 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `step_doctest(repo_root: Path) -> StepResult` — Run ``pytest --doctest-modules`` over docstring examples (opt-in).
 - `step_typecheck(repo_root: Path) -> StepResult` — Run pyrefly over the resolved scope (opt-in).
 - `step_doc_consistency(repo_root: Path) -> StepResult` — Run ``verify-forge-doc-consistency`` — doc claims vs repo state (opt-in).
-- `step_regen_docs(repo_root: Path) -> StepResult` — Regenerate the otherwise-unwired generated docs and re-stage them.
+- `step_regen_docs(repo_root: Path) -> StepResult` — Keep the generated docs fresh: regenerate what the commit feeds.
+- `class _RegenOutcome` _(internal)_ — What one regen_docs pass (check or generate) produced.
+- `_check_docs(repo_root: Path, decisions: list[RegenDecision]) -> _RegenOutcome` _(internal)_ — Verify, never write, the docs this commit needs rebuilt but does not feed.
+- `_generate_docs(repo_root: Path, decisions: list[RegenDecision]) -> _RegenOutcome` _(internal)_ — Regenerate and stage the docs this commit feeds.
 - `_cli_reference_lost_sections(repo_root: Path) -> list[str]` _(internal)_ — Return the CLI sections ``HEAD`` documents that the worktree doc lacks.
 - `_held_cli_reference(repo_root: Path, *, stale: bool, built: list[str]) -> str` _(internal)_ — Decide whether a stale-install cli-reference must be held back.
 - `install_refresh_hint(repo_root: Path) -> str` — Name the command that refreshes this repo's install.
@@ -1398,18 +1402,20 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _Decide when the generated docs must be regenerated at commit time._
 
-- `class RegenDecision` — Whether one generated doc is rebuilt this commit, and why.
+- `class RegenDecision` — What happens to one generated doc this commit, and why.
 - `class RegenSignals` — What :func:`decide_regen` compares for one generated doc.
-- `decide_regen(rel: str, cli: str, signals: RegenSignals) -> RegenDecision` — Decide whether *rel* must be regenerated; the first matching reason wins.
+- `_rebuild_reason(rel: str, signals: RegenSignals) -> str | None` _(internal)_ — Return why *rel* needs a rebuild (first match wins), ``None`` if not.
+- `decide_regen(rel: str, cli: str, signals: RegenSignals) -> RegenDecision` — Decide what happens to *rel* this commit.
 - `record_path(repo_root: Path) -> Path | None` — Return this checkout's regeneration-record path, ``None`` outside git.
 - `load_record(repo_root: Path) -> dict[str, dict[str, str]]` — Load the regeneration record for the checkout.
 - `save_record(repo_root: Path, record: dict[str, dict[str, str]]) -> None` — Write the regeneration record atomically; a no-op outside git.
 - `index_blobs(repo_root: Path) -> dict[str, str]` — Map every indexed path to its staged blob sha (one ``git ls-files -s``).
 - `is_forge_repo(repo_root: Path) -> bool` — Report whether the repo is forge itself (its CLIs come from this tree).
 - `regen_inputs(repo_root: Path, rel: str, blobs: dict[str, str] | None = None) -> str` — Fingerprint everything *rel* is built from, from the index.
+- `input_predicate(repo_root: Path, rel: str) -> Callable[[str], bool]` — Return the test of whether a repo path is one of *rel*'s inputs.
 - `forge_version() -> str` — Return the installed forge version, or ``""`` when unknowable.
 - `regen_decisions(repo_root: Path, targets: list[tuple[str, str]]) -> tuple[list[RegenDecision], dict[str, dict[str, str]]]` — Decide each target doc and return the inputs needed to record a build.
-- `record_regenerated(repo_root: Path, built: list[str], currents: dict[str, dict[str, str]]) -> None` — Record the docs that were just regenerated and re-staged successfully.
+- `record_regenerated(repo_root: Path, built: list[str], currents: dict[str, dict[str, str]]) -> None` — Record the docs just regenerated and re-staged, or verified in sync.
 
 ## `forge.release`
 
