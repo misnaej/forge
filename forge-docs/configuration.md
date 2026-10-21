@@ -236,8 +236,14 @@ The scan reads the packages installed in your environment and a remote
 advisory database. Neither changes because a commit happened, so running
 it on every commit spends network time — between a twentieth and a third
 of a commit's — on an answer that cannot have moved. It runs once per
-branch by default, and PR finalization forces a scan, so nothing is
-published unscanned.
+branch by default, and PR finalization forces a scan. `forge-pr-create`
+enforces that: it refuses to publish a branch whose sidecar records no
+scan since the branch left its base — in every wrap-up mode, emergency
+included — and names the fix (`FORGE_PIP_AUDIT_FORCE=1 forge-precommit
+--only pip_audit`). It checks only that a scan ran; whether findings stop
+anything is still `blocking`'s decision. A repo whose step selection
+leaves `pip_audit` out (`[tool.forge.precommit] disable`) is not asked
+for a scan.
 
 A reused scan still reports its findings: the step's log opens with a
 notice that the scan was reused, then carries the same report, marker
@@ -308,9 +314,12 @@ The `api_digest_check` step (`forge-gen-api-digest --check`, enabled the
 same way) has no config table — it is the **blocking** drift gate for
 `docs/api-digest.md`, mirroring how `c4` guards the C4 model. The
 default-on `regen_docs` step already regenerates and re-stages the digest
-non-blockingly whenever its inputs changed; enable this when you also want a stale or incomplete digest
-**refused** at commit time (e.g. to catch a generator error `regen_docs`
-would only warn on, or to gate the digest in CI). Kept opt-in because the
+non-blockingly whenever the commit changes its inputs; otherwise it only
+checks the digest and warns when it is out of date, leaving it for a
+commit of its own. Enable this when you also want a stale or incomplete
+digest **refused** at commit time (e.g. to catch a generator error or an
+out-of-date digest `regen_docs` would only warn on, or to gate the digest
+in CI). Kept opt-in because the
 digest changes on nearly every code PR, so the gate adds a
 regenerate-before-commit step to routine work. Self-skips when
 `docs/api-digest.md` is absent.
@@ -790,9 +799,17 @@ vulnerable code path is actually present.
 **Opt in by presence** of a `cve_usage_patterns.toml` map at the repo root —
 a `CVE-ID → {package, patterns, risk, mitigation}` table (your config; every
 repo's vulnerable surface differs). The step self-skips when the map (or
-pip-audit) is absent. It is **non-blocking** (advisory). Self-maintaining: a
-pattern is checked only while its CVE is live, so upgrading the package makes
-the warning disappear — no stale list to prune.
+pip-audit) is absent. It is **non-blocking** (advisory). A pattern is checked
+only while its CVE is live, so upgrading the package makes the warning
+disappear — a resolved CVE leaves nothing to prune.
+
+The check can only search for a CVE you wrote a pattern for, so the log
+opens with how many of the reported CVEs it checked (`Checked k of n
+reported CVEs …`) and names every one it did not — no entry, or an entry
+with no usable pattern (`patterns` not a list, empty, or a regex that does
+not compile). Any unchecked CVE renders the step `WARN`; the all-clear
+sentence appears only when every reported CVE was checked. A newly
+reported CVE therefore shows up as NOT checked until its pattern is added.
 
 Matching is line-based and skips **full-line comments** only — a pattern
 mentioned in a trailing `# …` comment on a code line can still match, so keep

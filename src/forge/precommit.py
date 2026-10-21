@@ -72,7 +72,6 @@ import hashlib
 import importlib.metadata
 import json
 import logging
-import math
 import os
 import re
 import shlex
@@ -100,6 +99,7 @@ from forge.changelog_fragments import check_staged as check_staged_fragments
 from forge.config import installed_console_scripts, resolve_model_section
 from forge.continuation_state import write_state
 from forge.emergency_state import active_state
+from forge.gen_common import HELP_UNAVAILABLE_MARKER
 from forge.git_utils import (
     EVIDENCE_OUTPUT_CAP,
     SCOPE_ALL,
@@ -109,6 +109,7 @@ from forge.git_utils import (
     emit,
     fetch_tags_best_effort,
     forge_cli_argv,
+    fork_point_time,
     get_modified_files,
     get_untracked_files,
     is_ancestor,
@@ -149,6 +150,8 @@ from forge.version_surfaces import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
+
+    from forge.regen_docs import RegenDecision
 
     StepFn = Callable[[Path], "StepResult"]
 
@@ -527,7 +530,7 @@ def _check_clone_identity(repo_root: Path) -> StepResult | None:
             f"⛔ The active forge-scripts install is editable from {shown[0]}, not "
             f"this clone ({shown[1]}). Every gate would run the other "
             "checkout's code. Activate this clone's env or refresh the install "
-            f"here ({_install_refresh_hint(repo_root)})."
+            f"here ({install_refresh_hint(repo_root)})."
         ),
     )
 
@@ -716,7 +719,7 @@ def step_env_sync(repo_root: Path) -> StepResult:
                     f"console script(s) not registered — {', '.join(missing)}.\n\n"
                     "A [project.scripts] entry was added since you last installed, so "
                     "the gate may run old code. Refresh the install "
-                    f"({_install_refresh_hint(repo_root)}) to register the new "
+                    f"({install_refresh_hint(repo_root)}) to register the new "
                     "entry point(s)."
                 ),
                 non_blocking=not blocking,
@@ -731,7 +734,7 @@ def step_env_sync(repo_root: Path) -> StepResult:
             output=(
                 f"⚠️  Installed forge-scripts {have} is behind the pin "
                 f"forge-scripts=={pinned}. Refresh the install "
-                f"({_install_refresh_hint(repo_root)}) to install the pinned "
+                f"({install_refresh_hint(repo_root)}) to install the pinned "
                 "version."
             ),
             non_blocking=True,
@@ -1312,11 +1315,6 @@ def step_foundation_md_check(repo_root: Path) -> StepResult:
 # to surface.
 _PIP_AUDIT_LOUDNESS_THRESHOLD = 10
 
-# Sidecar holding pip-audit's parsed JSON, written by ``step_pip_audit`` and
-# reused by ``step_cve_usage`` so the two steps share one pip-audit scan per
-# commit instead of each hitting the OSV network independently (#78).
-PIP_AUDIT_SIDECAR_NAME = "pip_audit.json"
-
 # Matches a full ``pip-audit`` advisory ID:
 # - ``PYSEC-YYYY-N`` (year + sequence number, both digit-only)
 # - ``GHSA-xxxx-yyyy-zzzz`` (three 4-char alphanumeric segments)
@@ -1346,69 +1344,6 @@ def _count_pip_audit_advisories(output: str) -> int:
 
 
 _PIP_AUDIT_FORCE_ENV = "FORGE_PIP_AUDIT_FORCE"
-#: A stamp dated further ahead than this is treated as invalid rather
-#: than allowed to suppress scans indefinitely (mirrors smart_test).
-_PIP_AUDIT_FUTURE_TOLERANCE_S = 300.0
-#: Sidecar field recording when the scan ran (epoch seconds, UTC).
-_PIP_AUDIT_SCANNED_AT_KEY = "scanned_at"
-
-
-def _scan_time_value(value: object) -> float | None:
-    """Return *value* as epoch seconds, or ``None`` when it is not a usable time.
-
-    Args:
-        value: The sidecar's recorded ``scanned_at`` field.
-
-    Returns:
-        A finite float, or ``None`` for a bool, a non-number, a non-finite
-        number, or an integer too large to be a float.
-    """
-    # bool is an int subclass: `true` must not read as 1970-01-01T00:00:01.
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    try:
-        seconds = float(value)
-    except OverflowError:
-        return None
-    return seconds if math.isfinite(seconds) else None
-
-
-def _sidecar_scanned_at(repo_root: Path) -> float | None:
-    """Return when the last CVE scan ran, the one reader every age check uses.
-
-    The time recorded in the payload wins because a file's modification
-    time does not survive a copy or a CI cache restore — both reset it to
-    the moment of the copy and manufacture a fresh-looking scan that never
-    ran. The modification time is used only for a sidecar written before
-    the field existed; a field that is present but unusable is not a
-    reason to trust the file's timestamp instead.
-
-    Args:
-        repo_root: Git repo root.
-
-    Returns:
-        Epoch seconds, or ``None`` when the sidecar is unreadable, its
-        recorded time is unusable, or the time is dated further ahead than
-        :data:`_PIP_AUDIT_FUTURE_TOLERANCE_S` — each means scan, which is
-        the safe direction (a future stamp would otherwise suppress scans
-        indefinitely).
-    """
-    data = _read_audit_sidecar(repo_root)
-    if data is None:
-        return None
-    if _PIP_AUDIT_SCANNED_AT_KEY in data:
-        scanned_at = _scan_time_value(data[_PIP_AUDIT_SCANNED_AT_KEY])
-        if scanned_at is None:
-            return None
-    else:
-        sidecar = code_health_dir(repo_root) / PIP_AUDIT_SIDECAR_NAME
-        try:
-            scanned_at = sidecar.stat().st_mtime
-        except OSError:
-            return None
-    if scanned_at - datetime.now(tz=UTC).timestamp() > _PIP_AUDIT_FUTURE_TOLERANCE_S:
-        return None
-    return scanned_at
 
 
 def _pip_audit_scan_age_hours(repo_root: Path) -> float | None:
@@ -1418,10 +1353,11 @@ def _pip_audit_scan_age_hours(repo_root: Path) -> float | None:
         repo_root: Git repo root.
 
     Returns:
-        Age in hours, or ``None`` when :func:`_sidecar_scanned_at` has no
-        trustworthy time.
+        Age in hours, or ``None`` when
+        :func:`forge.pip_audit_json.sidecar_scanned_at` has no trustworthy
+        time.
     """
-    scanned_at = _sidecar_scanned_at(repo_root)
+    scanned_at = pip_audit_json.sidecar_scanned_at(repo_root)
     if scanned_at is None:
         return None
     return max(0.0, (datetime.now(tz=UTC).timestamp() - scanned_at) / 3600.0)
@@ -1451,13 +1387,9 @@ def _reuse_reason_branch(repo_root: Path) -> str | None:
     """Return why a branch-cadence scan may be reused, or ``None`` to scan.
 
     "Once per branch" means the sidecar was written after this branch
-    left its base. An unresolvable fork point scans.
-
-    The two timestamps come from different clocks — the scan's from the
-    machine that ran it, the fork's from whoever authored that commit — so
-    a clock running ahead could date a scan after a fork it actually
-    preceded. :func:`_sidecar_scanned_at` rejects a future-dated scan,
-    which bounds that window.
+    left its base (:func:`forge.pip_audit_json.scan_postdates_fork`, the
+    same test ``forge-pr-create`` refuses on). An unresolvable fork point
+    scans.
 
     Args:
         repo_root: Git repo root.
@@ -1465,14 +1397,9 @@ def _reuse_reason_branch(repo_root: Path) -> str | None:
     Returns:
         A phrase for the reuse notice, or ``None``.
     """
-    fork = merge_base_with_head(repo_root, config.load_config(repo_root).base_branch)
-    if not fork:
-        return None
-    forked_at = run_git("show", "-s", "--format=%ct", fork, cwd=repo_root, check=False)
-    if not forked_at.strip().isdigit():
-        return None
-    scanned_at = _sidecar_scanned_at(repo_root)
-    if scanned_at is None or scanned_at <= float(forked_at.strip()):
+    forked_at = fork_point_time(repo_root, config.load_config(repo_root).base_branch)
+    scanned_at = pip_audit_json.sidecar_scanned_at(repo_root)
+    if not pip_audit_json.scan_postdates_fork(scanned_at, forked_at):
         return None
     return "already scanned on this branch"
 
@@ -1484,10 +1411,9 @@ def _pip_audit_reuse_reason(repo_root: Path) -> str | None:
     database, neither of which changes because a commit happened — so
     running it on every commit spends network time on an answer that
     cannot have moved. It runs once per branch by default; PR
-    finalization runs it forced. That last part is a convention the
-    `/pr` skill follows, not something this module enforces — a branch
-    that never reaches finalization is scanned once, which
-    ``docs/security.md`` states plainly.
+    finalization runs it forced. This module does not enforce the
+    forced run — ``forge-pr-create`` does, by refusing to publish a
+    branch whose sidecar holds no scan since the branch left its base.
 
     Every uncertain case scans: no stamp, an unreadable one, a
     future-dated one, an unknown cadence.
@@ -1618,7 +1544,7 @@ def _reused_pip_audit(repo_root: Path, *, blocking: bool) -> StepResult | None:
     notice = _pip_audit_reuse_reason(repo_root)
     if notice is None:
         return None
-    data = _read_audit_sidecar(repo_root)
+    data = pip_audit_json.read_sidecar(repo_root)
     if data is None or (blocking and pip_audit_json.has_vulns(data)):
         return None
     return _pip_audit_result(data, blocking=blocking, notice=notice)
@@ -1663,30 +1589,6 @@ def _pip_audit_result(data: dict, *, blocking: bool, notice: str = "") -> StepRe
     )
 
 
-def _read_audit_sidecar(repo_root: Path) -> dict | None:
-    """Return the sidecar's parsed scan, or ``None`` when it cannot be trusted.
-
-    Missing, unreadable, malformed, or not a pip-audit report (a JSON
-    object with a ``dependencies`` list) all read as ``None`` — the
-    caller then scans, the same safe direction an unreadable timestamp
-    takes. A skeletal ``{}`` would otherwise render as a clean scan.
-
-    Args:
-        repo_root: Git repo root.
-
-    Returns:
-        The parsed scan data, or ``None``.
-    """
-    sidecar = code_health_dir(repo_root) / PIP_AUDIT_SIDECAR_NAME
-    try:
-        data = json.loads(sidecar.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    if isinstance(data, dict) and isinstance(data.get("dependencies"), list):
-        return data
-    return None
-
-
 def _write_audit_sidecar(repo_root: Path, data: dict) -> None:
     """Persist pip-audit's parsed JSON to the shared sidecar.
 
@@ -1699,15 +1601,19 @@ def _write_audit_sidecar(repo_root: Path, data: dict) -> None:
 
     The scan time is written into the payload (``scanned_at``) so the
     reuse cadence reads when the scan ran, not when the file was last
-    copied (:func:`_sidecar_scanned_at`). Every reader of the report looks
-    only at its ``dependencies`` list, so the extra key is invisible to them.
+    copied (:func:`forge.pip_audit_json.sidecar_scanned_at`). Every reader
+    of the report looks only at its ``dependencies`` list, so the extra key
+    is invisible to them.
 
     Args:
         repo_root: Git repo root.
         data: Parsed pip-audit JSON (``AuditRun.data``).
     """
-    path = code_health_dir(repo_root) / PIP_AUDIT_SIDECAR_NAME
-    payload = {**data, _PIP_AUDIT_SCANNED_AT_KEY: datetime.now(tz=UTC).timestamp()}
+    path = code_health_dir(repo_root) / pip_audit_json.SIDECAR_NAME
+    payload = {
+        **data,
+        pip_audit_json.SCANNED_AT_KEY: datetime.now(tz=UTC).timestamp(),
+    }
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload), encoding="utf-8")
@@ -1744,12 +1650,20 @@ def step_cve_usage(repo_root: Path) -> StepResult:
     routine case above) is the only way it goes stale, and even then this
     step reuses the prior scan rather than re-running one unnecessarily.
 
+    A run the CLI did not carry out (pattern map unparseable, pip-audit
+    unavailable) is recognised by the CLI's own
+    :data:`forge.pip_audit_json.CVE_USAGE_SKIP_MARKER` line, matched as a
+    whole line — never by a word that a package name or advisory text in
+    a real run's output could also contain.
+
     Args:
         repo_root: Git repo root.
 
     Returns:
         ``StepResult`` for this step; ``non_blocking=True`` whenever the
-        check actually ran, ``skipped`` when there is no pattern map.
+        check actually ran, ``skipped`` when there is no pattern map or the
+        CLI reports it did not run. A run that leaves any reported CVE
+        unchecked exits non-zero, so it renders ``WARN``.
     """
     if not (repo_root / "cve_usage_patterns.toml").is_file():
         return StepResult(
@@ -1760,11 +1674,13 @@ def step_cve_usage(repo_root: Path) -> StepResult:
         )
     require_cli("verify-forge-cve-usage", caller="forge-precommit")
     cmd = ["verify-forge-cve-usage"]
-    sidecar = code_health_dir(repo_root) / PIP_AUDIT_SIDECAR_NAME
+    sidecar = code_health_dir(repo_root) / pip_audit_json.SIDECAR_NAME
     if sidecar.is_file():
         cmd += ["--audit-json", str(sidecar)]
     passed, output = _run(cmd, cwd=repo_root)
-    skipped = "skipped" in output
+    skipped = pip_audit_json.CVE_USAGE_SKIP_MARKER in (
+        line.strip() for line in output.splitlines()
+    )
     return StepResult(
         name="cve_usage",
         passed=passed,
@@ -2165,47 +2081,55 @@ def step_doc_consistency(repo_root: Path) -> StepResult:
 
 
 # Generators whose tracked doc is kept fresh non-blockingly by
-# step_regen_docs (regenerate + re-stage). cli-reference.md has no drift
-# gate of its own; api-digest.md has an opt-in one (step_api_digest_check,
-# off by default), so it stays here too — the non-blocking auto-write is the
-# always-on baseline, the gate the strict superset a repo can enable.
+# step_regen_docs (regenerate + re-stage when the commit feeds the doc,
+# otherwise check and warn). Both docs have only opt-in drift gates
+# (step_cli_reference_check, step_api_digest_check, off by default), so
+# they stay here too — the non-blocking refresh is the always-on baseline,
+# the gates the strict superset a repo can enable.
 _REGEN_DOCS: tuple[tuple[str, str], ...] = tuple(
     (REGEN_COMMANDS[rel][0], rel) for rel in (API_DIGEST_DOC, CLI_REFERENCE_DOC)
 )
 
 
 def step_regen_docs(repo_root: Path) -> StepResult:
-    """Regenerate the otherwise-unwired generated docs and re-stage them.
+    """Keep the generated docs fresh: regenerate what the commit feeds.
 
     ``docs/api-digest.md`` and ``docs/cli-reference.md`` come from
-    deterministic generators. ``cli-reference.md`` has no drift gate, so it
-    would silently rot without this; ``api-digest.md`` has only the *opt-in*
-    :func:`step_api_digest_check` gate, so it too relies on this always-on
-    refresh by default. This refreshes them the way the ruff step refreshes
-    formatting: regenerate in place, then
-    ``git add`` the result into the commit. Only docs that **already exist**
-    are touched (sync, never bootstrap a surprise tracked file in a consumer
-    repo). A generator crash warns rather than refusing the commit.
+    deterministic generators whose drift gates are opt-in, so by default
+    they rely on this always-on refresh. Only docs that **already exist**
+    are touched (sync, never bootstrap a surprise tracked file in a
+    consumer repo), and nothing here ever refuses a commit except the one
+    held case below.
 
-    A doc whose inputs are unchanged since its last successful build is
-    skipped, with one output line per doc saying which and why; the
+    Each doc gets one output line saying what happened and why; the
     decision and the per-clone record of past builds (under ``.git/``)
-    live in :mod:`forge.regen_docs`.
+    live in :mod:`forge.regen_docs`. A doc whose inputs are unchanged
+    since its last successful build is skipped. One that needs a rebuild
+    is regenerated and staged, the way the ruff step refreshes formatting,
+    only when this commit feeds it — the doc is staged, a merge is in
+    progress, or a staged path is one of its inputs. Otherwise it is only
+    checked (``--check``, nothing written or staged): in sync, the build
+    is recorded; out of date, the step warns and names the command to
+    regenerate it in a commit of its own, so a commit never carries a
+    generated file nothing in it changed. Checking costs one generator
+    run per needed rebuild the commit does not feed; it is accepted
+    because forge's own commits almost always feed both docs, and a
+    consumer keeps a CLI reference rarely.
 
     Args:
         repo_root: Git repo root.
 
     Returns:
         ``StepResult``, ``non_blocking=True`` except in the one held case
-        below; skipped when neither doc exists or when unstaged changes are
-        present (partial commit — the generators read the worktree, which
-        then differs from what the commit records). ``passed`` is False
-        when a present generator errored, or when the editable install is
-        stale (declared console scripts absent from the install the
-        cli-reference generator reads — the regenerated doc silently omits
-        them; renders WARN). When the stale regeneration would also drop
-        CLI sections ``HEAD`` documents, the doc is not staged and the
-        result blocks (:func:`_held_cli_reference`).
+        below; skipped when neither doc exists, when nothing needs a
+        rebuild, or when unstaged changes are present (partial commit —
+        the generators read the worktree, which then differs from what
+        the commit records). ``passed`` is False when a generator errored,
+        a checked doc is out of date, or the install is stale (declared
+        console scripts absent from the install the cli-reference
+        generator reads; renders WARN). When a stale regeneration would
+        also drop CLI sections ``HEAD`` documents, the doc is not staged
+        and the result blocks (:func:`_held_cli_reference`).
 
     Raises:
         SystemExit: If the running forge does not declare a needed
@@ -2238,17 +2162,123 @@ def step_regen_docs(repo_root: Path) -> StepResult:
         )
     decisions, currents = regen_decisions(repo_root, targets)
     sections = [
-        f"{d.rel}: {'regenerated' if d.regenerate else 'skipped'} — {d.reason}"
-        for d in decisions
+        f"{d.rel}: {_REGEN_ACTION_LABEL[d.action]} — {d.reason}" for d in decisions
     ]
-    targets = [(d.cli, d.rel) for d in decisions if d.regenerate]
-    if not targets:
+    if all(d.action == "skip" for d in decisions):
         return StepResult(
             name="regen_docs",
             passed=True,
             output="\n".join(sections),
             skipped=True,
         )
+    checked = _check_docs(repo_root, [d for d in decisions if d.action == "check"])
+    generated = _generate_docs(
+        repo_root, [d for d in decisions if d.action == "generate"]
+    )
+    sections.extend([*checked.sections, *generated.sections])
+    # Recorded only after a passing check or a successful generate +
+    # re-stage: a failed, skipped or held doc keeps its old entry, so the
+    # next commit retries it.
+    record_regenerated(
+        repo_root, [*checked.recordable, *generated.recordable], currents
+    )
+    return StepResult(
+        name="regen_docs",
+        passed=checked.passed and generated.passed,
+        output="\n\n".join(sections),
+        non_blocking=not generated.held,
+    )
+
+
+# The step-output verb for each regen_docs action.
+_REGEN_ACTION_LABEL: dict[str, str] = {
+    "skip": "skipped",
+    "generate": "regenerated",
+    "check": "checked only (this commit does not feed it)",
+}
+
+
+@dataclass(frozen=True)
+class _RegenOutcome:
+    """What one regen_docs pass (check or generate) produced.
+
+    Attributes:
+        passed: Every doc in the pass succeeded.
+        recordable: Docs whose build may be recorded.
+        sections: Output blocks for the step result.
+        held: A cli-reference held out of the commit — the step blocks.
+    """
+
+    passed: bool
+    recordable: list[str]
+    sections: list[str]
+    held: bool = False
+
+
+def _check_docs(repo_root: Path, decisions: list[RegenDecision]) -> _RegenOutcome:
+    """Verify, never write, the docs this commit needs rebuilt but does not feed.
+
+    An out-of-date doc gets advice that depends on why: a CLI reference
+    checked against a stale install (or whose help could not be captured)
+    is not genuinely out of date — regenerating it from that install would
+    drop sections — so the advice is to refresh the install, never to
+    regenerate and commit.
+
+    Args:
+        repo_root: Git repo root.
+        decisions: The ``"check"`` decisions.
+
+    Returns:
+        The outcome; in-sync docs are recordable.
+    """
+    passed = True
+    recordable: list[str] = []
+    sections: list[str] = []
+    for d in decisions:
+        ok, output = _run_gen_check(repo_root, d.rel)
+        if ok:
+            recordable.append(d.rel)
+            sections.append(f"{d.rel} is in sync (checked, nothing written).")
+            continue
+        passed = False
+        if d.rel == CLI_REFERENCE_DOC and (
+            HELP_UNAVAILABLE_MARKER in output or missing_console_scripts(repo_root)
+        ):
+            advice = (
+                f"⚠️ {d.rel} could not be checked against a healthy install — "
+                "some CLI help is unavailable or declared console scripts are "
+                "missing from it. Do not regenerate it from this install (that "
+                "would drop sections); refresh the install "
+                f"({_install_refresh_hint(repo_root)}) and commit again."
+            )
+        else:
+            advice = (
+                f"⚠️ {d.rel} is out of date ({d.reason}); not regenerated because "
+                f"nothing in this commit feeds it; run `{d.cli}` and commit it "
+                "on its own."
+            )
+        detail = output.strip() or "(no output)"
+        sections.append(f"{advice}\n$ {d.cli} --check\n{detail}")
+    return _RegenOutcome(passed=passed, recordable=recordable, sections=sections)
+
+
+def _generate_docs(repo_root: Path, decisions: list[RegenDecision]) -> _RegenOutcome:
+    """Regenerate and stage the docs this commit feeds.
+
+    Only docs whose generator succeeded are staged: a failed run (for the
+    CLI reference, a help capture that failed) writes nothing, so the
+    committed page keeps every section it had.
+
+    Args:
+        repo_root: Git repo root.
+        decisions: The ``"generate"`` decisions.
+
+    Returns:
+        The outcome; built, staged and not-held docs are recordable.
+    """
+    if not decisions:
+        return _RegenOutcome(passed=True, recordable=[], sections=[])
+    sections: list[str] = []
     # Stale-install advisory: forge-gen-cli-reference discovers CLIs from
     # INSTALLED entry points, and the healing steps (auto_rebuild,
     # env_sync) self-skip non-interactively — so a commit adding a
@@ -2258,7 +2288,7 @@ def step_regen_docs(repo_root: Path) -> StepResult:
     # that stale regeneration would drop sections the branch documents.
     stale = (
         missing_console_scripts(repo_root)
-        if any(rel == CLI_REFERENCE_DOC for _, rel in targets)
+        if any(d.rel == CLI_REFERENCE_DOC for d in decisions)
         else []
     )
     passed = not stale
@@ -2267,38 +2297,35 @@ def step_regen_docs(repo_root: Path) -> StepResult:
             "⚠️ install is stale — declared console script(s) absent "
             "from the install that docs/cli-reference.md is regenerated "
             f"from: {', '.join(stale)}. Refresh the install "
-            f"({_install_refresh_hint(repo_root)}) and re-commit to include them."
+            f"({install_refresh_hint(repo_root)}) and re-commit to include them."
         )
     # Launched from the running install, never by PATH name: on a machine
     # with several forge checkouts the bare name can resolve to another
     # checkout's older generator, which rewrites the doc from stale
     # knowledge while this step reports success.
     built: list[str] = []
-    for cli, rel in targets:
-        ok, output = _run(forge_cli_argv(cli, caller="forge-precommit"), cwd=repo_root)
+    for d in decisions:
+        argv = forge_cli_argv(d.cli, caller="forge-precommit")
+        ok, output = _run(argv, cwd=repo_root)
         passed = passed and ok
         if ok:
-            built.append(rel)
-        sections.append(f"$ {cli}\n{output.strip() or '(no output)'}")
+            built.append(d.rel)
+        sections.append(f"$ {d.cli}\n{output.strip() or '(no output)'}")
+        if not ok and not stale and HELP_UNAVAILABLE_MARKER in output:
+            sections.append(
+                f"⚠️ {d.rel} left untouched — some CLI help could not be "
+                "captured, which usually means a stale install. Refresh the "
+                f"install ({_install_refresh_hint(repo_root)}) and commit again."
+            )
     held = _held_cli_reference(repo_root, stale=bool(stale), built=built)
-    withheld = {CLI_REFERENCE_DOC} if held else set()
-    restaged = stage_modified_paths(
-        repo_root, [rel for _, rel in targets if rel not in withheld]
-    )
+    recordable = [rel for rel in built if not (held and rel == CLI_REFERENCE_DOC)]
+    restaged = stage_modified_paths(repo_root, recordable)
     if restaged:
         sections.append("Re-staged: " + ", ".join(restaged))
     if held:
         sections.append(held)
-    # Recorded only after a successful generate + re-stage: a failed,
-    # skipped or held doc keeps its old entry, so the next commit retries it.
-    record_regenerated(
-        repo_root, [rel for rel in built if rel not in withheld], currents
-    )
-    return StepResult(
-        name="regen_docs",
-        passed=passed,
-        output="\n\n".join(sections),
-        non_blocking=not held,
+    return _RegenOutcome(
+        passed=passed, recordable=recordable, sections=sections, held=bool(held)
     )
 
 
@@ -2362,14 +2389,14 @@ def _held_cli_reference(repo_root: Path, *, stale: bool, built: list[str]) -> st
         f"install, it would drop {len(lost)} section(s) HEAD documents: "
         f"{', '.join(lost)}. The regenerated file is left modified in your "
         "worktree, unstaged; this step did not restore it. Refresh the "
-        f"install ({_install_refresh_hint(repo_root)}), regenerate the doc "
+        f"install ({install_refresh_hint(repo_root)}), regenerate the doc "
         f"(`forge-gen-cli-reference`), stage it (`git add {CLI_REFERENCE_DOC}`) "
         "and commit again; with the doc left unstaged this step treats the "
         "commit as partial and skips."
     )
 
 
-def _install_refresh_hint(repo_root: Path) -> str:
+def install_refresh_hint(repo_root: Path) -> str:
     """Name the command that refreshes this repo's install.
 
     Forge's own repo has one sanctioned bootstrap; a consumer installs

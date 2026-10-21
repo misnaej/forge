@@ -1,0 +1,5 @@
+bump: patch
+
+- `regen_docs` no longer adds a generated doc to a commit that does not feed it. When `docs/api-digest.md` or `docs/cli-reference.md` needs a rebuild but nothing staged is one of its inputs (the doc itself, a merge, or an edited, deleted or renamed source), the step only checks the doc: in sync, nothing happens; out of date, it warns and names the command to regenerate it in a commit of its own.
+- `forge-gen-cli-reference` no longer records "help unavailable" as documentation. When any CLI's `--help` cannot be captured (usually a stale install), it names each such CLI, writes nothing and exits 1 in both write and `--check` mode, so a committed page can no longer silently lose a section while every check reports it in sync. `regen_docs` then leaves the page untouched and unstaged and tells you to refresh the install, never to regenerate from it.
+- `verify-forge-doc-consistency` no longer reports the private helper `_run_gen_check` as a stale step name on every run: names starting with an underscore are never step names.

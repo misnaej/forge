@@ -662,9 +662,10 @@ A compact index of this codebase's symbols — every top-level function and clas
 > _Generate the forge CLI reference doc from each console script's ``--help``._
 
 - `class CliEntry` — A single forge console-script CLI.
+- `class RenderedReference` — The rendered CLI reference, and the CLIs whose help was unavailable.
 - `discover_clis(distribution: str = DISTRIBUTION) -> list[CliEntry]` — Discover the console-script CLIs shipped by a distribution.
-- `capture_help(entry: CliEntry) -> str` — Capture the ``--help`` output of a single CLI.
-- `render_reference(entries: list[CliEntry]) -> str` — Render the full CLI reference markdown document.
+- `capture_help(entry: CliEntry) -> str | None` — Capture the ``--help`` output of a single CLI.
+- `render_reference(entries: list[CliEntry]) -> RenderedReference` — Render the full CLI reference markdown document.
 - `main() -> int` — Generate or verify the forge CLI reference doc.
 
 ## `forge.gen_commit_types`
@@ -748,11 +749,13 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `tag_on_remote(repo_root: Path, tag: str) -> bool | None` — Ask ``origin`` whether it holds *tag*, never prompting or hanging.
 - `_is_git_env_override(name: str) -> bool` _(internal)_ — Return whether *name* overrides git's config or repository per process.
 - `git_env_overrides_removed() -> Iterator[None]` — Run the body with git's per-process environment overrides removed.
-- `class PushResult` — The outcome of :func:`push_branch` or :func:`push_tag`.
+- `class PushResult` — The outcome of a push through one of this module's push seams.
 - `_refuse_dash_or_plus(remote: str, ref: str, kind: str) -> PushResult | None` _(internal)_ — Return a refusal when *remote* or *ref* could parse as more than a name.
-- `_push_refspec(repo_root: Path, remote: str, refspec: str, *, set_upstream: bool = False) -> PushResult` _(internal)_ — Push one fully qualified *refspec* without ever prompting or hanging.
+- `_push_refspec(repo_root: Path, remote: str, refspec: str, *, set_upstream: bool = False, lease: str | None = None) -> PushResult` _(internal)_ — Push one fully qualified *refspec* without ever prompting or hanging.
 - `push_branch(repo_root: Path, branch: str, *, set_upstream: bool = False, remote: str = 'origin') -> PushResult` — Push *branch* to *remote* without ever prompting or hanging.
 - `push_tag(repo_root: Path, tag: str, *, remote: str = 'origin') -> PushResult` — Push *tag* to *remote* without ever prompting or hanging.
+- `_refuse_delete_target(branch: str, expected_sha: str, base_branch: str) -> PushResult | None` _(internal)_ — Return a refusal when *branch* / *expected_sha* are not a safe delete target.
+- `delete_remote_branch(repo_root: Path, branch: str, *, expected_sha: str, base_branch: str, remote: str = 'origin') -> PushResult` — Delete *branch* on *remote* only if it still points at *expected_sha*.
 - `behind_ahead(repo_root: Path, base_ref: str) -> tuple[int, int] | None` — Return how many commits HEAD is behind and ahead of *base_ref*.
 - `merge_tree_clean(repo_root: Path, left: str, right: str) -> bool | None` — Return whether merging *left* and *right* would be free of conflicts.
 - `unpushed_commit_count(repo_root: Path) -> int | None` — Return how many commits HEAD holds that its upstream does not.
@@ -766,6 +769,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_open_pr_base_branch(root: Path) -> str | None` _(internal)_ — Return the base branch of the open PR for the checked-out branch, if any.
 - `resolve_pr_base_ref(root: Path | None, base_branch: str) -> str | None` — Return the ref this branch's PR actually lands on, falling back to the base.
 - `merge_base_with_head(root: Path | None, base_branch: str) -> str` — Return the merge-base SHA of ``HEAD`` and the resolved base ref.
+- `fork_point_time(root: Path | None, base_branch: str) -> int | None` — Return when this branch left its base: the merge-base's commit time.
 - `get_tree_sha(repo_root: Path, ref: str) -> str | None` — Return the git **tree** SHA of *ref*, or ``None`` when unresolvable.
 - `write_tree(repo_root: Path) -> str | None` — Return the tree SHA of the current **index** via ``git write-tree``.
 - `_stamp_excluded_paths(repo_root: Path) -> list[str]` _(internal)_ — Return the repo-relative log directories a tree stamp leaves out.
@@ -950,9 +954,20 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_gone_branches(repo_root: Path) -> list[str]` _(internal)_ — Return local branch names whose tracking remote is ``[origin/...: gone]``.
 - `_prune_gone_branches(repo_root: Path) -> tuple[list[str], list[str]]` _(internal)_ — ``git branch -d`` every branch whose remote is gone.
 - `_log_prune_result(repo_root: Path) -> None` _(internal)_ — Prune stale local branches and log the outcome.
+- `class PrLookup` — What ``gh`` said about the PRs whose head is one branch.
+- `_gh_prs_for_head(repo_root: Path, branch: str) -> PrLookup` _(internal)_ — Ask ``gh`` for every PR (any state) whose head branch is *branch*.
+- `_gh_pr_list_failure(stderr: str) -> PrLookup` _(internal)_ — Classify a non-zero ``gh pr list`` exit.
+- `_parse_pr_list(stdout: str) -> PrLookup` _(internal)_ — Parse the JSON array ``gh pr list`` printed on success.
+- `_remote_heads(repo_root: Path) -> dict[str, str] | None` _(internal)_ — Return ``{branch: tip sha}`` for every branch on origin, read live.
+- `_origin_head_branch(repo_root: Path) -> str | None` _(internal)_ — Return the branch ``origin/HEAD`` points at, or ``None`` if unknown.
+- `class RemotePruneReport` — What ``--prune-remote`` did, per branch.
+- `_pr_verdict(prs: list[dict[str, object]], branch: str, base: str) -> tuple[Literal['open', 'unmerged', 'merged'], frozenset[str]]` _(internal)_ — Judge *branch* from its PRs.
+- `_prune_merged_remote_branches(repo_root: Path, base_branch: str, *, pr_lister: PrLister | None = None) -> RemotePruneReport` _(internal)_ — Delete origin branches whose same-repo PR merged and whose tip is unchanged.
+- `_delete_one(repo_root: Path, branch: str, sha: str, base_branch: str, report: RemotePruneReport) -> None` _(internal)_ — Delete *branch* on origin lease-pinned to *sha*, recording the outcome.
+- `_log_remote_prune_result(repo_root: Path, base_branch: str, *, pr_lister: PrLister | None = None) -> None` _(internal)_ — Prune merged remote branches and log the outcome.
 - `main() -> int` — Refresh main, optionally tag the release, prune stale local branches.
 - `_pull_ff_only(repo_root: Path, target_branch: str) -> bool` _(internal)_ — Fast-forward *target_branch* from origin, bounded and prompt-free.
-- `_tag_and_report(repo_root: Path, args: argparse.Namespace) -> int` _(internal)_ — Run the post-sync tail: optional tag, optional prune, advisory.
+- `_tag_and_report(repo_root: Path, args: argparse.Namespace) -> int` _(internal)_ — Run the post-sync tail: optional tag, optional prunes, advisory.
 
 ## `forge.pip_audit_json`
 
@@ -961,9 +976,16 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `class AuditRun` — One completed pip-audit invocation.
 - `run_json(root: Path) -> AuditRun | None` — Run pip-audit once in JSON mode against *root*'s environment.
 - `_dict_list(obj: dict, key: str) -> list[dict]` _(internal)_ — Return ``obj[key]`` filtered to ``dict`` entries, or ``[]``.
+- `class Advisory` — One vulnerability pip-audit reported against one dependency.
+  - `ids(self) -> frozenset[str]` — Return every ID this advisory answers to — the primary plus aliases.
+- `advisories(data: dict) -> list[Advisory]` — Return one :class:`Advisory` per reported vulnerability, in report order.
 - `ids_from_data(data: dict) -> set[str]` — Collect the advisory / CVE IDs from parsed pip-audit JSON.
 - `has_vulns(data: dict) -> bool` — Report whether any scanned dependency carries a vulnerability.
 - `render_report(data: dict) -> str` — Render parsed pip-audit JSON as the human-readable step-log body.
+- `read_sidecar(repo_root: Path) -> dict | None` — Return the sidecar's parsed scan, or ``None`` when it cannot be trusted.
+- `_scan_time_value(value: object) -> float | None` _(internal)_ — Return *value* as epoch seconds, or ``None`` when it is not a usable time.
+- `sidecar_scanned_at(repo_root: Path) -> float | None` — Return when the last CVE scan ran, the one reader every age check uses.
+- `scan_postdates_fork(scanned_at: float | None, forked_at: int | None) -> bool` — Whether a scan ran after the branch left its base.
 
 ## `forge.plan_check_cli`
 
@@ -1113,6 +1135,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_existing_pr(branch: str) -> list[int] | None` _(internal)_ — List open PRs whose head is *branch*.
 - `_publish_emergency(root: Path, branch: str, cmd: list[str]) -> int` _(internal)_ — Run ``gh pr create`` under a claimed bypass, then commit or release it.
 - `_read_verified_wrapup(root: Path, branch: str) -> tuple[str | None, str | None]` _(internal)_ — Read the wrap-up and confirm it verifies this checkout's HEAD.
+- `_cve_scan_refusal(root: Path, base: str) -> str | None` _(internal)_ — Refuse a branch with no trustworthy CVE scan since it left *base*.
 - `_gate(root: Path, branch: str, base: str) -> tuple[str | None, bool]` _(internal)_ — Return why publication is refused, and whether it is an emergency.
 - `_warn_unlisted_closes(body_file: str) -> None` _(internal)_ — Warn when the body would close an issue forge's summary does not list.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Build the argument parser.
@@ -1306,8 +1329,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `step_cli_reference_check(repo_root: Path) -> StepResult` — Run ``forge-gen-cli-reference --check`` — cli-reference drift guard (opt-in).
 - `step_foundation_md_check(repo_root: Path) -> StepResult` — Verify ``FOUNDATION.md`` reproduces the installed foundation (opt-in).
 - `_count_pip_audit_advisories(output: str) -> int` _(internal)_ — Count advisory ID occurrences in a ``pip-audit`` text-mode output.
-- `_scan_time_value(value: object) -> float | None` _(internal)_ — Return *value* as epoch seconds, or ``None`` when it is not a usable time.
-- `_sidecar_scanned_at(repo_root: Path) -> float | None` _(internal)_ — Return when the last CVE scan ran, the one reader every age check uses.
 - `_pip_audit_scan_age_hours(repo_root: Path) -> float | None` _(internal)_ — Return how long ago the last CVE scan ran.
 - `_reuse_reason_hours(cfg: dict, age: float) -> str | None` _(internal)_ — Return why an hours-cadence scan may be reused, or ``None`` to scan.
 - `_reuse_reason_branch(repo_root: Path) -> str | None` _(internal)_ — Return why a branch-cadence scan may be reused, or ``None`` to scan.
@@ -1315,7 +1336,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `step_pip_audit(repo_root: Path) -> StepResult` — Run ``pip-audit --skip-editable`` and report findings as non-blocking.
 - `_reused_pip_audit(repo_root: Path, *, blocking: bool) -> StepResult | None` _(internal)_ — Return the previous scan's result when this commit may reuse it.
 - `_pip_audit_result(data: dict, *, blocking: bool, notice: str = '') -> StepResult` _(internal)_ — Build the pip_audit result from parsed scan data.
-- `_read_audit_sidecar(repo_root: Path) -> dict | None` _(internal)_ — Return the sidecar's parsed scan, or ``None`` when it cannot be trusted.
 - `_write_audit_sidecar(repo_root: Path, data: dict) -> None` _(internal)_ — Persist pip-audit's parsed JSON to the shared sidecar.
 - `step_cve_usage(repo_root: Path) -> StepResult` — Run ``verify-forge-cve-usage`` — the usage-scoped second stage on pip_audit.
 - `step_cli_wiring(repo_root: Path) -> StepResult` — Run ``verify-forge-cli-wiring`` — assert every script has a real caller.
@@ -1328,10 +1348,13 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `step_doctest(repo_root: Path) -> StepResult` — Run ``pytest --doctest-modules`` over docstring examples (opt-in).
 - `step_typecheck(repo_root: Path) -> StepResult` — Run pyrefly over the resolved scope (opt-in).
 - `step_doc_consistency(repo_root: Path) -> StepResult` — Run ``verify-forge-doc-consistency`` — doc claims vs repo state (opt-in).
-- `step_regen_docs(repo_root: Path) -> StepResult` — Regenerate the otherwise-unwired generated docs and re-stage them.
+- `step_regen_docs(repo_root: Path) -> StepResult` — Keep the generated docs fresh: regenerate what the commit feeds.
+- `class _RegenOutcome` _(internal)_ — What one regen_docs pass (check or generate) produced.
+- `_check_docs(repo_root: Path, decisions: list[RegenDecision]) -> _RegenOutcome` _(internal)_ — Verify, never write, the docs this commit needs rebuilt but does not feed.
+- `_generate_docs(repo_root: Path, decisions: list[RegenDecision]) -> _RegenOutcome` _(internal)_ — Regenerate and stage the docs this commit feeds.
 - `_cli_reference_lost_sections(repo_root: Path) -> list[str]` _(internal)_ — Return the CLI sections ``HEAD`` documents that the worktree doc lacks.
 - `_held_cli_reference(repo_root: Path, *, stale: bool, built: list[str]) -> str` _(internal)_ — Decide whether a stale-install cli-reference must be held back.
-- `_install_refresh_hint(repo_root: Path) -> str` _(internal)_ — Name the command that refreshes this repo's install.
+- `install_refresh_hint(repo_root: Path) -> str` — Name the command that refreshes this repo's install.
 - `_vendored_documented_hashes(repo_root: Path) -> dict[str, str]` _(internal)_ — Parse ``VENDORED.md`` into a ``{filename: sha256}`` map.
 - `_sha256_file(path: Path) -> str` _(internal)_ — Return *path*'s SHA-256 hex digest, read in 64 KiB chunks.
 - `step_vendored_integrity(repo_root: Path) -> StepResult` — Verify each vendored ``data/*.js`` blob matches its ``VENDORED.md`` hash.
@@ -1392,18 +1415,20 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _Decide when the generated docs must be regenerated at commit time._
 
-- `class RegenDecision` — Whether one generated doc is rebuilt this commit, and why.
+- `class RegenDecision` — What happens to one generated doc this commit, and why.
 - `class RegenSignals` — What :func:`decide_regen` compares for one generated doc.
-- `decide_regen(rel: str, cli: str, signals: RegenSignals) -> RegenDecision` — Decide whether *rel* must be regenerated; the first matching reason wins.
+- `_rebuild_reason(rel: str, signals: RegenSignals) -> str | None` _(internal)_ — Return why *rel* needs a rebuild (first match wins), ``None`` if not.
+- `decide_regen(rel: str, cli: str, signals: RegenSignals) -> RegenDecision` — Decide what happens to *rel* this commit.
 - `record_path(repo_root: Path) -> Path | None` — Return this checkout's regeneration-record path, ``None`` outside git.
 - `load_record(repo_root: Path) -> dict[str, dict[str, str]]` — Load the regeneration record for the checkout.
 - `save_record(repo_root: Path, record: dict[str, dict[str, str]]) -> None` — Write the regeneration record atomically; a no-op outside git.
 - `index_blobs(repo_root: Path) -> dict[str, str]` — Map every indexed path to its staged blob sha (one ``git ls-files -s``).
 - `is_forge_repo(repo_root: Path) -> bool` — Report whether the repo is forge itself (its CLIs come from this tree).
 - `regen_inputs(repo_root: Path, rel: str, blobs: dict[str, str] | None = None) -> str` — Fingerprint everything *rel* is built from, from the index.
+- `input_predicate(repo_root: Path, rel: str) -> Callable[[str], bool]` — Return the test of whether a repo path is one of *rel*'s inputs.
 - `forge_version() -> str` — Return the installed forge version, or ``""`` when unknowable.
 - `regen_decisions(repo_root: Path, targets: list[tuple[str, str]]) -> tuple[list[RegenDecision], dict[str, dict[str, str]]]` — Decide each target doc and return the inputs needed to record a build.
-- `record_regenerated(repo_root: Path, built: list[str], currents: dict[str, dict[str, str]]) -> None` — Record the docs that were just regenerated and re-staged successfully.
+- `record_regenerated(repo_root: Path, built: list[str], currents: dict[str, dict[str, str]]) -> None` — Record the docs just regenerated and re-staged, or verified in sync.
 
 ## `forge.release`
 
@@ -1701,14 +1726,20 @@ A compact index of this codebase's symbols — every top-level function and clas
 > _verify-forge-cve-usage — second-stage CVE filter on top of pip-audit._
 
 - `class Finding` — One matched vulnerable-usage occurrence.
+- `class Coverage` — Which reported advisories the pattern map let the scan check.
 - `load_patterns(root: Path) -> dict[str, dict[str, object]] | None` — Load the consumer's ``cve_usage_patterns.toml`` map.
+- `_load_audit_data(root: Path, audit_json: Path | None) -> dict | None` _(internal)_ — Return pip-audit's parsed report, from the sidecar or a live run.
 - `active_cve_ids(root: Path, audit_json: Path | None = None) -> set[str] | None` — Return the advisory / CVE IDs pip-audit currently reports.
+- `_usable_patterns(entry: dict[str, object]) -> list[re.Pattern[str]]` _(internal)_ — Return an entry's patterns that can actually be searched for, compiled.
+- `coverage(patterns: dict[str, dict[str, object]], advisories: list[pip_audit_json.Advisory]) -> Coverage` — Split the reported advisories into the ones the map can check and the rest.
 - `_iter_source_lines(root: Path) -> Iterable[tuple[str, int, str]]` _(internal)_ — Yield ``(repo_relative_path, line_no, text)`` for every source line.
 - `scan(root: Path, patterns: dict[str, dict[str, object]], active: set[str]) -> list[Finding]` — Grep the source for the patterns of every active, mapped CVE.
-- `_render(findings: list[Finding]) -> str` _(internal)_ — Render findings as the ``code_health/cve_usage.log`` body.
+- `_advisory_label(advisory: pip_audit_json.Advisory) -> str` _(internal)_ — Name an advisory for the report: its primary ID, else its first alias.
+- `_render(findings: list[Finding], cov: Coverage) -> str` _(internal)_ — Render the ``code_health/cve_usage.log`` body.
 - `inactive_cves(patterns: dict[str, dict[str, object]], active: set[str]) -> list[tuple[str, str]]` — Return mapped CVE IDs that pip-audit is *not* currently reporting.
 - `_render_inactive(dormant: list[tuple[str, str]]) -> str` _(internal)_ — Render the ``--list-inactive`` report body.
 - `_run_list_inactive(root: Path, audit_json: Path | None) -> int` _(internal)_ — Print dormant mapped CVEs; never mutates the map. Always exits 0.
+- `_run_check(root: Path, audit_json: Path | None) -> int` _(internal)_ — Run the usage check and log its report; the body of :func:`main`.
 - `main() -> int` — CLI entry point.
 
 ## `forge.verify_doc_consistency`

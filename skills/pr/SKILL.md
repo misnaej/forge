@@ -387,7 +387,9 @@ Verification is done, fixes are committed, and the wrap-up is authored
    wrap-up against THAT branch's HEAD, and earns the light and emergency
    escapes there too. The raw form is refused: it forces a guard to infer
    the branch from command text, which carries free-form title and body
-   prose and can be steered.
+   prose and can be steered. It also refuses a branch with no CVE scan
+   since it left its base, in every mode — its refusal names the command
+   to run.
 
    The body file holds the description (rules: FOUNDATION §6 "PR
    descriptions"):

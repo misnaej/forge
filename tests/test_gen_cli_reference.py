@@ -7,6 +7,8 @@ import sys
 import time
 from typing import TYPE_CHECKING
 
+import pytest
+
 from forge.gen_cli_reference import (
     DOC_RELPATH,
     CliEntry,
@@ -15,12 +17,11 @@ from forge.gen_cli_reference import (
     main,
     render_reference,
 )
+from forge.gen_common import HELP_UNAVAILABLE_MARKER
 
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 def test_discover_clis_returns_sorted_named_entries() -> None:
@@ -38,14 +39,26 @@ def test_capture_help_returns_usage_text() -> None:
     """Capturing --help for a real CLI yields its argparse usage block."""
     entry = CliEntry(name="forge-precommit", module="forge.precommit")
     help_text = capture_help(entry)
+    assert help_text is not None
     assert "usage:" in help_text
 
 
-def test_capture_help_placeholder_on_bad_module() -> None:
-    """A non-importable module yields a placeholder line, not a crash."""
+def test_capture_help_returns_none_on_bad_module(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A non-importable module yields ``None`` and one error naming the CLI.
+
+    Never a placeholder string: a placeholder is indistinguishable from
+    real help once rendered, so the page would lose the section silently.
+    The message carries ``HELP_UNAVAILABLE_MARKER`` because ``precommit``
+    classifies a generator failure by searching its output for it.
+    """
     entry = CliEntry(name="ghost-cli", module="forge.does_not_exist")
-    help_text = capture_help(entry)
-    assert "ghost-cli" in help_text
+    with caplog.at_level(logging.ERROR):
+        assert capture_help(entry) is None
+    named = [r for r in caplog.records if "ghost-cli" in r.getMessage()]
+    assert len(named) == 1
+    assert HELP_UNAVAILABLE_MARKER in named[0].getMessage()
 
 
 def test_capture_help_is_width_independent(
@@ -78,7 +91,9 @@ def test_render_reference_covers_every_cli() -> None:
         CliEntry(name="forge-precommit", module="forge.precommit"),
         CliEntry(name="forge-doctor", module="forge.doctor"),
     ]
-    doc = render_reference(entries)
+    rendered = render_reference(entries)
+    assert rendered.unavailable == []
+    doc = rendered.text
     assert doc.startswith("# CLI Reference")
     assert doc.endswith("\n")
     for entry in entries:
@@ -87,7 +102,7 @@ def test_render_reference_covers_every_cli() -> None:
 
 def test_render_reference_includes_generated_note() -> None:
     """The rendered doc warns it is generated and how to regenerate it."""
-    doc = render_reference([CliEntry(name="forge-doctor", module="forge.doctor")])
+    doc = render_reference([CliEntry(name="forge-doctor", module="forge.doctor")]).text
     assert "do not edit by hand" in doc.lower()
     assert "forge-gen-cli-reference" in doc
 
@@ -165,6 +180,51 @@ def test_main_check_returns_one_when_doc_missing(
     assert any("does not exist" in record.getMessage() for record in caplog.records)
 
 
+@pytest.mark.parametrize("argv_tail", [[], ["--check"]], ids=["write", "check"])
+def test_main_writes_nothing_when_one_help_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    argv_tail: list[str],
+) -> None:
+    """One of N CLIs without help: exit 1, doc byte-identical, the CLI named.
+
+    Args:
+        argv_tail: Extra CLI arguments after ``forge-gen-cli-reference``
+            (``[]`` for write mode, ``["--check"]`` for check mode).
+
+    SCENARIO: two CLIs; one captures fine, the other's module does not
+        import (the stale-install shape). The committed doc predates both.
+    MOCK SETUP: ``discover_clis`` → the two entries; ``capture_help`` →
+        canned help for the good CLI, the real ``capture_help`` (a failing
+        subprocess) for the ghost one; ``repo_root`` → ``tmp_path``.
+    EXPECTED BEHAVIOR: in both write and ``--check`` mode ``main`` returns
+        1, the doc's bytes are unchanged, and exactly one log line names
+        the ghost CLI.
+    """
+    real_capture = capture_help
+    good = CliEntry(name="good-cli", module="forge.doctor")
+    ghost = CliEntry(name="ghost-cli", module="forge.does_not_exist")
+
+    def _capture(entry: CliEntry) -> str | None:
+        return "usage: good-cli" if entry == good else real_capture(entry)
+
+    monkeypatch.setattr("forge.gen_cli_reference.repo_root", lambda: tmp_path)
+    monkeypatch.setattr("forge.gen_cli_reference.discover_clis", lambda: [good, ghost])
+    monkeypatch.setattr("forge.gen_cli_reference.capture_help", _capture)
+    doc_path = tmp_path / DOC_RELPATH
+    doc_path.parent.mkdir(parents=True)
+    committed = b"# CLI Reference\n\n## ghost-cli\n\n```text\nusage: ghost\n```\n"
+    doc_path.write_bytes(committed)
+
+    monkeypatch.setattr(sys, "argv", ["forge-gen-cli-reference", *argv_tail])
+    with caplog.at_level(logging.ERROR):
+        assert main() == 1
+    assert doc_path.read_bytes() == committed
+    named = [r for r in caplog.records if "ghost-cli" in r.getMessage()]
+    assert len(named) == 1
+
+
 def test_render_reference_captures_concurrently_but_keeps_entry_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -183,15 +243,17 @@ def test_render_reference_captures_concurrently_but_keeps_entry_order(
     entries = [CliEntry(name=f"cli-{i}", module=f"mod{i}") for i in range(count)]
     delays = {e.name: (count - i) * step / count * 2 for i, e in enumerate(entries)}
 
-    def _slow_capture(entry: CliEntry) -> str:
+    def _slow_capture(entry: CliEntry) -> str | None:
         time.sleep(delays[entry.name])
         return f"help-of-{entry.name}"
 
     monkeypatch.setattr("forge.gen_cli_reference.capture_help", _slow_capture)
     started = time.monotonic()
-    text = render_reference(entries)
+    rendered = render_reference(entries)
     elapsed = time.monotonic() - started
 
+    assert rendered.unavailable == []
+    text = rendered.text
     headings = [line for line in text.splitlines() if line.startswith("## ")]
     assert headings == [f"## {e.name}" for e in entries]
     for entry in entries:

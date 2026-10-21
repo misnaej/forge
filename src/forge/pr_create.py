@@ -15,7 +15,9 @@ This command removes the inference instead of improving it. It runs in the
 checkout it publishes, so the branch is not a guess — it is where the
 process is standing. It verifies that checkout's own wrap-up against that
 checkout's own HEAD, earns the light, light-release and emergency escapes
-in the same place, and only then creates the pull request. The guard's
+in the same place, refuses a branch with no CVE scan since it left its
+base (in every mode, emergency included), and only then creates the pull
+request. The guard's
 job shrinks to refusing the raw command, which is a question about the
 command's *name* and needs no understanding of its arguments.
 
@@ -42,11 +44,12 @@ import sys
 from pathlib import Path
 from typing import Final, cast
 
-from forge import emergency
+from forge import emergency, pip_audit_json
 from forge.config import load_config
 from forge.git_utils import (
     code_health_dir,
     configure_cli_logging,
+    fork_point_time,
     repo_root,
     resolve_current_branch,
     run_git,
@@ -54,6 +57,7 @@ from forge.git_utils import (
 from forge.pr_delta import extract_verified_shas, unlisted_closing_refs
 from forge.pr_plan import classify
 from forge.pr_wrapup import WRAPUP_NAME
+from forge.precommit import install_refresh_hint, resolve_steps
 
 
 configure_cli_logging()
@@ -393,6 +397,62 @@ def _read_verified_wrapup(root: Path, branch: str) -> tuple[str | None, str | No
     return text, None
 
 
+def _cve_scan_refusal(root: Path, base: str) -> str | None:
+    """Refuse a branch with no trustworthy CVE scan since it left *base*.
+
+    The scan runs once per branch at commit time, so "scan before
+    publishing" held only while every author remembered to force one.
+    This checks freshness only — whether the ``pip_audit`` sidecar records
+    a scan after the fork point, by the same test the step's branch
+    cadence uses (:func:`forge.pip_audit_json.scan_postdates_fork`). What
+    the scan found stays the step's business: ``[tool.forge.pip_audit]
+    .blocking`` decides whether findings stop anything.
+
+    Exempt only when the repo's step selection does not run ``pip_audit``
+    at all — a repo that disabled the scan has no scan to demand. A
+    selection that cannot be read (a step-name typo) refuses with that
+    error rather than exempting: a typo must not switch the gate off.
+
+    Args:
+        root: Checkout holding the branch.
+        base: Base branch the PR targets (``--base``).
+
+    Returns:
+        A refusal reason, or ``None``.
+    """
+    try:
+        steps = resolve_steps(root, skip=(), only=())
+    except ValueError as exc:
+        return (
+            f"the pre-commit step selection cannot be read ({exc}), so whether "
+            "this repo runs the CVE scan is unknown. Fix [tool.forge.precommit]."
+        )
+    if all(step.name != "pip_audit" for step in steps):
+        return None
+    forked_at = fork_point_time(root, base)
+    if forked_at is None:
+        return (
+            f"the point where this branch left '{base}' cannot be found, so "
+            "whether a CVE scan ran since then is unknown. Fetch the base "
+            f"(`git fetch origin {base}`) and retry."
+        )
+    scanned_at = pip_audit_json.sidecar_scanned_at(root)
+    if pip_audit_json.scan_postdates_fork(scanned_at, forked_at):
+        return None
+    sidecar = code_health_dir(root) / pip_audit_json.SIDECAR_NAME
+    state = (
+        "records no usable scan time"
+        if scanned_at is None
+        else f"holds a scan from before this branch left '{base}'"
+    )
+    return (
+        f"{sidecar} {state}, so no CVE scan is known to have run on this "
+        "branch. Scan now with `FORGE_PIP_AUDIT_FORCE=1 forge-precommit "
+        "--only pip_audit`; if it reports pip-audit missing or unparseable, "
+        f"refresh the install ({install_refresh_hint(root)}) and scan again."
+    )
+
+
 def _gate(root: Path, branch: str, base: str) -> tuple[str | None, bool]:
     """Return why publication is refused, and whether it is an emergency.
 
@@ -401,7 +461,9 @@ def _gate(root: Path, branch: str, base: str) -> tuple[str | None, bool]:
     tree judged and the tree published are the same tree by construction,
     not by inference from command text. An emergency wrap-up is only
     recognised here; the bypass is claimed later, as the last step before
-    publishing, so no refusal can follow a claim.
+    publishing, so no refusal can follow a claim. Every mode, emergency
+    included, also needs a CVE scan since the branch left its base
+    (:func:`_cve_scan_refusal`).
 
     Args:
         root: Checkout holding the branch.
@@ -418,7 +480,12 @@ def _gate(root: Path, branch: str, base: str) -> tuple[str | None, bool]:
     # Invariant: if reason is None, text is a valid string (per _read_verified_wrapup).
     text = cast("str", text)
     # Traceability is never deferred, only verification: the HEAD match
-    # above applies to an emergency publication too.
+    # above applies to an emergency publication too. So does the CVE scan's
+    # freshness — an emergency defers the review ceremony, not whether the
+    # dependencies were scanned.
+    scan_refusal = _cve_scan_refusal(root, base)
+    if scan_refusal is not None:
+        return scan_refusal, False
     if re.search(r"^wrapup-mode:[ \t]*emergency[ \t]*$", text, re.MULTILINE):
         return None, True
     for declared in EARNED_WRAPUP_MODES:
