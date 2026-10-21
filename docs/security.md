@@ -29,7 +29,10 @@ Four concrete mechanisms ship with forge:
 > finalization scan; `forge-pr-create` does, by refusing a branch whose
 > `code_health/pip_audit.json` records no scan since the branch forked (or no
 > trustworthy scan time at all). The refusal names the fix:
-> `FORGE_PIP_AUDIT_FORCE=1 forge-precommit --only pip_audit`.
+> `FORGE_PIP_AUDIT_FORCE=1 forge-precommit --only pip_audit`. The check is a
+> freshness check against the fork point, not an attestation: it does not notice
+> dependency pins changed later on the branch, and it trusts the local,
+> gitignored sidecar like every other `code_health/` gate.
 
 Everything else in this document is **policy + guidance** that
 consumer repos and reviewers apply manually.
