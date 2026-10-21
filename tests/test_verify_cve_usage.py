@@ -1,9 +1,10 @@
 """Tests for ``forge.verify_cve_usage`` — the usage-scoped CVE filter.
 
-# MOCKING STRATEGY: pip-audit is never actually run — ``active_cve_ids`` is
-# monkeypatched to return a controlled live-CVE set so the intersect + grep
-# logic is exercised deterministically. The pattern map and source tree are
-# real files under tmp_path.
+# MOCKING STRATEGY: pip-audit is never actually run — ``main()`` tests patch
+# ``_load_audit_data`` to return a controlled report (``--list-inactive``
+# tests patch ``active_cve_ids``), so the coverage + intersect + grep logic
+# is exercised deterministically. The pattern map and source tree are real
+# files under tmp_path.
 """
 
 from __future__ import annotations
@@ -139,7 +140,48 @@ def test_main_skips_without_pattern_file(
     monkeypatch.setattr("sys.argv", ["verify-forge-cve-usage"])
     assert cve.main() == 0
     log = (code_health_dir(tmp_path) / "cve_usage.log").read_text()
-    assert "skipped" in log
+    assert cve.pip_audit_json.CVE_USAGE_SKIP_MARKER in log.splitlines()
+
+
+def _report(*vulns: tuple[str, str, list[str]]) -> dict:
+    """Build a pip-audit report with one dependency per ``(package, id, aliases)``.
+
+    Args:
+        *vulns: One ``(package, primary id, aliases)`` triple per advisory.
+
+    Returns:
+        The parsed-JSON report.
+    """
+    return {
+        "dependencies": [
+            {"name": pkg, "version": "1.0", "vulns": [{"id": vid, "aliases": aliases}]}
+            for pkg, vid, aliases in vulns
+        ]
+    }
+
+
+def _run_main_on(
+    monkeypatch: pytest.MonkeyPatch, root: Path, report: dict | None
+) -> tuple[int, str]:
+    """Run ``main()`` against *root* with *report* as pip-audit's findings.
+
+    Args:
+        monkeypatch: Pytest's monkeypatch fixture.
+        root: Repo root holding the map and the source tree.
+        report: The audit report the loader returns (``None`` = unavailable).
+
+    Returns:
+        The exit code and the ``cve_usage.log`` text.
+    """
+    monkeypatch.setattr(cve, "repo_root", lambda: root)
+    monkeypatch.setattr(cve, "_load_audit_data", lambda _root, _audit_json: report)
+    monkeypatch.setattr("sys.argv", ["verify-forge-cve-usage"])
+    rc = cve.main()
+    return rc, (code_health_dir(root) / "cve_usage.log").read_text()
+
+
+_LXML_ADVISORY = ("lxml", "PYSEC-2024-1", ["CVE-2024-0001"])
+_UNMAPPED_ADVISORY = ("requests", "PYSEC-2024-2", ["CVE-2024-0002"])
 
 
 def test_main_returns_one_on_finding(
@@ -149,36 +191,206 @@ def test_main_returns_one_on_finding(
 
     SCENARIO: pattern map contains CVE-2024-0001 with lxml patterns; source
         file imports lxml.etree, which matches.
-    MOCK SETUP: repo_root → tmp_path; active_cve_ids → {"CVE-2024-0001"} so
-        pip-audit is never invoked; sys.argv drives the bare main() call.
-    EXPECTED BEHAVIOR: exit 1; cve_usage.log names the CVE and the matched
-        file location.
+    MOCK SETUP: repo_root → tmp_path; _load_audit_data → a report carrying
+        that CVE as an alias, so pip-audit is never invoked.
+    EXPECTED BEHAVIOR: exit 1; cve_usage.log names the CVE, the matched
+        file location, and that 1 of 1 reported CVEs was checked.
     """
     _write_map(tmp_path)
     _write_src(tmp_path, "import lxml.etree\n")
-    monkeypatch.setattr(cve, "repo_root", lambda: tmp_path)
-    monkeypatch.setattr(
-        cve, "active_cve_ids", lambda _root, _audit_json: {"CVE-2024-0001"}
-    )
-    monkeypatch.setattr("sys.argv", ["verify-forge-cve-usage"])
-    assert cve.main() == 1
-    log = (code_health_dir(tmp_path) / "cve_usage.log").read_text()
+    rc, log = _run_main_on(monkeypatch, tmp_path, _report(_LXML_ADVISORY))
+    assert rc == 1
     assert "CVE-2024-0001" in log
     assert "src/app.py:1" in log
+    assert "Checked 1 of 1 reported CVEs" in log
 
 
-def test_main_returns_zero_when_clean(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("advisories", "expected", "unchecked_ids"),
+    [
+        pytest.param(
+            [_LXML_ADVISORY],
+            (
+                0,
+                [
+                    (
+                        "Checked 1 of 1 reported CVEs against cve_usage_patterns.toml "
+                        "— no vulnerable usage found."
+                    )
+                ],
+            ),
+            [],
+            id="all-checked",
+        ),
+        pytest.param(
+            [_LXML_ADVISORY, _UNMAPPED_ADVISORY],
+            (
+                1,
+                [
+                    (
+                        "Checked 1 of 2 reported CVEs against cve_usage_patterns.toml "
+                        "— no match among the ones checked."
+                    )
+                ],
+            ),
+            ["PYSEC-2024-2 (requests)"],
+            id="partly-checked",
+        ),
+        pytest.param(
+            [_UNMAPPED_ADVISORY, ("urllib3", "PYSEC-2024-3", [])],
+            (
+                1,
+                [
+                    (
+                        "Checked 0 of 2 reported CVEs against cve_usage_patterns.toml "
+                        "— no match among the ones checked."
+                    )
+                ],
+            ),
+            ["PYSEC-2024-2 (requests)", "PYSEC-2024-3 (urllib3)"],
+            id="none-checked",
+        ),
+        pytest.param(
+            [],
+            (0, ["pip-audit reports no CVEs — nothing to check."]),
+            [],
+            id="no-advisories",
+        ),
+    ],
+)
+def test_main_reports_how_many_reported_cves_it_checked(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    advisories: list[tuple[str, str, list[str]]],
+    expected: tuple[int, list[str]],
+    unchecked_ids: list[str],
 ) -> None:
-    """main() returns 0 when the map exists but no usage matches a live CVE."""
+    """The log counts what it checked; the all-clear appears only when all were.
+
+    SCENARIO: live CVEs with and without a map entry; no source usage.
+    MOCK SETUP: _load_audit_data → the report built from *advisories*.
+    EXPECTED BEHAVIOR: exit 1 whenever a reported CVE is NOT checked; the
+        unchecked ones are named; a real run never reads as skipped.
+
+    Args:
+        tmp_path: Temporary repo root.
+        monkeypatch: Pytest's monkeypatch fixture.
+        advisories: The ``(package, id, aliases)`` triples pip-audit reports.
+        expected: The ``(exit code, lines the log must contain verbatim)`` pair.
+        unchecked_ids: Advisory labels the NOT-checked line must name.
+    """
+    expected_rc, expected_lines = expected
     _write_map(tmp_path)
     _write_src(tmp_path, "import json\n")
-    monkeypatch.setattr(cve, "repo_root", lambda: tmp_path)
-    monkeypatch.setattr(
-        cve, "active_cve_ids", lambda _root, _audit_json: {"CVE-2024-0001"}
+    rc, log = _run_main_on(monkeypatch, tmp_path, _report(*advisories))
+    assert rc == expected_rc
+    for line in expected_lines:
+        assert line in log.splitlines()
+    if unchecked_ids:
+        not_checked = next(ln for ln in log.splitlines() if "NOT checked" in ln)
+        for label in unchecked_ids:
+            assert label in not_checked
+    else:
+        assert "NOT checked" not in log
+    if expected_rc == 1:
+        assert "no vulnerable usage found" not in log
+    assert "skipped" not in log
+    assert cve.pip_audit_json.CVE_USAGE_SKIP_MARKER not in log
+
+
+def test_main_marks_a_run_without_audit_data_as_not_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """pip-audit unavailable → exit 0 with the skip marker as its own line."""
+    _write_map(tmp_path)
+    rc, log = _run_main_on(monkeypatch, tmp_path, None)
+    assert rc == 0
+    assert cve.pip_audit_json.CVE_USAGE_SKIP_MARKER in log.splitlines()
+
+
+def _advisory(vid: str, *aliases: str) -> cve.pip_audit_json.Advisory:
+    """Build an Advisory for the coverage matrix.
+
+    Args:
+        vid: Primary ID.
+        *aliases: Alias IDs.
+
+    Returns:
+        The advisory, package ``pkg``.
+    """
+    return cve.pip_audit_json.Advisory(package="pkg", id=vid, aliases=aliases)
+
+
+@pytest.mark.parametrize(
+    ("entry_key", "patterns_value", "advisory", "checked"),
+    [
+        pytest.param("PYSEC-1", ["foo"], _advisory("PYSEC-1"), True, id="id-keyed"),
+        pytest.param(
+            "CVE-1", ["foo"], _advisory("PYSEC-1", "CVE-1"), True, id="alias-keyed"
+        ),
+        pytest.param("CVE-9", ["foo"], _advisory("PYSEC-1"), False, id="no-entry"),
+        pytest.param(
+            "PYSEC-1", "foo", _advisory("PYSEC-1"), False, id="patterns-not-a-list"
+        ),
+        pytest.param("PYSEC-1", [], _advisory("PYSEC-1"), False, id="empty-patterns"),
+        pytest.param(
+            "PYSEC-1", [42], _advisory("PYSEC-1"), False, id="non-string-pattern"
+        ),
+        pytest.param(
+            "PYSEC-1", ["(unclosed"], _advisory("PYSEC-1"), False, id="bad-regex"
+        ),
+        pytest.param(
+            "PYSEC-1",
+            ["(unclosed", "foo"],
+            _advisory("PYSEC-1"),
+            True,
+            id="one-good-regex-is-enough",
+        ),
+    ],
+)
+def test_coverage_checks_an_advisory_only_with_a_usable_pattern(
+    *,
+    entry_key: str,
+    patterns_value: object,
+    advisory: cve.pip_audit_json.Advisory,
+    checked: bool,
+) -> None:
+    """An advisory is checked iff one of its IDs keys an entry with a usable pattern.
+
+    Args:
+        entry_key: The pattern-map key.
+        patterns_value: The entry's ``patterns`` value.
+        advisory: The reported advisory.
+        checked: Whether coverage must count it as checked.
+    """
+    patterns: dict = {entry_key: {"package": "pkg", "patterns": patterns_value}}
+    cov = cve.coverage(patterns, [advisory])
+    assert (cov.checked == [advisory]) is checked
+    assert (cov.unchecked == [advisory]) is not checked
+
+
+def test_scan_skips_a_bad_regex_instead_of_crashing(tmp_path: Path) -> None:
+    """A regex that does not compile is unusable, not a traceback; good ones run."""
+    _write_map(
+        tmp_path,
+        "['CVE-1']\npackage = \"lxml\"\npatterns = ['(unclosed', 'lxml\\.etree']\n",
     )
-    monkeypatch.setattr("sys.argv", ["verify-forge-cve-usage"])
-    assert cve.main() == 0
+    _write_src(tmp_path, "import lxml.etree\n")
+    findings = cve.scan(tmp_path, cve.load_patterns(tmp_path), {"CVE-1"})
+    assert [(f.cve, f.line) for f in findings] == [("CVE-1", 1)]
+
+
+def test_main_with_only_a_bad_regex_reports_not_checked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An entry whose only pattern is malformed leaves its CVE NOT checked, exit 1."""
+    _write_map(tmp_path, "['CVE-2024-0001']\npackage = \"lxml\"\npatterns = ['(']\n")
+    _write_src(tmp_path, "import lxml.etree\n")
+    rc, log = _run_main_on(monkeypatch, tmp_path, _report(_LXML_ADVISORY))
+    assert rc == 1
+    assert "Checked 0 of 1 reported CVEs" in log
+    assert "PYSEC-2024-1 (lxml)" in log
 
 
 # ---------------------------------------------------------------------------

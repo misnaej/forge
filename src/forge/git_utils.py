@@ -1813,6 +1813,27 @@ def merge_base_with_head(root: Path | None, base_branch: str) -> str:
     return _run_git("merge-base", ref, "HEAD", cwd=root)
 
 
+def fork_point_time(root: Path | None, base_branch: str) -> int | None:
+    """Return when this branch left its base: the merge-base's commit time.
+
+    Args:
+        root: Git repo root; ``None`` uses the cached process-wide
+            :func:`repo_root`.
+        base_branch: Base-branch name, resolved origin-first by
+            :func:`merge_base_with_head`.
+
+    Returns:
+        The merge-base's committer time in epoch seconds, or ``None`` when
+        no base ref resolves, the histories share no merge-base, or git
+        prints something that is not a timestamp.
+    """
+    fork = merge_base_with_head(root, base_branch)
+    if not fork:
+        return None
+    stamp = _run_git("show", "-s", "--format=%ct", fork, cwd=root)
+    return int(stamp) if stamp.isdigit() else None
+
+
 def get_tree_sha(repo_root: Path, ref: str) -> str | None:
     """Return the git **tree** SHA of *ref*, or ``None`` when unresolvable.
 

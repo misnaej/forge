@@ -12,14 +12,14 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+import pytest
+
 from forge import pip_audit_json, precommit
 from tests.conftest import FakeProc
 
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 def _data_with_n_vulns(n: int) -> dict:
@@ -172,6 +172,78 @@ def test_ids_from_data_dependencies_not_list_gives_empty() -> None:
 def test_ids_from_data_empty_deps_gives_empty() -> None:
     """An empty dependencies list yields an empty set."""
     assert pip_audit_json.ids_from_data({"dependencies": []}) == set()
+
+
+# One report exercising every malformed shape the walkers tolerate at once.
+_MALFORMED_REPORT: dict = {
+    "dependencies": [
+        "not-a-dict",
+        {"version": "1.0", "vulns": [{"id": "PYSEC-A", "aliases": "nope"}]},
+        {
+            "name": "pkg",
+            "vulns": [
+                "not-a-dict",
+                {"id": 42, "aliases": ["CVE-B", None, ""]},
+                {"id": "", "aliases": []},
+                {"id": "PYSEC-C"},
+            ],
+        },
+        {"name": "clean", "vulns": "not-a-list"},
+    ]
+}
+
+
+def test_ids_from_data_output_pinned_on_a_malformed_report() -> None:
+    """Re-implementing on ``advisories`` leaves the ID set exactly as it was."""
+    assert pip_audit_json.ids_from_data(_MALFORMED_REPORT) == {
+        "PYSEC-A",
+        "CVE-B",
+        "PYSEC-C",
+    }
+
+
+def test_advisories_one_record_per_reported_vuln_on_a_malformed_report() -> None:
+    """Every dict vuln is a record — an ID-less one too — with guards applied."""
+    assert pip_audit_json.advisories(_MALFORMED_REPORT) == [
+        pip_audit_json.Advisory(package="?", id="PYSEC-A", aliases=()),
+        pip_audit_json.Advisory(package="pkg", id="", aliases=("CVE-B",)),
+        pip_audit_json.Advisory(package="pkg", id="", aliases=()),
+        pip_audit_json.Advisory(package="pkg", id="PYSEC-C", aliases=()),
+    ]
+
+
+def test_advisory_ids_is_primary_plus_aliases_without_blanks() -> None:
+    """``Advisory.ids`` is the one "answers to this ID" set both CVE paths use."""
+    adv = pip_audit_json.Advisory(package="p", id="", aliases=("CVE-1", "GHSA-x"))
+    assert adv.ids() == {"CVE-1", "GHSA-x"}
+
+
+# ---------------------------------------------------------------------------
+# scan_postdates_fork
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("scanned_at", "forked_at", "expected"),
+    [
+        pytest.param(1_700_000_001.0, 1_700_000_000, True, id="after-fork"),
+        pytest.param(1_700_000_000.0, 1_700_000_000, False, id="fork-second"),
+        pytest.param(1_699_999_000.0, 1_700_000_000, False, id="before-fork"),
+        pytest.param(None, 1_700_000_000, False, id="scan-unknown"),
+        pytest.param(1_700_000_001.0, None, False, id="fork-unknown"),
+    ],
+)
+def test_scan_postdates_fork(
+    *, scanned_at: float | None, forked_at: int | None, expected: bool
+) -> None:
+    """Only a known scan strictly later than a known fork counts.
+
+    Args:
+        scanned_at: The scan time.
+        forked_at: The fork-point commit time.
+        expected: The verdict.
+    """
+    assert pip_audit_json.scan_postdates_fork(scanned_at, forked_at) is expected
 
 
 # ---------------------------------------------------------------------------

@@ -72,7 +72,6 @@ import hashlib
 import importlib.metadata
 import json
 import logging
-import math
 import os
 import re
 import shlex
@@ -109,6 +108,7 @@ from forge.git_utils import (
     emit,
     fetch_tags_best_effort,
     forge_cli_argv,
+    fork_point_time,
     get_modified_files,
     get_untracked_files,
     is_ancestor,
@@ -527,7 +527,7 @@ def _check_clone_identity(repo_root: Path) -> StepResult | None:
             f"⛔ The active forge-scripts install is editable from {shown[0]}, not "
             f"this clone ({shown[1]}). Every gate would run the other "
             "checkout's code. Activate this clone's env or refresh the install "
-            f"here ({_install_refresh_hint(repo_root)})."
+            f"here ({install_refresh_hint(repo_root)})."
         ),
     )
 
@@ -716,7 +716,7 @@ def step_env_sync(repo_root: Path) -> StepResult:
                     f"console script(s) not registered — {', '.join(missing)}.\n\n"
                     "A [project.scripts] entry was added since you last installed, so "
                     "the gate may run old code. Refresh the install "
-                    f"({_install_refresh_hint(repo_root)}) to register the new "
+                    f"({install_refresh_hint(repo_root)}) to register the new "
                     "entry point(s)."
                 ),
                 non_blocking=not blocking,
@@ -731,7 +731,7 @@ def step_env_sync(repo_root: Path) -> StepResult:
             output=(
                 f"⚠️  Installed forge-scripts {have} is behind the pin "
                 f"forge-scripts=={pinned}. Refresh the install "
-                f"({_install_refresh_hint(repo_root)}) to install the pinned "
+                f"({install_refresh_hint(repo_root)}) to install the pinned "
                 "version."
             ),
             non_blocking=True,
@@ -1312,11 +1312,6 @@ def step_foundation_md_check(repo_root: Path) -> StepResult:
 # to surface.
 _PIP_AUDIT_LOUDNESS_THRESHOLD = 10
 
-# Sidecar holding pip-audit's parsed JSON, written by ``step_pip_audit`` and
-# reused by ``step_cve_usage`` so the two steps share one pip-audit scan per
-# commit instead of each hitting the OSV network independently (#78).
-PIP_AUDIT_SIDECAR_NAME = "pip_audit.json"
-
 # Matches a full ``pip-audit`` advisory ID:
 # - ``PYSEC-YYYY-N`` (year + sequence number, both digit-only)
 # - ``GHSA-xxxx-yyyy-zzzz`` (three 4-char alphanumeric segments)
@@ -1346,69 +1341,6 @@ def _count_pip_audit_advisories(output: str) -> int:
 
 
 _PIP_AUDIT_FORCE_ENV = "FORGE_PIP_AUDIT_FORCE"
-#: A stamp dated further ahead than this is treated as invalid rather
-#: than allowed to suppress scans indefinitely (mirrors smart_test).
-_PIP_AUDIT_FUTURE_TOLERANCE_S = 300.0
-#: Sidecar field recording when the scan ran (epoch seconds, UTC).
-_PIP_AUDIT_SCANNED_AT_KEY = "scanned_at"
-
-
-def _scan_time_value(value: object) -> float | None:
-    """Return *value* as epoch seconds, or ``None`` when it is not a usable time.
-
-    Args:
-        value: The sidecar's recorded ``scanned_at`` field.
-
-    Returns:
-        A finite float, or ``None`` for a bool, a non-number, a non-finite
-        number, or an integer too large to be a float.
-    """
-    # bool is an int subclass: `true` must not read as 1970-01-01T00:00:01.
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    try:
-        seconds = float(value)
-    except OverflowError:
-        return None
-    return seconds if math.isfinite(seconds) else None
-
-
-def _sidecar_scanned_at(repo_root: Path) -> float | None:
-    """Return when the last CVE scan ran, the one reader every age check uses.
-
-    The time recorded in the payload wins because a file's modification
-    time does not survive a copy or a CI cache restore — both reset it to
-    the moment of the copy and manufacture a fresh-looking scan that never
-    ran. The modification time is used only for a sidecar written before
-    the field existed; a field that is present but unusable is not a
-    reason to trust the file's timestamp instead.
-
-    Args:
-        repo_root: Git repo root.
-
-    Returns:
-        Epoch seconds, or ``None`` when the sidecar is unreadable, its
-        recorded time is unusable, or the time is dated further ahead than
-        :data:`_PIP_AUDIT_FUTURE_TOLERANCE_S` — each means scan, which is
-        the safe direction (a future stamp would otherwise suppress scans
-        indefinitely).
-    """
-    data = _read_audit_sidecar(repo_root)
-    if data is None:
-        return None
-    if _PIP_AUDIT_SCANNED_AT_KEY in data:
-        scanned_at = _scan_time_value(data[_PIP_AUDIT_SCANNED_AT_KEY])
-        if scanned_at is None:
-            return None
-    else:
-        sidecar = code_health_dir(repo_root) / PIP_AUDIT_SIDECAR_NAME
-        try:
-            scanned_at = sidecar.stat().st_mtime
-        except OSError:
-            return None
-    if scanned_at - datetime.now(tz=UTC).timestamp() > _PIP_AUDIT_FUTURE_TOLERANCE_S:
-        return None
-    return scanned_at
 
 
 def _pip_audit_scan_age_hours(repo_root: Path) -> float | None:
@@ -1418,10 +1350,11 @@ def _pip_audit_scan_age_hours(repo_root: Path) -> float | None:
         repo_root: Git repo root.
 
     Returns:
-        Age in hours, or ``None`` when :func:`_sidecar_scanned_at` has no
-        trustworthy time.
+        Age in hours, or ``None`` when
+        :func:`forge.pip_audit_json.sidecar_scanned_at` has no trustworthy
+        time.
     """
-    scanned_at = _sidecar_scanned_at(repo_root)
+    scanned_at = pip_audit_json.sidecar_scanned_at(repo_root)
     if scanned_at is None:
         return None
     return max(0.0, (datetime.now(tz=UTC).timestamp() - scanned_at) / 3600.0)
@@ -1451,13 +1384,9 @@ def _reuse_reason_branch(repo_root: Path) -> str | None:
     """Return why a branch-cadence scan may be reused, or ``None`` to scan.
 
     "Once per branch" means the sidecar was written after this branch
-    left its base. An unresolvable fork point scans.
-
-    The two timestamps come from different clocks — the scan's from the
-    machine that ran it, the fork's from whoever authored that commit — so
-    a clock running ahead could date a scan after a fork it actually
-    preceded. :func:`_sidecar_scanned_at` rejects a future-dated scan,
-    which bounds that window.
+    left its base (:func:`forge.pip_audit_json.scan_postdates_fork`, the
+    same test ``forge-pr-create`` refuses on). An unresolvable fork point
+    scans.
 
     Args:
         repo_root: Git repo root.
@@ -1465,14 +1394,9 @@ def _reuse_reason_branch(repo_root: Path) -> str | None:
     Returns:
         A phrase for the reuse notice, or ``None``.
     """
-    fork = merge_base_with_head(repo_root, config.load_config(repo_root).base_branch)
-    if not fork:
-        return None
-    forked_at = run_git("show", "-s", "--format=%ct", fork, cwd=repo_root, check=False)
-    if not forked_at.strip().isdigit():
-        return None
-    scanned_at = _sidecar_scanned_at(repo_root)
-    if scanned_at is None or scanned_at <= float(forked_at.strip()):
+    forked_at = fork_point_time(repo_root, config.load_config(repo_root).base_branch)
+    scanned_at = pip_audit_json.sidecar_scanned_at(repo_root)
+    if not pip_audit_json.scan_postdates_fork(scanned_at, forked_at):
         return None
     return "already scanned on this branch"
 
@@ -1484,10 +1408,9 @@ def _pip_audit_reuse_reason(repo_root: Path) -> str | None:
     database, neither of which changes because a commit happened — so
     running it on every commit spends network time on an answer that
     cannot have moved. It runs once per branch by default; PR
-    finalization runs it forced. That last part is a convention the
-    `/pr` skill follows, not something this module enforces — a branch
-    that never reaches finalization is scanned once, which
-    ``docs/security.md`` states plainly.
+    finalization runs it forced. This module does not enforce the
+    forced run — ``forge-pr-create`` does, by refusing to publish a
+    branch whose sidecar holds no scan since the branch left its base.
 
     Every uncertain case scans: no stamp, an unreadable one, a
     future-dated one, an unknown cadence.
@@ -1618,7 +1541,7 @@ def _reused_pip_audit(repo_root: Path, *, blocking: bool) -> StepResult | None:
     notice = _pip_audit_reuse_reason(repo_root)
     if notice is None:
         return None
-    data = _read_audit_sidecar(repo_root)
+    data = pip_audit_json.read_sidecar(repo_root)
     if data is None or (blocking and pip_audit_json.has_vulns(data)):
         return None
     return _pip_audit_result(data, blocking=blocking, notice=notice)
@@ -1663,30 +1586,6 @@ def _pip_audit_result(data: dict, *, blocking: bool, notice: str = "") -> StepRe
     )
 
 
-def _read_audit_sidecar(repo_root: Path) -> dict | None:
-    """Return the sidecar's parsed scan, or ``None`` when it cannot be trusted.
-
-    Missing, unreadable, malformed, or not a pip-audit report (a JSON
-    object with a ``dependencies`` list) all read as ``None`` — the
-    caller then scans, the same safe direction an unreadable timestamp
-    takes. A skeletal ``{}`` would otherwise render as a clean scan.
-
-    Args:
-        repo_root: Git repo root.
-
-    Returns:
-        The parsed scan data, or ``None``.
-    """
-    sidecar = code_health_dir(repo_root) / PIP_AUDIT_SIDECAR_NAME
-    try:
-        data = json.loads(sidecar.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    if isinstance(data, dict) and isinstance(data.get("dependencies"), list):
-        return data
-    return None
-
-
 def _write_audit_sidecar(repo_root: Path, data: dict) -> None:
     """Persist pip-audit's parsed JSON to the shared sidecar.
 
@@ -1699,15 +1598,19 @@ def _write_audit_sidecar(repo_root: Path, data: dict) -> None:
 
     The scan time is written into the payload (``scanned_at``) so the
     reuse cadence reads when the scan ran, not when the file was last
-    copied (:func:`_sidecar_scanned_at`). Every reader of the report looks
-    only at its ``dependencies`` list, so the extra key is invisible to them.
+    copied (:func:`forge.pip_audit_json.sidecar_scanned_at`). Every reader
+    of the report looks only at its ``dependencies`` list, so the extra key
+    is invisible to them.
 
     Args:
         repo_root: Git repo root.
         data: Parsed pip-audit JSON (``AuditRun.data``).
     """
-    path = code_health_dir(repo_root) / PIP_AUDIT_SIDECAR_NAME
-    payload = {**data, _PIP_AUDIT_SCANNED_AT_KEY: datetime.now(tz=UTC).timestamp()}
+    path = code_health_dir(repo_root) / pip_audit_json.SIDECAR_NAME
+    payload = {
+        **data,
+        pip_audit_json.SCANNED_AT_KEY: datetime.now(tz=UTC).timestamp(),
+    }
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(payload), encoding="utf-8")
@@ -1744,12 +1647,20 @@ def step_cve_usage(repo_root: Path) -> StepResult:
     routine case above) is the only way it goes stale, and even then this
     step reuses the prior scan rather than re-running one unnecessarily.
 
+    A run the CLI did not carry out (pattern map unparseable, pip-audit
+    unavailable) is recognised by the CLI's own
+    :data:`forge.pip_audit_json.CVE_USAGE_SKIP_MARKER` line, matched as a
+    whole line — never by a word that a package name or advisory text in
+    a real run's output could also contain.
+
     Args:
         repo_root: Git repo root.
 
     Returns:
         ``StepResult`` for this step; ``non_blocking=True`` whenever the
-        check actually ran, ``skipped`` when there is no pattern map.
+        check actually ran, ``skipped`` when there is no pattern map or the
+        CLI reports it did not run. A run that leaves any reported CVE
+        unchecked exits non-zero, so it renders ``WARN``.
     """
     if not (repo_root / "cve_usage_patterns.toml").is_file():
         return StepResult(
@@ -1760,11 +1671,13 @@ def step_cve_usage(repo_root: Path) -> StepResult:
         )
     require_cli("verify-forge-cve-usage", caller="forge-precommit")
     cmd = ["verify-forge-cve-usage"]
-    sidecar = code_health_dir(repo_root) / PIP_AUDIT_SIDECAR_NAME
+    sidecar = code_health_dir(repo_root) / pip_audit_json.SIDECAR_NAME
     if sidecar.is_file():
         cmd += ["--audit-json", str(sidecar)]
     passed, output = _run(cmd, cwd=repo_root)
-    skipped = "skipped" in output
+    skipped = pip_audit_json.CVE_USAGE_SKIP_MARKER in (
+        line.strip() for line in output.splitlines()
+    )
     return StepResult(
         name="cve_usage",
         passed=passed,
@@ -2267,7 +2180,7 @@ def step_regen_docs(repo_root: Path) -> StepResult:
             "⚠️ install is stale — declared console script(s) absent "
             "from the install that docs/cli-reference.md is regenerated "
             f"from: {', '.join(stale)}. Refresh the install "
-            f"({_install_refresh_hint(repo_root)}) and re-commit to include them."
+            f"({install_refresh_hint(repo_root)}) and re-commit to include them."
         )
     # Launched from the running install, never by PATH name: on a machine
     # with several forge checkouts the bare name can resolve to another
@@ -2362,14 +2275,14 @@ def _held_cli_reference(repo_root: Path, *, stale: bool, built: list[str]) -> st
         f"install, it would drop {len(lost)} section(s) HEAD documents: "
         f"{', '.join(lost)}. The regenerated file is left modified in your "
         "worktree, unstaged; this step did not restore it. Refresh the "
-        f"install ({_install_refresh_hint(repo_root)}), regenerate the doc "
+        f"install ({install_refresh_hint(repo_root)}), regenerate the doc "
         f"(`forge-gen-cli-reference`), stage it (`git add {CLI_REFERENCE_DOC}`) "
         "and commit again; with the doc left unstaged this step treats the "
         "commit as partial and skips."
     )
 
 
-def _install_refresh_hint(repo_root: Path) -> str:
+def install_refresh_hint(repo_root: Path) -> str:
     """Name the command that refreshes this repo's install.
 
     Forge's own repo has one sanctioned bootstrap; a consumer installs
