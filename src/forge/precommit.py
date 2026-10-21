@@ -2249,7 +2249,7 @@ def _check_docs(repo_root: Path, decisions: list[RegenDecision]) -> _RegenOutcom
                 "some CLI help is unavailable or declared console scripts are "
                 "missing from it. Do not regenerate it from this install (that "
                 "would drop sections); refresh the install "
-                f"({_install_refresh_hint(repo_root)}) and commit again."
+                f"({install_refresh_hint(repo_root)}) and commit again."
             )
         else:
             advice = (
@@ -2315,7 +2315,7 @@ def _generate_docs(repo_root: Path, decisions: list[RegenDecision]) -> _RegenOut
             sections.append(
                 f"⚠️ {d.rel} left untouched — some CLI help could not be "
                 "captured, which usually means a stale install. Refresh the "
-                f"install ({_install_refresh_hint(repo_root)}) and commit again."
+                f"install ({install_refresh_hint(repo_root)}) and commit again."
             )
     held = _held_cli_reference(repo_root, stale=bool(stale), built=built)
     recordable = [rel for rel in built if not (held and rel == CLI_REFERENCE_DOC)]
