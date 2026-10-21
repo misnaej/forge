@@ -2729,6 +2729,32 @@ def test_delete_remote_branch_with_stale_lease_keeps_ref(
     assert _bare_has(bare, "moved-b")
 
 
+def test_delete_remote_branch_remote_rejection_is_not_stale_lease(
+    tmp_path: Path,
+) -> None:
+    """A server hook declining the delete is a plain failure, not "moved".
+
+    Only git's lease text (``stale info``) means the branch moved; a
+    ``[remote rejected]`` from a pre-receive hook must not be reported as
+    a branch left alone because it moved. Uses its own remote: the hook
+    would refuse every later push to the shared module fixture.
+    """
+    work, bare = _init_single_track_repo(tmp_path)
+    sha = _push_new_branch(work, "guarded-c")
+    hook = bare / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\necho 'protected branch hook declined' >&2\nexit 1\n")
+    hook.chmod(0o755)
+
+    result = git_utils.delete_remote_branch(
+        work, "guarded-c", expected_sha=sha, base_branch="main"
+    )
+
+    assert result.ok is False
+    assert "remote rejected" in result.stderr
+    assert result.stale_lease is False
+    assert _bare_has(bare, "guarded-c")
+
+
 @pytest.mark.parametrize(
     ("branch", "expected_sha", "why"),
     [
@@ -2739,6 +2765,11 @@ def test_delete_remote_branch_with_stale_lease_keeps_ref(
         pytest.param("HEAD", "a" * 40, "not a plain branch", id="head"),
         pytest.param("a:b", "a" * 40, "not a plain branch", id="colon"),
         pytest.param("a b", "a" * 40, "not a plain branch", id="space"),
+        pytest.param("refs/heads/x", "a" * 40, "not a plain branch", id="refs-prefix"),
+        pytest.param("feat*", "a" * 40, "not a plain branch", id="glob-star"),
+        pytest.param("feat?", "a" * 40, "not a plain branch", id="glob-question"),
+        pytest.param("feat[ab]", "a" * 40, "not a plain branch", id="glob-bracket"),
+        pytest.param("a..b", "a" * 40, "not a plain branch", id="dot-dot"),
         pytest.param("x", "abc123", "not a full id", id="short-sha"),
         pytest.param("x", "A" * 40, "not a full id", id="upper-sha"),
         pytest.param("x", "a" * 41, "not a full id", id="41-hex"),

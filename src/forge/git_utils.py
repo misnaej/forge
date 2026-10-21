@@ -1285,8 +1285,9 @@ class PushResult:
             (timed out, could not start, or the arguments were refused).
         stderr: Git's error output, or why the push never ran.
         stale_lease: ``True`` only for a :func:`delete_remote_branch` that
-            git rejected because the remote branch no longer pointed at the
-            expected commit — the branch moved and was left alone.
+            git rejected with its lease text (``stale info``): the remote
+            branch no longer pointed at the expected commit, so it moved and
+            was left alone. Any other rejection leaves it ``False``.
     """
 
     ok: bool
@@ -1488,7 +1489,13 @@ def _refuse_delete_target(
     reason = None
     if branch == base_branch:
         reason = f"refused to delete the base branch {branch!r}"
-    elif not branch or branch == "HEAD" or ":" in branch or re.search(r"\s", branch):
+    elif (
+        not branch
+        or branch == "HEAD"
+        or branch.startswith("refs/")
+        or ".." in branch
+        or re.search(r"[\s:*?\[]", branch)
+    ):
         reason = f"refused a branch name that is not a plain branch: {branch!r}"
     elif not _FULL_SHA_RE.fullmatch(expected_sha):
         reason = f"refused an expected sha that is not a full id: {expected_sha!r}"
@@ -1516,9 +1523,10 @@ def delete_remote_branch(
     ``--force``, and rewrites no history. The lease is a compare-and-swap
     guard, not a force — git refuses the delete when the remote branch has
     moved past the commit the caller verified, so work pushed after the
-    merge survives. Git's rejection is classified here
-    (:attr:`PushResult.stale_lease`) so callers report "moved since merge,
-    left alone" rather than a generic failure. The base-branch and name
+    merge survives. A lease rejection — git's ``stale info`` — is classified
+    here (:attr:`PushResult.stale_lease`) so callers report "moved since
+    merge, left alone"; every other rejection, such as a server-side hook
+    declining the delete, stays a plain failure. The base-branch and name
     checks live in this seam, not only in a Claude Code hook, because a
     hook sees the command an agent types and never a CLI's own
     subprocesses.
@@ -1533,7 +1541,8 @@ def delete_remote_branch(
     Returns:
         The outcome. Refused without running git when *remote* or
         *branch* starts with ``-`` or ``+``; when *branch* is the base
-        branch; when *branch* is empty, ``HEAD``, or contains ``:`` or
+        branch; when *branch* is empty, ``HEAD``, starts with ``refs/``, or
+        contains ``:``, ``..``, a glob character (``*`` ``?`` ``[``) or
         whitespace; or when *expected_sha* is not a full 40- or 64-digit
         lowercase hex object id.
     """
@@ -1546,7 +1555,10 @@ def delete_remote_branch(
     result = _push_refspec(repo_root, remote, f":{ref}", lease=f"{ref}:{expected_sha}")
     if result.ok or result.returncode is None:
         return result
-    stale = "stale info" in result.stderr or "rejected" in result.stderr
+    # Only git's lease text means "moved since merge": any other rejection
+    # (`! [remote rejected] … (protected branch hook declined)`) is a plain
+    # failure the caller must not report as a branch that merely moved.
+    stale = "stale info" in result.stderr
     return PushResult(
         ok=False,
         returncode=result.returncode,

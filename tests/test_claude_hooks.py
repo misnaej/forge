@@ -2268,6 +2268,23 @@ def test_raw_git_env_prefix_still_bypassable_slips_agent_bypass() -> None:
         pytest.param("git push origin +:feature", 2, id="plus-empty-src"),
         pytest.param("git push --mirror origin", 2, id="mirror"),
         pytest.param("git push --prune origin", 2, id="prune"),
+        pytest.param("git push --m origin", 2, id="mirror-shortest-prefix"),
+        pytest.param("git push --mi origin", 2, id="mirror-prefix"),
+        pytest.param("git push origin :feat*", 2, id="empty-src-glob"),
+        pytest.param("git push origin $(echo :foo)", 2, id="dynamic-subst"),
+        pytest.param("git push origin `echo :foo`", 2, id="dynamic-backtick"),
+        pytest.param("x=:foo; git push origin $x", 2, id="dynamic-var"),
+        pytest.param("g=git; $g push origin :foo", 2, id="dynamic-git-var"),
+        pytest.param("git push origin $(cat f)", 2, id="dynamic-cat"),
+        pytest.param("xargs git push origin", 2, id="dynamic-xargs"),
+        pytest.param(
+            "gh api -X DELETE repos/o/r/git/refs/heads/foo", 2, id="gh-api-delete-ref"
+        ),
+        pytest.param(
+            "gh api --method DELETE repos/o/r/branches/foo",
+            2,
+            id="gh-api-delete-branch",
+        ),
         pytest.param("git push -u origin feature-d", 0, id="branch-with-d"),
         pytest.param("git push origin HEAD", 0, id="plain-push"),
     ],
@@ -2276,8 +2293,11 @@ def test_raw_git_commit_agent_branch_deleting_push(command: str, expected: int) 
     """The commit agent pushes work but never deletes a remote branch.
 
     Only option tokens and empty-source refspecs count, so a branch whose
-    name contains ``d`` and a ``-u`` push stay allowed. The refusal names
-    the sanctioned path for merged branches and the human escape.
+    name contains ``d`` and a ``-u`` push stay allowed. A push whose words
+    are built at run time (a variable, a substitution, ``xargs``, git
+    itself behind a variable) cannot be judged and is refused, as is a
+    ``gh api`` DELETE of a branch. The refusal names the sanctioned path
+    for merged branches and the human escape.
 
     Args:
         command: The push the commit agent runs.
@@ -2290,6 +2310,11 @@ def test_raw_git_commit_agent_branch_deleting_push(command: str, expected: int) 
     if expected == 2:
         assert "forge-next-prep --prune-remote" in proc.stderr
         assert f"! {command}" in proc.stderr
+
+
+def test_raw_git_gh_api_read_allowed_outside_commit_agent() -> None:
+    """The gh-api branch-delete rule is the commit agent's; a GET is untouched."""
+    assert _run_hook(_RAW_GIT, "gh api repos/o/r/branches/foo") == 0
 
 
 def test_branch_deletion_still_guards_protected_branch_for_non_agents() -> None:

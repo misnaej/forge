@@ -28,8 +28,13 @@ Operations (in order, each idempotent):
    open, and origin's live tip still equals that PR's head commit. The
    delete is lease-pinned to that commit, so a branch that moved since
    the merge is reported and left alone; the base branch and the branch
-   ``origin/HEAD`` names are never touched. When ``gh`` cannot answer,
-   the step is skipped with a warning — never read as "nothing to prune".
+   ``origin/HEAD`` names are never touched. A branch whose PR state
+   ``gh`` cannot report is skipped with a warning — never read as
+   "nothing to prune"; if ``gh`` is missing, unauthenticated or times
+   out, the run stops there and deletes nothing further, and if
+   ``git ls-remote`` fails nothing is deleted. At most 50 branches are
+   examined per run (in name order); the rest are reported unexamined.
+   A deleted branch is restorable from its PR page.
 
 Exits 0 on success, 1 if the target branch can't fast-forward
 (divergent state).

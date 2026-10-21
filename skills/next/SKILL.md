@@ -40,7 +40,7 @@ Stop immediately and report if any step fails.
      fallback). On a repo with no plugin manifest, the CLI warns and
      skips the tag step — per-merge tagging is not a consumer pattern.
    - Deletes local branches with `[origin/...: gone]` tracking via safe `git branch -d`. Branches with unmerged commits are reported, not deleted by the CLI — the skill then `-D`s any whose PR is confirmed merged (the squash-merge case `-d` cannot detect; see Important Rules). Use `--no-prune-branches` to skip.
-   - `--prune-remote` (always passed): deletes origin branches whose same-repo PR merged into the base branch and whose tip is unchanged since, lease-pinned to the merged commit. Branches with an open PR, no merged PR, or a moved tip are reported and left alone; when `gh` cannot answer, the step warns and deletes nothing. Relay what it reports.
+   - `--prune-remote` (always passed): deletes origin branches whose same-repo PR merged into the base branch and whose tip is unchanged since, lease-pinned to the merged commit. Branches with an open PR, no merged PR, or a moved tip are reported and left alone; the base branch and the branch `origin/HEAD` names are never touched. A branch whose PR state `gh` cannot report is skipped with a warning; if `gh` is missing, unauthenticated or times out, the run stops there and deletes nothing further, and if `git ls-remote` fails nothing is deleted. At most 50 branches are examined per run — the rest are reported unexamined. A deleted branch is restorable from its PR page. Relay what it reports.
    - Exits non-zero (1) when main cannot fast-forward — stop and report.
 
 3. **Confirm clean state**
