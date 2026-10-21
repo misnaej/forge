@@ -8566,12 +8566,19 @@ def test_guards_read_each_shell_word_whole_and_assembled_text_joined(
 ) -> None:
     """SCENARIO: a guard reads a word, and a joined command, as the shell does.
 
+    The protected-branch rows run as the commit agent, so the verdict does
+    not depend on which branch the test checkout is on (CI runs on `main`)
+    and only the destination check is under test.
+
     Args:
         hook: Guard hook under test.
         command: The shell command it judges.
         expected: Its verdict (2 blocks, 0 allows).
     """
-    assert _run_hook(hook, command) == expected
+    options = (
+        HookOptions(agent_type="forge:git-commit-push") if hook == _PROTECTED else None
+    )
+    assert _run_hook(hook, command, options=options) == expected
 
 
 @pytest.mark.parametrize(
