@@ -9457,6 +9457,32 @@ _PLAN_LABEL_WRITES = [
         id="rest-unknowable-method",
     ),
     pytest.param('gh api graphql -f query=" $Q"', id="graphql-unknowable-query"),
+    # No bracket counting: a `)` in a backtick, a case pattern or a `${…}`
+    # never ends the call early, and a nested gh call never hides the rest.
+    pytest.param(
+        "gh api repos/o/r/issues/5 -f x=`echo )` -f labels[]=plan-ready",
+        id="backtick-close-paren",
+    ),
+    pytest.param(
+        "gh issue edit 5 --body $(case a in a) :;; esac) --add-label plan-ready",
+        id="case-pattern-close-paren",
+    ),
+    pytest.param(
+        "gh issue edit 5 --body ${y:-)} --add-label plan-ready",
+        id="parameter-default-close-paren",
+    ),
+    pytest.param(
+        "gh api -X PATCH repos/o/r/issues/5 -f labels[]=plan-ready -f x=${y:-(} ; "
+        "gh api -X GET repos/o/r/issues/6",
+        id="later-get-never-cancels-a-write",
+    ),
+    pytest.param(
+        'gh issue edit 5 --title "$(gh --version)" --add-label plan-ready',
+        id="nested-gh-call",
+    ),
+    pytest.param(
+        "gh issue edit 5 --add-label plan-ready; echo done", id="separator-after-label"
+    ),
     *(
         pytest.param(
             f"gh api graphql -f query='mutation{{{name}(input:{{}}){{x}}}}'",
@@ -9689,6 +9715,11 @@ def test_plan_mint_reads_the_body_file(
             "2026-10-21'",
             id="sentinel-pickup",
         ),
+        pytest.param(
+            "gh issue comment 5 --body \"$(cat <<'EOF'\n[sentinel] taken up (x) — "
+            'branch fix/x\nEOF\n)"',
+            id="sentinel-pickup-heredoc",
+        ),
         pytest.param("gh issue comment 5 --body '[sentinel] PR #7 opened'", id="pr"),
         pytest.param(
             "gh issue comment 5 --body "
@@ -9746,6 +9777,19 @@ def test_plan_mint_reads_the_body_file(
             "--label bug",
             id="create-heredoc-body-other-label",
         ),
+        # A segment runs to the next gh call; trailing words of another
+        # command are never read as this call's labels or endpoints.
+        pytest.param(
+            "gh api repos/o/r/issues/7/comments -f body=x; gh issue list",
+            id="comment-then-list",
+        ),
+        pytest.param(
+            "gh issue edit 5 --add-label bug; echo plan-ready", id="label-then-echo"
+        ),
+        pytest.param(
+            "gh api -X GET repos/o/r/issues/5; echo state=closed", id="get-then-echo"
+        ),
+        pytest.param("gh label create bug; echo plan-ready", id="label-create-echo"),
         pytest.param("gh issue edit --help", id="help"),
         pytest.param(
             'echo "gh issue edit 5 --add-label plan-ready"', id="quoted-mention"
@@ -9910,6 +9954,32 @@ _ISSUE_CLOSE = "block_issue_close.sh"
             id="graphql-substituted-query",
         ),
         pytest.param('gh api graphql -f query=" $Q"', id="graphql-blank-then-variable"),
+        pytest.param(
+            "gh api repos/o/r/issues/5 -f x=`echo )` -f state=closed",
+            id="backtick-close-paren",
+        ),
+        pytest.param(
+            "gh api repos/o/r/issues/5 -f x=$(case a in a) echo;; esac) "
+            "-f state=closed",
+            id="case-pattern-close-paren",
+        ),
+        pytest.param(
+            "gh api repos/o/r/issues/5 -f x=${y:-)} -f state=closed",
+            id="parameter-default-close-paren",
+        ),
+        pytest.param(
+            "gh api -X PATCH repos/o/r/issues/5 -f state=closed -f x=${y:-(} ; "
+            "gh api -X GET repos/o/r/issues/6",
+            id="later-get-never-cancels-a-write",
+        ),
+        pytest.param(
+            'gh api -X PATCH repos/o/r/issues/5 -f x="$(gh --version)" -f state=closed',
+            id="nested-gh-call",
+        ),
+        pytest.param(
+            "gh api -X PATCH repos/o/r/issues/5 -f state=closed; echo done",
+            id="separator-after-state",
+        ),
         *(
             pytest.param(
                 f"gh api graphql -f query='mutation{{{name}(input:{{}}){{x}}}}'",
@@ -10027,6 +10097,18 @@ def test_issue_close_reads_an_input_file(
         pytest.param(
             "gh api graphql -f query='query($id:ID!){node(id:$id){id}}' -f id=I",
             id="graphql-query-with-variables",
+        ),
+        pytest.param(
+            "gh issue comment 5 --body \"$(cat <<'EOF'\n[sentinel] taken up (x)\n"
+            'EOF\n)"',
+            id="sentinel-heredoc-comment",
+        ),
+        pytest.param(
+            "gh api repos/o/r/issues/7/comments -f body=x; gh issue list",
+            id="comment-then-list",
+        ),
+        pytest.param(
+            "gh api -X GET repos/o/r/issues/5; echo state=closed", id="get-then-echo"
         ),
         pytest.param(
             "gh api graphql -f query='mutation{deleteIssueComment(input:{}){x}}'",

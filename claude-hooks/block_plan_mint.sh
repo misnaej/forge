@@ -180,19 +180,21 @@ _unknowable() {
     return 1
 }
 
-# _endpoint <word…> — the call's endpoint: the first positional word
-# after `api`, skipping options and the values they take.
-_endpoint() {
+# _endpoints <word…> — set EPS to each call's endpoint: the first
+# positional word after each `api`, skipping options and their values.
+_endpoints() {
     local seen=0 skip=0 t
+    EPS=()
     for t in "$@"; do
         if [ "$skip" = 1 ]; then
             skip=0
             continue
         fi
-        if [ "$seen" = 0 ]; then
-            [ "$t" = api ] && seen=1
+        if [ "$t" = api ]; then
+            seen=1
             continue
         fi
+        [ "$seen" = 1 ] || continue
         case "$t" in
             -X | --method | -f | --raw-field | -F | --field | -H | --header | --input \
                 | -q | --jq | -t | --template | --hostname | --cache | -p | --preview)
@@ -200,40 +202,51 @@ _endpoint() {
                 ;;
             -*) ;;
             *)
-                printf '%s' "$t"
-                return 0
+                EPS+=("$t")
+                seen=0
                 ;;
         esac
     done
 }
 
 # _segments <regex> <text> — each call <regex> finds in <text>, one per
-# line: from the match to the first `;` `&` `|` `)` or newline outside a
-# `(…)` group. The --words view keeps a substitution's `(…)`, so an
-# option after `"$(date)"` or `"$(a; b)"` still belongs to the call.
+# line: from its match to the next gh call in <text>, or the end. No
+# bracket is counted: a `)` in a backtick, a case pattern or a `${…}`
+# desynchronises any counter. A segment may so run past its call's end,
+# which only adds what is judged — options are read as the values of the
+# call's own flags, so a trailing `echo plan-ready` is not a label. A gh
+# call nested in a substitution (`-f x="$(gh --version)" -f …`) ends a
+# segment early, so when <text> holds a `(` and more than one gh call, a
+# last line, marked by a leading \002, runs from the first match to the
+# end and is judged as one call carrying every endpoint in it.
 _segments() {
-    local offs
-    offs=$(LC_ALL=C grep -obE "$1" <<< "$2" | cut -d: -f1 | tr '\n' ' ') || true
-    [ -n "$offs" ] || return 0
-    LC_ALL=C awk -v offs="$offs" '
-        { s = s (NR > 1 ? "\n" : "") $0 }
+    local kinds anchors
+    kinds=$(LC_ALL=C grep -obE "$1" <<< "$2" | cut -d: -f1 | tr '\n' ' ') || true
+    [ -n "$kinds" ] || return 0
+    anchors=$(LC_ALL=C grep -obE "$GH_ANCHOR" <<< "$2" | cut -d: -f1 | tr '\n' ' ') || true
+    LC_ALL=C awk -v kinds="$kinds" -v anchors="$anchors" '
+        { s = s (NR > 1 ? " " : "") $0 }
         END {
-            n = split(offs, o, " ")
-            len = length(s)
-            for (k = 1; k <= n; k++) {
-                i = o[k] + 1
-                if (substr(s, i, 1) ~ /[;&|(]/) i++
-                start = i
-                depth = 0
-                for (; i <= len; i++) {
-                    c = substr(s, i, 1)
-                    if (c == "(") depth++
-                    else if (c == ")") { if (depth == 0) break; depth-- }
-                    else if (depth == 0 && (c == ";" || c == "&" || c == "|" || c == "\n")) break
-                }
-                out = substr(s, start, i - start)
-                gsub(/\n/, " ", out)
+            nk = split(kinds, k, " ")
+            na = split(anchors, a, " ")
+            j = 1
+            for (x = 1; x <= nk; x++) {
+                while (j <= na && a[j] + 0 <= k[x] + 0) j++
+                from = k[x] + 1
+                to = (j <= na) ? a[j] + 1 : length(s) + 1
+                if (substr(s, from, 1) ~ /[;&|(]/) from++
+                out = substr(s, from, to - from)
+                # A separator never belongs to a word: `plan-ready;` is
+                # `plan-ready`. A `(` stays, so a substitution stays visible.
+                gsub(/[;&|)]/, " ", out)
                 print out
+            }
+            if (na > 1 && index(s, "(") > 0) {
+                from = k[1] + 1
+                if (substr(s, from, 1) ~ /[;&|(]/) from++
+                out = substr(s, from)
+                gsub(/[;&|)]/, " ", out)
+                print "\002" out
             }
         }' <<< "$2"
 }
@@ -301,7 +314,7 @@ _label_values() {
 # --- A1: gh issue edit / create label values ------------------------------
 if [ "$IS_TRIAGE" != 1 ] && invoked "${GH_ANCHOR}issue[[:space:]]+${GH_OPTS}(edit|create)\b"; then
     while IFS= read -r seg; do
-        read -ra toks <<< "$seg"
+        read -ra toks <<< "${seg#$'\002'}"
         n=${#toks[@]}
         for ((i = 0; i < n; i++)); do
             t=${toks[i]}
@@ -321,17 +334,45 @@ fi
 
 # --- A1: gh label create / edit naming plan-ready -------------------------
 if [ "$IS_TRIAGE" != 1 ] && invoked "${GH_ANCHOR}label[[:space:]]+${GH_OPTS}(create|edit)\b"; then
-    if _segments "${GH_ANCHOR}label[[:space:]]+${GH_OPTS}(create|edit)\b" "$WORDS" \
-        | LC_ALL=C grep -qiE "(^|[[:space:]=${N}\"'])plan-ready([[:space:]${N}\"']|$)"; then
-        LABEL_WRITE="creating or renaming a label to plan-ready"
-    fi
+    # The name is the first plain word after `create` / `edit`, or a
+    # `--name` value — never any word the segment happens to hold.
+    while IFS= read -r seg; do
+        read -ra toks <<< "${seg#$'\002'}"
+        n=${#toks[@]}
+        want=0
+        for ((i = 0; i < n; i++)); do
+            t=${toks[i]}
+            val=""
+            case "$t" in
+                create | edit)
+                    want=1
+                    continue
+                    ;;
+                --name) val=${toks[i + 1]:-} ;;
+                --name=*) val=${t#*=} ;;
+                -c | --color | -d | --description | -R | --repo)
+                    i=$((i + 1))
+                    continue
+                    ;;
+                -*) continue ;;
+                *)
+                    [ "$want" = 1 ] || continue
+                    want=0
+                    val=$t
+                    ;;
+            esac
+            if [ -n "$val" ] && _label_values "$val"; then
+                LABEL_WRITE="creating or renaming a label to plan-ready"
+            fi
+        done
+    done < <(_segments "${GH_ANCHOR}label[[:space:]]+${GH_OPTS}(create|edit)\b" "$WORDS")
 fi
 
 # --- gh issue comment: a comment writer, with its body sources ------------
 if invoked "${GH_ANCHOR}issue[[:space:]]+${GH_OPTS}comment\b"; then
     COMMENT_WRITE=1
     while IFS= read -r seg; do
-        read -ra toks <<< "$seg"
+        read -ra toks <<< "${seg#$'\002'}"
         n=${#toks[@]}
         for ((i = 0; i < n; i++)); do
             t=${toks[i]}
@@ -349,48 +390,73 @@ fi
 
 # --- gh api: REST and GraphQL writes --------------------------------------
 if invoked "${GH_ANCHOR}api\b"; then
+    RE_LABELS="/labels([/?${N}]|$)"
+    RE_COMMENTS="issues/[^/${N}]+/comments([/?${N}]|$)|issues/comments/[^/${N}]+"
+    RE_ISSUE="/issues(/[^/?${N}]+)?/*([?${N}]|$)"
     while IFS= read -r seg; do
+        seg=${seg#$'\002'}
         read -ra toks <<< "$seg"
         n=${#toks[@]}
-        method=""
-        has_fields=0
+        # Any write wins: one PATCH/POST/PUT — or a method built at run
+        # time — anywhere in the segment makes it a write, and a GET
+        # elsewhere never cancels it. A call with no method is a POST
+        # once it carries a field or --input, judged per `api` word.
+        write=0
+        explicit=0
+        carries=0
         fields=()
         kinds=()
-        input=""
+        inputs=()
         for ((i = 0; i < n; i++)); do
             t=${toks[i]}
+            m=""
             case "$t" in
-                -X | --method) method=${toks[i + 1]:-} ;;
-                --method=*) method=${t#*=} ;;
-                -X?*) method=${t#-X} ;;
-                -f | --raw-field) has_fields=1; fields+=("${toks[i + 1]:-}"); kinds+=(raw) ;;
-                -F | --field) has_fields=1; fields+=("${toks[i + 1]:-}"); kinds+=(typed) ;;
-                --raw-field=*) has_fields=1; fields+=("${t#*=}"); kinds+=(raw) ;;
-                --field=*) has_fields=1; fields+=("${t#*=}"); kinds+=(typed) ;;
-                -f?*) has_fields=1; fields+=("${t#-f}"); kinds+=(raw) ;;
-                -F?*) has_fields=1; fields+=("${t#-F}"); kinds+=(typed) ;;
-                --input) has_fields=1; input=${toks[i + 1]:-} ;;
-                --input=*) has_fields=1; input=${t#*=} ;;
+                api)
+                    [ "$explicit" = 0 ] && [ "$carries" = 1 ] && write=1
+                    explicit=0
+                    carries=0
+                    ;;
+                -X | --method) m=${toks[i + 1]:-} ;;
+                --method=*) m=${t#*=} ;;
+                -X?*) m=${t#-X} ;;
+                -f | --raw-field) carries=1; fields+=("${toks[i + 1]:-}"); kinds+=(raw) ;;
+                -F | --field) carries=1; fields+=("${toks[i + 1]:-}"); kinds+=(typed) ;;
+                --raw-field=*) carries=1; fields+=("${t#*=}"); kinds+=(raw) ;;
+                --field=*) carries=1; fields+=("${t#*=}"); kinds+=(typed) ;;
+                -f?*) carries=1; fields+=("${t#-f}"); kinds+=(raw) ;;
+                -F?*) carries=1; fields+=("${t#-F}"); kinds+=(typed) ;;
+                --input) carries=1; inputs+=("${toks[i + 1]:-}") ;;
+                --input=*) carries=1; inputs+=("${t#*=}") ;;
             esac
+            if [ -n "$m" ]; then
+                explicit=1
+                case "${m^^}" in
+                    POST | PUT | PATCH) write=1 ;;
+                    *) _unknowable "$m" && write=1 ;;
+                esac
+            fi
         done
-        method=$(tr '[:lower:]' '[:upper:]' <<< "$method")
-        if [ -z "$method" ]; then
-            [ "$has_fields" = 1 ] && method=POST || method=GET
-        fi
-        # A method built at run time may be a write.
-        _unknowable "$method" && method=POST
-        case "$method" in POST | PUT | PATCH) ;; *) continue ;; esac
-        # An endpoint built at run time may be any of the writes below.
+        [ "$explicit" = 0 ] && [ "$carries" = 1 ] && write=1
+        [ "$write" = 1 ] || continue
+        # Every endpoint in the segment (one per `api` word; a merged
+        # segment carries several) is judged.
+        _endpoints "${toks[@]}"
         ep_unknown=0
-        _unknowable "$(_endpoint "${toks[@]}")" && ep_unknown=1
+        graphql=0
+        label_seg=0
+        comment_seg=0
+        issue_seg=0
+        for ep in "${EPS[@]}"; do
+            _unknowable "$ep" && ep_unknown=1
+            [ "$ep" = graphql ] && graphql=1
+            [[ "$ep" =~ $RE_LABELS ]] && label_seg=1
+            [[ "$ep" =~ $RE_COMMENTS ]] && comment_seg=1
+            [[ "$ep" =~ $RE_ISSUE ]] && issue_seg=1
+        done
         # The text this call sends as code: the segment, plus any GraphQL
         # query read from a file.
         text="$seg"
         query_unknown=0
-        graphql=0
-        if LC_ALL=C grep -qE "(^|[[:space:]])graphql([[:space:]${N}]|$)" <<< "$seg"; then
-            graphql=1
-        fi
         for ((k = 0; k < ${#fields[@]}; k++)); do
             f=${fields[k]}
             case "$f" in
@@ -414,31 +480,25 @@ if invoked "${GH_ANCHOR}api\b"; then
         done
         # A GraphQL request sent whole as the --input body: a file is read,
         # stdin is judged by the raw command (a heredoc holds it there).
-        if [ "$graphql" = 1 ] && [ -n "$input" ]; then
-            case "$input" in
-                - | /dev/stdin)
-                    if [ "$HAS_HEREDOC" = 1 ]; then
-                        text="$text"$'\n'"$COMMAND"
-                    else
-                        query_unknown=1
-                    fi
-                    ;;
-                *)
-                    if _read_file "$input" && ! _encoded "$FT"; then
-                        text="$text"$'\n'"$FT"
-                    else
-                        query_unknown=1
-                    fi
-                    ;;
-            esac
-        fi
-        label_seg=0
-        comment_seg=0
-        if LC_ALL=C grep -qE "/labels([/?[:space:]${N}]|$)" <<< "$seg"; then
-            label_seg=1
-        fi
-        if LC_ALL=C grep -qE "issues/[^/[:space:]${N}]+/comments([/?[:space:]${N}]|$)|issues/comments/[^/[:space:]${N}]+" <<< "$seg"; then
-            comment_seg=1
+        if [ "$graphql" = 1 ]; then
+            for input in "${inputs[@]}"; do
+                case "$input" in
+                    - | /dev/stdin)
+                        if [ "$HAS_HEREDOC" = 1 ]; then
+                            text="$text"$'\n'"$COMMAND"
+                        else
+                            query_unknown=1
+                        fi
+                        ;;
+                    *)
+                        if _read_file "$input" && ! _encoded "$FT"; then
+                            text="$text"$'\n'"$FT"
+                        else
+                            query_unknown=1
+                        fi
+                        ;;
+                esac
+            done
         fi
         if [ "$graphql" = 1 ]; then
             LC_ALL=C grep -qE "$LABEL_MUTATIONS" <<< "$text" && label_seg=1
@@ -459,8 +519,7 @@ if invoked "${GH_ANCHOR}api\b"; then
         # An issue create (`issues`) or edit (`issues/<N>`) sets labels from
         # a `labels` field or body: refused when it carries one, or a field
         # name or body the hook cannot read.
-        if [ "$graphql" = 0 ] && [ "$IS_TRIAGE" != 1 ] \
-            && LC_ALL=C grep -qE "/issues(/[^/?[:space:]${N}]+)?/?([?[:space:]${N}]|$)" <<< "$seg"; then
+        if [ "$issue_seg" = 1 ] && [ "$IS_TRIAGE" != 1 ]; then
             for ((k = 0; k < ${#fields[@]}; k++)); do
                 key=${fields[k]%%=*}
                 case "$key" in
@@ -470,27 +529,28 @@ if invoked "${GH_ANCHOR}api\b"; then
                         ;;
                 esac
             done
-            case "$input" in
-                "") ;;
-                - | /dev/stdin)
-                    if LC_ALL=C grep -qiE "labels" <<< "$COMMAND"; then
-                        LABEL_WRITE="setting issue labels through the API"
-                    elif [ "$HAS_HEREDOC" != 1 ]; then
-                        LABEL_WRITE="an API issue write whose --input body is piped where the hook cannot read it"
-                    elif _encoded "$COMMAND"; then
-                        LABEL_WRITE="an API issue write whose --input body is JSON-escaped (\\u00XX)"
-                    fi
-                    ;;
-                *)
-                    if ! _read_file "$input"; then
-                        LABEL_WRITE="an API issue write whose --input body the hook cannot read"
-                    elif LC_ALL=C grep -qiE "labels" <<< "$FT"; then
-                        LABEL_WRITE="setting issue labels through the API"
-                    elif _encoded "$FT"; then
-                        LABEL_WRITE="an API issue write whose --input body is JSON-escaped (\\u00XX)"
-                    fi
-                    ;;
-            esac
+            for input in "${inputs[@]}"; do
+                case "$input" in
+                    - | /dev/stdin)
+                        if LC_ALL=C grep -qiE "labels" <<< "$COMMAND"; then
+                            LABEL_WRITE="setting issue labels through the API"
+                        elif [ "$HAS_HEREDOC" != 1 ]; then
+                            LABEL_WRITE="an API issue write whose --input body is piped where the hook cannot read it"
+                        elif _encoded "$COMMAND"; then
+                            LABEL_WRITE="an API issue write whose --input body is JSON-escaped (\\u00XX)"
+                        fi
+                        ;;
+                    *)
+                        if ! _read_file "$input"; then
+                            LABEL_WRITE="an API issue write whose --input body the hook cannot read"
+                        elif LC_ALL=C grep -qiE "labels" <<< "$FT"; then
+                            LABEL_WRITE="setting issue labels through the API"
+                        elif _encoded "$FT"; then
+                            LABEL_WRITE="an API issue write whose --input body is JSON-escaped (\\u00XX)"
+                        fi
+                        ;;
+                esac
+            done
         fi
         [ "$comment_seg" = 1 ] || continue
         COMMENT_WRITE=1
@@ -506,9 +566,9 @@ if invoked "${GH_ANCHOR}api\b"; then
                 _body_inline "$v"
             fi
         done
-        if [ -n "$input" ]; then
+        for input in "${inputs[@]}"; do
             _body_file "$input" json
-        fi
+        done
     done < <(_segments "${GH_ANCHOR}api\b" "$WORDS")
 fi
 

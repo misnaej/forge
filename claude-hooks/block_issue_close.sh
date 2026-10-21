@@ -83,39 +83,45 @@ _read_file() {
 }
 
 # _segments <regex> <text> — each call <regex> finds in <text>, one per
-# line: from the match to the first `;` `&` `|` `)` or newline outside a
-# `(…)` group. The --words view keeps a substitution's `(…)`, so a
-# field after `"$(date)"` or `"$(a; b)"` still belongs to the call.
+# line: from its match to the next gh call in <text>, or the end. No
+# bracket is counted: a `)` in a backtick, a case pattern or a `${…}`
+# desynchronises any counter. A segment may so run past its call's end,
+# which only adds what is judged — fields are read as the values of the
+# call's own flags, so a trailing `echo state=closed` is not a field. A
+# gh call nested in a substitution (`-f x="$(gh --version)" -f …`) ends
+# a segment early, so when <text> holds a `(` and more than one gh call,
+# a last line, marked by a leading \002, runs from the first match to
+# the end and is judged as one call carrying every endpoint in it.
 _segments() {
-    local offs
-    offs=$(LC_ALL=C grep -obE "$1" <<< "$2" | cut -d: -f1 | tr '\n' ' ') || true
-    [ -n "$offs" ] || return 0
-    LC_ALL=C awk -v offs="$offs" '
-        { s = s (NR > 1 ? "\n" : "") $0 }
+    local kinds anchors
+    kinds=$(LC_ALL=C grep -obE "$1" <<< "$2" | cut -d: -f1 | tr '\n' ' ') || true
+    [ -n "$kinds" ] || return 0
+    anchors=$(LC_ALL=C grep -obE "$GH_ANCHOR" <<< "$2" | cut -d: -f1 | tr '\n' ' ') || true
+    LC_ALL=C awk -v kinds="$kinds" -v anchors="$anchors" '
+        { s = s (NR > 1 ? " " : "") $0 }
         END {
-            n = split(offs, o, " ")
-            len = length(s)
-            for (k = 1; k <= n; k++) {
-                i = o[k] + 1
-                if (substr(s, i, 1) ~ /[;&|(]/) i++
-                start = i
-                depth = 0
-                for (; i <= len; i++) {
-                    c = substr(s, i, 1)
-                    if (c == "(") depth++
-                    else if (c == ")") { if (depth == 0) break; depth-- }
-                    else if (depth == 0 && (c == ";" || c == "&" || c == "|" || c == "\n")) break
-                }
-                out = substr(s, start, i - start)
-                gsub(/\n/, " ", out)
+            nk = split(kinds, k, " ")
+            na = split(anchors, a, " ")
+            j = 1
+            for (x = 1; x <= nk; x++) {
+                while (j <= na && a[j] + 0 <= k[x] + 0) j++
+                from = k[x] + 1
+                to = (j <= na) ? a[j] + 1 : length(s) + 1
+                if (substr(s, from, 1) ~ /[;&|(]/) from++
+                out = substr(s, from, to - from)
+                # A separator never belongs to a word: `state=closed;` is
+                # `state=closed`. A `(` stays, so a substitution stays visible.
+                gsub(/[;&|)]/, " ", out)
                 print out
             }
+            if (na > 1 && index(s, "(") > 0) {
+                from = k[1] + 1
+                if (substr(s, from, 1) ~ /[;&|(]/) from++
+                out = substr(s, from)
+                gsub(/[;&|)]/, " ", out)
+                print "\002" out
+            }
         }' <<< "$2"
-}
-
-# _input_of <segment> — the segment's --input value (empty when none).
-_input_of() {
-    LC_ALL=C grep -oE -- "--input([[:space:]]+|=)[^[:space:]]+" <<< "$1" | head -n 1 | sed -E 's/^--input([[:space:]]+|=)//' || true
 }
 
 # _graphql_closes <text> — the text names a mutation that changes an
@@ -142,19 +148,21 @@ _unknowable() {
     return 1
 }
 
-# _endpoint <word…> — the call's endpoint: the first positional word
-# after `api`, skipping options and the values they take.
-_endpoint() {
+# _endpoints <word…> — set EPS to each call's endpoint: the first
+# positional word after each `api`, skipping options and their values.
+_endpoints() {
     local seen=0 skip=0 t
+    EPS=()
     for t in "$@"; do
         if [ "$skip" = 1 ]; then
             skip=0
             continue
         fi
-        if [ "$seen" = 0 ]; then
-            [ "$t" = api ] && seen=1
+        if [ "$t" = api ]; then
+            seen=1
             continue
         fi
+        [ "$seen" = 1 ] || continue
         case "$t" in
             -X | --method | -f | --raw-field | -F | --field | -H | --header | --input \
                 | -q | --jq | -t | --template | --hostname | --cache | -p | --preview)
@@ -162,8 +170,8 @@ _endpoint() {
                 ;;
             -*) ;;
             *)
-                printf '%s' "$t"
-                return 0
+                EPS+=("$t")
+                seen=0
                 ;;
         esac
     done
@@ -196,55 +204,82 @@ if ! echo "$CMDPOS" | grep -qE "${GH_ANCHOR}api\b"; then
     exit 0
 fi
 N="$GUARD_NEUTRAL"
-ISSUE_TAIL="issues/[^/?[:space:]${N}]+/*([?[:space:]${N}]|$)"
+RE_ISSUE="issues/[^/?${N}]+/*([?${N}]|$)"
 while IFS= read -r seg; do
-    input=$(_input_of "$seg")
+    seg=${seg#$'\002'}
     read -ra toks <<< "$seg"
-    # The method (POST once a field or --input is given, GET otherwise),
-    # and each field — a method built at run time may be any write.
-    method=""
+    # Any write wins: one PATCH/POST/PUT/DELETE — or a method built at
+    # run time — anywhere in the segment makes it a write, and a GET
+    # elsewhere never cancels it. A call with no method is a POST once it
+    # carries a field or --input, judged per `api` word.
+    write=0
+    delete=0
+    unknown_method=0
+    explicit=0
+    carries=0
     fields=()
     kinds=()
+    inputs=()
     for ((i = 0; i < ${#toks[@]}; i++)); do
         t=${toks[i]}
+        m=""
         case "$t" in
-            -X | --method) method=${toks[i + 1]:-} ;;
-            --method=*) method=${t#*=} ;;
-            -X?*) method=${t#-X} ;;
-            -f | --raw-field) fields+=("${toks[i + 1]:-}"); kinds+=(raw) ;;
-            -F | --field) fields+=("${toks[i + 1]:-}"); kinds+=(typed) ;;
-            --raw-field=*) fields+=("${t#*=}"); kinds+=(raw) ;;
-            --field=*) fields+=("${t#*=}"); kinds+=(typed) ;;
-            -f?*) fields+=("${t:2}"); kinds+=(raw) ;;
-            -F?*) fields+=("${t:2}"); kinds+=(typed) ;;
+            api)
+                [ "$explicit" = 0 ] && [ "$carries" = 1 ] && write=1
+                explicit=0
+                carries=0
+                ;;
+            -X | --method) m=${toks[i + 1]:-} ;;
+            --method=*) m=${t#*=} ;;
+            -X?*) m=${t#-X} ;;
+            -f | --raw-field) carries=1; fields+=("${toks[i + 1]:-}"); kinds+=(raw) ;;
+            -F | --field) carries=1; fields+=("${toks[i + 1]:-}"); kinds+=(typed) ;;
+            --raw-field=*) carries=1; fields+=("${t#*=}"); kinds+=(raw) ;;
+            --field=*) carries=1; fields+=("${t#*=}"); kinds+=(typed) ;;
+            -f?*) carries=1; fields+=("${t:2}"); kinds+=(raw) ;;
+            -F?*) carries=1; fields+=("${t:2}"); kinds+=(typed) ;;
+            --input) carries=1; inputs+=("${toks[i + 1]:-}") ;;
+            --input=*) carries=1; inputs+=("${t#*=}") ;;
         esac
+        if [ -n "$m" ]; then
+            explicit=1
+            case "${m^^}" in
+                POST | PUT | PATCH) write=1 ;;
+                DELETE) write=1; delete=1 ;;
+                *) _unknowable "$m" && { write=1; unknown_method=1; } ;;
+            esac
+        fi
     done
-    method=$(tr '[:lower:]' '[:upper:]' <<< "$method")
-    if [ -z "$method" ]; then
-        { [ "${#fields[@]}" -gt 0 ] || [ -n "$input" ]; } && method=POST || method=GET
-    fi
-    _unknowable "$method" && method=UNKNOWN
-    [ "$method" = GET ] && continue
-    # A write to an endpoint built at run time may be an issue's.
-    if _unknowable "$(_endpoint "${toks[@]}")"; then
-        _refuse " (an API write whose endpoint the hook cannot read)"
-    fi
-    if LC_ALL=C grep -qE "(^|[[:space:]])graphql([[:space:]${N}]|$)" <<< "$seg"; then
+    [ "$explicit" = 0 ] && [ "$carries" = 1 ] && write=1
+    [ "$write" = 1 ] || continue
+    # Every endpoint in the segment (one per `api` word; a merged
+    # segment carries several) is judged; one built at run time may be
+    # an issue's.
+    _endpoints "${toks[@]}"
+    graphql=0
+    issue=0
+    for ep in "${EPS[@]}"; do
+        _unknowable "$ep" && _refuse " (an API write whose endpoint the hook cannot read)"
+        [ "$ep" = graphql ] && graphql=1
+        [[ "$ep" =~ $RE_ISSUE ]] && issue=1
+    done
+    if [ "$graphql" = 1 ]; then
         _graphql_closes "$seg" && _refuse " through the GraphQL API"
         # A query sent as the --input body: stdin is judged by the raw
         # command (a heredoc or here-string holds it there); a file is
         # read, and one the hook cannot read is refused.
-        case "$input" in
-            "") ;;
-            - | /dev/stdin)
-                _graphql_closes "$COMMAND" && _refuse " through the GraphQL API"
-                _encoded "$COMMAND" && _refuse " (the --input query is JSON-escaped, so the hook cannot read it)"
-                ;;
-            *)
-                _file_body "$input" "--input query"
-                _graphql_closes "$FT" && _refuse " through the GraphQL API"
-                ;;
-        esac
+        for input in "${inputs[@]}"; do
+            case "$input" in
+                - | /dev/stdin)
+                    _graphql_closes "$COMMAND" && _refuse " through the GraphQL API"
+                    _encoded "$COMMAND" && _refuse " (the --input query is JSON-escaped, so the hook cannot read it)"
+                    ;;
+                *)
+                    _file_body "$input" "--input query"
+                    _graphql_closes "$FT" && _refuse " through the GraphQL API"
+                    ;;
+            esac
+        done
         # A query read from a file by a typed field (`-F query=@q.graphql`)
         # is read the same way (a raw `-f` field sends `@…` literally); a
         # query built at run time is refused.
@@ -259,13 +294,10 @@ while IFS= read -r seg; do
                 _refuse " (the GraphQL query is built at run time, so the hook cannot read it)"
             fi
         done
-        continue
     fi
-    LC_ALL=C grep -qE "$ISSUE_TAIL" <<< "$seg" || continue
-    case "$method" in
-        DELETE) _refuse " through the REST API" ;;
-        UNKNOWN) _refuse " (an API call to an issue whose method the hook cannot read)" ;;
-    esac
+    [ "$issue" = 1 ] || continue
+    [ "$delete" = 1 ] && _refuse " through the REST API"
+    [ "$unknown_method" = 1 ] && _refuse " (an API call to an issue whose method the hook cannot read)"
     # Each field's key: `state`, or a key the hook cannot read (an
     # expansion, a substitution, a quoted blank), may close the issue.
     for ((k = 0; k < ${#fields[@]}; k++)); do
@@ -279,17 +311,18 @@ while IFS= read -r seg; do
     done
     # A request body from --input: a file is read; stdin is judged by the
     # raw command text (a heredoc or here-string holds it there).
-    case "$input" in
-        "") ;;
-        - | /dev/stdin)
-            LC_ALL=C grep -qE "state" <<< "$COMMAND" && _refuse " through the REST API"
-            _encoded "$COMMAND" && _refuse " (the --input body is JSON-escaped, so the hook cannot read it)"
-            ;;
-        *)
-            _file_body "$input" "--input body"
-            LC_ALL=C grep -qE '"state"' <<< "$FT" && _refuse " through the REST API"
-            ;;
-    esac
+    for input in "${inputs[@]}"; do
+        case "$input" in
+            - | /dev/stdin)
+                LC_ALL=C grep -qE "state" <<< "$COMMAND" && _refuse " through the REST API"
+                _encoded "$COMMAND" && _refuse " (the --input body is JSON-escaped, so the hook cannot read it)"
+                ;;
+            *)
+                _file_body "$input" "--input body"
+                LC_ALL=C grep -qE '"state"' <<< "$FT" && _refuse " through the REST API"
+                ;;
+        esac
+    done
 done < <(_segments "${GH_ANCHOR}api\b" "$(command_positions --words --no-redir "$COMMAND")")
 
 exit 0
