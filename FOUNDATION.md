@@ -286,7 +286,8 @@ gate.
   server-side deletion rulesets. `block_branch_deletion` enforces this with **no
   bypass** — blocks `git push --delete` / `:ref` and `gh api -X DELETE
   …/branches/…`. Local `git branch -d/-D` is untouched; a human deletes via `! …`.
-  To check a branch's real protection, query BOTH
+  A feature branch whose PR merged is deleted only through `forge-next-prep
+  --prune-remote`, lease-pinned to the merged tip. To check a branch's real protection, query BOTH
   `gh api repos/{owner}/{repo}/rules/branches/{branch}` and
   `.../rulesets` — never conclude "unprotected" from a 404 on the legacy
   `/branches/{branch}/protection` endpoint alone (it 404s for

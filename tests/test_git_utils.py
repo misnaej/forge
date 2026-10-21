@@ -2633,6 +2633,147 @@ def test_push_branch_local_plus_main_branch_cannot_force_move_origin_main(
 
 
 # ---------------------------------------------------------------------------
+# delete_remote_branch
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def delete_remote(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path]:
+    """One work/bare pair for the module; each test pushes its own branch.
+
+    Returns:
+        The ``(work, bare)`` paths.
+    """
+    return _init_single_track_repo(tmp_path_factory.mktemp("delete-remote"))
+
+
+def _push_new_branch(work: Path, name: str, *, parent: str = "main") -> str:
+    """Push a fresh commit on top of *parent* to ``origin/<name>``.
+
+    Args:
+        work: The work tree.
+        name: Branch to create or fast-forward on the remote.
+        parent: Commit the new one sits on.
+
+    Returns:
+        The pushed commit's sha.
+    """
+    sha = subprocess.run(
+        ["git", "commit-tree", "-p", parent, "-m", name, "main^{tree}"],
+        cwd=work,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "push", "-q", "origin", f"{sha}:refs/heads/{name}"],
+        cwd=work,
+        env=_GIT_ENV,
+        check=True,
+    )
+    return sha
+
+
+def _bare_has(bare: Path, name: str) -> bool:
+    """Return whether the bare remote still holds ``refs/heads/<name>``.
+
+    Args:
+        bare: The bare repo.
+        name: Branch name.
+
+    Returns:
+        ``True`` when the ref exists.
+    """
+    return (
+        subprocess.run(
+            ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{name}"],
+            cwd=bare,
+            env=_GIT_ENV,
+            check=False,
+        ).returncode
+        == 0
+    )
+
+
+def test_delete_remote_branch_with_matching_lease_removes_ref(
+    delete_remote: tuple[Path, Path],
+) -> None:
+    """The tip the caller verified is still there → the remote ref is gone."""
+    work, bare = delete_remote
+    sha = _push_new_branch(work, "merged-a")
+
+    result = git_utils.delete_remote_branch(
+        work, "merged-a", expected_sha=sha, base_branch="main"
+    )
+
+    assert result.ok is True
+    assert result.stale_lease is False
+    assert not _bare_has(bare, "merged-a")
+
+
+def test_delete_remote_branch_with_stale_lease_keeps_ref(
+    delete_remote: tuple[Path, Path],
+) -> None:
+    """The branch moved past the expected commit → kept, classified as stale."""
+    work, bare = delete_remote
+    old = _push_new_branch(work, "moved-b")
+    _push_new_branch(work, "moved-b", parent=old)
+
+    result = git_utils.delete_remote_branch(
+        work, "moved-b", expected_sha=old, base_branch="main"
+    )
+
+    assert result.ok is False
+    assert result.stale_lease is True
+    assert _bare_has(bare, "moved-b")
+
+
+@pytest.mark.parametrize(
+    ("branch", "expected_sha", "why"),
+    [
+        pytest.param("main", "a" * 40, "base branch", id="base"),
+        pytest.param("-x", "a" * 40, "starting with '-'", id="dash"),
+        pytest.param("+x", "a" * 40, "starting with '-' or '+'", id="plus"),
+        pytest.param("", "a" * 40, "not a plain branch", id="empty"),
+        pytest.param("HEAD", "a" * 40, "not a plain branch", id="head"),
+        pytest.param("a:b", "a" * 40, "not a plain branch", id="colon"),
+        pytest.param("a b", "a" * 40, "not a plain branch", id="space"),
+        pytest.param("x", "abc123", "not a full id", id="short-sha"),
+        pytest.param("x", "A" * 40, "not a full id", id="upper-sha"),
+        pytest.param("x", "a" * 41, "not a full id", id="41-hex"),
+    ],
+)
+def test_delete_remote_branch_refuses_without_running_git(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    branch: str,
+    expected_sha: str,
+    why: str,
+) -> None:
+    """Every unsafe target is refused in the seam, before any subprocess.
+
+    Args:
+        branch: Branch to delete.
+        expected_sha: Lease commit.
+        why: Text the refusal must contain.
+    """
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        git_utils.subprocess, "run", lambda cmd, **_kw: calls.append(cmd)
+    )
+
+    result = git_utils.delete_remote_branch(
+        tmp_path, branch, expected_sha=expected_sha, base_branch="main"
+    )
+
+    assert result.ok is False
+    assert result.returncode is None
+    assert why in result.stderr
+    assert calls == []
+
+
+# ---------------------------------------------------------------------------
 # push_tag
 # ---------------------------------------------------------------------------
 

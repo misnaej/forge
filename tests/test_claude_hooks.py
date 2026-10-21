@@ -2257,6 +2257,68 @@ def test_raw_git_env_prefix_still_bypassable_slips_agent_bypass() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        pytest.param("git push origin --delete feature", 2, id="delete"),
+        pytest.param("git push origin --del feature", 2, id="delete-prefix"),
+        pytest.param("git push -d origin feature", 2, id="short-d"),
+        pytest.param("git push -fd origin feature", 2, id="cluster-d"),
+        pytest.param("git push origin :feature", 2, id="empty-src"),
+        pytest.param("git push origin +:feature", 2, id="plus-empty-src"),
+        pytest.param("git push --mirror origin", 2, id="mirror"),
+        pytest.param("git push --prune origin", 2, id="prune"),
+        pytest.param("git push -u origin feature-d", 0, id="branch-with-d"),
+        pytest.param("git push origin HEAD", 0, id="plain-push"),
+    ],
+)
+def test_raw_git_commit_agent_branch_deleting_push(command: str, expected: int) -> None:
+    """The commit agent pushes work but never deletes a remote branch.
+
+    Only option tokens and empty-source refspecs count, so a branch whose
+    name contains ``d`` and a ``-u`` push stay allowed. The refusal names
+    the sanctioned path for merged branches and the human escape.
+
+    Args:
+        command: The push the commit agent runs.
+        expected: ``2`` for a refused delete, ``0`` for an ordinary push.
+    """
+    proc = _run_hook_proc(
+        _RAW_GIT, command, options=HookOptions(agent_type="forge:git-commit-push")
+    )
+    assert proc.returncode == expected
+    if expected == 2:
+        assert "forge-next-prep --prune-remote" in proc.stderr
+        assert f"! {command}" in proc.stderr
+
+
+def test_branch_deletion_still_guards_protected_branch_for_non_agents() -> None:
+    """A protected-branch delete outside the commit agent still hits its own hook."""
+    assert _run_hook("block_branch_deletion.sh", "git push origin --delete main") == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param(
+            'git add . && git commit -m "x\n\nCo-Authored-By: Claude <c@x.y>"',
+            id="chained-commit",
+        ),
+        pytest.param('gh pr comment 1 --body "Generated with Claude"', id="pr-comment"),
+    ],
+)
+def test_attribution_refusal_says_nothing_ran(command: str) -> None:
+    """The refusal tells the caller the whole command was dropped, on every path.
+
+    Args:
+        command: A refused command, with and without a chained stage.
+    """
+    proc = _run_hook_proc(_ATTRIBUTION, command)
+    assert proc.returncode == 2
+    assert "nothing in it ran" in proc.stderr
+    assert "re-run the whole command" in proc.stderr
+
+
 # --- sequencer verbs (revert/cherry-pick) close the same hole as raw
 # commit/push (#348 family) -------------------------------------------------
 # `git revert` / `git cherry-pick` create a commit through git's sequencer,

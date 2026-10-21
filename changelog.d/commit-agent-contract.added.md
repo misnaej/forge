@@ -1,0 +1,6 @@
+bump: minor
+
+- `forge-next-prep --prune-remote` deletes origin branches whose same-repo PR merged into the base branch and whose tip has not moved since. Each delete is pinned to the merged commit, so a branch that received a push after the merge is reported and left alone, as are branches with an open PR or no merged PR; the base branch is never touched. When `gh` cannot answer, the step warns and deletes nothing. `/next` always passes the flag. The delete goes through a new `forge.git_utils.delete_remote_branch`, which refuses the base branch and malformed names or commits itself.
+- The commit agent can no longer delete remote branches: a push that deletes (`--delete`, `-d`, `:branch`, `--mirror`, `--prune`) is refused for it and points at `forge-next-prep --prune-remote`, or at running it yourself with `!`.
+- When a command is refused for carrying AI attribution, the message now says the whole command was refused and nothing in it ran — including anything chained before it — so a retry re-runs all of it rather than only the commit.
+- The commit agent stages in a separate call, checks that the staged files match the request before committing and that the commit holds exactly those files before pushing, and after a refused commit restarts from staging.

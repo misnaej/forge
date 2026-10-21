@@ -17,11 +17,14 @@
 # push` — that is its job. The PreToolUse payload includes `agent_type`
 # (the `name:` frontmatter of the calling subagent, per
 # code.claude.com/docs/en/hooks); when it matches `git-commit-push` or
-# `forge:git-commit-push`, only the commit/push rule is waived. Every other
-# rule here — the fail-closed anchor-lib check, revert/cherry-pick, ref
-# plumbing and inline interpreter git — applies to that agent like to
-# everyone: each creates commits or moves refs with no pre-commit hook,
-# which is exactly what that agent exists to prevent. Same scoped-bypass shape as block_protected_branches.sh.
+# `forge:git-commit-push`, only the commit/push rule is waived, and a
+# branch-deleting push stays refused even for that agent (deleting remote
+# branches is not its job; merged ones go to `forge-next-prep
+# --prune-remote`). Every other rule here — the fail-closed anchor-lib
+# check, revert/cherry-pick, ref plumbing and inline interpreter git —
+# applies to that agent like to everyone: each creates commits or moves
+# refs with no pre-commit hook, which is exactly what that agent exists to
+# prevent. Same scoped-bypass shape as block_protected_branches.sh.
 set -e
 INPUT=$(cat)
 COMMAND=$(jq -r '.tool_input.command // empty' <<< "$INPUT")
@@ -53,6 +56,56 @@ CMDPOS=$(command_positions "$COMMAND")
 if [ "$IS_COMMIT_AGENT" != 1 ] && echo "$CMDPOS" | grep -qE "${GIT_ANCHOR}(commit|push)\b" \
     && ! guard_help_only "$CMDPOS" "${GIT_ANCHOR}(commit|push)\b"; then
     echo "BLOCKED: raw 'git commit' / 'git push' from Bash is forbidden by FOUNDATION §3 mandatory-delegation. Use the forge:git-commit-push agent — it runs pre-commit, signs the commit per the convention, and pushes with the right tracking flags." >&2
+    exit 2
+fi
+
+# A branch-deleting push from the commit agent. Its waiver above covers
+# committing and pushing work, not removing remote branches: a merged
+# branch is pruned by `forge-next-prep --prune-remote` (lease-pinned to
+# the merged tip), anything else is the user's call. Judged per
+# invocation over the --words view with redirections blanked, reading
+# only option tokens (a word starting with `-`) and refspecs: a long
+# delete option by any prefix git accepts (`--de` … `--delete`, also
+# `=value`), a short cluster holding `d` (`-d`, `-fd`), `--mirror` /
+# `--prune` (either can delete any remote ref), or a refspec with an
+# empty source (`:feature`, `+:feature`). A branch name containing `d`
+# is a positional, never an option.
+_commit_agent_push_deletes() {
+    local inv args tok skip endopt
+    local -a toks
+    while IFS= read -r inv; do
+        [ -n "$inv" ] || continue
+        args="${inv#*	}"
+        toks=($args)
+        skip=0
+        endopt=0
+        for tok in "${toks[@]}"; do
+            if [ "$skip" = 1 ]; then skip=0; continue; fi
+            if [ "$endopt" = 0 ]; then
+                case "$tok" in
+                    --) endopt=1; continue ;;
+                    --repo | --receive-pack | --exec | --push-option) skip=1; continue ;;
+                esac
+                if [[ $tok =~ ^--(de|del|dele|delet|delete|mi|mir|mirr|mirro|mirror|pru|prun|prune)(=.*)?$ ]]; then
+                    return 0
+                fi
+                case "$tok" in
+                    --*) continue ;;
+                    -*d*) return 0 ;;
+                    -*o) skip=1; continue ;;
+                    -*) continue ;;
+                esac
+            fi
+            case "$tok" in
+                :* | +:*) return 0 ;;
+            esac
+        done
+    done <<< "$(guard_git_invocations "$(command_positions --words --no-redir "$COMMAND")" push || true)"
+    return 1
+}
+if [ "$IS_COMMIT_AGENT" = 1 ] && echo "$CMDPOS" | grep -qE "${GIT_ANCHOR}push\b" \
+    && ! guard_help_only "$CMDPOS" "${GIT_ANCHOR}push\b" && _commit_agent_push_deletes; then
+    echo "BLOCKED: the forge:git-commit-push agent commits and pushes work; it does not delete remote branches. A branch whose PR merged is pruned by \`forge-next-prep --prune-remote\` (lease-pinned to the merged tip). Anything else is the user's decision — a human runs it with: ! $COMMAND" >&2
     exit 2
 fi
 

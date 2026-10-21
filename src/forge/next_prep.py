@@ -22,6 +22,14 @@ Operations (in order, each idempotent):
 4. **Prune stale branches** (``--prune-branches``, default ON): delete
    local branches whose remote shows ``[origin/...: gone]``. Uses
    ``git branch -d`` (safe) — never ``-D``.
+5. **Prune merged remote branches** (``--prune-remote``, default off;
+   ``/next`` always passes it): delete an origin branch only when a
+   same-repo PR from it merged into the base branch, no PR from it is
+   open, and origin's live tip still equals that PR's head commit. The
+   delete is lease-pinned to that commit, so a branch that moved since
+   the merge is reported and left alone; the base branch and the branch
+   ``origin/HEAD`` names are never touched. When ``gh`` cannot answer,
+   the step is skipped with a warning — never read as "nothing to prune".
 
 Exits 0 on success, 1 if the target branch can't fast-forward
 (divergent state).
@@ -30,13 +38,16 @@ Exits 0 on success, 1 if the target branch can't fast-forward
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 from forge.changelog_fragments import discover_fragments
 from forge.config import (
@@ -44,9 +55,11 @@ from forge.config import (
     load_config,
 )
 from forge.git_utils import (
+    GH_TIMEOUT_S,
     PUSH_TIMEOUT_S,
     configure_cli_logging,
     create_annotated_tag,
+    delete_remote_branch,
     fetch_tags_best_effort,
     latest_v_tag,
     network_git_env,
@@ -360,6 +373,357 @@ def _log_prune_result(repo_root: Path) -> None:
         logger.info("No stale branches to prune.")
 
 
+# A branch reused for several PRs can have more than one; a lookup that
+# fills the limit may be hiding an open one, so it counts as unknown.
+_GH_PR_LIST_LIMIT = 10
+# Bounds one run's gh calls (one per remote branch); the rest wait for
+# the next run.
+_PRUNE_REMOTE_CAP = 50
+_PR_JSON_FIELDS = (
+    "number,state,headRefName,headRefOid,isCrossRepository,baseRefName,mergedAt"
+)
+
+
+class PrLookup(NamedTuple):
+    """What ``gh`` said about the PRs whose head is one branch.
+
+    Attributes:
+        prs: The PRs as ``gh pr list --json`` returns them, or ``None``
+            when gh could not answer.
+        problem: Why gh could not answer, one line; ``None`` on success.
+        fatal: ``True`` when the problem applies to every branch (gh
+            missing, unauthenticated, timed out), so the run stops asking.
+    """
+
+    prs: list[dict[str, object]] | None
+    problem: str | None = None
+    fatal: bool = False
+
+
+PrLister = Callable[[Path, str], PrLookup]
+
+
+def _gh_prs_for_head(repo_root: Path, branch: str) -> PrLookup:
+    """Ask ``gh`` for every PR (any state) whose head branch is *branch*.
+
+    Args:
+        repo_root: Repo root (gh resolves the repository from it).
+        branch: Head branch name.
+
+    Returns:
+        The lookup; failures are classified rather than raised, and never
+        collapse to an empty list — "gh could not say" is not "no PR".
+    """
+    if shutil.which("gh") is None:
+        return PrLookup(None, "gh is not installed", fatal=True)
+    try:
+        proc = subprocess.run(
+            [
+                "gh",
+                "pr",
+                "list",
+                f"--head={branch}",
+                "--state=all",
+                f"--json={_PR_JSON_FIELDS}",
+                f"--limit={_GH_PR_LIST_LIMIT}",
+            ],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=GH_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        return PrLookup(None, f"gh did not answer within {GH_TIMEOUT_S}s", fatal=True)
+    except OSError as exc:
+        return PrLookup(None, f"gh could not start: {exc}", fatal=True)
+    if proc.returncode != 0:
+        return _gh_pr_list_failure(proc.stderr)
+    return _parse_pr_list(proc.stdout)
+
+
+def _gh_pr_list_failure(stderr: str) -> PrLookup:
+    """Classify a non-zero ``gh pr list`` exit.
+
+    Args:
+        stderr: What gh wrote to stderr.
+
+    Returns:
+        A failed lookup; fatal when the cause is authentication.
+    """
+    detail = (stderr.strip().splitlines() or ["no error output"])[0]
+    if "auth" in stderr.lower():
+        return PrLookup(None, f"gh is not authenticated ({detail})", fatal=True)
+    return PrLookup(None, f"gh pr list failed ({detail})")
+
+
+def _parse_pr_list(stdout: str) -> PrLookup:
+    """Parse the JSON array ``gh pr list`` printed on success.
+
+    Args:
+        stdout: What gh wrote to stdout.
+
+    Returns:
+        The parsed lookup, or a failed one when the output is not a JSON list.
+    """
+    try:
+        prs = json.loads(stdout or "[]")
+    except json.JSONDecodeError:
+        return PrLookup(None, "gh pr list returned output that is not JSON")
+    if not isinstance(prs, list):
+        return PrLookup(None, "gh pr list returned output that is not a list")
+    return PrLookup(prs)
+
+
+def _remote_heads(repo_root: Path) -> dict[str, str] | None:
+    """Return ``{branch: tip sha}`` for every branch on origin, read live.
+
+    Read with ``git ls-remote`` rather than from remote-tracking refs, so
+    the tip compared against the merged PR is origin's own, not a cached
+    copy.
+
+    Args:
+        repo_root: Repo root.
+
+    Returns:
+        The mapping, or ``None`` when origin could not be listed.
+    """
+    try:
+        raw = run_git(
+            "ls-remote",
+            "--heads",
+            "origin",
+            cwd=repo_root,
+            env=network_git_env(repo_root),
+            timeout=PUSH_TIMEOUT_S,
+            log_errors=False,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return None
+    heads: dict[str, str] = {}
+    for line in raw.splitlines():
+        sha, _, ref = line.partition("\t")
+        if ref.startswith("refs/heads/"):
+            heads[ref.removeprefix("refs/heads/")] = sha
+    return heads
+
+
+def _origin_head_branch(repo_root: Path) -> str | None:
+    """Return the branch ``origin/HEAD`` points at, or ``None`` if unknown.
+
+    Args:
+        repo_root: Repo root.
+
+    Returns:
+        The branch name (e.g. ``"main"``), or ``None``.
+    """
+    ref = run_git(
+        "symbolic-ref",
+        "--quiet",
+        "refs/remotes/origin/HEAD",
+        cwd=repo_root,
+        check=False,
+        log_errors=False,
+    )
+    return ref.removeprefix("refs/remotes/origin/") or None
+
+
+class RemotePruneReport(NamedTuple):
+    """What ``--prune-remote`` did, per branch.
+
+    Attributes:
+        deleted: Branches deleted on origin.
+        moved: Branches whose tip differs from their merged PR's head
+            (including a lease git rejected), left alone.
+        open_pr: Branches with an open PR, left alone.
+        unmerged: Branches with no same-repo PR merged into the base
+            branch, left alone.
+        failed: ``{branch: reason}`` for a delete that failed otherwise.
+        unknown: ``{reason: [branches]}`` for branches gh could not judge.
+        examined: How many remote branches were examined.
+        total: How many remote branches were candidates.
+        listed: ``False`` when origin could not be listed at all.
+    """
+
+    deleted: list[str]
+    moved: list[str]
+    open_pr: list[str]
+    unmerged: list[str]
+    failed: dict[str, str]
+    unknown: dict[str, list[str]]
+    examined: int
+    total: int
+    listed: bool = True
+
+
+def _pr_verdict(
+    prs: list[dict[str, object]], branch: str, base: str
+) -> tuple[Literal["open", "unmerged", "merged"], frozenset[str]]:
+    """Judge *branch* from its PRs.
+
+    Any open PR on the head wins, whatever repository it comes from: the
+    branch is still in use. Only a same-repo PR merged into *base* makes
+    the branch prunable — a cross-repo PR's head lives in a fork.
+
+    Args:
+        prs: The branch's PRs from :func:`_gh_prs_for_head`.
+        branch: The branch being judged.
+        base: The configured base branch.
+
+    Returns:
+        The verdict, and for ``"merged"`` the merged PRs' head commits
+        (the caller matches origin's live tip against them).
+    """
+    if any(pr.get("state") == "OPEN" for pr in prs):
+        return "open", frozenset()
+    merged = frozenset(
+        str(pr.get("headRefOid"))
+        for pr in prs
+        if pr.get("state") == "MERGED"
+        and pr.get("isCrossRepository") is False
+        and pr.get("headRefName") == branch
+        and pr.get("baseRefName") == base
+        and pr.get("headRefOid")
+    )
+    return ("merged", merged) if merged else ("unmerged", frozenset())
+
+
+def _prune_merged_remote_branches(
+    repo_root: Path, base_branch: str, *, pr_lister: PrLister | None = None
+) -> RemotePruneReport:
+    """Delete origin branches whose same-repo PR merged and whose tip is unchanged.
+
+    A branch is deleted only when a same-repo PR from it merged into
+    *base_branch*, no PR from it is open, and origin's live tip equals
+    that PR's head commit — the delete is lease-pinned to that commit, so
+    a push landing in between leaves the branch alone. *base_branch* and
+    the branch ``origin/HEAD`` names are never candidates.
+
+    Args:
+        repo_root: Repo root.
+        base_branch: The configured base branch.
+        pr_lister: Replaces the gh lookup (tests); defaults to
+            :func:`_gh_prs_for_head`, resolved at call time.
+
+    Returns:
+        The report.
+    """
+    lister = pr_lister or _gh_prs_for_head
+    report = RemotePruneReport([], [], [], [], {}, {}, 0, 0)
+    heads = _remote_heads(repo_root)
+    if heads is None:
+        return report._replace(listed=False)
+    protected = {base_branch, _origin_head_branch(repo_root) or base_branch}
+    candidates = sorted(b for b in heads if b not in protected)
+    batch = candidates[:_PRUNE_REMOTE_CAP]
+    report = report._replace(total=len(candidates), examined=len(batch))
+    for index, branch in enumerate(batch):
+        lookup = lister(repo_root, branch)
+        if lookup.prs is None or len(lookup.prs) >= _GH_PR_LIST_LIMIT:
+            reason = lookup.problem or (
+                f"{_GH_PR_LIST_LIMIT}+ PRs on this head, too many to judge"
+            )
+            # A problem that applies to every branch stops the run: asking
+            # again would only repeat it (or wait out the timeout again).
+            rest = batch[index:] if lookup.fatal else [branch]
+            report.unknown.setdefault(reason, []).extend(rest)
+            if lookup.fatal:
+                break
+            continue
+        verdict, merged_heads = _pr_verdict(lookup.prs, branch, base_branch)
+        if verdict == "open":
+            report.open_pr.append(branch)
+        elif verdict == "unmerged":
+            report.unmerged.append(branch)
+        elif heads[branch] not in merged_heads:
+            report.moved.append(branch)
+        else:
+            _delete_one(repo_root, branch, heads[branch], base_branch, report)
+    return report
+
+
+def _delete_one(
+    repo_root: Path, branch: str, sha: str, base_branch: str, report: RemotePruneReport
+) -> None:
+    """Delete *branch* on origin lease-pinned to *sha*, recording the outcome.
+
+    Args:
+        repo_root: Repo root.
+        branch: Branch to delete.
+        sha: The merged head commit the branch must still point at.
+        base_branch: The configured base branch (refused by the seam).
+        report: The report whose lists receive the outcome.
+    """
+    result = delete_remote_branch(
+        repo_root, branch, expected_sha=sha, base_branch=base_branch
+    )
+    if result.ok:
+        report.deleted.append(branch)
+    elif result.stale_lease:
+        report.moved.append(branch)
+    else:
+        report.failed[branch] = result.stderr or "git push failed"
+
+
+def _log_remote_prune_result(
+    repo_root: Path, base_branch: str, *, pr_lister: PrLister | None = None
+) -> None:
+    """Prune merged remote branches and log the outcome.
+
+    Args:
+        repo_root: Repo root.
+        base_branch: The configured base branch.
+        pr_lister: Replaces the gh lookup (tests).
+    """
+    report = _prune_merged_remote_branches(repo_root, base_branch, pr_lister=pr_lister)
+    if not report.listed:
+        logger.warning(
+            "Remote prune skipped: origin's branches could not be listed "
+            "(git ls-remote failed or timed out) — nothing was deleted."
+        )
+        return
+    if report.deleted:
+        logger.info(
+            "Deleted merged remote branches (each restorable from its PR page): %s",
+            ", ".join(report.deleted),
+        )
+    if report.moved:
+        logger.warning(
+            "Left remote branches that moved since their PR merged: %s",
+            ", ".join(report.moved),
+        )
+    if report.open_pr:
+        logger.info(
+            "Left remote branches with an open PR: %s", ", ".join(report.open_pr)
+        )
+    if report.unmerged:
+        logger.info(
+            "Left remote branches with no merged PR into %s: %s",
+            base_branch,
+            ", ".join(report.unmerged),
+        )
+    for branch, reason in report.failed.items():
+        logger.warning("Could not delete remote branch %s: %s", branch, reason)
+    for reason, branches in report.unknown.items():
+        logger.warning(
+            "Remote prune skipped %d branch(es), PR state unknown (%s): %s",
+            len(branches),
+            reason,
+            ", ".join(branches),
+        )
+    if report.total > report.examined:
+        logger.warning(
+            "Remote prune examined %d of %d remote branches (cap %d per run, "
+            "in name order); the remaining %d were not examined.",
+            report.examined,
+            report.total,
+            _PRUNE_REMOTE_CAP,
+            report.total - report.examined,
+        )
+    if report.total == 0:
+        logger.info("No remote branches besides %s to prune.", base_branch)
+
+
 def main() -> int:
     """Refresh main, optionally tag the release, prune stale local branches.
 
@@ -394,6 +758,16 @@ def main() -> int:
         "--no-prune-branches",
         action="store_true",
         help="Skip the stale-branch prune step.",
+    )
+    parser.add_argument(
+        "--prune-remote",
+        action="store_true",
+        help=(
+            "Delete origin branches whose same-repo PR merged into the base "
+            "branch and whose tip is unchanged since (lease-pinned to the "
+            "merged commit). Branches with an open PR, no merged PR, or a "
+            "moved tip are reported and left alone. Off by default."
+        ),
     )
     parser.add_argument(
         "--no-sync",
@@ -499,14 +873,15 @@ def _pull_ff_only(repo_root: Path, target_branch: str) -> bool:
 
 
 def _tag_and_report(repo_root: Path, args: argparse.Namespace) -> int:
-    """Run the post-sync tail: optional tag, optional prune, advisory.
+    """Run the post-sync tail: optional tag, optional prunes, advisory.
 
     Shared by the normal (synced) path and ``--no-sync``, so the tag /
     prune / promotion-advisory behavior cannot drift between them.
 
     Args:
         repo_root: Repo root.
-        args: Parsed CLI namespace (``tag``, ``no_prune_branches``).
+        args: Parsed CLI namespace (``tag``, ``no_prune_branches``,
+            ``prune_remote``).
 
     Returns:
         ``1`` when the tag push timed out (already logged); otherwise ``0``
@@ -528,6 +903,8 @@ def _tag_and_report(repo_root: Path, args: argparse.Namespace) -> int:
 
     if not args.no_prune_branches:
         _log_prune_result(repo_root)
+    if args.prune_remote:
+        _log_remote_prune_result(repo_root, load_config(repo_root).base_branch)
 
     # Fragment-accumulation advisory. Self-gating on fragments mode
     # (FOUNDATION §16, pattern C): pending changelog.d/ entries mean an
