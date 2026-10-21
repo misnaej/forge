@@ -105,7 +105,8 @@ fi
 # commits past the commit guard. Blocked when an interpreter at a
 # command position (bare, path-qualified, or behind a runner such as
 # `env`, `uv run`, `pixi run`, `conda run`) receives inline code — `-c`,
-# `-e`, `-E`, `-p`, `--eval`, `--print`, `-` or a heredoc / here-string —
+# `-e`, `-E`, `-p`, `--eval`, `--print`, `deno eval`, `-` or a heredoc /
+# here-string —
 # or a bare interpreter reads its script from a pipe, AND that code names
 # `git` as a word (`.git`, `git_utils`, `github` do not count). No
 # commit-agent bypass. This is a tripwire for the recorded route, not a
@@ -128,6 +129,7 @@ GIT_WORD_RE='(^|[^[:alnum:]_.-])git([^[:alnum:]_./-]|$)'
 # right (the first interpreter-named word is the interpreter; anything
 # before it is a runner). Prints `inline` (code on the command line:
 # `-c`/`-e`/`-E`/`-p`/`--eval`/`--print`, also clustered like `-Ic`),
+# `evalarg` (`deno eval`: inline code the scanner moved off the line),
 # `stdin` (`-`, a heredoc or here-string, or a bare interpreter fed by a
 # pipe) or nothing (a script file or `-m module` — not inline code, so
 # `python3 -m pytest -k git` is not this rule's business).
@@ -178,6 +180,12 @@ _interp_code_source() {
             --*) ;;
             -*[ceEp]*) SRC=inline; return 0 ;;
             -*) ;;
+            # `deno eval <code>` runs the code it is given: its first
+            # positional word is a subcommand, and `eval` is the inline one.
+            # The scanner reads the code after any `eval` word as a shell
+            # payload of its own, so it is not on this invocation's line
+            # (SRC=evalarg: _inline_interp_git reads the raw text instead).
+            eval) case "$interp" in deno*) SRC=evalarg ;; esac; return 0 ;;
             *) return 0 ;;
         esac
     done
@@ -205,6 +213,7 @@ _inline_interp_git() {
         # with bash's own regex engine — no process per invocation.
         case "$SRC" in
             inline) [[ $inv =~ $GIT_WORD_RE ]] && return 0 ;;
+            evalarg) [[ ${COMMAND#*eval} =~ $GIT_WORD_RE ]] && return 0 ;;
             stdin)
                 if [[ $inv == *'<<'* ]]; then
                     [[ ${COMMAND#*<<} =~ $GIT_WORD_RE ]] && return 0

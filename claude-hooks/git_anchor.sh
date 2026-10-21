@@ -61,7 +61,6 @@
 # outside the prefix list (`flock`, `su -c`, `runuser`, `parallel`,
 # `watch`, `unshare`, `nsenter`, `systemd-run`, `script -c`), an `env -S`
 # payload attached to its option (`env -S'…'`, `--split-string='…'`),
-# a backslash-newline continuation BETWEEN the words of an anchor,
 # wrappers nested more than one level deep with escaped inner quotes,
 # a non-heredoc script piped into a shell (`echo "…" | bash`; a heredoc
 # whose line pipes into a shell IS covered), an interpreter running git
@@ -71,22 +70,24 @@
 # boundary), git aliases (inline `git -c alias.x='!…' x` and configured
 # ones), other git verbs that overwrite files or move refs
 # (`read-tree -u`, `checkout-index -f`, `branch -f`),
-# payloads assembled from several arguments or positional parameters
-# (`bash -c 'git "$@"' _ push -f`, `ssh h git push '-f'`, issue #738),
-# a quoted redirection target containing a blank before a payload
-# (`bash -c > 'a b' '…'`: the --words view keeps the blank, so the target
-# reads as two words there and the payload is not unwrapped in that view;
-# likewise `> 'a b' git push` reads as a redirection then the word `b` in
-# the --words view, so a guard reading flags there loses that invocation),
+# positional parameters whose values exist only at run time
+# (`find … -exec sh -c '"$@"' _ {} +`), a command an ssh option runs on
+# the local machine (`ssh -o ProxyCommand=…`, `LocalCommand`), an ssh
+# command whose start unknowable words could move by more than two (a
+# word holding an expansion where the host is read moves it up to two,
+# an option letter outside OpenSSH's getopt string one), a positional
+# reference past JOINCAP in a padded payload (substitution stops there,
+# below), assembled text nested past the re-scan depth,
 # a redirection between a valued git option and its value
 # (`git -C 2>&1 <dir> push`: the anchor takes the redirection for the
 # value, and `<dir>` then ends the option run), a command word hidden by escapes inside `$'…'`
 # (`$'\x67it' push`), a quoted command word holding a variable or a blank
-# (`"$G" push`, `'git push'` as one word), a quoted global-option value
-# containing a blank (`git -C 'a b' push -f`, issue #754), and one
-# accepted false block: `x &>log git push`, where
+# (`"$G" push`, `'git push'` as one word), and two
+# accepted false blocks: `x &>log git push`, where
 # git is only an argument, reads as `&` followed by a redirected
-# `git push` — it costs a `!` — the guards are tripwires for the routes
+# `git push`, and an `ssh` word that is only an argument
+# (`echo ssh h git push -f`) has its following words read as the remote
+# command — each costs a `!` — the guards are tripwires for the routes
 # agents were seen to take, not a sandbox.
 #
 # GUARD_REDIR is one or more redirection words: an optional fd number or
@@ -199,10 +200,18 @@ GH_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"'gh[[:space:
 #   payload candidate too, quoted or not, so an option after `-c`
 #   (`bash -c -x '…'`, `-o posix`, `--`) cannot shift the real payload out
 #   of view; a later quoted argument of `eval` / `ssh` is re-scanned the
-#   same way, each one separately (never joined into one string). A
-#   heredoc fed to a shell (`bash <<EOF`, `ssh host <<EOF`, or a heredoc
-#   line that pipes into one: `cat <<EOF | sh`) is kept as commands for
-#   the same reason;
+#   same way, each one separately. A heredoc fed to a shell (`bash <<EOF`,
+#   `ssh host <<EOF`, or a heredoc line that pipes into one:
+#   `cat <<EOF | sh`) is kept as commands for the same reason;
+# - text the shell assembles from several words is ALSO read joined, as
+#   the shell runs it, at the end of the simple command between two `;`
+#   marks: the arguments of `eval` (`eval 'git' 'push -f'`), the words
+#   after the host of an `ssh` (`ssh h git push -f`, its options read as
+#   OpenSSH reads them), and a shell `-c` payload with its positional
+#   parameters substituted from the words after it
+#   (`bash -c 'git "$@"' _ push -f`). The word-by-word reading above stays
+#   too, so joining only adds what a guard sees (details at
+#   "Text the shell assembles", in the scanner);
 # - redirections (`2>&1`, `>out`, `<in`, `&>log`, `>|f`, `{fd}>x`, with or
 #   without a blank before the target) are not words of the command:
 #   wrapper detection reads past them, so `bash 2>&1 -c '…'`,
@@ -213,7 +222,9 @@ GH_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"'gh[[:space:
 #   still are). `ssh` is recognised by path too (`/usr/bin/ssh`). The
 #   emitted text is unchanged — only detection reads the
 #   redirection-stripped copy;
-# - an escaped separator (`\;`) is a literal, so it is emitted as `_`;
+# - an escaped separator or blank (`\;`, `\ `) is a literal, so it is
+#   emitted as `_` (a line continuation, backslash-newline, adds nothing,
+#   inside a word or before one);
 # - when unsure, the scanner keeps text VISIBLE (a false block costs a
 #   `!`; a bypass costs the guard): `#` starts a comment only at an
 #   unescaped word start outside `${…}` and never inside backticks, and
@@ -221,12 +232,13 @@ GH_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"'gh[[:space:
 #   never opens a heredoc that would blank the lines after it.
 #
 # `command_positions --words "$COMMAND"` prints the same view with quoted
-# spans kept as their words instead of blanked (quote characters dropped,
-# separators inside them neutralised to `_`). Guards gate on the first
-# view and read flags, refspecs, branch names and paths from this one: a
-# quoted `"--no-verify"` or `"main"` is still the flag or branch the
-# command receives, but a `;` inside a quoted message cannot end the
-# invocation early or start a fake one.
+# spans kept as their words instead of blanked (quote characters dropped;
+# blanks and separators inside them, and escaped ones, neutralised to
+# GUARD_NEUTRAL, below). Guards gate on the first view and read flags,
+# refspecs, branch names and paths from this one: a quoted `"--no-verify"`
+# or `"main"` is still the flag or branch the command receives, but a `;`
+# inside a quoted message cannot end the invocation early or start a fake
+# one, and every shell word is one word in both views.
 #
 # The scanner is a quote state machine: one left-to-right pass mirroring bash's own
 # tokenizer (single quotes have no escapes; in double quotes a backslash
@@ -238,6 +250,22 @@ GH_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"'gh[[:space:
 # Payload re-scans are capped at four levels; deeper payloads are emitted
 # unscanned and visible (fail closed). If awk itself fails the raw text is
 # returned — the guard then behaves as it did before the pre-pass existed.
+#
+# GUARD_NEUTRAL is the byte (US, \037) the --words view puts in place of
+# every character inside a quoted or escaped word that would otherwise act
+# as shell syntax or split the word: blanks, tabs, newlines, the separators
+# `;` `&` `|` `(` `)` `<` `>`, `{` `}`, `!` and the backtick. It is not
+# whitespace to bash, grep or awk, so a quoted word stays ONE word in that
+# view (`-C 'a b'` is the single value `a␟b`, as git receives it), and it
+# is no identifier character, so it never glues a word to its neighbour
+# (`system(q(git push))` keeps `git` a word of its own). A guard that hands
+# a word's value to git and finds this byte in it cannot know that value
+# exactly, and treats it as unknowable (block_git_destructive.sh). The
+# command-positions view never holds it: there a quoted span is `_`, and an
+# escaped character that would be syntax — an escaped blank included —
+# is `_` too.
+# shellcheck disable=SC2034  # consumed by sourcing hooks
+GUARD_NEUTRAL=$'\037'
 # The redirection blanker, one copy: the scanner below includes it, and
 # guard_unredir runs it alone.
 _GUARD_UNREDIR_AWK='
@@ -295,7 +323,11 @@ function unredir(t,   n, k, a, r, c, d, f, j, e, m) {
 }
 '
 _GUARD_CMDPOS_AWK="${_GUARD_UNREDIR_AWK}"'
-function neut(t) { gsub(/[;&|()`<>\n!{}]/, "_", t); return t }
+# Neutralise every character of t that would act as shell syntax or split
+# a word. The stand-in is NREP, set once per view in BEGIN: `_` in the
+# command-positions view (where only escaped characters reach here), the
+# GUARD_NEUTRAL byte in the --words view.
+function neut(t) { gsub(/[;&|()`<>\n!{} \t]/, NREP, t); return t }
 # Wrapper type of the command so far. t is the current wrapper chain — the
 # output since the chain base cb (see scan), however long: a fixed-size
 # window let padding (`bash -o posix -o posix … -c`) push the wrapper out
@@ -335,10 +367,207 @@ function rescan(t,   r) {
     PD++; r = scan(t, 1, 0); PD--
     return ";" r ";"
 }
+# ---- Text the shell assembles from several words --------------------------
+# `eval` joins its arguments with blanks and parses the result; ssh joins
+# the words after the host into the command the remote shell parses; and
+# a shell `-c` payload reads the words after it as $0, $1, … So each is
+# also read the way the shell runs it: joined (or substituted) into one
+# text and re-scanned, in addition to the word-by-word reading.
+#
+# The cost stays linear in the command: a simple command is joined at most
+# once per scan (the caller tracks how far a join already read), words are
+# joined pairwise (joins), never by growing one string, and every joined
+# or substituted text that is re-scanned is charged to BUDGET, one byte
+# budget for the whole command across every depth. A text longer than
+# JOINCAP, or one past the budget, is emitted unscanned with its quote
+# characters dropped — visible to every guard (fail closed), not
+# re-parsed.
+#
+# A redirection starts at i: an operator, or an fd number / {name} before
+# one.
+function redir_start(s, i,   c) {
+    c = substr(s, i, 1)
+    if (c == "<" || c == ">" || (c == "&" && substr(s, i + 1, 1) == ">")) return 1
+    return substr(s, i, 40) ~ /^([0-9]+|[{][A-Za-z_][A-Za-z0-9_]*[}])[<>]/
+}
+# The position after the redirection at i: its fd part, its operator, the
+# blanks after it and its target (one word, or one `(…)` group).
+function redir_skip(s, i,   n, d, ch) {
+    n = length(s)
+    if (match(substr(s, i, 40), /^([0-9]+|[{][A-Za-z_][A-Za-z0-9_]*[}])/)) i += RLENGTH
+    if (substr(s, i, 1) == "&") i++
+    i++
+    while (i <= n && index("<>&|-", substr(s, i, 1))) i++
+    while (i <= n && index(" \t", substr(s, i, 1))) i++
+    if (substr(s, i, 1) == "(") {
+        d = 0
+        while (i <= n) {
+            ch = substr(s, i, 1); i++
+            if (ch == "(") d++
+            else if (ch == ")" && --d == 0) break
+        }
+        return i
+    }
+    pword(s, i)
+    return (WPOS > i) ? WPOS : i
+}
+# The words of the simple command from i, each decoded as pword() reads
+# it, redirections skipped, up to the first separator, newline or comment.
+# Sets CN, CW[1..CN] (the words), CX[k] (1 when word k holds a `$` or a
+# backtick, so its value after expansion is unknowable here), CR (how
+# many words decode to text other than their own spelling: quoted or
+# escaped) and CEND (the position where the simple command ends).
+function cmd_words(s, i,   n, c, st, w) {
+    n = length(s); CN = 0; CR = 0
+    while (i <= n) {
+        c = substr(s, i, 1)
+        if (c == " " || c == "\t") { i++; continue }
+        if (c == "\\" && substr(s, i + 1, 1) == "\n") { i += 2; continue }
+        if (index(";&|\n()", c) && !redir_amp(s, i, c, substr(s, i - 1, 1))) break
+        if (c == "#") break
+        if (redir_start(s, i)) { i = redir_skip(s, i); continue }
+        st = i; w = pword(s, i); i = WPOS
+        if (i == st) { i++; continue }
+        CW[++CN] = w; CX[CN] = (substr(s, st, i - st) ~ /[$`]/)
+        if (substr(s, st, i - st) != w) CR++
+    }
+    CEND = i
+}
+# A[lo..hi] joined with sep, pairwise: the copying is n log n, where
+# growing one string word by word is quadratic in some awks.
+function joins(A, lo, hi, sep,   m) {
+    if (lo > hi) return ""
+    if (lo == hi) return A[lo]
+    m = int((lo + hi) / 2)
+    return joins(A, lo, m, sep) sep joins(A, m + 1, hi, sep)
+}
+# rescan(), for an assembled text: charged to BUDGET; past JOINCAP or the
+# budget, emitted unscanned with quote characters dropped (see above).
+function jrescan(t) {
+    if (length(t) > JOINCAP || length(t) > BUDGET) { gsub(/["\047]/, "", t); return ";" t ";" }
+    BUDGET -= length(t)
+    return rescan(t)
+}
+# The words after `ssh`, L[1..n] (X[k] as CX), read as OpenSSH reads them
+# — its getopt string SSH_GETOPT (BEGIN), verbatim from ssh.c: an option
+# word is a dash and at least one letter; in a cluster, a letter that
+# takes a value takes the rest of the word or, at its end, the next word;
+# `--` ends the options. The run starts at k; returns the index of the
+# first word that is no option (-1 when a value is missing), and sets
+# SAMB (letters outside the string, each of which may take a value in a
+# newer OpenSSH) and STERM (the run ended with `--`).
+function ssh_optrun(L, n, k,   t, j, m, c) {
+    SAMB = 0; STERM = 0
+    while (k <= n) {
+        t = L[k]
+        if (t !~ /^-./) return k
+        if (t == "--") { STERM = 1; return k + 1 }
+        m = length(t)
+        for (j = 2; j <= m; j++) {
+            c = substr(t, j, 1)
+            if (index(SSH_VAL, c)) { if (j == m && ++k > n) return -1; break }
+            if (!index(SSH_FLAG, c)) SAMB++
+        }
+        k++
+    }
+    return k
+}
+# Where the remote command starts in L[1..n]: an option run, the host,
+# then — unless `--` ended the first run — a second option run, because
+# OpenSSH reads options again after the host. A word standing where the
+# host is read that holds an expansion may expand to nothing, or to
+# options taking the next word; that and each unknown letter may move the
+# start later, never earlier. Sets SLO (the start when none does) and SHI
+# (the latest start they allow); returns 0 when no command follows.
+function ssh_start(L, X, n,   k, host, amb) {
+    k = ssh_optrun(L, n, 1); amb = SAMB
+    if (k < 0 || k > n) return 0
+    host = k
+    if (X[host]) amb += 2
+    k = host + 1
+    if (!STERM) { k = ssh_optrun(L, n, k); amb += SAMB }
+    if (k < 0 || k > n) return 0
+    SLO = k; SHI = k + amb
+    return 1
+}
+# The ssh command from i (the word after `ssh`), joined and re-scanned at
+# each start ssh_start() allows — at most three. Sets JEND to the end of
+# the simple command.
+function ssh_join(s, i,   L, X, n, k, hi, r) {
+    cmd_words(s, i); JEND = CEND; n = CN
+    for (k = 1; k <= n; k++) { L[k] = CW[k]; X[k] = CX[k] }
+    if (!ssh_start(L, X, n)) return ""
+    hi = SHI; if (hi > SLO + 2) hi = SLO + 2
+    r = ""
+    for (k = SLO; k <= hi && k <= n; k++) r = r jrescan(joins(L, k, n, " "))
+    return r
+}
+# The eval arguments from i, joined and re-scanned. Sets JEND. When every
+# word is spelled as it decodes, the joined text is the words themselves,
+# which the word-by-word reading already scans after its `;` mark, so
+# nothing is added: a chain of plain `eval eval …` costs no joins.
+function eval_join(s, i,   L, n, k) {
+    cmd_words(s, i); JEND = CEND; n = CN
+    if (!CR) return ""
+    for (k = 1; k <= n; k++) L[k] = CW[k]
+    k = (n && L[1] == "--") ? 2 : 1
+    return (k <= n) ? jrescan(joins(L, k, n, " ")) : ""
+}
+# v single-quoted for the shell; an embedded single quote is closed,
+# escaped with a backslash and reopened.
+function squote(v,   Q, n) {
+    n = split(v, Q, "\047")
+    return "\047" joins(Q, 1, n, "\047\\\047\047") "\047"
+}
+# The shell `-c` payload w with its positional parameters substituted from
+# the words after it (from i: $0 first, then $1 …), re-scanned. A lone
+# "$@" becomes every argument single-quoted, a lone "$*" or "$N" one
+# single-quoted word; any other reference — unquoted, inside a longer
+# quoted string, or `${…}` with an operator — the raw text: the arguments
+# joined with blanks (`$@` `$*`, which never include $0) or the one
+# argument (`$N`, and `$0` too: a payload of `$0 "$@"` before the words
+# `git push -f` runs git). The
+# first reference is always substituted — its text is at most the command
+# itself, and it is the one that names what a lone `"$@"` payload runs; a
+# later one only while the text stays within JOINCAP, after which the
+# rest of the payload is kept as written and the whole is emitted
+# unscanned (jrescan).
+function pos_rescan(w, s, i,   P, m, k, n, c, d, j, e, body, v, A, na, tot, st, QP, raw, qall, qstar, num) {
+    cmd_words(s, i); m = CN - 1
+    for (k = 1; k <= CN; k++) { P[k - 1] = CW[k]; QP[k - 1] = squote(CW[k]) }
+    raw = joins(P, 1, m, " "); qall = joins(QP, 1, m, " "); qstar = squote(raw)
+    n = length(w); k = 1; st = 1; na = 0; tot = 0
+    while (k <= n) {
+        c = substr(w, k, 1)
+        if (c == "\"" && match(substr(w, k, 24), /^"[$]([@*0-9]|[{]([@*]|[0-9]+)[}])"/)) {
+            e = k + RLENGTH; body = substr(w, k + 2, RLENGTH - 3); gsub(/[{}]/, "", body)
+            if (body == "@") v = qall
+            else if (body == "*") v = qstar
+            else v = (body + 0 <= m) ? QP[body + 0] : "\047\047"
+        } else if (c == "$") {
+            d = substr(w, k + 1, 1)
+            if (d == "@" || d == "*") { v = raw; e = k + 2 }
+            else if (d ~ /[0-9]/) { num = d + 0; v = (num <= m) ? P[num] : ""; e = k + 2 }
+            else if (d == "{" && (j = index(substr(w, k + 2), "}")) > 0) {
+                body = substr(w, k + 2, j - 1); e = k + 2 + j
+                if (body ~ /^[0-9]+$/) v = (body + 0 <= m) ? P[body + 0] : ""
+                else if (body ~ /^#?([@*]|[0-9])/) v = raw
+                else { k++; continue }
+            } else { k++; continue }
+        } else { k++; continue }
+        if (na && tot + (k - st) + length(v) > JOINCAP) break
+        A[++na] = substr(w, st, k - st); A[++na] = v; tot += (k - st) + length(v)
+        k = e; st = e
+    }
+    A[++na] = substr(w, st)
+    return jrescan(joins(A, 1, na, ""))
+}
 # One shell word at i, quotes removed — the payload of a wrapper such as
 # `bash -c`. Its quote rules must match scan()s own handlers (single,
 # double and $-quotes there) and litword() below; the quoting-parity test
-# runs every case both ways so they cannot drift.
+# runs every case both ways so they cannot drift. Its scan() calls only
+# find where a substitution ends — their output is not kept — so NJ turns
+# the joins above off inside them.
 function pword(s, i,   n, w, c, d, k, j, ch, e) {
     n = length(s); w = ""
     while (i <= n) {
@@ -372,7 +601,7 @@ function pword(s, i,   n, w, c, d, k, j, ch, e) {
                 }
                 if (ch == "\"") break
                 if ((ch == "$" && substr(s, k + 1, 1) == "(") || ch == "`") {
-                    if (ch == "`") scan(s, k + 1, 2); else scan(s, k + 2, 1)
+                    NJ++; if (ch == "`") scan(s, k + 1, 2); else scan(s, k + 2, 1); NJ--
                     e = RPOS; w = w substr(s, k, e - k); k = e; continue
                 }
                 w = w ch; k++
@@ -380,7 +609,7 @@ function pword(s, i,   n, w, c, d, k, j, ch, e) {
             i = k + 1; continue
         }
         if ((c == "$" && substr(s, i + 1, 1) == "(") || c == "`") {
-            if (c == "`") scan(s, i + 1, 2); else scan(s, i + 2, 1)
+            NJ++; if (c == "`") scan(s, i + 1, 2); else scan(s, i + 2, 1); NJ--
             e = RPOS; w = w substr(s, i, e - i); i = e; continue
         }
         w = w c; i++
@@ -394,7 +623,8 @@ function pword(s, i,   n, w, c, d, k, j, ch, e) {
 # least one piece is quoted, every piece is literal (single-quoted text;
 # double-quoted or $"…" text with no `$`, backtick or backslash; $'…'
 # text with no backslash; unquoted characters; a backslash-escaped plain
-# character), every quote is closed, and the result is a run of
+# character; a backslash-newline line continuation, which adds nothing),
+# every quote is closed, and the result is a run of
 # [A-Za-z0-9_@%+=:,./-]. A quoted `-h` / `--help` stays blank, so the help
 # exemption (guard_help_only) never widens. Its quote rules must match
 # scan()s handlers and pword(). Reads one word: linear. Sets LPOS to the
@@ -406,6 +636,9 @@ function litword(s, i,   n, w, q, c, d, k, j, body) {
         if (index(" \t\n;&|()<>", c)) break
         if (c == "\\") {
             d = substr(s, i + 1, 1)
+            # A line continuation joins the lines and adds nothing, so the
+            # word goes on (`g\<newline>"it"`, or one that starts with it).
+            if (d == "\n") { i += 2; continue }
             if (d !~ /^[A-Za-z0-9_@%+=:,.\/-]$/) return ""
             w = w d; i += 2; continue
         }
@@ -533,15 +766,26 @@ function heredoc_open(s, i, before,   n, k, ch, j, rl) {
 # psh marks that a shell `-c` payload was found: every later word of the
 # simple command is then re-scanned as a payload too (options may follow
 # `-c`), until a separator clears it with pa.
-function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k, j, w, line, sb, e, ansi, dec, vis, kv, ch, h, cmp, pc, bd, pa, wt, qs, cb, pws, pw, hsh, hssh, hev, psh, isr, rt, prr, lw, mpw, spw, st, lt) {
+#
+# The joined readings (Text the shell assembles, above) are found at the
+# same words — the first word after `eval` (ev), the first after `ssh`,
+# and the first shell `-c` payload that names a positional parameter
+# (pdone) — and are held in pj until the simple command ends, then
+# emitted: written where they were found, they would cut the chain the
+# word-by-word reading still has to see. je is where the last join
+# stopped reading, so a word inside an already joined command (the second
+# `eval` of `eval eval …`) starts no second join.
+function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k, j, w, line, sb, e, ansi, dec, vis, kv, ch, h, cmp, pc, bd, pa, wt, qs, cb, pws, pw, hsh, hssh, hev, psh, isr, rt, prr, lw, mpw, spw, st, lt, qb, ev, je, pj, pdone) {
     n = length(s); out = ""; depth = 0; dollar = 0; nh = 0; bd = 0; pa = 0; st = i
     cb = 0; pws = 0; hsh = 0; hssh = 0; hev = 0; psh = 0; rt = 0; prr = 0; lw = ""
+    je = 0; pj = ""; pdone = 0
     while (i <= n) {
         c = substr(s, i, 1)
         pc = (i == 1) ? "\n" : substr(s, i - 1, 1)
         if (rt && index(" \t<>", c)) { pws = length(out); rt = 0 }
         if (index(";&|\n()", c) && !redir_amp(s, i, c, pc)) {
-            pa = 0; psh = 0; rt = 0; prr = 0; lw = ""
+            if (pj != "") { out = out pj; pj = "" }
+            pa = 0; psh = 0; rt = 0; prr = 0; lw = ""; pdone = 0
             cb = length(out); pws = cb + 1; hsh = 0; hssh = 0; hev = 0
         }
         if (!index(" \t\n;&|()<>", c) && index(" \t<", pc)) {
@@ -557,6 +801,10 @@ function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k
             wt = 0
             if (!isr && ((hsh && spw ~ /^-[A-Za-z]*c[A-Za-z]*$/) || spw ~ /<<<$/ || spw ~ RE_EVALW || (qs && hssh)))
                 wt = wtype(unredir(substr(out, cb + 1)))
+            ev = (wt == 2)
+            if (!NJ && i >= je && (ev || spw ~ RE_SSHW)) {
+                pj = pj (ev ? eval_join(s, i) : ssh_join(s, i)); je = JEND
+            }
             if (!isr && wt == 0) {
                 if (spw ~ RE_EXECW) wt = 4
                 else if (qs && hev && spw ~ RE_ENVSW && pword(s, i) ~ /[ \t]/) wt = 5
@@ -574,6 +822,7 @@ function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k
             }
             if (wt != 4 && (wt == 1 || (wt && qs))) {
                 w = pword(s, i); out = out rescan(w); i = WPOS
+                if (wt == 1 && !pdone && !NJ && w ~ RE_POSREF) { pdone = 1; pj = pj pos_rescan(w, s, i) }
                 cb = length(out); pws = cb; hsh = 0; hssh = 0; hev = 0; lw = ""; prr = 0
                 if (wt == 1) psh = 1
                 pa = (wt == 2 || wt == 3); dollar = 0; continue
@@ -621,12 +870,22 @@ function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k
         }
         if (c == "\"") {
             dollar = 0
-            k = i + 1; vis = ""; kv = ""
+            k = i + 1; vis = ""; kv = ""; qb = 0
             while (k <= n) {
-                j = match(substr(s, k), /[\\"$`]/)
+                j = match(substr(s, k), /[\\"$`{}]/)
                 if (j == 0) { kv = kv neut(substr(s, k)); k = n + 1; break }
                 if (j > 1) { kv = kv neut(substr(s, k, j - 1)); k += j - 1 }
                 ch = substr(s, k, 1)
+                # A live `${…}` keeps its braces, so `"${G}" push` still reads
+                # as a variable in the command-word slot (GIT_UNKNOWN_ANCHOR);
+                # qb counts the braces open inside it. Any other brace is
+                # neutralised like the rest of the span.
+                if (ch == "$" && substr(s, k + 1, 1) == "{") { kv = kv "${"; qb++; k += 2; continue }
+                if (ch == "{" || ch == "}") {
+                    if (qb == 0) kv = kv NREP
+                    else { kv = kv ch; qb += (ch == "{") ? 1 : -1 }
+                    k++; continue
+                }
                 if (ch == "\\") {
                     d = substr(s, k + 1, 1)
                     if (d == "\n") { k += 2; continue }
@@ -647,7 +906,7 @@ function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k
             continue
         }
         if (c == "`") {
-            if (mode == 2) { RPOS = i + 1; return out }
+            if (mode == 2) { RPOS = i + 1; return out pj }
             sb = scan(s, i + 1, 2); out = out "(" sb ")"; i = RPOS; dollar = 0; continue
         }
         if (c == "(" && substr(s, i + 1, 1) == "(" && (pc == "$" || index(" \t\n;&|(", pc))) {
@@ -688,10 +947,25 @@ function scan(s, i, mode,    n, out, c, d, depth, dollar, nh, hdl, hq, ht, hx, k
         out = out c; dollar = 0; i++
     }
     RPOS = n + 1
-    return out
+    return out pj
 }
 BEGIN {
-    PD = 0; SP = " "
+    PD = 0; SP = " "; NJ = 0
+    NREP = KEEP ? NEUT : "_"
+    # Assembled texts (Text the shell assembles, above): the most one may
+    # hold and still be re-scanned, and the bytes all of them together may
+    # re-scan.
+    JOINCAP = 16384; BUDGET = 65536
+    RE_POSREF = "[$]([@*0-9]|[{]#?([@*]|[0-9]))"
+    # OpenSSH ssh.c getopt string, verbatim: a letter before a colon takes a
+    # value. SSH_FLAG and SSH_VAL are its two letter sets.
+    SSH_GETOPT = "1246ab:c:e:fgi:kl:m:no:p:qstvxAB:CD:E:F:GI:J:KL:MNO:P:Q:R:S:TVw:W:XYy"
+    SSH_FLAG = ""; SSH_VAL = ""
+    for (GK = 1; GK <= length(SSH_GETOPT); GK++) {
+        GC = substr(SSH_GETOPT, GK, 1)
+        if (GC == ":") continue
+        if (substr(SSH_GETOPT, GK + 1, 1) == ":") SSH_VAL = SSH_VAL GC; else SSH_FLAG = SSH_FLAG GC
+    }
     B = "(^|[ \t\n;&|()!{}])"
     SHELLS = "([^ \t\n;&|()<>]*/)?(bash|sh|zsh|dash|ksh)"
     SSHH = "([^ \t\n;&|()<>]*/)?ssh"
@@ -801,7 +1075,7 @@ command_positions() {
         esac
         shift
     done
-    view=$(printf '%s\n' "$1" | LC_ALL=C awk -v KEEP="$keep" -v WRAPPERS="$GUARD_WRAPPERS" "$_GUARD_CMDPOS_AWK" 2>/dev/null) || view="$1"
+    view=$(printf '%s\n' "$1" | LC_ALL=C awk -v KEEP="$keep" -v NEUT="$GUARD_NEUTRAL" -v WRAPPERS="$GUARD_WRAPPERS" "$_GUARD_CMDPOS_AWK" 2>/dev/null) || view="$1"
     if [ "$noredir" = 1 ]; then
         view=$(guard_unredir "$view")
     fi
