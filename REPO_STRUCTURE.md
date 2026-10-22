@@ -32,6 +32,7 @@ Checked on every commit by `verify-forge-repo-structure`: every listed file and 
    - telemetry.py: `forge-telemetry` — process-tree RSS + host CPU sampler around a wrapped command; per-run log/plot artifacts, append-only `code_health/telemetry_history.log`, `--history` trend reader
    - agent_profile.py: `forge-agent-profile` — where agent and subagent time goes: pairs the `log_agent_timing` hook ledger (`code_health/agent_timing.jsonl`) with the subagent transcripts it names into per-agent-type wall/active time, slowest runs, per-tool cost, loop suspects, and `forge:precommit-fixer` cap breaches; append-only `code_health/agent_profile_history.log`; wired via `/perf` and `/report-to-forge`
    - ledger.py: the one writer + parser for the append-only `key=value` ledgers under `code_health/` (telemetry_history.log, smart_test_history.log, agent_profile_history.log)
+   - text_clip.py: `truncate` — the shared "keep N characters, then append a marker" cut for bounded text (evidence, log fragments, labels, echoes); callers keep their own marker, budget arithmetic and stripping
    - config.py: loader for the `[tool.forge]` table in a repo's `pyproject.toml` (base branch and the other forge settings, defaulting to single-branch `main` behaviour)
    - memory_audit.py: `forge-memory-audit` — `status` counts agent memory notes added since the last audit stamp and says whether to offer `/memory-audit`; `stamp` rewrites the stamp after an audit
    - forge_config.py: `forge-config` — lists every `[tool.forge.*]` key forge reads (value/default + description), names native sections like `[tool.interrogate]`, and advises on recommended-but-unset config; read-only, surfaced by `install-forge-bootstrap`
@@ -266,6 +267,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_forge_config.py: tests for forge_config
    - test_gh_comments.py: tests for gh_comments (shared PR-comment plumbing: paging, filtering, attribution)
    - test_ledger.py: tests for ledger (the append-only `key=value` ledger shape)
+   - test_text_clip.py: tests for text_clip (`truncate` under, at and over the limit; custom and empty suffix)
    - test_memory_audit.py: tests for memory_audit (new-memory counting and the audit stamp)
    - test_pr_create.py: tests for pr_create (publishing a PR from the branch it verifies, and the CVE-scan freshness refusal, against real ephemeral git repos and real sidecars)
    - test_pr_plan.py: tests for pr_plan (the `/pr` finalization-path classifier, `--freshness` and `--evidence`)

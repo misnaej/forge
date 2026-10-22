@@ -38,6 +38,7 @@ from forge.changelog_fragments import branch_added_fragments
 from forge.config import is_fragments_mode, load_config
 from forge.git_utils import (
     EVIDENCE_OUTPUT_CAP,
+    EVIDENCE_TRUNCATED_SUFFIX,
     code_health_dir,
     log_freshness,
     resolve_base_branch_ref,
@@ -50,6 +51,7 @@ from forge.git_utils import (
 from forge.pr_delta import PROVENANCE_GATE_STEPS, find_closing_refs, regen_commands
 from forge.pr_wrapup_compose import render_issue_management
 from forge.precommit import freshness_verdicts, timing_markers
+from forge.text_clip import truncate
 
 
 if TYPE_CHECKING:
@@ -151,8 +153,7 @@ def _data(text: str) -> list[str]:
     Returns:
         The fenced block's lines.
     """
-    if len(text) > EVIDENCE_OUTPUT_CAP:
-        text = f"{text[:EVIDENCE_OUTPUT_CAP]}\n… (truncated)"
+    text = truncate(text, EVIDENCE_OUTPUT_CAP, suffix=EVIDENCE_TRUNCATED_SUFFIX)
     clean = "\n".join(sanitize_log_text(line) for line in text.splitlines())
     return wrap_in_code_fence(clean).splitlines()
 
