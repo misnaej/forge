@@ -62,6 +62,7 @@ from forge.git_utils import (
     repo_root,
 )
 from forge.ledger import append_ledger_line, parse_ledger
+from forge.text_clip import truncate
 
 
 if TYPE_CHECKING:
@@ -450,12 +451,11 @@ def _safe_label(raw: str) -> str:
         raw: Path string as recorded.
 
     Returns:
-        A single-line label of at most :data:`PATH_LABEL_CAP` characters.
+        A single-line label of at most :data:`PATH_LABEL_CAP` + 1
+        characters (the cap plus a one-character ellipsis when cut).
     """
     flat = "".join(ch if ch.isprintable() else " " for ch in raw).strip()
-    if len(flat) > PATH_LABEL_CAP:
-        flat = flat[:PATH_LABEL_CAP] + "…"
-    return flat or "<empty>"
+    return truncate(flat, PATH_LABEL_CAP) or "<empty>"
 
 
 def _relative_to_root(raw: str, root: Path) -> str:

@@ -138,6 +138,7 @@ from forge.regen_docs import (
 )
 from forge.run_context import is_ci, is_non_interactive
 from forge.smart_test import lifecycle as _lifecycle
+from forge.text_clip import truncate
 from forge.version_surfaces import (
     DIST_NAME,
     SKEW_REMEDIATION,
@@ -3601,10 +3602,11 @@ def _capped(output: str) -> str:
     Returns:
         The text, truncated with a marker when it exceeds the cap.
     """
-    text = output.rstrip()
-    if len(text) <= EVIDENCE_OUTPUT_CAP:
-        return text
-    return f"{text[:EVIDENCE_OUTPUT_CAP]}\n… (truncated; full output in the log)"
+    return truncate(
+        output.rstrip(),
+        EVIDENCE_OUTPUT_CAP,
+        suffix="\n… (truncated; full output in the log)",
+    )
 
 
 def _echo_ci_output_enabled(repo_root: Path) -> bool:
