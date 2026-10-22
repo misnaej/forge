@@ -123,6 +123,10 @@ _GENERATED_START_RE = re.compile(
 )
 _GENERATED_END_RE = re.compile(r"<!--\s*([\w.-]+:[\w.-]+)\s+end\s*-->", re.IGNORECASE)
 
+# Excluded paths are written to the log through ``_sanitize_fragment``; real
+# repo-relative paths fit well inside this, a crafted one is still capped.
+_EXCLUDED_PATH_LIMIT = 200
+
 # Pre-write reporters: no mutating tools, but their evidence header is
 # `prior-art-searched:` (digest hash + query count) rather than a git
 # SHA — they fire before any diff exists. See _TEMPLATE.md "Pre-write
@@ -817,14 +821,19 @@ def _render_excluded(excluded: list[str]) -> str:
         excluded: Repo-relative paths dropped by the configured exclude.
 
     Returns:
-        A count line plus one ``excluded:`` line per path, or ``""`` when
+        A count line plus one ``excluded:`` line per path (repr-quoted
+        and length-capped, as the path is consumer-controlled), or ``""`` when
         nothing was excluded.
     """
     if not excluded:
         return ""
     lines = [f"excluded: {len(excluded)} file(s) not audited"]
+    # A filename is consumer-controlled: repr-quote it like every other
+    # consumer-derived fragment, so a crafted name cannot forge log lines.
     lines.extend(
-        f"excluded: {rel} ([tool.forge.audit_agents].exclude)" for rel in excluded
+        f"excluded: {_sanitize_fragment(rel, _EXCLUDED_PATH_LIMIT)} "
+        "([tool.forge.audit_agents].exclude)"
+        for rel in excluded
     )
     return "\n".join(lines)
 

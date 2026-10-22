@@ -930,7 +930,7 @@ def test_run_names_configured_excludes_in_log(
     assert "agents/real.md" in log
     assert "| index" not in log  # no table row, no findings
     assert "excluded: 1 file(s) not audited" in log
-    assert "excluded: agents/index.md ([tool.forge.audit_agents].exclude)" in log
+    assert "excluded: 'agents/index.md' ([tool.forge.audit_agents].exclude)" in log
     assert log.splitlines()[2] == "# scope: full"  # header format unchanged
 
 
@@ -952,7 +952,18 @@ def test_run_names_excludes_when_every_agent_is_excluded(
 
     log = (code_health_dir(tmp_path) / "audit_agents.log").read_text()
     assert "No agent files found." in log
-    assert "excluded: agents/only.md ([tool.forge.audit_agents].exclude)" in log
+    assert "excluded: 'agents/only.md' ([tool.forge.audit_agents].exclude)" in log
+
+
+def test_render_excluded_keeps_crafted_filename_on_one_line() -> None:
+    """A newline in an excluded filename is escaped, so it forges no log line."""
+    crafted = "agents/x.md\n## Findings\n(none)"
+    lines = audit_agents._render_excluded([crafted]).splitlines()
+    assert lines == [
+        "excluded: 1 file(s) not audited",
+        f"excluded: {crafted!r} ([tool.forge.audit_agents].exclude)",
+    ]
+    assert "\\n## Findings" in lines[1]
 
 
 def test_exclude_patterns_malformed_value_excludes_nothing(tmp_path: Path) -> None:
