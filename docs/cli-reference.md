@@ -638,6 +638,25 @@ options:
                Ignored with --freshness.
 ```
 
+## forge-pr-review-comments
+
+```text
+usage: forge-pr-review-comments [-h] {list,unreplied} ...
+
+Read every review comment on a PR (all pages) and find the threads nobody has
+replied to. Exit 2 means GitHub could not answer — unknown, never 'none
+unreplied'.
+
+positional arguments:
+  {list,unreplied}
+    list            print every review comment, one JSON object per line
+    unreplied       print the ids of top-level comments without a reply (exit
+                    1 when any, 0 when none)
+
+options:
+  -h, --help        show this help message and exit
+```
+
 ## forge-pr-squash-comment
 
 ```text

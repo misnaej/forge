@@ -26,7 +26,7 @@ The caller's prompt names a `## Task:` section; all are independently callable. 
 ```bash
 gh pr view <PR#>
 gh pr view <PR#> --comments
-gh api repos/<owner>/<repo>/pulls/<PR#>/comments
+forge-pr-review-comments list --pr <PR#>
 git diff --stat main...HEAD
 ```
 
@@ -35,7 +35,7 @@ Report PR status, CI checks, approval state, comment summary. For "what public s
 ## Task: Fetch & Categorize Review Comments
 
 ```bash
-gh api repos/<owner>/<repo>/pulls/<PR#>/comments --jq '.[] | {id, path, line, body}'
+forge-pr-review-comments list --pr <PR#>   # every page, one JSON object per comment
 ```
 
 Categorize each as already-resolved/needs-action/needs-discussion; report all with id + file:line + category + content. Do NOT implement fixes.
@@ -108,23 +108,21 @@ gh pr view <PR#> --json mergeable,baseRefName
 git rev-list --left-right --count origin/<base>...HEAD   # left = behind
 ```
 
-`CONFLICTING` → **stop and report** (caller resolves + re-invokes; when only forge-generated artifacts conflict the caller runs `forge-resync --resolve-conflicts` — never a hand-merge of a generated file); behind-but-clean → merge the base and proceed, saying what was done — **no confirmation needed** (FOUNDATION §6's resolution rule; /pr Step 0.5).
+`CONFLICTING` → **stop and report** (caller resolves + re-invokes; when only forge-generated artifacts conflict the caller runs `forge-resync --resolve-conflicts` — never a hand-merge of a generated file); behind-but-clean → merge the base and proceed, disclosed per Output — **no confirmation needed** (FOUNDATION §6's resolution rule; /pr Step 0.5).
 
-**Two modes.** *Evidence-supplied* — the caller ran verification and named
-its SHA — means every step below whose evidence was handed over is
-skipped, and the work is composition and posting only. *Direct
+**Two modes.** *Evidence-supplied* (above): every step below whose
+evidence was handed over is skipped. *Direct
 invocation* — no evidence, or evidence from another tree — means the
 agent gathers it itself: a **change-scoped** run, never the whole suite,
 under a bound stated before it starts (FOUNDATION §6). Exceeding the
 bound is a finding — report what ran, what is still unverified, and post
 the wrap-up saying so; "waiting for the run to complete" is never the
-result. Supplying evidence changes what runs, never what the wrap-up
-must say: a section with no evidence behind it is reported as
-unverified, not assumed.
+result. A section with no evidence behind it is reported unverified,
+never assumed.
 
 1. **The three checkers** via Task — one design/security/docs report each; skip per pre-run coverage, all three under delta mode.
 2. **`precommit-fixer` in `mode: strict`** — unless the caller supplied pre-commit results for the current `HEAD`; otherwise ALWAYS, because docstring fixes shift line lengths (`strict`'s `pip_audit` escalation: `/pr` Step 2).
-3. **Deferred changelog** (`precommit_enforce = false`, no `CHANGELOG.md` entry in the diff): author it now — MANDATORY per `/pr` Step 3 (bullet convention: `docs/consumer-release.md`); commit via `forge:git-commit-push`; wrap-up line "wrote CHANGELOG bullet: <text>".
+3. **Deferred changelog** (`precommit_enforce = false`, no `CHANGELOG.md` entry in the diff): author it now — MANDATORY per `/pr` Step 3 (bullet convention: `docs/consumer-release.md`); commit via `forge:git-commit-push`, disclosed per Output; wrap-up line "wrote CHANGELOG bullet: <text>".
 4. **Compose, fill and post the wrap-up**: `forge-pr-wrapup compose --base origin/<base> --pr <PR#> --design <file> --security <file> --docs <file> [--prior-art <file>]`, fill its slots (task above), then `forge-pr-wrapup post --pr <PR#>` — never a raw `gh pr comment` (the `block_raw_wrapup_post` hook refuses it). What `post` refuses and refreshes: [`/pr` Step 4](../skills/pr/SKILL.md#step-4-post-with-the-clis-mandatory) — do not restate; on exit 3 report the fix it names.
 5. **Post the squash-merge message as a separate PR comment, LAST** (task above) — MANDATORY in every wrap-up. It goes after the wrap-up because the person merging copies it out of the bottom of the conversation (FOUNDATION §6); anything posted later is followed by a `forge-pr-squash-comment --pr <PR#>` re-post, which the `keep_squash_comment_last` hook fires on its own.
 
@@ -133,7 +131,7 @@ unverified, not assumed.
 Search related work first; auto-close wiring: "Task: Write PR Description". Creation is propose-first — **report title + body to the user BEFORE creating**; on approval:
 
 ```bash
-gh issue list --search "<keywords>"
+gh issue list --search "<keywords>" --limit 1000
 gh issue create --title "<title>" \
     --body "<summary + plan + benefits + related files — no timeline estimates>"
 ```
@@ -157,7 +155,7 @@ PR COMMENTS CATEGORIZED: <count>
 
 OUTSIDE MY SCOPE: I cannot implement code fixes
 ```
-The main agent implements → `precommit-fixer` → `git-commit-push`, then calls back per comment:
+The main agent fixes, then calls back per comment:
 ```
 pr-manager: "Reply to comment <ID> with commit <hash>: <what was done>"
 ```
@@ -178,8 +176,10 @@ truth: `[tool.forge.agent_doc.guarded_by]`); contract: [`_TEMPLATE.md` "Guard ho
 
 ## Output
 
-Report templates live in each task section — Verification's two mandatory PR comments, Fetch/Categorize's structured list, URL/comment-id returns elsewhere. Reports reach the **orchestrator only** — callers must relay to the user's terminal (rationale: `/pr` Step 3.9).
+Report templates live in each task section. Reports reach the **orchestrator only** — callers must relay to the user's terminal (rationale: `/pr` Step 3.9).
+
+The hand-back lists every commit, merge or push this run caused, its own or a delegate's: SHA, files, pushed or not. It also quotes every guard refusal with the refused command. A refusal ends that step: report it and ask, never reshape the command to the same effect (FOUNDATION §2).
 
 ## Success Criteria
 
-Task-dependent: comments categorized + reported; reply posted; description ≤300 words, bare `Closes #N`; squash message via `forge-pr-squash-comment`; reporters called (or delta short-circuit); both finalization comments posted; issues only with user approval.
+Task-dependent: each task's report returned; both finalization comments posted; every side effect and refusal disclosed; issues only with user approval.
