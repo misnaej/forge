@@ -24,6 +24,8 @@ from importlib import metadata
 from pathlib import Path
 from typing import Literal
 
+from forge.text_clip import truncate
+
 
 logger = logging.getLogger(__name__)
 
@@ -887,6 +889,11 @@ def create_annotated_tag(
 # with in-body verification evidence.
 EVIDENCE_OUTPUT_CAP = 4000
 
+# Marker appended after evidence cut at EVIDENCE_OUTPUT_CAP. Named so the
+# sites embedding gate evidence share one spelling; deliberately not the
+# generic truncate() default, which most callers want shorter.
+EVIDENCE_TRUNCATED_SUFFIX = "\n… (truncated)"
+
 
 # Shortest fence `wrap_in_code_fence` emits — four backticks, so a plain
 # three-backtick example inside the content never needs a longer one.
@@ -965,8 +972,7 @@ def run_gate_evidence(
     output = "\n".join(
         part for part in (proc.stdout.strip(), proc.stderr.strip()) if part
     )
-    if len(output) > EVIDENCE_OUTPUT_CAP:
-        output = f"{output[:EVIDENCE_OUTPUT_CAP]}\n… (truncated)"
+    output = truncate(output, EVIDENCE_OUTPUT_CAP, suffix=EVIDENCE_TRUNCATED_SUFFIX)
     return passed, (
         f"## {section_title}\n\n{headline}\n\n{wrap_in_code_fence(output)}\n"
     )

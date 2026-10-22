@@ -48,6 +48,7 @@ from tests.conftest import (
     PRODUCED_AT_RE,
     _detach_head,
     commit_all,
+    git_stdout,
     init_git_repo,
     init_single_track_repo,
     log_body,
@@ -4793,26 +4794,6 @@ _API_MODULE = "forge.gen_api_digest"
 _CLI_MODULE = "forge.gen_cli_reference"
 
 
-def _rg_git(repo: Path, *args: str) -> str:
-    """Run a real git command in a repo.
-
-    Args:
-        repo: Repository to run in.
-        *args: Arguments passed to ``git``.
-
-    Returns:
-        The command's stdout.
-    """
-    return subprocess.run(
-        ["git", *args],
-        cwd=repo,
-        env=GIT_ENV,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-
-
 def _rg_repo(tmp_path: Path, *, name: str = "consumer", commit: bool = True) -> Path:
     """Build a repo with a source root, both generated docs and a pyproject.
 
@@ -4848,9 +4829,9 @@ def _rg_repo(tmp_path: Path, *, name: str = "consumer", commit: bool = True) -> 
     (repo / "docs").mkdir()
     (repo / _API_DOC).write_text("api\n")
     (repo / _CLI_DOC).write_text("cli\n")
-    _rg_git(repo, "add", "-A")
+    git_stdout(repo, "add", "-A")
     if commit:
-        _rg_git(repo, "commit", "-q", "-m", "seed")
+        git_stdout(repo, "commit", "-q", "-m", "seed")
     return repo
 
 
@@ -5024,7 +5005,7 @@ def test_regen_inputs_api_digest_ignores_file_outside_roots(tmp_path: Path) -> N
     before = regen_docs.regen_inputs(repo, _API_DOC)
     (repo / "scripts" / "other.py").write_text("y = 2\n")
     (repo / "README.md").write_text("hi\n")
-    _rg_git(repo, "add", "-A")
+    git_stdout(repo, "add", "-A")
     assert regen_docs.regen_inputs(repo, _API_DOC) == before
 
 
@@ -5045,14 +5026,14 @@ def test_regen_inputs_api_digest_tracks_root_and_pyproject_changes(
     elif change == "add":
         (src / "b.py").write_text('"""B."""\n')
     elif change == "delete":
-        _rg_git(repo, "rm", "-q", "-f", "src/pkg/a.py")
+        git_stdout(repo, "rm", "-q", "-f", "src/pkg/a.py")
     elif change == "rename":
-        _rg_git(repo, "mv", "src/pkg/a.py", "src/pkg/renamed.py")
+        git_stdout(repo, "mv", "src/pkg/a.py", "src/pkg/renamed.py")
     else:
         (repo / "pyproject.toml").write_text(
             (repo / "pyproject.toml").read_text() + "\n# touched\n"
         )
-    _rg_git(repo, "add", "-A")
+    git_stdout(repo, "add", "-A")
     assert regen_docs.regen_inputs(repo, _API_DOC) != before
 
 
@@ -5061,14 +5042,14 @@ def test_regen_inputs_cli_reference_ignores_consumer_sources(tmp_path: Path) -> 
     repo = _rg_repo(tmp_path, name="consumer")
     (repo / "src" / "forge").mkdir()
     (repo / "src" / "forge" / "m.py").write_text("a = 1\n")
-    _rg_git(repo, "add", "-A")
+    git_stdout(repo, "add", "-A")
     before = regen_docs.regen_inputs(repo, _CLI_DOC)
     (repo / "src" / "forge" / "m.py").write_text("a = 2\n")
     (repo / "src" / "pkg" / "a.py").write_text("z = 1\n")
     (repo / "pyproject.toml").write_text(
         (repo / "pyproject.toml").read_text() + "\n# touched\n"
     )
-    _rg_git(repo, "add", "-A")
+    git_stdout(repo, "add", "-A")
     assert regen_docs.regen_inputs(repo, _CLI_DOC) == before
 
 
@@ -5079,27 +5060,29 @@ def test_regen_inputs_cli_reference_tracks_src_forge_in_forge_scripts_repo(
     repo = _rg_repo(tmp_path, name="forge-scripts")
     (repo / "src" / "forge").mkdir()
     (repo / "src" / "forge" / "m.py").write_text("a = 1\n")
-    _rg_git(repo, "add", "-A")
+    git_stdout(repo, "add", "-A")
     before = regen_docs.regen_inputs(repo, _CLI_DOC)
     (repo / "src" / "forge" / "data").mkdir()
     (repo / "src" / "forge" / "data" / "note.md").write_text("not python\n")
-    _rg_git(repo, "add", "-A")
+    git_stdout(repo, "add", "-A")
     assert regen_docs.regen_inputs(repo, _CLI_DOC) == before
     (repo / "src" / "forge" / "m.py").write_text("a = 2\n")
-    _rg_git(repo, "add", "-A")
+    git_stdout(repo, "add", "-A")
     after_edit = regen_docs.regen_inputs(repo, _CLI_DOC)
     assert after_edit != before
     (repo / "pyproject.toml").write_text(
         (repo / "pyproject.toml").read_text() + "\n# touched\n"
     )
-    _rg_git(repo, "add", "-A")
+    git_stdout(repo, "add", "-A")
     assert regen_docs.regen_inputs(repo, _CLI_DOC) != after_edit
 
 
 def test_regen_record_path_follows_git_path(tmp_path: Path) -> None:
     """The record lives at `git rev-parse --git-path forge/regen_docs.json`."""
     repo = _rg_repo(tmp_path)
-    expected = _rg_git(repo, "rev-parse", "--git-path", "forge/regen_docs.json").strip()
+    expected = git_stdout(
+        repo, "rev-parse", "--git-path", "forge/regen_docs.json"
+    ).strip()
     path = regen_docs.record_path(repo)
     assert path is not None
     assert path.resolve() == (repo / expected).resolve()
@@ -5122,7 +5105,7 @@ def test_regen_record_round_trips_and_is_per_worktree(tmp_path: Path) -> None:
     regen_docs.save_record(repo, record)
     assert regen_docs.load_record(repo) == record
     linked = tmp_path / "linked"
-    _rg_git(repo, "worktree", "add", "-q", "-b", "other", str(linked))
+    git_stdout(repo, "worktree", "add", "-q", "-b", "other", str(linked))
     main_path = regen_docs.record_path(repo)
     linked_path = regen_docs.record_path(linked)
     assert linked_path is not None
@@ -5178,11 +5161,11 @@ def _rg_stale_cli_repo(
         (repo / _CLI_DOC).write_text(_CLI_AT_HEAD)
     else:
         (repo / _CLI_DOC).unlink()
-    _rg_git(repo, "add", "-A")
-    _rg_git(repo, "commit", "-q", "-m", "document clis")
+    git_stdout(repo, "add", "-A")
+    git_stdout(repo, "commit", "-q", "-m", "document clis")
     (repo / "src" / "forge").mkdir()
     (repo / "src" / "forge" / "m.py").write_text("a = 1\n")
-    _rg_git(repo, "add", "-A")
+    git_stdout(repo, "add", "-A")
 
     def _fake_run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
         if cmd[-1] == _CLI_MODULE:
@@ -5212,8 +5195,8 @@ def test_step_regen_docs_stale_install_dropping_sections_blocks_and_holds_doc(
     result = precommit.step_regen_docs(repo)
     assert not result.non_blocking
     assert not result.passed
-    assert _CLI_DOC not in _rg_git(repo, "diff", "--cached", "--name-only")
-    assert _CLI_DOC in _rg_git(repo, "diff", "--name-only")
+    assert _CLI_DOC not in git_stdout(repo, "diff", "--cached", "--name-only")
+    assert _CLI_DOC in git_stdout(repo, "diff", "--name-only")
     assert (repo / _CLI_DOC).read_text() == "# CLI\n\n## forge-foo\nfoo\n"
     assert "forge-bar" in result.output
     assert "forge-gen-cli-reference" in result.output
@@ -5237,7 +5220,7 @@ def test_step_regen_docs_fresh_install_dropping_a_section_is_not_held(
     result = precommit.step_regen_docs(repo)
     assert result.non_blocking
     assert "NOT staged" not in result.output
-    assert _CLI_DOC in _rg_git(repo, "diff", "--cached", "--name-only")
+    assert _CLI_DOC in git_stdout(repo, "diff", "--cached", "--name-only")
 
 
 def test_step_regen_docs_stale_install_without_doc_at_head_is_not_held(
@@ -5275,7 +5258,7 @@ def test_step_regen_docs_stale_install_without_lost_section_only_warns(
     assert result.non_blocking
     assert not result.passed
     assert "install is stale" in result.output
-    assert _CLI_DOC in _rg_git(repo, "diff", "--cached", "--name-only")
+    assert _CLI_DOC in git_stdout(repo, "diff", "--cached", "--name-only")
 
 
 def test_install_refresh_hint_names_dev_setup_only_in_forge_repo(
@@ -5412,7 +5395,7 @@ def test_step_regen_docs_first_run_drifted_unfed_doc_warns_and_touches_nothing(
     repo = _rg_repo(tmp_path)
     launched = _rg_stub_generators(monkeypatch, check_ok=False)
     (repo / "notes.txt").write_text("hello\n")
-    _rg_git(repo, "add", "notes.txt")
+    git_stdout(repo, "add", "notes.txt")
     result = precommit.step_regen_docs(repo)
     assert not result.passed
     assert result.non_blocking
@@ -5420,8 +5403,8 @@ def test_step_regen_docs_first_run_drifted_unfed_doc_warns_and_touches_nothing(
     assert result.output.count("not regenerated because nothing in this commit") == 2
     assert "run `forge-gen-api-digest` and commit it on its own" in result.output
     assert sorted(launched) == [f"{_API_MODULE} --check", f"{_CLI_MODULE} --check"]
-    assert _rg_git(repo, "status", "--porcelain").split() == ["A", "notes.txt"]
-    assert _rg_git(repo, "diff", "--cached", "--name-only").split() == ["notes.txt"]
+    assert git_stdout(repo, "status", "--porcelain").split() == ["A", "notes.txt"]
+    assert git_stdout(repo, "diff", "--cached", "--name-only").split() == ["notes.txt"]
     assert _rg_record_bytes(repo) is None
 
 
@@ -5440,15 +5423,15 @@ def test_step_regen_docs_staged_removal_of_an_input_feeds_the_doc(
     repo = _rg_repo(tmp_path)
     # A second module keeps the source root in existence once a.py leaves.
     (repo / "src" / "pkg" / "keep.py").write_text('"""Keep."""\n')
-    _rg_git(repo, "add", "-A")
-    _rg_git(repo, "commit", "-q", "-m", "second module")
+    git_stdout(repo, "add", "-A")
+    git_stdout(repo, "commit", "-q", "-m", "second module")
     launched = _rg_stub_generators(monkeypatch)
     precommit.step_regen_docs(repo)
     launched.clear()
     if change == "delete":
-        _rg_git(repo, "rm", "-q", "src/pkg/a.py")
+        git_stdout(repo, "rm", "-q", "src/pkg/a.py")
     else:
-        _rg_git(repo, "mv", "src/pkg/a.py", "scripts/a.py")
+        git_stdout(repo, "mv", "src/pkg/a.py", "scripts/a.py")
     result = precommit.step_regen_docs(repo)
     assert launched == [_API_MODULE]
     assert "regenerated — sources changed" in result.output
@@ -5510,7 +5493,7 @@ def test_step_regen_docs_unrelated_staged_file_skips_both(
     precommit.step_regen_docs(repo)
     launched.clear()
     (repo / "notes.txt").write_text("hello\n")
-    _rg_git(repo, "add", "notes.txt")
+    git_stdout(repo, "add", "notes.txt")
     result = precommit.step_regen_docs(repo)
     assert launched == []
     assert result.skipped
@@ -5525,7 +5508,7 @@ def test_step_regen_docs_staged_source_runs_api_digest_only(
     precommit.step_regen_docs(repo)
     launched.clear()
     (repo / "src" / "pkg" / "a.py").write_text('"""A2."""\n')
-    _rg_git(repo, "add", "src/pkg/a.py")
+    git_stdout(repo, "add", "src/pkg/a.py")
     result = precommit.step_regen_docs(repo)
     assert launched == [_API_MODULE]
     assert not result.skipped
@@ -5559,15 +5542,15 @@ def test_step_regen_docs_detects_source_committed_bypassing_the_step(
     launched = _rg_stub_generators(monkeypatch)
     precommit.step_regen_docs(repo)
     (repo / "src" / "pkg" / "a.py").write_text('"""Bypassed."""\n')
-    _rg_git(repo, "add", "-A")
-    _rg_git(repo, "commit", "-q", "-m", "bypass the step")
+    git_stdout(repo, "add", "-A")
+    git_stdout(repo, "commit", "-q", "-m", "bypass the step")
     launched = _rg_stub_generators(monkeypatch, check_ok=False)
     result = precommit.step_regen_docs(repo)
     assert launched == [f"{_API_MODULE} --check"]
     assert "out of date (sources changed)" in result.output
     assert result.non_blocking
     assert not result.passed
-    assert _rg_git(repo, "status", "--porcelain") == ""
+    assert git_stdout(repo, "status", "--porcelain") == ""
 
 
 def test_step_regen_docs_hand_edited_staged_doc_is_regenerated(
@@ -5579,7 +5562,7 @@ def test_step_regen_docs_hand_edited_staged_doc_is_regenerated(
     precommit.step_regen_docs(repo)
     launched.clear()
     (repo / _API_DOC).write_text("hand edited\n")
-    _rg_git(repo, "add", _API_DOC)
+    git_stdout(repo, "add", _API_DOC)
     result = precommit.step_regen_docs(repo)
     assert launched == [_API_MODULE]
     assert "doc edited outside generator" in result.output
@@ -5593,8 +5576,8 @@ def test_step_regen_docs_merge_in_progress_regenerates(
     launched = _rg_stub_generators(monkeypatch)
     precommit.step_regen_docs(repo)
     launched.clear()
-    merge_head = _rg_git(repo, "rev-parse", "--git-path", "MERGE_HEAD").strip()
-    (repo / merge_head).write_text(_rg_git(repo, "rev-parse", "HEAD"))
+    merge_head = git_stdout(repo, "rev-parse", "--git-path", "MERGE_HEAD").strip()
+    (repo / merge_head).write_text(git_stdout(repo, "rev-parse", "HEAD"))
     result = precommit.step_regen_docs(repo)
     assert sorted(launched) == [_API_MODULE, _CLI_MODULE]
     assert "merge in progress" in result.output
@@ -5641,7 +5624,7 @@ def test_step_regen_docs_generator_failure_leaves_record_untouched(
     recorded = _rg_record_bytes(repo)
     assert recorded is not None
     (repo / "src" / "pkg" / "a.py").write_text('"""A3."""\n')
-    _rg_git(repo, "add", "src/pkg/a.py")
+    git_stdout(repo, "add", "src/pkg/a.py")
     monkeypatch.undo()
     launched = _rg_stub_generators(monkeypatch, ok=False)
     result = precommit.step_regen_docs(repo)
@@ -5709,10 +5692,10 @@ def test_step_regen_docs_staged_input_regenerates_and_stages_the_doc(
 
     monkeypatch.setattr(precommit, "_run", _writing_run)
     (repo / "src" / "pkg" / "a.py").write_text('"""A2."""\n')
-    _rg_git(repo, "add", "src/pkg/a.py")
+    git_stdout(repo, "add", "src/pkg/a.py")
     result = precommit.step_regen_docs(repo)
     assert "Re-staged: docs/api-digest.md" in result.output
-    staged = _rg_git(repo, "diff", "--cached", "--name-only").split()
+    staged = git_stdout(repo, "diff", "--cached", "--name-only").split()
     assert sorted(staged) == [_API_DOC, "src/pkg/a.py"]
     assert _API_DOC in regen_docs.load_record(repo)
 
@@ -5742,7 +5725,7 @@ def test_step_regen_docs_failed_help_capture_stages_nothing_and_hints_refresh(
     assert result.non_blocking
     assert not result.passed
     assert (repo / _CLI_DOC).read_text() == _CLI_AT_HEAD
-    assert _CLI_DOC not in _rg_git(repo, "diff", "--cached", "--name-only")
+    assert _CLI_DOC not in git_stdout(repo, "diff", "--cached", "--name-only")
     assert _CLI_DOC not in regen_docs.load_record(repo)
     assert "./dev/setup.sh" in result.output
     assert "some CLI help could not be captured" in result.output
@@ -8089,7 +8072,7 @@ def test_changelog_updated_unstaged_intent_to_add_fragment_not_counted(
     work = _init_fragments_mode_repo(tmp_path)
     _changelog_updated_on_branch_with_source_change(work, monkeypatch)
     _write_pending_fragment(work, "a.added.md", "bump: minor\n- x\n")
-    _rg_git(work, "add", "-N", "changelog.d/a.added.md")
+    git_stdout(work, "add", "-N", "changelog.d/a.added.md")
     result = precommit.step_changelog_updated(work)
     assert not result.passed
     assert "Not staged, so not counted: `changelog.d/a.added.md`" in result.output
@@ -8102,7 +8085,7 @@ def test_changelog_updated_staged_valid_fragment_counts(
     work = _init_fragments_mode_repo(tmp_path)
     _changelog_updated_on_branch_with_source_change(work, monkeypatch)
     _write_pending_fragment(work, "a.added.md", "bump: minor\n- x\n")
-    _rg_git(work, "add", "changelog.d/a.added.md")
+    git_stdout(work, "add", "changelog.d/a.added.md")
     result = precommit.step_changelog_updated(work)
     assert result.passed
 
@@ -8118,7 +8101,7 @@ def test_changelog_updated_validates_the_staged_copy_not_the_disk(
     work = _init_fragments_mode_repo(tmp_path)
     _changelog_updated_on_branch_with_source_change(work, monkeypatch)
     _write_pending_fragment(work, "a.added.md", "placeholder\n")
-    _rg_git(work, "add", "changelog.d/a.added.md")
+    git_stdout(work, "add", "changelog.d/a.added.md")
     _write_pending_fragment(work, "a.added.md", "bump: minor\n- x\n")
     result = precommit.step_changelog_updated(work)
     assert not result.passed
@@ -8148,7 +8131,7 @@ def test_changelog_updated_staged_invalid_fragment_still_fails(
     work = _init_fragments_mode_repo(tmp_path)
     _changelog_updated_on_branch_with_source_change(work, monkeypatch)
     _write_pending_fragment(work, "a.bogus.md", "bump: minor\n- x\n")
-    _rg_git(work, "add", "changelog.d/a.bogus.md")
+    git_stdout(work, "add", "changelog.d/a.bogus.md")
     result = precommit.step_changelog_updated(work)
     assert not result.passed
     assert "Invalid changelog.d/" in result.output
@@ -9335,7 +9318,7 @@ def untracked_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (tmp_path / "src" / "pkg").mkdir(parents=True)
     (tmp_path / "src" / "pkg" / "good.py").write_text(_GOOD_MODULE)
     commit_all(tmp_path, "seed")
-    _rg_git(tmp_path, "checkout", "-q", "-b", "feat/x")
+    git_stdout(tmp_path, "checkout", "-q", "-b", "feat/x")
     monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
     return tmp_path
 
@@ -9615,8 +9598,8 @@ def _commit_on_branch(repo: Path, message: str) -> None:
         repo: Repo root.
         message: Commit message.
     """
-    _rg_git(repo, "add", "-A")
-    _rg_git(repo, "commit", "-q", "-m", message)
+    git_stdout(repo, "add", "-A")
+    git_stdout(repo, "commit", "-q", "-m", message)
 
 
 # Candidate files spanning every axis a step's selection filters on:
@@ -9717,7 +9700,7 @@ def test_untracked_note_selects_what_the_step_selects_once_tracked(
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text("")
     commit_all(tmp_path, "seed")
-    _rg_git(tmp_path, "checkout", "-q", "-b", "feat/x")
+    git_stdout(tmp_path, "checkout", "-q", "-b", "feat/x")
     for rel in _PARITY_FILES:
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         body = "bump: patch\n\n- x\n" if rel.endswith(".md") else ""
