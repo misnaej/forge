@@ -274,7 +274,7 @@ applied: <reason>.` comment.
 ### I WILL NOT (report and stop)
 
 - Maintain a markdown backlog file → **retired pattern**
-- Close / reopen / delete issues → **human / PR action**
+- Close / reopen issues without the user's word, or delete them → **FOUNDATION §2**
 - Edit issue bodies other than the Backlog Index → **out of scope**
 - Override user-set tier labels silently → **comment alternative instead**
 - Install dependencies → **`install-forge-labels` must already be available**

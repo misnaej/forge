@@ -55,6 +55,7 @@ from forge.audit.common import (
 )
 from forge.config import AGENT_DEFINITION_DIRS, read_tool_forge_section
 from forge.git_utils import configure_cli_logging, repo_root
+from forge.text_clip import truncate
 
 
 configure_cli_logging()
@@ -353,8 +354,7 @@ def _sanitize_fragment(text: str, limit: int = 40) -> str:
     Returns:
         Repr-quoted, length-capped rendering of *text*.
     """
-    clipped = text if len(text) <= limit else text[:limit] + "…"
-    return repr(clipped)
+    return repr(truncate(text, limit))
 
 
 def _is_reporter_agent(agent: AgentDoc, reporters: frozenset[str]) -> bool:
