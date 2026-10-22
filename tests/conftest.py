@@ -2,7 +2,7 @@
 
 Lives at ``tests/conftest.py`` so pytest auto-discovers it. Exposes the
 real-git helpers ``GIT_ENV``, ``init_git_repo`` and ``init_single_track_repo``
-(ephemeral repos for the git-touching suites) plus ``git_stdout``, the one
+(ephemeral repos for the git-touching suites) plus ``git_stdout``, the shared
 test-side git runner, the subprocess fakes
 ``FakeProc``, ``CapturedCalls`` and the ``make_fake_run`` factory — used by
 tests that monkeypatch ``subprocess.run`` in any of the forge CLIs —
@@ -319,7 +319,7 @@ def commit_all(repo: Path, message: str) -> None:
 def git_stdout(repo: Path, *args: str) -> str:
     """Run a real git command in *repo* under :data:`GIT_ENV`.
 
-    The one test-side git runner, so suites stop growing private copies.
+    The shared test-side git runner, so suites stop growing private copies.
     It deliberately does not borrow ``forge.git_utils.run_git``: a test
     driving git through the code under test cannot catch that code's own
     bugs. Output is returned unstripped — callers strip when they need to.
