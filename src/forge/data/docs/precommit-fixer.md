@@ -1,0 +1,1 @@
+../../../../forge-docs/precommit-fixer.md

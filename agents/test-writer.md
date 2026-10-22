@@ -65,6 +65,8 @@ Apply the testing documentation standards in
 ### I WILL
 - Create/extend test files and make them pass.
 - Use `Bash` only to run `pytest` on the files I touch.
+- Edit files only with the Edit/Write tools, never by a script or shell
+  redirection; a refused edit is reported, never re-routed.
 
 ### I WILL NOT (report and stop)
 - Review tests for standard-compliance → **Use `forge:test-advisor`**.
