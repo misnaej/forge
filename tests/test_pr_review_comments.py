@@ -134,18 +134,28 @@ def test_exits_two_when_github_cannot_answer(
     assert capsys.readouterr().out == ""
 
 
+@pytest.mark.parametrize(
+    "bad_page",
+    ["not json", '{"id": 2, "body": "x"}', "5", "[1, 2]", '"abc"'],
+    ids=["not-json", "object-page", "scalar-page", "non-object-items", "string"],
+)
 def test_malformed_page_fails_closed(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    bad_page: str,
 ) -> None:
-    """SCENARIO: page 2 of the listing is not JSON.
+    """SCENARIO: page 2 of the listing is not a JSON list of comment objects.
 
     MOCK SETUP: ``gh_api`` serves a valid page holding an unanswered
-    thread followed by a garbage line.
+    thread followed by the malformed page.
 
-    EXPECTED BEHAVIOR: exit 2 and no ids printed — a partial listing is
-    never reported as the review.
+    EXPECTED BEHAVIOR: exit 2, no traceback and no ids printed — a
+    partial or garbled listing is never reported as the review.
+
+    Args:
+        bad_page: The malformed second page.
     """
-    _serve(monkeypatch, page_json(_comment(1)) + "\nnot json")
+    _serve(monkeypatch, page_json(_comment(1)) + "\n" + bad_page)
 
     assert mod.main(["unreplied", "--pr", "7"]) == 2
     assert capsys.readouterr().out == ""

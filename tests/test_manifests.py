@@ -18,7 +18,7 @@ MANIFEST_DIR = REPO_ROOT / ".claude-plugin"
 # GitHub listings that silently stop at a default page (30 rows), and the
 # flag that makes each one complete. `gh … list --head <branch>` asks for
 # one branch's PR, so it is never truncated.
-_GH_LIST_RE = re.compile(r"\bgh\s+(?:issue|pr)\s+list\b")
+_GH_LIST_RE = re.compile(r"\bgh\s+(?:issue|pr|run|release|label|gist|repo)\s+list\b")
 _GH_SEARCH_RE = re.compile(r"\bgh\s+search\b")
 _GH_API_COMMENTS_RE = re.compile(r"\bgh\s+api\b.*/(?:comments|reviews)\b")
 _LIMIT_RE = re.compile(r"(?:--limit|-L)\b")
@@ -547,6 +547,13 @@ def _fenced_commands(text: str) -> list[tuple[int, str]]:
 def _unbounded_listing(command: str) -> str | None:
     """Return why *command* reads a GitHub listing that may stop at 30 rows.
 
+    Covered, and nothing else: ``gh issue|pr|run|release|label|gist|repo
+    list`` without ``--limit``/``-L`` (``--head`` exempt); ``gh search``
+    without ``--limit``/``-L``; and a ``gh api`` path containing
+    ``/comments`` or ``/reviews`` without ``--paginate``, unless it posts
+    (``--method POST``, ``-X POST``, ``-f body=``). Other ``gh api``
+    listings and GraphQL queries are not checked.
+
     Args:
         command: One joined shell command.
 
@@ -559,7 +566,7 @@ def _unbounded_listing(command: str) -> str | None:
         and not _LIMIT_RE.search(command)
         and "--head" not in command
     ):
-        return "`gh issue/pr list` without `--limit`"
+        return "`gh <noun> list` without `--limit`"
     if _GH_SEARCH_RE.search(command) and not _LIMIT_RE.search(command):
         return "`gh search` without `--limit`"
     if (
@@ -577,6 +584,8 @@ def _unbounded_listing(command: str) -> str | None:
         ("```bash\ngh pr list --state open --json number\n```", True),
         ("```bash\ngh pr list --state open \\\n    --limit 1000 --json n\n```", False),
         ("```bash\ngh pr list --head feat/x --json number\n```", False),
+        ("```bash\ngh run list --workflow ci.yml\n```", True),
+        ("```bash\ngh release list -L 5\n```", False),
         ("```bash\ngh search issues --author=@me \\\n    --json url\n```", True),
         ("```bash\ngh api repos/o/r/pulls/1/comments --jq '.[]'\n```", True),
         ("```bash\ngh api repos/o/r/pulls/1/comments/2/replies -X POST\n```", False),
@@ -603,9 +612,9 @@ def test_shipped_agents_and_skills_bound_every_github_listing() -> None:
     SCENARIO: agents read review comments, open PRs and search results
     through listings that stop at 30 rows without saying so; comments
     past the 30th never got a reply.
-    EXPECTED BEHAVIOR: every fenced `gh issue/pr list` and `gh search`
-    passes `--limit`, and every GET of PR comments or reviews passes
-    `--paginate` (or the listing goes through `forge-pr-review-comments`).
+    EXPECTED BEHAVIOR: no fenced command trips `_unbounded_listing` (its
+    docstring lists exactly what is covered) — review comments go through
+    `forge-pr-review-comments` instead.
     """
     docs = sorted(
         [

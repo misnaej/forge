@@ -482,8 +482,9 @@ def list_review_comments(pr_number: int) -> list[dict[str, object]] | None:
         One ``{"id", "path", "line", "body", "in_reply_to_id"}`` mapping
         per comment (``in_reply_to_id`` is ``None`` for a thread's first
         comment), or ``None`` when the listing call failed or a page was
-        not JSON — "no comments" and "could not look" stay distinct, so a
-        caller never reads a failed listing as an empty review.
+        not a JSON list of objects — "no comments" and "could not look"
+        stay distinct, so a caller never reads a failed listing as an
+        empty review.
     """
     raw = gh_api(
         f"repos/{{owner}}/{{repo}}/pulls/{pr_number}/comments",
@@ -495,10 +496,16 @@ def list_review_comments(pr_number: int) -> list[dict[str, object]] | None:
     if raw is None:
         return None
     try:
-        return parse_paged_json(raw, strict=True)
-    except json.JSONDecodeError:
-        logger.warning("unparseable review-comment page for PR #%d", pr_number)
+        comments = parse_paged_json(raw, strict=True)
+    except (json.JSONDecodeError, TypeError):
+        # TypeError: a page that is a JSON scalar cannot be flattened.
+        comments = None
+    # An object or string page flattens into keys or characters, so
+    # every entry must itself be a comment object.
+    if comments is None or not all(isinstance(c, dict) for c in comments):
+        logger.warning("malformed review-comment page for PR #%d", pr_number)
         return None
+    return comments
 
 
 def post_new_comment(pr_number: int, body: str) -> int:
