@@ -552,10 +552,15 @@ def test_shipped_agents_stay_under_word_hard_cap() -> None:
     own check, so the test and `forge-audit-agents` cannot disagree.
     """
     root = Path(__file__).parents[2]
-    over_cap = [
-        finding
+    agents = [
+        path
         for path in sorted((root / "agents").glob("*.md"))
         if not path.name.startswith("_")
+    ]
+    assert agents, "no shipped agents found — the cap check would pass vacuously"
+    over_cap = [
+        finding
+        for path in agents
         for finding in audit_agents._check_word_count(
             audit_agents._parse_agent(path, root)
         )
