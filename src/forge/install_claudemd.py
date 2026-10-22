@@ -276,6 +276,7 @@ FORGE_DOCS_PAGES = (
     "ci-recipe.md",
     "smart-test.md",
     "backlog-tracks.md",
+    "precommit-fixer.md",
 )
 FORGE_DOCS_README = "README.md"
 # Distinct from BLOCK_NAME: the mirrored-docs README is its own managed
