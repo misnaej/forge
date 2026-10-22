@@ -11,9 +11,13 @@ Works in **two contexts**:
   default union; consumer reporter agents are classified via
   ``[tool.forge.audit_agents]`` (additive to the shipped lists).
 
-Audits every ``*.md`` under the scan roots (skipping ``_TEMPLATE.md``
-and other underscore-prefixed files) against the structural and length
-policy documented in ``agents/_TEMPLATE.md``. Writes
+Audits every ``*.md`` under the scan roots (skipping ``_TEMPLATE.md``,
+other underscore-prefixed files, a folder ``README.md``, and anything
+matching ``[tool.forge.audit_agents].exclude``) against the structural
+and length policy documented in ``agents/_TEMPLATE.md``. Text between
+matching generated-block markers (``<!-- ns:name start -->`` …
+``<!-- ns:name end -->``) is ignored by the cross-agent copied-text
+check only. Writes
 ``code_health/audit_agents.log`` with one row per agent plus
 per-finding details.
 
@@ -53,7 +57,12 @@ from forge.audit.common import (
     make_audit_parser,
     write_log,
 )
-from forge.config import AGENT_DEFINITION_DIRS, read_tool_forge_section
+from forge.config import (
+    AGENT_DEFINITION_DIRS,
+    filter_excluded,
+    is_agent_definition,
+    read_tool_forge_section,
+)
 from forge.git_utils import configure_cli_logging, repo_root
 
 
@@ -96,6 +105,17 @@ REPORTER_AGENT_NAMES = (
 _REPORTER_WITH_ARTIFACT_NAMES = (
     "docs-types-checker",  # in-place docstring fixes (Edit)
     "weekly-summary",  # writes .plan/weekly_summary_*.md (Write)
+)
+
+# A script-generated block injected identically into several agents
+# (``<!-- ns:name start -->`` … ``<!-- ns:name end -->``, same id on both
+# markers) is the de-duplication FOUNDATION §12 asks for, so the copied-text
+# check must not tell its authors to extract it again. Non-greedy with a
+# back-reference: a mismatched id or a missing end marker leaves the text
+# in place, still checked.
+_GENERATED_REGION_RE = re.compile(
+    r"<!--\s*([\w.-]+:[\w.-]+)\s+(?:start|begin)\s*-->.*?<!--\s*\1\s+end\s*-->",
+    re.IGNORECASE | re.DOTALL,
 )
 
 # Pre-write reporters: no mutating tools, but their evidence header is
@@ -626,8 +646,25 @@ def _check_foundation_restatements(
     ]
 
 
+def _strip_generated_regions(text: str) -> str:
+    """Remove complete generated-block regions (markers included) from *text*.
+
+    Args:
+        text: Agent body, code blocks already stripped.
+
+    Returns:
+        *text* with every matched region replaced by a single space, so
+        the words on either side never fuse into one token.
+    """
+    return _GENERATED_REGION_RE.sub(" ", text)
+
+
 def _cross_agent_duplicate_findings(agents: list[AgentDoc]) -> list[Finding]:
     """Flag n-grams that appear in two or more agent files.
+
+    Text inside generated-block markers is ignored here only — it is
+    still counted as words and still checked against FOUNDATION, because
+    the agent pays for it as prompt all the same.
 
     Args:
         agents: All parsed agents.
@@ -639,7 +676,8 @@ def _cross_agent_duplicate_findings(agents: list[AgentDoc]) -> list[Finding]:
     """
     by_ngram: dict[str, list[str]] = defaultdict(list)
     for a in agents:
-        for ngram in _ngrams(_tokens(a.body_no_code), SHARED_TOKEN_MIN):
+        body = _strip_generated_regions(a.body_no_code)
+        for ngram in _ngrams(_tokens(body), SHARED_TOKEN_MIN):
             by_ngram[ngram].append(a.path)
     # Build per-agent shared-ngram lists, keeping only ngrams in ≥ 2 agents.
     min_agents_for_share = 2  # ngram counts as "shared" only across ≥ 2 agents
@@ -686,30 +724,61 @@ class AgentsConfig:
 
 
 def _iter_agent_files(
-    repo_root_path: Path, roots: list[Path] | None = None
+    repo_root_path: Path,
+    roots: list[Path] | None = None,
+    exclude: list[str] | None = None,
 ) -> list[Path]:
     """Return every public agent markdown file under the scan roots.
 
-    Filters out ``_TEMPLATE.md`` and other underscore-prefixed files —
-    those are template / documentation, not actual agents.
+    Filters out files that are not agent definitions —
+    ``_TEMPLATE.md``, other underscore-prefixed files and a folder
+    ``README.md``, per :func:`forge.config.is_agent_definition` — and
+    any file matching an *exclude* pattern, which applies with
+    ``--roots`` too. A file outside *repo_root_path* has no repo-relative
+    path to match, so *exclude* never drops it.
 
     Args:
         repo_root_path: Repo root.
         roots: Explicit scan roots (from ``--roots``); ``None`` or empty
             scans the :data:`forge.config.AGENT_DEFINITION_DIRS` union.
+        exclude: Patterns from ``[tool.forge.audit_agents].exclude``,
+            matched by :func:`forge.config.filter_excluded`.
 
     Returns:
         Sorted, de-duplicated list of absolute paths to agent files.
     """
     dirs = roots or [repo_root_path / d for d in AGENT_DEFINITION_DIRS]
     files = {
-        p
-        for d in dirs
-        if d.is_dir()
-        for p in d.glob("*.md")
-        if not p.name.startswith("_")
+        p for d in dirs if d.is_dir() for p in d.glob("*.md") if is_agent_definition(p)
     }
+    if exclude:
+        by_rel: dict[str, Path] = {}
+        for p in files:
+            try:
+                by_rel[p.relative_to(repo_root_path).as_posix()] = p
+            except ValueError:
+                continue
+        kept = set(filter_excluded(sorted(by_rel), exclude))
+        files -= {p for rel, p in by_rel.items() if rel not in kept}
     return sorted(files)
+
+
+def _exclude_patterns(repo_root_path: Path) -> list[str]:
+    """Return the ``[tool.forge.audit_agents].exclude`` patterns.
+
+    A non-list value or non-string items are dropped quietly, matching
+    :func:`_effective_reporter_sets` — a malformed value excludes nothing.
+
+    Args:
+        repo_root_path: Repo root (for the ``pyproject.toml`` read).
+
+    Returns:
+        The string patterns, in configured order.
+    """
+    value = read_tool_forge_section(repo_root_path, "audit_agents").get("exclude")
+    if not isinstance(value, list):
+        return []
+    return [v for v in value if isinstance(v, str)]
 
 
 def _effective_reporter_sets(
@@ -886,7 +955,7 @@ def run(scope: Scope, roots: list[Path], config: AgentsConfig) -> int:
     foundation_text = foundation_path.read_text(encoding="utf-8")
     foundation_ngrams = _ngrams(_tokens(foundation_text), SHARED_TOKEN_MIN)
 
-    agent_paths = _iter_agent_files(root, roots)
+    agent_paths = _iter_agent_files(root, roots, exclude=_exclude_patterns(root))
     if not agent_paths:
         scanned = (
             ", ".join(str(r) for r in roots)

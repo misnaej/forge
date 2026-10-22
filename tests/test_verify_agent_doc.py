@@ -114,6 +114,15 @@ def test_roster_discovers_agents_skills_hooks_clis(tmp_path: Path) -> None:
     assert roster["clis"] == {"forge-ship"}
 
 
+def test_roster_excludes_agents_dir_readme(tmp_path: Path) -> None:
+    """A folder README in an agents dir is not an agent the doc must cover."""
+    _build_repo(tmp_path)
+    _write(tmp_path / ".claude" / "agents" / "README.md", "# Our agents\n")
+    _write(tmp_path / "agents" / "readme.md", "# lower-case readme\n")
+    roster = vad._roster(tmp_path)
+    assert roster["agents"] == {"reviewer"}
+
+
 def test_roster_consumer_claude_hook_dir_is_local_and_known(tmp_path: Path) -> None:
     """A hook under `.claude/hooks/` (not `claude-hooks/`) is repo-local + known.
 

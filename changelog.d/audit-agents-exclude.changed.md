@@ -1,0 +1,4 @@
+bump: minor
+
+- `forge-audit-agents` no longer reports a folder `README.md` (any case) in an agents directory as an agent, and skips any path listed in the new `[tool.forge.audit_agents].exclude` key (fnmatch globs or directory prefixes on repo-relative paths, applied with `--roots` too; a malformed value excludes nothing). `verify-forge-agent-doc` applies the same "is this an agent file" rule, so a README is not required in the agent doc either.
+- Its copied-text check ignores text between matching generated-block markers (`<!-- ns:name start -->` … `<!-- ns:name end -->`, `begin` also accepted, same id on both), so a block a script injects identically into every agent is no longer reported as copying. The text still counts toward the word budget and the FOUNDATION-restatement check; an unclosed or mismatched marker leaves it checked.

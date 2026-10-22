@@ -81,6 +81,25 @@ SKILL_DEFINITION_DIRS = ("skills", ".claude/skills")
 HOOK_DEFINITION_DIRS = ("claude-hooks", ".claude/hooks")
 
 
+def is_agent_definition(path: Path) -> bool:
+    """Say whether a Markdown file in an agents dir defines an agent.
+
+    The one rule every tool that lists agents applies, so they cannot
+    drift: an underscore-prefixed file (``_TEMPLATE.md``) is a template
+    and a ``README.md`` (any case) describes the folder — neither is an
+    agent Claude Code loads, so neither can carry agent frontmatter.
+
+    Args:
+        path: A ``*.md`` file found under one of
+            :data:`AGENT_DEFINITION_DIRS` (or an explicit scan root).
+
+    Returns:
+        ``False`` for underscore-prefixed stems and for ``README.md``;
+        ``True`` otherwise.
+    """
+    return not (path.stem.startswith("_") or path.stem.lower() == "readme")
+
+
 def detect_source_dirs(repo_root: Path) -> list[str]:
     """Smart-detect the repo's source roots when ``source_dirs`` is unset.
 
@@ -540,18 +559,20 @@ def path_under_roots(
 
 
 def filter_excluded(files: list[str], globs: list[str]) -> list[str]:
-    """Drop *files* matching any exclude *glob* (the ``[tool.forge].exclude`` half).
+    """Drop *files* matching any exclude *glob*.
 
-    The Option-1 half of issue #83: a repo-wide, uniformly-honored exclude
-    so a directory already excluded from ruff / interrogate can be skipped
-    by forge's whole-tree steps too, without editing forge source. A
+    The shared matcher behind every forge exclude list —
+    ``[tool.forge].exclude`` (a repo-wide, uniformly-honored exclude so a
+    directory already excluded from ruff / interrogate can be skipped by
+    forge's whole-tree steps too, without editing forge source) and
+    tool-scoped lists such as ``[tool.forge.audit_agents].exclude``. A
     pattern matches a repo-relative path either as an fnmatch glob
     (``*.gen.py``, ``vendor/**``) or as a directory prefix — a bare
     directory name (``vendor`` or ``vendor/``) excludes its whole subtree.
 
     Args:
         files: Repo-relative file paths.
-        globs: Exclude patterns from ``[tool.forge].exclude``.
+        globs: Exclude patterns, e.g. from ``[tool.forge].exclude``.
 
     Returns:
         The subset of *files* matching no pattern, original order preserved.

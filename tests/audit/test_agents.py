@@ -552,11 +552,7 @@ def test_shipped_agents_stay_under_word_hard_cap() -> None:
     own check, so the test and `forge-audit-agents` cannot disagree.
     """
     root = Path(__file__).parents[2]
-    agents = [
-        path
-        for path in sorted((root / "agents").glob("*.md"))
-        if not path.name.startswith("_")
-    ]
+    agents = audit_agents._iter_agent_files(root, [root / "agents"])
     assert agents, "no shipped agents found — the cap check would pass vacuously"
     over_cap = [
         finding
@@ -717,6 +713,59 @@ def test_cross_agent_duplicates_clean_when_no_overlap() -> None:
     assert audit_agents._cross_agent_duplicate_findings(agents) == []
 
 
+_SHARED_BLOCK = "this exact generated block repeats across every consumer agent file"
+
+
+def test_cross_agent_duplicates_ignores_text_inside_generated_markers() -> None:
+    """A block both agents carry between matching markers is not flagged."""
+    agents = [
+        _agent_doc(
+            body=(
+                f"alpha beta\n<!-- team:shared start -->\n{_SHARED_BLOCK}\n"
+                "<!-- team:shared end -->\ngamma delta"
+            ),
+            path="agents/a.md",
+        ),
+        _agent_doc(
+            body=(
+                f"<!-- TEAM:shared begin -->{_SHARED_BLOCK}"
+                "<!--team:shared END--> epsilon"
+            ),
+            path="agents/b.md",
+        ),
+    ]
+    assert audit_agents._cross_agent_duplicate_findings(agents) == []
+
+
+def test_cross_agent_duplicates_still_flags_same_block_outside_markers() -> None:
+    """The same block outside markers in one agent is still copied text."""
+    agents = [
+        _agent_doc(
+            body=f"<!-- team:shared start -->{_SHARED_BLOCK}<!-- team:shared end -->",
+            path="agents/a.md",
+        ),
+        _agent_doc(body=f"intro {_SHARED_BLOCK}", path="agents/b.md"),
+        _agent_doc(body=f"other {_SHARED_BLOCK}", path="agents/c.md"),
+    ]
+    paths = {f.path for f in audit_agents._cross_agent_duplicate_findings(agents)}
+    assert paths == {"agents/b.md", "agents/c.md"}
+
+
+def test_strip_generated_regions_leaves_mismatched_or_unclosed_markers() -> None:
+    """A mismatched id or a missing end marker leaves the text in place."""
+    mismatched = f"<!-- team:a start -->{_SHARED_BLOCK}<!-- team:b end -->"
+    unclosed = f"<!-- team:a start -->{_SHARED_BLOCK}"
+    assert audit_agents._strip_generated_regions(mismatched) == mismatched
+    assert audit_agents._strip_generated_regions(unclosed) == unclosed
+
+
+def test_word_count_includes_text_inside_generated_markers() -> None:
+    """Generated text is still prompt the agent pays for, so it is counted."""
+    body = f"<!-- team:shared start -->{_SHARED_BLOCK}<!-- team:shared end -->"
+    assert audit_agents._word_count(body) == len(body.split())
+    assert audit_agents._word_count(body) > len(_SHARED_BLOCK.split())
+
+
 # ---------------------------------------------------------------------------
 # Orchestration: run() on a synthetic agents dir
 # ---------------------------------------------------------------------------
@@ -769,6 +818,73 @@ def test_run_skips_underscore_prefixed_files(
 
     paths = audit_agents._iter_agent_files(tmp_path)
     assert paths == []
+
+
+def test_iter_agent_files_skips_readme_any_case(tmp_path: Path) -> None:
+    """A folder README is not an agent, whatever its case."""
+    (tmp_path / "agents").mkdir()
+    (tmp_path / "agents" / "README.md").write_text("# Our agents\n")
+    (tmp_path / ".claude" / "agents").mkdir(parents=True)
+    (tmp_path / ".claude" / "agents" / "readme.md").write_text("# notes\n")
+    (tmp_path / ".claude" / "agents" / "real.md").write_text("# Real\n")
+
+    paths = audit_agents._iter_agent_files(tmp_path)
+
+    assert paths == [tmp_path / ".claude" / "agents" / "real.md"]
+
+
+def test_iter_agent_files_exclude_glob_and_directory_prefix(tmp_path: Path) -> None:
+    """Exclude patterns drop matches by glob and by directory prefix."""
+    agents_dir = tmp_path / ".claude" / "agents"
+    agents_dir.mkdir(parents=True)
+    for name in ("keep.md", "draft-one.md", "notes.md"):
+        (agents_dir / name).write_text("# x\n")
+    vendor = tmp_path / "vendor" / "agents"
+    vendor.mkdir(parents=True)
+    (vendor / "third.md").write_text("# x\n")
+
+    paths = audit_agents._iter_agent_files(
+        tmp_path,
+        [agents_dir, vendor],
+        exclude=[".claude/agents/draft-*.md", ".claude/agents/notes.md", "vendor"],
+    )
+
+    assert paths == [agents_dir / "keep.md"]
+
+
+def test_run_honours_configured_exclude(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`[tool.forge.audit_agents].exclude` keeps a file out of the log."""
+    (tmp_path / "FOUNDATION.md").write_text("Foundation text.")
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.audit_agents]\nexclude = ["agents/index.md"]\n'
+    )
+    agents_dir = tmp_path / "agents"
+    agents_dir.mkdir()
+    (agents_dir / "index.md").write_text("generated index, no frontmatter\n")
+    (agents_dir / "real.md").write_text("# Real\n")
+    monkeypatch.setattr("forge.audit.agents.repo_root", lambda: tmp_path)
+    monkeypatch.setattr("forge.audit.common.repo_root", lambda: tmp_path)
+
+    with patch("sys.argv", ["forge-audit-agents"]):
+        assert audit_agents.main() == 0
+
+    log = (code_health_dir(tmp_path) / "audit_agents.log").read_text()
+    assert "agents/real.md" in log
+    assert "index.md" not in log
+
+
+def test_exclude_patterns_malformed_value_excludes_nothing(tmp_path: Path) -> None:
+    """A non-list value or non-string items are dropped quietly."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.audit_agents]\nexclude = "agents"\n'
+    )
+    assert audit_agents._exclude_patterns(tmp_path) == []
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.audit_agents]\nexclude = [1, "agents/x.md"]\n'
+    )
+    assert audit_agents._exclude_patterns(tmp_path) == ["agents/x.md"]
 
 
 def test_run_writes_log_when_no_agent_files(

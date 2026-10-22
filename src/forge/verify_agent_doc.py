@@ -61,6 +61,7 @@ from forge.config import (
     HOOK_DEFINITION_DIRS,
     SKILL_DEFINITION_DIRS,
     installed_console_scripts,
+    is_agent_definition,
     read_tool_forge_section,
 )
 from forge.git_utils import capturing_to_step_log, configure_cli_logging, repo_root
@@ -194,14 +195,15 @@ def _roster(root: Path) -> dict[str, set[str]]:
     Returns:
         A mapping with the repo-local keys ``agents`` / ``skills`` /
         ``hooks`` / ``clis`` plus resolution-only ``skills_known`` /
-        ``hooks_known`` / ``clis_known``. Underscore-prefixed agent
-        files (e.g. ``_TEMPLATE``) are excluded — templates, not agents.
+        ``hooks_known`` / ``clis_known``. Files that are not agent
+        definitions (``_TEMPLATE``, a folder ``README``) are excluded,
+        per :func:`forge.config.is_agent_definition`.
     """
     agents = {
         p.stem
         for d in AGENT_DEFINITION_DIRS
         for p in (root / d).glob("*.md")
-        if not p.stem.startswith("_")
+        if is_agent_definition(p)
     }
     skills = {
         p.parent.name
