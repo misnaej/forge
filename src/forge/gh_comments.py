@@ -5,7 +5,9 @@ lifecycle on a PR (post, find their own earlier comments by a marker,
 retire them). The ``gh`` calls behind that — paginated listing, post,
 delete, edit — and the FOUNDATION §2 attribution gate every posted body
 must pass are identical for both, so they live here once. Policy (what
-each CLI validates, what "retire" means) stays per CLI.
+each CLI validates, what "retire" means) stays per CLI. The full
+review-comment listing ``forge-pr-review-comments`` reads lives here
+too, beside the other PR-comment listings.
 """
 
 from __future__ import annotations
@@ -461,6 +463,49 @@ def list_marker_comments(
             continue
         own.append(comment)
     return own
+
+
+def list_review_comments(pr_number: int) -> list[dict[str, object]] | None:
+    """Return every review comment on *pr_number*, from every page, oldest first.
+
+    Review comments (the ones anchored to a diff line) live behind
+    ``pulls/N/comments``, not the conversation endpoint
+    :func:`list_marker_comments` reads, and nobody's comments are
+    filtered out: the callers need the whole review. A bare ``gh api``
+    call stops at the first 30 rows without saying so, which is why this
+    walks every page and refuses a page it cannot parse.
+
+    Args:
+        pr_number: GitHub PR number.
+
+    Returns:
+        One ``{"id", "path", "line", "body", "in_reply_to_id"}`` mapping
+        per comment (``in_reply_to_id`` is ``None`` for a thread's first
+        comment), or ``None`` when the listing call failed or a page was
+        not a JSON list of objects — "no comments" and "could not look"
+        stay distinct, so a caller never reads a failed listing as an
+        empty review.
+    """
+    raw = gh_api(
+        f"repos/{{owner}}/{{repo}}/pulls/{pr_number}/comments",
+        "--paginate",
+        "--jq",
+        "[.[] | {id, path, line, body, in_reply_to_id}]",
+        timeout=GH_LIST_TIMEOUT,
+    )
+    if raw is None:
+        return None
+    try:
+        comments = parse_paged_json(raw, strict=True)
+    except (json.JSONDecodeError, TypeError):
+        # TypeError: a page that is a JSON scalar cannot be flattened.
+        comments = None
+    # An object or string page flattens into keys or characters, so
+    # every entry must itself be a comment object.
+    if comments is None or not all(isinstance(c, dict) for c in comments):
+        logger.warning("malformed review-comment page for PR #%d", pr_number)
+        return None
+    return comments
 
 
 def post_new_comment(pr_number: int, body: str) -> int:

@@ -106,7 +106,7 @@ Nothing beyond issue creation: no branches, no fixes, no PRs.
 Re-check open performance issues against current data:
 
 ```bash
-gh issue list --state open --label performance \
+gh issue list --state open --label performance --limit 1000 \
   --json number,title,updatedAt
 ```
 

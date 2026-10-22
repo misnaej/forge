@@ -701,6 +701,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `validate_no_ai_attribution(text: str, *, exempt_fenced_vendor_tokens: bool = False) -> None` — Reject Claude / AI attribution per FOUNDATION §2.
 - `parse_paged_json(raw: str, *, strict: bool = False) -> list[Any]` — Flatten ``gh api --paginate --jq '[...]'`` output into one list.
 - `list_marker_comments(pr_number: int, marker: str, *, anchored: bool = False) -> list[dict[str, object]] | None` — Return this identity's comments on *pr_number* carrying *marker*, oldest first.
+- `list_review_comments(pr_number: int) -> list[dict[str, object]] | None` — Return every review comment on *pr_number*, from every page, oldest first.
 - `post_new_comment(pr_number: int, body: str) -> int` — Post *body* as a new comment on PR ``pr_number``.
 - `delete_comment(comment_id: int) -> bool` — Delete one issue comment by id.
 - `patch_comment(comment_id: int, body: str) -> bool` — Replace one issue comment's body in place.
@@ -1212,6 +1213,16 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `classify(root: Path, base: str, pr_number: int | None) -> PrPlan` — Classify the current branch's finalization path.
 - `_write_evidence(root: Path, base: str, plan: PrPlan, pr_number: int | None) -> None` _(internal)_ — Write the review evidence pack; a failure is logged, never raised.
 - `main(argv: list[str] | None = None) -> int` — Run the finalization-path classifier (or the freshness check) and emit JSON.
+
+## `forge.pr_review_comments`
+
+> _forge-pr-review-comments — read a PR's review comments in full._
+
+- `unreplied_ids(comments: list[dict[str, object]]) -> list[int]` — Return the ids of top-level review comments nobody has replied to.
+- `_fetch(pr_number: int) -> list[dict[str, object]] | None` _(internal)_ — Return the full listing, logging why when there is none.
+- `_cmd_list(pr_number: int) -> int` _(internal)_ — Print every review comment, one JSON object per line.
+- `_cmd_unreplied(pr_number: int) -> int` _(internal)_ — Print the ids of unreplied top-level review comments.
+- `main(argv: list[str] | None = None) -> int` — Dispatch ``list`` / ``unreplied``.
 
 ## `forge.pr_squash_comment`
 

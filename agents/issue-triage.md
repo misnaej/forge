@@ -56,7 +56,7 @@ then `git rm` it. Finish with a `triage` run.
 
 ```bash
 gh issue list --state open --limit 1000 --json number,title,labels,updatedAt,assignees,body
-gh pr list --state open --json number,title,body,headRefName
+gh pr list --state open --limit 1000 --json number,title,body,headRefName
 ```
 
 For each issue missing a `tier-N-*` label, classify by title + body +
@@ -171,7 +171,7 @@ An issue with a `[sentinel] taken up` comment and no later `[sentinel] PR #N ope
 
 ```bash
 gh issue list --state open --limit 1000 --json number,title,labels,body,updatedAt,author,comments
-gh pr list --state open --json number,title,body,headRefName
+gh pr list --state open --limit 1000 --json number,title,body,headRefName
 ```
 
 Per open issue, a four-point verdict from **mechanical heuristics

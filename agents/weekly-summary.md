@@ -53,9 +53,9 @@ Otherwise, discover every repo with activity in range:
 
 ```bash
 # Repos where the user opened OR was assigned PRs / issues in range
-gh search prs --author=@me --created=">=<DATE>" \
+gh search prs --author=@me --created=">=<DATE>" --limit 1000 \
     --json repository --jq '[.[].repository.nameWithOwner] | unique'
-gh search issues --author=@me --created=">=<DATE>" \
+gh search issues --author=@me --created=">=<DATE>" --limit 1000 \
     --json repository --jq '[.[].repository.nameWithOwner] | unique'
 # Plus the current repo (covers `gh search` miss when activity is older than range)
 git remote -v 2>/dev/null | awk '/origin/ && /(fetch)/ {print $2}' | head -1
@@ -79,23 +79,23 @@ For **each repo in scope** repeat the fetch. Over-fetching is safe
 
 ```bash
 # PRs created OR merged in range
-gh pr list --repo <owner>/<repo> --author @me --state all \
+gh pr list --repo <owner>/<repo> --author @me --state all --limit 1000 \
     --search "created:>=<DATE>" --json number,title,state,createdAt,mergedAt,url,isDraft
-gh pr list --repo <owner>/<repo> --author @me --state all \
+gh pr list --repo <owner>/<repo> --author @me --state all --limit 1000 \
     --search "merged:>=<DATE>"  --json number,title,state,createdAt,mergedAt,url
 # Work in progress (any age)
-gh pr list --repo <owner>/<repo> --author @me --state open \
+gh pr list --repo <owner>/<repo> --author @me --state open --limit 1000 \
     --json number,title,state,createdAt,url,isDraft
-gh pr list --repo <owner>/<repo> --author @me --draft \
+gh pr list --repo <owner>/<repo> --author @me --draft --limit 1000 \
     --json number,title,createdAt,url
 ```
 
 For issues, the `gh search` form is cheaper than per-repo loops:
 
 ```bash
-gh search issues --author=<username> --created=">=<DATE>" \
+gh search issues --author=<username> --created=">=<DATE>" --limit 1000 \
     --json repository,title,number,state,url
-gh search issues --assignee=<username> --state=open \
+gh search issues --assignee=<username> --state=open --limit 1000 \
     --json repository,title,number,url
 ```
 
