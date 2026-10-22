@@ -286,8 +286,10 @@ this template. Per-agent findings land in `code_health/audit_agents.log`.
 Initially non-blocking; promoted to blocking after the Layer 3 trim PRs
 converge. The hard cap already blocks in forge itself: forge's own test
 suite fails when any shipped agent exceeds 1500 words.
-A folder `README.md` and underscore-prefixed files are not audited, nor
-are paths listed in `[tool.forge.audit_agents].exclude`. Text a script
+Underscore-prefixed files and a folder `README.md` without frontmatter
+are not audited (a README opening with `---` frontmatter may load as an
+agent, so it is). Paths listed in `[tool.forge.audit_agents].exclude`
+are skipped too, and the log names each one. Text a script
 injects identically into several agents, wrapped in matching
 `<!-- ns:name start -->` … `<!-- ns:name end -->` markers, is skipped by
 the copied-text check only — it still counts toward the word budget.

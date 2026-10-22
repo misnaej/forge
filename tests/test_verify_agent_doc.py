@@ -123,6 +123,14 @@ def test_roster_excludes_agents_dir_readme(tmp_path: Path) -> None:
     assert roster["agents"] == {"reviewer"}
 
 
+def test_roster_keeps_agents_dir_readme_with_frontmatter(tmp_path: Path) -> None:
+    """A README opening with frontmatter may load as an agent, so it is one."""
+    _build_repo(tmp_path)
+    _write(tmp_path / "agents" / "README.md", "---\nname: README\n---\n# x\n")
+    roster = vad._roster(tmp_path)
+    assert roster["agents"] == {"reviewer", "README"}
+
+
 def test_roster_consumer_claude_hook_dir_is_local_and_known(tmp_path: Path) -> None:
     """A hook under `.claude/hooks/` (not `claude-hooks/`) is repo-local + known.
 

@@ -290,8 +290,9 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         ("tool", "forge", "audit_agents", "exclude"),
         default=[],
         description="Repo-relative fnmatch globs or directory prefixes "
-        "forge-audit-agents skips, with --roots too (folder READMEs and "
-        "underscore-prefixed files are always skipped).",
+        "forge-audit-agents skips and names in its log, with --roots too "
+        "(frontmatter-less folder READMEs and underscore-prefixed files "
+        "are always skipped).",
     ),
     ConfigKey(
         ("tool", "forge", "pr", "docs_only_globs"),

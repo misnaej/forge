@@ -106,7 +106,9 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_strip_generated_regions(text: str) -> str` _(internal)_ — Remove complete generated-block regions (markers included) from *text*.
 - `_cross_agent_duplicate_findings(agents: list[AgentDoc]) -> list[Finding]` _(internal)_ — Flag n-grams that appear in two or more agent files.
 - `class AgentsConfig` — Configuration for ``forge-audit-agents``.
-- `_iter_agent_files(repo_root_path: Path, roots: list[Path] | None = None, exclude: list[str] | None = None) -> list[Path]` _(internal)_ — Return every public agent markdown file under the scan roots.
+- `_iter_agent_files(repo_root_path: Path, roots: list[Path] | None = None) -> list[Path]` _(internal)_ — Return every public agent markdown file under the scan roots.
+- `_split_excluded(repo_root_path: Path, paths: list[Path], exclude: list[str]) -> tuple[list[Path], list[str]]` _(internal)_ — Separate the agent files an *exclude* pattern drops from those kept.
+- `_render_excluded(excluded: list[str]) -> str` _(internal)_ — Render the excluded-files block appended to the log summary.
 - `_exclude_patterns(repo_root_path: Path) -> list[str]` _(internal)_ — Return the ``[tool.forge.audit_agents].exclude`` patterns.
 - `_effective_reporter_sets(repo_root_path: Path) -> tuple[frozenset[str], frozenset[str]]` _(internal)_ — Return the effective reporter / reporter-with-artifact name sets.
 - `_per_agent_findings(agent: AgentDoc, foundation_ngrams: set[str], reporters: frozenset[str], artifact_reporters: frozenset[str]) -> list[Finding]` _(internal)_ — Run every per-agent check and return the combined finding list.

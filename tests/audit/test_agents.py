@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
@@ -759,6 +760,37 @@ def test_strip_generated_regions_leaves_mismatched_or_unclosed_markers() -> None
     assert audit_agents._strip_generated_regions(unclosed) == unclosed
 
 
+def test_strip_generated_regions_pairs_each_start_with_its_own_end() -> None:
+    """An unclosed start is skipped; later regions still pair and are removed."""
+    text = (
+        "keep1 <!-- x:open start --> keep2 "
+        "<!-- a:one start --> gone1 <!-- a:one end --> keep3 "
+        "<!-- b:two begin --> gone2 <!-- B:TWO end --> keep4"
+    )
+    out = audit_agents._strip_generated_regions(text)
+    assert "gone" not in out
+    assert out.split() == [
+        "keep1",
+        "<!--",
+        "x:open",
+        "start",
+        "-->",
+        "keep2",
+        "keep3",
+        "keep4",
+    ]
+
+
+def test_strip_generated_regions_many_unclosed_starts_is_fast() -> None:
+    """8000 unclosed start markers finish well under a second (no rescans)."""
+    text = "<!-- team:x start --> word " * 8000
+    began = time.perf_counter()
+    out = audit_agents._strip_generated_regions(text + "<!-- team:y end -->")
+    elapsed = time.perf_counter() - began
+    assert out.startswith(text)
+    assert elapsed < 1.0
+
+
 def test_word_count_includes_text_inside_generated_markers() -> None:
     """Generated text is still prompt the agent pays for, so it is counted."""
     body = f"<!-- team:shared start -->{_SHARED_BLOCK}<!-- team:shared end -->"
@@ -821,7 +853,7 @@ def test_run_skips_underscore_prefixed_files(
 
 
 def test_iter_agent_files_skips_readme_any_case(tmp_path: Path) -> None:
-    """A folder README is not an agent, whatever its case."""
+    """A frontmatter-less folder README is not an agent, whatever its case."""
     (tmp_path / "agents").mkdir()
     (tmp_path / "agents" / "README.md").write_text("# Our agents\n")
     (tmp_path / ".claude" / "agents").mkdir(parents=True)
@@ -833,7 +865,16 @@ def test_iter_agent_files_skips_readme_any_case(tmp_path: Path) -> None:
     assert paths == [tmp_path / ".claude" / "agents" / "real.md"]
 
 
-def test_iter_agent_files_exclude_glob_and_directory_prefix(tmp_path: Path) -> None:
+def test_iter_agent_files_audits_readme_with_frontmatter(tmp_path: Path) -> None:
+    """A README opening with `---` frontmatter may load as an agent: audited."""
+    (tmp_path / "agents").mkdir()
+    readme = tmp_path / "agents" / "README.md"
+    readme.write_text("---\nname: readme\n---\n# Agent\n")
+
+    assert audit_agents._iter_agent_files(tmp_path) == [readme]
+
+
+def test_split_excluded_glob_and_directory_prefix(tmp_path: Path) -> None:
     """Exclude patterns drop matches by glob and by directory prefix."""
     agents_dir = tmp_path / ".claude" / "agents"
     agents_dir.mkdir(parents=True)
@@ -843,19 +884,34 @@ def test_iter_agent_files_exclude_glob_and_directory_prefix(tmp_path: Path) -> N
     vendor.mkdir(parents=True)
     (vendor / "third.md").write_text("# x\n")
 
-    paths = audit_agents._iter_agent_files(
+    kept, excluded = audit_agents._split_excluded(
         tmp_path,
-        [agents_dir, vendor],
-        exclude=[".claude/agents/draft-*.md", ".claude/agents/notes.md", "vendor"],
+        audit_agents._iter_agent_files(tmp_path, [agents_dir, vendor]),
+        [".claude/agents/draft-*.md", ".claude/agents/notes.md", "vendor"],
     )
 
-    assert paths == [agents_dir / "keep.md"]
+    assert kept == [agents_dir / "keep.md"]
+    assert excluded == [
+        ".claude/agents/draft-one.md",
+        ".claude/agents/notes.md",
+        "vendor/agents/third.md",
+    ]
 
 
-def test_run_honours_configured_exclude(
+def test_split_excluded_keeps_files_outside_repo_root(tmp_path: Path) -> None:
+    """A path with no repo-relative form cannot match a pattern, so is kept."""
+    outside = tmp_path / "elsewhere" / "a.md"
+    kept, excluded = audit_agents._split_excluded(
+        tmp_path / "repo", [outside], ["elsewhere"]
+    )
+    assert kept == [outside]
+    assert excluded == []
+
+
+def test_run_names_configured_excludes_in_log(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`[tool.forge.audit_agents].exclude` keeps a file out of the log."""
+    """An excluded file is not audited, but the log names it with a count."""
     (tmp_path / "FOUNDATION.md").write_text("Foundation text.")
     (tmp_path / "pyproject.toml").write_text(
         '[tool.forge.audit_agents]\nexclude = ["agents/index.md"]\n'
@@ -872,7 +928,31 @@ def test_run_honours_configured_exclude(
 
     log = (code_health_dir(tmp_path) / "audit_agents.log").read_text()
     assert "agents/real.md" in log
-    assert "index.md" not in log
+    assert "| index" not in log  # no table row, no findings
+    assert "excluded: 1 file(s) not audited" in log
+    assert "excluded: agents/index.md ([tool.forge.audit_agents].exclude)" in log
+    assert log.splitlines()[2] == "# scope: full"  # header format unchanged
+
+
+def test_run_names_excludes_when_every_agent_is_excluded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With every file excluded, "No agent files found." still names them."""
+    (tmp_path / "FOUNDATION.md").write_text("Foundation text.")
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.audit_agents]\nexclude = ["agents"]\n'
+    )
+    (tmp_path / "agents").mkdir()
+    (tmp_path / "agents" / "only.md").write_text("# Only\n")
+    monkeypatch.setattr("forge.audit.agents.repo_root", lambda: tmp_path)
+    monkeypatch.setattr("forge.audit.common.repo_root", lambda: tmp_path)
+
+    with patch("sys.argv", ["forge-audit-agents"]):
+        assert audit_agents.main() == 0
+
+    log = (code_health_dir(tmp_path) / "audit_agents.log").read_text()
+    assert "No agent files found." in log
+    assert "excluded: agents/only.md ([tool.forge.audit_agents].exclude)" in log
 
 
 def test_exclude_patterns_malformed_value_excludes_nothing(tmp_path: Path) -> None:

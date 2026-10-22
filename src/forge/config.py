@@ -85,19 +85,32 @@ def is_agent_definition(path: Path) -> bool:
     """Say whether a Markdown file in an agents dir defines an agent.
 
     The one rule every tool that lists agents applies, so they cannot
-    drift: an underscore-prefixed file (``_TEMPLATE.md``) is a template
-    and a ``README.md`` (any case) describes the folder — neither is an
-    agent Claude Code loads, so neither can carry agent frontmatter.
+    drift: an underscore-prefixed file (``_TEMPLATE.md``) is a template,
+    and a ``README.md`` (any case) without frontmatter describes the
+    folder. A README that *opens* with a ``---`` frontmatter block is
+    something Claude Code may load as an agent, so it stays an agent —
+    skipping it would hide a live agent from every check. An unreadable
+    README also stays an agent, so the failure surfaces downstream
+    instead of vanishing here.
 
     Args:
         path: A ``*.md`` file found under one of
             :data:`AGENT_DEFINITION_DIRS` (or an explicit scan root).
 
     Returns:
-        ``False`` for underscore-prefixed stems and for ``README.md``;
-        ``True`` otherwise.
+        ``False`` for underscore-prefixed stems and for a ``README.md``
+        whose first line is not ``---``; ``True`` otherwise.
     """
-    return not (path.stem.startswith("_") or path.stem.lower() == "readme")
+    if path.stem.startswith("_"):
+        return False
+    if path.stem.lower() != "readme":
+        return True
+    try:
+        with path.open(encoding="utf-8-sig") as handle:
+            first_line = handle.readline()
+    except (OSError, UnicodeDecodeError):
+        return True
+    return first_line.rstrip("\r\n").rstrip() == "---"
 
 
 def detect_source_dirs(repo_root: Path) -> list[str]:

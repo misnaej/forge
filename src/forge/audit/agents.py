@@ -12,8 +12,9 @@ Works in **two contexts**:
   ``[tool.forge.audit_agents]`` (additive to the shipped lists).
 
 Audits every ``*.md`` under the scan roots (skipping ``_TEMPLATE.md``,
-other underscore-prefixed files, a folder ``README.md``, and anything
-matching ``[tool.forge.audit_agents].exclude``) against the structural
+other underscore-prefixed files, a frontmatter-less folder ``README.md``,
+and anything matching ``[tool.forge.audit_agents].exclude`` — each
+excluded path is named in the log) against the structural
 and length policy documented in ``agents/_TEMPLATE.md``. Text between
 matching generated-block markers (``<!-- ns:name start -->`` …
 ``<!-- ns:name end -->``) is ignored by the cross-agent copied-text
@@ -43,6 +44,7 @@ Measurements per agent:
 
 from __future__ import annotations
 
+import bisect
 import logging
 import re
 import sys
@@ -110,13 +112,16 @@ _REPORTER_WITH_ARTIFACT_NAMES = (
 # A script-generated block injected identically into several agents
 # (``<!-- ns:name start -->`` … ``<!-- ns:name end -->``, same id on both
 # markers) is the de-duplication FOUNDATION §12 asks for, so the copied-text
-# check must not tell its authors to extract it again. Non-greedy with a
-# back-reference: a mismatched id or a missing end marker leaves the text
-# in place, still checked.
-_GENERATED_REGION_RE = re.compile(
-    r"<!--\s*([\w.-]+:[\w.-]+)\s+(?:start|begin)\s*-->.*?<!--\s*\1\s+end\s*-->",
-    re.IGNORECASE | re.DOTALL,
+# check must not tell its authors to extract it again. A mismatched id or a
+# missing end marker leaves the text in place, still checked. Start and end
+# markers are located separately and paired by a linear scan
+# (:func:`_strip_generated_regions`), never by one back-referencing regex:
+# that regex rescans to the end of the body for every unclosed start
+# marker, so consumer-authored text could make it quadratic.
+_GENERATED_START_RE = re.compile(
+    r"<!--\s*([\w.-]+:[\w.-]+)\s+(?:start|begin)\s*-->", re.IGNORECASE
 )
+_GENERATED_END_RE = re.compile(r"<!--\s*([\w.-]+:[\w.-]+)\s+end\s*-->", re.IGNORECASE)
 
 # Pre-write reporters: no mutating tools, but their evidence header is
 # `prior-art-searched:` (digest hash + query count) rather than a git
@@ -652,11 +657,33 @@ def _strip_generated_regions(text: str) -> str:
     Args:
         text: Agent body, code blocks already stripped.
 
+    A start marker pairs with the first later end marker carrying the
+    same id (case-insensitive); a start with none is left in place and
+    the scan moves on. Every marker is visited once and each lookup is a
+    bisect, so the cost stays near-linear whatever the text holds.
+
     Returns:
         *text* with every matched region replaced by a single space, so
         the words on either side never fuse into one token.
     """
-    return _GENERATED_REGION_RE.sub(" ", text)
+    ends: dict[str, list[tuple[int, int]]] = defaultdict(list)
+    for m in _GENERATED_END_RE.finditer(text):
+        ends[m.group(1).lower()].append((m.start(), m.end()))
+    if not ends:
+        return text
+    pieces: list[str] = []
+    cursor = 0
+    for start in _GENERATED_START_RE.finditer(text):
+        if start.start() < cursor:
+            continue  # inside a region already removed
+        candidates = ends.get(start.group(1).lower(), [])
+        i = bisect.bisect_left(candidates, (start.end(), -1))
+        if i == len(candidates):
+            continue  # unclosed (or only closed earlier): leave it checked
+        pieces.extend((text[cursor : start.start()], " "))
+        cursor = candidates[i][1]
+    pieces.append(text[cursor:])
+    return "".join(pieces)
 
 
 def _cross_agent_duplicate_findings(agents: list[AgentDoc]) -> list[Finding]:
@@ -724,25 +751,20 @@ class AgentsConfig:
 
 
 def _iter_agent_files(
-    repo_root_path: Path,
-    roots: list[Path] | None = None,
-    exclude: list[str] | None = None,
+    repo_root_path: Path, roots: list[Path] | None = None
 ) -> list[Path]:
     """Return every public agent markdown file under the scan roots.
 
     Filters out files that are not agent definitions —
-    ``_TEMPLATE.md``, other underscore-prefixed files and a folder
-    ``README.md``, per :func:`forge.config.is_agent_definition` — and
-    any file matching an *exclude* pattern, which applies with
-    ``--roots`` too. A file outside *repo_root_path* has no repo-relative
-    path to match, so *exclude* never drops it.
+    ``_TEMPLATE.md``, other underscore-prefixed files and a
+    frontmatter-less folder ``README.md``, per
+    :func:`forge.config.is_agent_definition`. Configured excludes are
+    applied afterwards by :func:`_split_excluded`, so they stay visible.
 
     Args:
         repo_root_path: Repo root.
         roots: Explicit scan roots (from ``--roots``); ``None`` or empty
             scans the :data:`forge.config.AGENT_DEFINITION_DIRS` union.
-        exclude: Patterns from ``[tool.forge.audit_agents].exclude``,
-            matched by :func:`forge.config.filter_excluded`.
 
     Returns:
         Sorted, de-duplicated list of absolute paths to agent files.
@@ -751,16 +773,60 @@ def _iter_agent_files(
     files = {
         p for d in dirs if d.is_dir() for p in d.glob("*.md") if is_agent_definition(p)
     }
-    if exclude:
-        by_rel: dict[str, Path] = {}
-        for p in files:
-            try:
-                by_rel[p.relative_to(repo_root_path).as_posix()] = p
-            except ValueError:
-                continue
-        kept = set(filter_excluded(sorted(by_rel), exclude))
-        files -= {p for rel, p in by_rel.items() if rel not in kept}
     return sorted(files)
+
+
+def _split_excluded(
+    repo_root_path: Path, paths: list[Path], exclude: list[str]
+) -> tuple[list[Path], list[str]]:
+    """Separate the agent files an *exclude* pattern drops from those kept.
+
+    Applies with ``--roots`` too. A file outside *repo_root_path* has no
+    repo-relative path to match, so it is always kept. The dropped paths
+    are returned rather than discarded so the log can name them — an
+    audit that silently audits fewer files reads as full coverage.
+
+    Args:
+        repo_root_path: Repo root the patterns are relative to.
+        paths: Agent files from :func:`_iter_agent_files`.
+        exclude: Patterns from ``[tool.forge.audit_agents].exclude``,
+            matched by :func:`forge.config.filter_excluded`.
+
+    Returns:
+        ``(kept, excluded)``: the kept absolute paths in input order, and
+        the sorted repo-relative paths that were excluded.
+    """
+    if not exclude:
+        return paths, []
+    by_rel: dict[str, Path] = {}
+    for p in paths:
+        try:
+            by_rel[p.relative_to(repo_root_path).as_posix()] = p
+        except ValueError:
+            continue
+    kept_rel = set(filter_excluded(sorted(by_rel), exclude))
+    excluded = sorted(rel for rel in by_rel if rel not in kept_rel)
+    dropped = {by_rel[rel] for rel in excluded}
+    return [p for p in paths if p not in dropped], excluded
+
+
+def _render_excluded(excluded: list[str]) -> str:
+    """Render the excluded-files block appended to the log summary.
+
+    Args:
+        excluded: Repo-relative paths dropped by the configured exclude.
+
+    Returns:
+        A count line plus one ``excluded:`` line per path, or ``""`` when
+        nothing was excluded.
+    """
+    if not excluded:
+        return ""
+    lines = [f"excluded: {len(excluded)} file(s) not audited"]
+    lines.extend(
+        f"excluded: {rel} ([tool.forge.audit_agents].exclude)" for rel in excluded
+    )
+    return "\n".join(lines)
 
 
 def _exclude_patterns(repo_root_path: Path) -> list[str]:
@@ -955,7 +1021,10 @@ def run(scope: Scope, roots: list[Path], config: AgentsConfig) -> int:
     foundation_text = foundation_path.read_text(encoding="utf-8")
     foundation_ngrams = _ngrams(_tokens(foundation_text), SHARED_TOKEN_MIN)
 
-    agent_paths = _iter_agent_files(root, roots, exclude=_exclude_patterns(root))
+    agent_paths, excluded = _split_excluded(
+        root, _iter_agent_files(root, roots), _exclude_patterns(root)
+    )
+    excluded_block = _render_excluded(excluded)
     if not agent_paths:
         scanned = (
             ", ".join(str(r) for r in roots)
@@ -963,9 +1032,8 @@ def run(scope: Scope, roots: list[Path], config: AgentsConfig) -> int:
             else " and ".join(f"{root}/{d}" for d in AGENT_DEFINITION_DIRS)
         )
         logger.info("No agent files under %s", scanned)
-        write_log(
-            "agents", [], "No agent files found.", output=config.output, scope=scope
-        )
+        summary = "\n\n".join(filter(None, ["No agent files found.", excluded_block]))
+        write_log("agents", [], summary, output=config.output, scope=scope)
         return 0
     agents = [_parse_agent(p, root) for p in agent_paths]
 
@@ -977,7 +1045,9 @@ def run(scope: Scope, roots: list[Path], config: AgentsConfig) -> int:
         )
     findings.extend(_cross_agent_duplicate_findings(agents))
 
-    summary = _render_summary(agents, findings)
+    summary = "\n\n".join(
+        filter(None, [_render_summary(agents, findings), excluded_block])
+    )
     write_log("agents", findings, summary, output=config.output, scope=scope)
     return 0
 
