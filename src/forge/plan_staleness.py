@@ -60,6 +60,7 @@ from typing import TYPE_CHECKING, Final, Protocol
 from forge.git_utils import run_git, wrap_in_code_fence
 from forge.plan_staleness_gh import WRITE_PERMISSIONS
 from forge.pr_delta import ISSUE_REF_RE, strip_fences
+from forge.text_clip import truncate
 
 
 if TYPE_CHECKING:
@@ -408,9 +409,7 @@ def capped_echo(text: str) -> str:
     Returns:
         A fenced block, ending in ``…[truncated]`` when cut.
     """
-    if len(text) > ECHO_CAP:
-        text = text[:ECHO_CAP] + " …[truncated]"
-    return wrap_in_code_fence(text)
+    return wrap_in_code_fence(truncate(text, ECHO_CAP, suffix=" …[truncated]"))
 
 
 def is_safe_path(path: str) -> bool:

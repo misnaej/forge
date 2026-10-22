@@ -1659,6 +1659,12 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `run_command(cmd: Sequence[str], root: Path, *, capture: bool = False, cwd: Path | None = None, label: str = '') -> tuple[int, str]` — Run *cmd* under resource sampling and write the telemetry artifacts.
 - `main(argv: list[str] | None = None) -> int` — Run the telemetry CLI: ``forge-telemetry -- <cmd> ...``.
 
+## `forge.text_clip`
+
+> _Shared "keep N characters, then add a marker" text cut._
+
+- `truncate(text: str, limit: int, *, suffix: str = '…') -> str` — Return *text* cut to *limit* characters plus *suffix* when longer.
+
 ## `forge.upgrade`
 
 > _forge-upgrade — one-command consumer upgrade flow._
