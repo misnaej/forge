@@ -1137,6 +1137,33 @@ _BLOCK_EXIT = 2
         ),
         pytest.param('bash -c "git config core.hooksPath x"', id="bash-c"),
         pytest.param("git config core.hooks\\Path x", id="escaped-letter"),
+        pytest.param('git config core.hooksPath ""', id="set-empty-double"),
+        pytest.param("git config core.hooksPath ''", id="set-empty-single"),
+        pytest.param(
+            "git config alias.x '!git -c core.hooksPath=/dev/null commit'",
+            id="alias-shell",
+        ),
+        pytest.param(
+            "git config alias.ci2 '-c core.hooksPath=/x commit'", id="alias-dash-c"
+        ),
+        pytest.param("git config alias.nv 'commit -n'", id="alias-commit-n"),
+        pytest.param('git config alias.nv "commit --no-verif"', id="alias-no-verif"),
+        pytest.param("git config --global alias.m merge", id="alias-merge"),
+        pytest.param("git config set alias.p 'pull --ff'", id="alias-set-pull"),
+        pytest.param('git config alias.v "$V"', id="alias-unknowable"),
+        pytest.param("git -c alias.x='commit -n' x", id="alias-dash-c-oneoff"),
+        pytest.param(
+            "git -c alias.ok=status -c alias.x='commit -n' x", id="alias-second-dash-c"
+        ),
+        pytest.param("git --config-env=alias.x=V x", id="alias-config-env"),
+        pytest.param(
+            "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.x GIT_CONFIG_VALUE_0=commit "
+            "git x",
+            id="alias-env-key",
+        ),
+        pytest.param(
+            "GIT_CONFIG_PARAMETERS=\"'alias.x=commit -n'\" git x", id="alias-env-params"
+        ),
     ],
 )
 def test_no_verify_blocks_every_hooks_path_change(
@@ -1173,6 +1200,11 @@ def test_no_verify_blocks_every_hooks_path_change(
             "git status",
             id="env-other-key",
         ),
+        pytest.param("git config alias.co checkout", id="alias-harmless"),
+        pytest.param("git config alias.st 'status -s'", id="alias-harmless-quoted"),
+        pytest.param("git config --get alias.ci", id="alias-read"),
+        pytest.param("git config --unset alias.x", id="alias-unset"),
+        pytest.param("git -c alias.st=status st", id="alias-dash-c-harmless"),
     ],
 )
 def test_no_verify_allows_hooks_path_reads_and_other_keys(
@@ -1186,6 +1218,49 @@ def test_no_verify_allows_hooks_path_reads_and_other_keys(
     """
     options = HookOptions(cwd=tmp_path, env=GIT_ENV)
     assert _run_hook(_NO_VERIFY, command, options=options) == 0
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        pytest.param("git commit --no-verif -m x", _BLOCK_EXIT, id="no-verif"),
+        pytest.param("git commit --no-veri -m x", _BLOCK_EXIT, id="no-veri"),
+        pytest.param("git commit --no-ve -m x", _BLOCK_EXIT, id="no-ve-ambiguous"),
+        pytest.param("git push --no-verif origin x", _BLOCK_EXIT, id="push-no-verif"),
+        pytest.param("git commit --no-verbose -m x", 0, id="no-verbose"),
+        pytest.param("git commit --verbose -m x", 0, id="verbose"),
+    ],
+)
+def test_no_verify_refuses_every_abbreviation_git_accepts(
+    command: str, expected: int, tmp_path: Path
+) -> None:
+    """Git takes an unambiguous prefix of a long option, so each one is the flag.
+
+    Args:
+        command: A commit or push with a `--no-ve…` option.
+        expected: The hook's verdict.
+        tmp_path: A directory that is not a git repo.
+    """
+    options = HookOptions(cwd=tmp_path, env=GIT_ENV)
+    assert _run_hook(_NO_VERIFY, command, options=options) == expected
+
+
+def test_no_verify_config_pass_is_linear_in_invocations(tmp_path: Path) -> None:
+    """Thousands of harmless config reads before one write stay well inside the timeout.
+
+    A timed-out hook allows the command, so the config pass must not grow
+    quadratically with the number of invocations.
+
+    Args:
+        tmp_path: A directory that is not a git repo.
+    """
+    command = "git config --list; " * 3000 + "git config core.hooksPath x"
+    options = HookOptions(cwd=tmp_path, env=GIT_ENV)
+    start = time.monotonic()
+    verdict = _run_hook(_NO_VERIFY, command, options=options)
+    elapsed = time.monotonic() - start
+    assert verdict == _BLOCK_EXIT
+    assert elapsed < 2.0
 
 
 def _repo_tracking_forge_hook(root: Path, *, executable: bool = True) -> Path:

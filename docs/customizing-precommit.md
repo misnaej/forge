@@ -53,14 +53,11 @@ git finds the hook through `core.hooksPath`, which `install-forge-githooks`
 points at `.githooks/`. `forge-doctor` shows the folder git resolves in a
 checkout and whether a runnable `pre-commit` sits there; the forge Claude
 Code plugin refuses an agent command that changes or overrides
-`core.hooksPath`, and a commit, merge or pull whose resolved folder has no
+`core.hooksPath` or defines a git alias that could commit past the hook,
+and a commit, merge or pull whose resolved folder has no
 executable `pre-commit` in a repo that tracks this file.
 
-A merge git completes without conflicts creates its merge commit through
-a different hook, `pre-merge-commit`, which forge deliberately does not
-install, so that commit runs no local gate. It is still checked: CI runs
-`forge-precommit` on every PR and push, the next commit's gate checks the
-merged state, and every check log is stamped with the tree it describes,
-so `forge-precommit --freshness` and the PR evidence treat logs from
-before the merge as stale. A conflicted merge is finished with
-`git commit`, which runs this hook as usual.
+A conflicted merge is finished with `git commit`, which runs this hook as
+usual. A merge git completes without conflicts runs no local gate, by
+design — why, and what checks it instead, is in FOUNDATION §2 (the sync
+ladder).

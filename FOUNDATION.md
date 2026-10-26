@@ -264,11 +264,11 @@ gate.
   are stamped by tree, so `--freshness` and the PR evidence already read
   pre-merge logs as stale. A conflicted merge is finished with
   `git commit` and gated as usual. `git merge --abort` is the permitted
-  recovery verb **only after** a checkpoint secured the work (git documents it as lossy
-  for uncommitted changes). Stash is no longer part of any sanctioned
-  procedure. Humans: never `export FORGE_WIP_SYNC` in a persistent shell
-  — it would silently defer the gate on every later commit; use it
-  inline, once. The `block_git_destructive` hook enforces all of this with
+  recovery verb **only after** a checkpoint secured the work (git
+  documents it as lossy for uncommitted changes). Stash is no longer
+  part of any sanctioned procedure. Humans: never
+  `export FORGE_WIP_SYNC` in a persistent shell — it would silently
+  defer the gate on every later commit; use it inline, once. The `block_git_destructive` hook enforces all of this with
   **no bypass**; a human runs the blocked form via `! git ...`.
 - **On deviation: STOP and report.** When you detect you have deviated from
   instructions or repository state is not what you expected, halt and

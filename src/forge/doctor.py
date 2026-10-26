@@ -1001,11 +1001,11 @@ def main() -> int:
         results.extend(_check_plugin_contents(plugin_root))
 
     results.extend(_check_version_skew(Path.cwd()))
-    results.extend(_check_hooks_path(Path.cwd()))
     if not args.skip_plugin_checks:
         results.extend(_check_plugin_cache_skew(Path.cwd()))
         results.extend(_check_global_install(Path.cwd()))
     results.extend(_surface_pin_revision(Path.cwd()))
+    results.extend(_check_hooks_path(Path.cwd()))
     results.extend(_check_under_used_capabilities(Path.cwd()))
 
     if args.json:
