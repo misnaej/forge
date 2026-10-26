@@ -477,6 +477,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_source_mismatch_advisory(status: PluginCacheStatus) -> CheckResult` _(internal)_ — Wrap a ``"source-mismatch"`` verdict as an advisory naming both refs.
 - `_enabled_in(settings_path: Path) -> bool | None` _(internal)_ — Return ``enabledPlugins["forge@forge"]`` from a settings file.
 - `_check_global_install(repo_root: Path) -> list[CheckResult]` _(internal)_ — Flag a machine-wide forge install alongside this repo's own.
+- `_check_hooks_path(repo_root: Path) -> list[CheckResult]` _(internal)_ — Report the hooks folder git will use here and whether it can gate a commit.
 - `_check_version_skew(repo_root: Path) -> list[CheckResult]` _(internal)_ — Compare forge's version across its install surfaces and flag drift (#184).
 - `_surface_pin_revision(root: Path) -> list[CheckResult]` _(internal)_ — Compare the pyproject pin's git ref against the installed build's.
 - `_check_plugin_manifests(plugin_root: Path | None, plugin_name: str) -> list[CheckResult]` _(internal)_ — Validate plugin.json + marketplace.json under the installed plugin root.
@@ -756,6 +757,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `create_commit(repo_root: Path, message: str) -> None` — Commit the staged index, surviving identity-less runners.
 - `resolve_current_branch(repo_root: Path) -> tuple[str, str] | None` — Return the current branch name and where it came from, or ``None``.
 - `ref_exists(repo_root: Path, ref: str) -> bool` — Return whether *ref* resolves to a commit in the repo.
+- `git_path(repo_root: Path, rel: str) -> Path | None` — Return where git keeps *rel* for the checkout at *repo_root*.
 - `merge_in_progress(repo_root: Path) -> bool` — Return whether *repo_root* has an in-progress (uncommitted) merge.
 - `unmerged_paths(repo_root: Path) -> list[str]` — Return the repo-relative paths currently in an unmerged index state.
 - `fetch_quietly(repo_root: Path, remote: str, refspec: str) -> bool` — Fetch *refspec* from *remote* without ever prompting for credentials.

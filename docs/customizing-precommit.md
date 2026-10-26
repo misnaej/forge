@@ -46,3 +46,18 @@ The `# forge:precommit-managed v1` marker on line 2 tells
 version token lets the installer upgrade an outdated managed hook
 automatically while honoring user edits — delete or change the marker
 and the file is considered yours, never touched without `--force`.
+
+## When the hook runs — and when it does not
+
+git finds the hook through `core.hooksPath`, which `install-forge-githooks`
+points at `.githooks/`. `forge-doctor` shows the folder git resolves in a
+checkout and whether a runnable `pre-commit` sits there; the forge Claude
+Code plugin refuses an agent command that changes or overrides
+`core.hooksPath` or defines a git alias that could commit past the hook,
+and a commit, merge or pull whose resolved folder has no
+executable `pre-commit` in a repo that tracks this file.
+
+A conflicted merge is finished with `git commit`, which runs this hook as
+usual. A merge git completes without conflicts runs no local gate, by
+design — why, and what checks it instead, is in FOUNDATION §2 (the sync
+ladder).

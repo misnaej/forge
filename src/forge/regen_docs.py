@@ -24,7 +24,6 @@ import hashlib
 import importlib.metadata
 import json
 import subprocess
-from pathlib import Path
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
 from forge import config
@@ -32,6 +31,7 @@ from forge.git_utils import (
     FORGE_DIST_NAME,
     console_script_modules,
     diff_names_z,
+    git_path,
     merge_in_progress,
     run_git,
 )
@@ -39,6 +39,7 @@ from forge.git_utils import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
 
 API_DIGEST_DOC = "docs/api-digest.md"
@@ -166,13 +167,7 @@ def record_path(repo_root: Path) -> Path | None:
     Returns:
         The record path, or ``None`` when git reports no path.
     """
-    out = run_git(
-        "rev-parse", "--git-path", RECORD_GIT_PATH, cwd=repo_root, check=False
-    )
-    if not out.strip():
-        return None
-    path = Path(out.strip())
-    return path if path.is_absolute() else repo_root / path
+    return git_path(repo_root, RECORD_GIT_PATH)
 
 
 def load_record(repo_root: Path) -> dict[str, dict[str, str]]:

@@ -1087,6 +1087,394 @@ def test_no_verify_short_flag_blocks_when_a_separator_follows(command: str) -> N
     assert _run_hook(_NO_VERIFY, command) == 2
 
 
+# --- block_no_verify: core.hooksPath and the resolved hooks folder ----------
+# The hook's own git queries read no machine config (GIT_ENV), so a
+# developer's global core.hooksPath cannot change a verdict.
+
+_COMMIT_AGENT = "forge:git-commit-push"
+# The PreToolUse block status (the shared `_BLOCK` is defined further down,
+# after these parametrize tables are evaluated).
+_BLOCK_EXIT = 2
+
+
+@pytest.mark.parametrize("agent_type", ["", _COMMIT_AGENT])
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("git config core.hooksPath /dev/null", id="set"),
+        pytest.param("git config --global core.hooksPath /tmp/x", id="set-global"),
+        pytest.param("git config --local core.HOOKSPATH x", id="set-any-case"),
+        pytest.param("git config -f .git/config core.hooksPath x", id="set-file"),
+        pytest.param("git config --add core.hooksPath x", id="add"),
+        pytest.param("git config --replace-all core.hooksPath x", id="replace-all"),
+        pytest.param("git config --unset core.hooksPath", id="unset"),
+        pytest.param("git config --unset-all core.hooksPath", id="unset-all"),
+        pytest.param("git config set core.hooksPath x", id="set-subcommand"),
+        pytest.param("git config unset core.hooksPath", id="unset-subcommand"),
+        pytest.param("git config --remove-section core", id="remove-section"),
+        pytest.param("git config --rename-section core x", id="rename-section"),
+        pytest.param("git config remove-section core", id="remove-section-sub"),
+        pytest.param("git -c core.hooksPath=/dev/null commit -m x", id="dash-c"),
+        pytest.param("git -c core.hookspath commit -m x", id="dash-c-boolean"),
+        pytest.param('git -c "core.hooksPath=/dev/null" status', id="dash-c-quoted"),
+        pytest.param("git --config-env=core.hooksPath=V commit -m x", id="config-env"),
+        pytest.param(
+            "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath "
+            "GIT_CONFIG_VALUE_0=/dev/null git commit -m x",
+            id="env-key",
+        ),
+        pytest.param(
+            "GIT_CONFIG_PARAMETERS=\"'core.hooksPath=/dev/null'\" git commit -m x",
+            id="env-parameters",
+        ),
+        pytest.param(
+            "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath; git commit",
+            id="env-export",
+        ),
+        pytest.param(
+            "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=$K GIT_CONFIG_VALUE_0=x git commit",
+            id="env-key-unknowable",
+        ),
+        pytest.param('bash -c "git config core.hooksPath x"', id="bash-c"),
+        pytest.param("git config core.hooks\\Path x", id="escaped-letter"),
+        pytest.param('git config core.hooksPath ""', id="set-empty-double"),
+        pytest.param("git config core.hooksPath ''", id="set-empty-single"),
+        pytest.param(
+            "git config alias.x '!git -c core.hooksPath=/dev/null commit'",
+            id="alias-shell",
+        ),
+        pytest.param(
+            "git config alias.ci2 '-c core.hooksPath=/x commit'", id="alias-dash-c"
+        ),
+        pytest.param("git config alias.nv 'commit -n'", id="alias-commit-n"),
+        pytest.param('git config alias.nv "commit --no-verif"', id="alias-no-verif"),
+        pytest.param("git config --global alias.m merge", id="alias-merge"),
+        pytest.param("git config set alias.p 'pull --ff'", id="alias-set-pull"),
+        pytest.param('git config alias.v "$V"', id="alias-unknowable"),
+        pytest.param("git -c alias.x='commit -n' x", id="alias-dash-c-oneoff"),
+        pytest.param(
+            "git -c alias.ok=status -c alias.x='commit -n' x", id="alias-second-dash-c"
+        ),
+        pytest.param("git --config-env=alias.x=V x", id="alias-config-env"),
+        pytest.param(
+            "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.x GIT_CONFIG_VALUE_0=commit "
+            "git x",
+            id="alias-env-key",
+        ),
+        pytest.param(
+            "GIT_CONFIG_PARAMETERS=\"'alias.x=commit -n'\" git x", id="alias-env-params"
+        ),
+        pytest.param("git config alias.x \"$(echo '!sh')\"", id="alias-subst-quoted"),
+        pytest.param("git config alias.x `echo '!sh'`", id="alias-backtick"),
+        pytest.param("git config alias.x $(echo x)", id="alias-subst-bare"),
+        pytest.param('git config --add alias.x "$(echo x)"', id="alias-subst-add"),
+        pytest.param('git config alias.x "pre$(echo x)"', id="alias-subst-inner"),
+        pytest.param('git -c alias.x="$(echo x)" x', id="alias-subst-dash-c"),
+        pytest.param(
+            'git config alias.x \'c"o"mmit --no-"verify"\'', id="alias-split-commit"
+        ),
+        pytest.param("git config alias.x \"c'o'mmit\"", id="alias-split-single"),
+        pytest.param(
+            "git config alias.x '-c core.hooks\"Path=/x\" status'",
+            id="alias-split-hookspath",
+        ),
+        pytest.param(
+            "git config alias.x '-c user.name=x commit'", id="alias-commit-after-c"
+        ),
+    ],
+)
+def test_no_verify_blocks_every_hooks_path_change(
+    command: str, agent_type: str, tmp_path: Path
+) -> None:
+    """Changing or overriding where git looks for hooks is refused for everyone.
+
+    Run outside a repo, so only the core.hooksPath rule is under test.
+
+    Args:
+        command: A command that writes, removes or overrides the key.
+        agent_type: The calling agent — the main thread or the commit agent,
+            which has no bypass here.
+        tmp_path: A directory that is not a git repo.
+    """
+    options = HookOptions(agent_type=agent_type, cwd=tmp_path, env=GIT_ENV)
+    assert _run_hook(_NO_VERIFY, command, options=options) == _BLOCK_EXIT
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("git config --get core.hooksPath", id="get"),
+        pytest.param("git config core.hooksPath", id="bare-key-read"),
+        pytest.param("git config get core.hooksPath", id="get-subcommand"),
+        pytest.param("git config --list", id="list"),
+        pytest.param("git config core.editor vim", id="other-key"),
+        pytest.param("git -c core.editor=vim status", id="dash-c-other-key"),
+        pytest.param("git config --rename-section foo bar", id="other-section"),
+        pytest.param('echo "git config core.hooksPath x"', id="quoted-mention"),
+        pytest.param('git commit -m "set core.hooksPath"', id="message-mention"),
+        pytest.param(
+            "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.name GIT_CONFIG_VALUE_0=t "
+            "git status",
+            id="env-other-key",
+        ),
+        pytest.param("git config alias.co checkout", id="alias-harmless"),
+        pytest.param("git config alias.st 'status -s'", id="alias-harmless-quoted"),
+        pytest.param("git config --get alias.ci", id="alias-read"),
+        pytest.param("git config --unset alias.x", id="alias-unset"),
+        pytest.param("git -c alias.st=status st", id="alias-dash-c-harmless"),
+        pytest.param("git config alias.l 'log -n 5'", id="alias-log-n"),
+        pytest.param("git config alias.g 'log --grep=commit'", id="alias-grep-commit"),
+        pytest.param("git config alias.t 'tag -n'", id="alias-tag-n"),
+        pytest.param("git config alias.c 'clean -n'", id="alias-clean-n"),
+        pytest.param("git -c alias.l='log -n 5' l", id="alias-dash-c-log-n"),
+    ],
+)
+def test_no_verify_allows_hooks_path_reads_and_other_keys(
+    command: str, tmp_path: Path
+) -> None:
+    """Reading the key, other keys and quoted mentions stay allowed.
+
+    Args:
+        command: A command that does not change core.hooksPath.
+        tmp_path: A directory that is not a git repo.
+    """
+    options = HookOptions(cwd=tmp_path, env=GIT_ENV)
+    assert _run_hook(_NO_VERIFY, command, options=options) == 0
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        pytest.param("git commit --no-verif -m x", _BLOCK_EXIT, id="no-verif"),
+        pytest.param("git commit --no-veri -m x", _BLOCK_EXIT, id="no-veri"),
+        pytest.param("git commit --no-ve -m x", _BLOCK_EXIT, id="no-ve-ambiguous"),
+        pytest.param("git push --no-verif origin x", _BLOCK_EXIT, id="push-no-verif"),
+        pytest.param("git commit --no-verbose -m x", 0, id="no-verbose"),
+        pytest.param("git commit --verbose -m x", 0, id="verbose"),
+        pytest.param('git commit --no-"verify" -m x', _BLOCK_EXIT, id="split-quote"),
+        pytest.param("git commit --no-v\\erify -m x", _BLOCK_EXIT, id="split-escape"),
+        pytest.param('git commit --"no"-verify -m x', _BLOCK_EXIT, id="split-lead"),
+        pytest.param("git commit --$'no-verify' -m x", _BLOCK_EXIT, id="split-ansi"),
+        pytest.param('git commit --no-v""erify -m x', _BLOCK_EXIT, id="split-empty"),
+        pytest.param('git push --no-"verif" origin x', _BLOCK_EXIT, id="push-split"),
+        pytest.param('git commit -"n" -m x', _BLOCK_EXIT, id="short-quoted"),
+        pytest.param("git commit $(echo --no-verify) -m x", _BLOCK_EXIT, id="subst"),
+        pytest.param("git commit --no-verify$(true)", _BLOCK_EXIT, id="subst-glued"),
+        pytest.param(
+            "git commit --no-ve$(true) -m x", _BLOCK_EXIT, id="subst-glued-abbrev"
+        ),
+        pytest.param(
+            "git commit --no-$(echo verify) -m x", _BLOCK_EXIT, id="subst-prefix"
+        ),
+        pytest.param('git commit -m "$(cat msg)"', 0, id="subst-message"),
+        pytest.param('git commit -m "mention --no-verify here"', 0, id="message"),
+        pytest.param("git commit -m 'no --no-verif here'", 0, id="message-abbrev"),
+    ],
+)
+def test_no_verify_refuses_every_abbreviation_git_accepts(
+    command: str, expected: int, tmp_path: Path
+) -> None:
+    """Git takes an unambiguous prefix of a long option, so each one is the flag.
+
+    Args:
+        command: A commit or push with a `--no-ve…` option.
+        expected: The hook's verdict.
+        tmp_path: A directory that is not a git repo.
+    """
+    options = HookOptions(cwd=tmp_path, env=GIT_ENV)
+    assert _run_hook(_NO_VERIFY, command, options=options) == expected
+
+
+def test_no_verify_config_pass_is_linear_in_invocations(tmp_path: Path) -> None:
+    """Thousands of harmless config reads before one write stay well inside the timeout.
+
+    A timed-out hook allows the command, so the config pass must not grow
+    quadratically with the number of invocations.
+
+    Args:
+        tmp_path: A directory that is not a git repo.
+    """
+    command = "git config --list; " * 3000 + "git config core.hooksPath x"
+    options = HookOptions(cwd=tmp_path, env=GIT_ENV)
+    start = time.monotonic()
+    verdict = _run_hook(_NO_VERIFY, command, options=options)
+    elapsed = time.monotonic() - start
+    assert verdict == _BLOCK_EXIT
+    assert elapsed < 2.0
+
+
+def _repo_tracking_forge_hook(root: Path, *, executable: bool = True) -> Path:
+    """Init a repo under *root* that tracks `.githooks/pre-commit`.
+
+    Args:
+        root: Directory to initialize (created).
+        executable: Whether the tracked hook file is executable.
+
+    Returns:
+        The repo root.
+    """
+    root.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=root, env=GIT_ENV, check=True)
+    hook = root / ".githooks" / "pre-commit"
+    hook.parent.mkdir()
+    hook.write_text("#!/bin/sh\n")
+    hook.chmod(0o755 if executable else 0o644)
+    subprocess.run(
+        ["git", "add", ".githooks/pre-commit"], cwd=root, env=GIT_ENV, check=True
+    )
+    return root
+
+
+def _set_hooks_path(repo: Path, value: str) -> None:
+    """Set this repo's own core.hooksPath.
+
+    Args:
+        repo: Repo whose local config is written.
+        value: The folder to point git at.
+    """
+    subprocess.run(
+        ["git", "config", "core.hooksPath", value], cwd=repo, env=GIT_ENV, check=True
+    )
+
+
+_GATED_COMMANDS = [
+    pytest.param("git commit -m x", id="commit"),
+    pytest.param("git merge origin/main", id="merge"),
+    pytest.param("git pull", id="pull"),
+    pytest.param("bash -c 'git commit -m x'", id="wrapped-commit"),
+]
+
+
+@pytest.mark.parametrize("command", _GATED_COMMANDS)
+def test_no_verify_refuses_when_the_resolved_hooks_folder_has_no_pre_commit(
+    command: str, tmp_path: Path
+) -> None:
+    """A repo tracking forge's hook but resolving git's default folder is refused.
+
+    No core.hooksPath, so git would use `.git/hooks`, which holds no
+    pre-commit: the command would run ungated. Judged from a subdirectory
+    too, since `--git-path` answers relative to where git runs.
+
+    Args:
+        command: A commit, merge or pull.
+        tmp_path: Parent of the scratch repo.
+    """
+    repo = _repo_tracking_forge_hook(tmp_path / "repo")
+    (repo / "sub").mkdir()
+    for cwd in (repo, repo / "sub"):
+        proc = _run_hook_proc(
+            _NO_VERIFY, command, options=HookOptions(cwd=cwd, env=GIT_ENV)
+        )
+        assert proc.returncode == _BLOCK_EXIT
+        assert "install-forge-githooks" in proc.stderr
+
+
+@pytest.mark.parametrize("command", _GATED_COMMANDS)
+def test_no_verify_refuses_a_pre_commit_that_is_not_executable(
+    command: str, tmp_path: Path
+) -> None:
+    """Git skips a hook it cannot execute, so a present but plain file is refused.
+
+    Args:
+        command: A commit, merge or pull.
+        tmp_path: Parent of the scratch repo.
+    """
+    repo = _repo_tracking_forge_hook(tmp_path / "repo", executable=False)
+    _set_hooks_path(repo, ".githooks")
+    options = HookOptions(cwd=repo, env=GIT_ENV)
+    assert _run_hook(_NO_VERIFY, command, options=options) == _BLOCK_EXIT
+
+
+@pytest.mark.parametrize("command", _GATED_COMMANDS)
+def test_no_verify_allows_a_wired_hooks_folder(command: str, tmp_path: Path) -> None:
+    """With core.hooksPath at the tracked, executable hook, the command runs.
+
+    Args:
+        command: A commit, merge or pull.
+        tmp_path: Parent of the scratch repo.
+    """
+    repo = _repo_tracking_forge_hook(tmp_path / "repo")
+    _set_hooks_path(repo, ".githooks")
+    options = HookOptions(cwd=repo / ".githooks", env=GIT_ENV)
+    assert _run_hook(_NO_VERIFY, command, options=options) == 0
+
+
+@pytest.mark.parametrize("command", _GATED_COMMANDS)
+def test_no_verify_never_refuses_another_hook_manager(
+    command: str, tmp_path: Path
+) -> None:
+    """A repo not tracking `.githooks/pre-commit` (husky-style) is never refused.
+
+    Its hooks folder is empty here, and still the guard stands aside: the
+    repo chose another hook manager, and there is no forge gate to protect.
+
+    Args:
+        command: A commit, merge or pull.
+        tmp_path: Parent of the scratch repo.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, env=GIT_ENV, check=True)
+    (repo / ".husky").mkdir()
+    _set_hooks_path(repo, ".husky")
+    options = HookOptions(cwd=repo, env=GIT_ENV)
+    assert _run_hook(_NO_VERIFY, command, options=options) == 0
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        pytest.param("git merge --abort", 0, id="merge-abort"),
+        pytest.param("git merge --quit", 0, id="merge-quit"),
+        pytest.param("git merge-tree --write-tree a b", 0, id="merge-tree"),
+        pytest.param("git commit-tree x", 0, id="commit-tree"),
+        pytest.param("git commit --help", 0, id="help"),
+        pytest.param("git status", 0, id="status"),
+        pytest.param("git merge --abort; git merge x", _BLOCK_EXIT, id="abort-then"),
+    ],
+)
+def test_no_verify_judges_only_commands_that_create_a_gated_commit(
+    command: str, expected: int, tmp_path: Path
+) -> None:
+    """Verbs that create no gated commit pass even with no pre-commit wired.
+
+    Args:
+        command: A git command run in a repo whose hooks folder is empty.
+        expected: The hook's verdict.
+        tmp_path: Parent of the scratch repo.
+    """
+    repo = _repo_tracking_forge_hook(tmp_path / "repo")
+    options = HookOptions(cwd=repo, env=GIT_ENV)
+    assert _run_hook(_NO_VERIFY, command, options=options) == expected
+
+
+def test_no_verify_payload_cwd_wins_over_the_hook_process_cwd(tmp_path: Path) -> None:
+    """The folder is resolved in the payload's cwd, where the command runs.
+
+    The hook process sits outside any repo; the payload names the
+    unwired repo, so the commit is refused.
+
+    Args:
+        tmp_path: Parent of the scratch repo.
+    """
+    repo = _repo_tracking_forge_hook(tmp_path / "repo")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    payload = json.dumps(
+        {"tool_input": {"command": "git commit -m x"}, "cwd": str(repo)}
+    )
+    proc = subprocess.run(
+        ["bash", str(_HOOKS_DIR / _NO_VERIFY)],
+        input=payload,
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=outside,
+        env=GIT_ENV,
+    )
+    assert proc.returncode == _BLOCK_EXIT
+
+
 _PR_MERGE = "block_pr_merge.sh"
 
 
@@ -8562,22 +8950,28 @@ _SCANNER_WORD_CASES = [
 
 @pytest.mark.parametrize(("hook", "command", "expected"), _SCANNER_WORD_CASES)
 def test_guards_read_each_shell_word_whole_and_assembled_text_joined(
-    hook: str, command: str, expected: int
+    hook: str, command: str, expected: int, tmp_path: Path
 ) -> None:
     """SCENARIO: a guard reads a word, and a joined command, as the shell does.
 
     The protected-branch rows run as the commit agent, so the verdict does
     not depend on which branch the test checkout is on (CI runs on `main`)
-    and only the destination check is under test.
+    and only the destination check is under test. The no-verify rows run
+    outside any repo for the same reason: that hook also refuses a commit
+    whose resolved hooks folder holds no pre-commit, which depends on how
+    the test checkout's hooks are wired.
 
     Args:
         hook: Guard hook under test.
         command: The shell command it judges.
         expected: Its verdict (2 blocks, 0 allows).
+        tmp_path: A directory outside any repo, for the no-verify rows.
     """
-    options = (
-        HookOptions(agent_type="forge:git-commit-push") if hook == _PROTECTED else None
-    )
+    options = None
+    if hook == _PROTECTED:
+        options = HookOptions(agent_type="forge:git-commit-push")
+    elif hook == _NO_VERIFY:
+        options = HookOptions(cwd=tmp_path)
     assert _run_hook(hook, command, options=options) == expected
 
 

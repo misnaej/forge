@@ -1099,16 +1099,43 @@ def ref_exists(repo_root: Path, ref: str) -> bool:
     )
 
 
+def git_path(repo_root: Path, rel: str) -> Path | None:
+    """Return where git keeps *rel* for the checkout at *repo_root*.
+
+    The one wrapper over ``git rev-parse --git-path``: it resolves a path
+    inside the git dir the way git itself does — linked worktrees and
+    submodules keep theirs elsewhere, ``GIT_INDEX_FILE`` relocates
+    ``index``, and ``core.hooksPath`` relocates ``hooks`` — so no caller
+    hardcodes ``.git/<rel>``. Git prints a path relative to *repo_root*
+    or an absolute one; a relative answer is joined to *repo_root*.
+
+    Args:
+        repo_root: Directory git runs in (a checkout root or below it).
+        rel: Path inside the git dir (``"MERGE_HEAD"``, ``"index"``,
+            ``"hooks"``, …).
+
+    Returns:
+        The resolved path, which need not exist, or ``None`` outside a
+        git repo or when git fails.
+    """
+    out = run_git(
+        "rev-parse", "--git-path", rel, cwd=repo_root, check=False, log_errors=False
+    )
+    if not out:
+        return None
+    path = Path(out)
+    return path if path.is_absolute() else repo_root / path
+
+
 def merge_in_progress(repo_root: Path) -> bool:
     """Return whether *repo_root* has an in-progress (uncommitted) merge.
 
-    Resolves ``MERGE_HEAD`` via ``git rev-parse --git-path`` rather than a
-    hardcoded ``.git/MERGE_HEAD`` so linked worktrees and submodules (where
-    the git dir lives elsewhere) are handled; ``--git-path`` may return a
-    relative or absolute path, and the ``/`` join degrades correctly for
-    both. Mid-merge, diff-vs-merge-base checks misattribute the base's
-    changes to the branch (HEAD is still pre-merge), so callers use this to
-    suppress that class of false positive.
+    Resolves ``MERGE_HEAD`` via :func:`git_path` rather than a hardcoded
+    ``.git/MERGE_HEAD`` so linked worktrees and submodules (where the git
+    dir lives elsewhere) are handled. Mid-merge, diff-vs-merge-base checks
+    misattribute the base's changes to the branch (HEAD is still
+    pre-merge), so callers use this to suppress that class of false
+    positive.
 
     Args:
         repo_root: Git repo root.
@@ -1117,10 +1144,8 @@ def merge_in_progress(repo_root: Path) -> bool:
         ``True`` when ``MERGE_HEAD`` exists (mid ``git merge``, before the
         merge commit).
     """
-    git_path = run_git(
-        "rev-parse", "--git-path", "MERGE_HEAD", cwd=repo_root, check=False
-    )
-    return bool(git_path) and (repo_root / git_path).exists()
+    merge_head = git_path(repo_root, "MERGE_HEAD")
+    return merge_head is not None and merge_head.exists()
 
 
 def unmerged_paths(repo_root: Path) -> list[str]:
@@ -2078,12 +2103,10 @@ def working_tree_sha(repo_root: Path) -> str | None:
     """
     if unmerged_paths(repo_root):
         return None
-    index = run_git(
-        "rev-parse", "--git-path", "index", cwd=repo_root, check=False, log_errors=False
-    )
-    if not index:
+    index = git_path(repo_root, "index")
+    if index is None:
         return None
-    return _tree_without_logs(repo_root, ("add", "-A"), source_index=repo_root / index)
+    return _tree_without_logs(repo_root, ("add", "-A"), source_index=index)
 
 
 def _tree_without_logs(
@@ -2105,15 +2128,8 @@ def _tree_without_logs(
         The tree SHA, or ``None`` when any step fails (a git call, or
         preparing the scratch index and object store).
     """
-    objects = run_git(
-        "rev-parse",
-        "--git-path",
-        "objects",
-        cwd=repo_root,
-        check=False,
-        log_errors=False,
-    )
-    if not objects:
+    objects = git_path(repo_root, "objects")
+    if objects is None:
         return None
     with tempfile.TemporaryDirectory(prefix="forge-stamp-") as scratch:
         scratch_index = Path(scratch) / "index"
@@ -2121,7 +2137,7 @@ def _tree_without_logs(
         # New blobs and trees land in the scratch store, never the repo's:
         # a stamp must not persist uncommitted or untracked content into
         # `.git/objects`. Existing objects stay readable as alternates.
-        alternates = [str((repo_root / objects).resolve())]
+        alternates = [str(objects.resolve())]
         # Keep alternates the caller already relies on (shared object
         # caches): replacing them would hide objects HEAD's tree needs.
         if inherited := os.environ.get("GIT_ALTERNATE_OBJECT_DIRECTORIES"):
