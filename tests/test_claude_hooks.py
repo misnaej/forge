@@ -1164,6 +1164,23 @@ _BLOCK_EXIT = 2
         pytest.param(
             "GIT_CONFIG_PARAMETERS=\"'alias.x=commit -n'\" git x", id="alias-env-params"
         ),
+        pytest.param("git config alias.x \"$(echo '!sh')\"", id="alias-subst-quoted"),
+        pytest.param("git config alias.x `echo '!sh'`", id="alias-backtick"),
+        pytest.param("git config alias.x $(echo x)", id="alias-subst-bare"),
+        pytest.param('git config --add alias.x "$(echo x)"', id="alias-subst-add"),
+        pytest.param('git config alias.x "pre$(echo x)"', id="alias-subst-inner"),
+        pytest.param('git -c alias.x="$(echo x)" x', id="alias-subst-dash-c"),
+        pytest.param(
+            'git config alias.x \'c"o"mmit --no-"verify"\'', id="alias-split-commit"
+        ),
+        pytest.param("git config alias.x \"c'o'mmit\"", id="alias-split-single"),
+        pytest.param(
+            "git config alias.x '-c core.hooks\"Path=/x\" status'",
+            id="alias-split-hookspath",
+        ),
+        pytest.param(
+            "git config alias.x '-c user.name=x commit'", id="alias-commit-after-c"
+        ),
     ],
 )
 def test_no_verify_blocks_every_hooks_path_change(
@@ -1205,6 +1222,11 @@ def test_no_verify_blocks_every_hooks_path_change(
         pytest.param("git config --get alias.ci", id="alias-read"),
         pytest.param("git config --unset alias.x", id="alias-unset"),
         pytest.param("git -c alias.st=status st", id="alias-dash-c-harmless"),
+        pytest.param("git config alias.l 'log -n 5'", id="alias-log-n"),
+        pytest.param("git config alias.g 'log --grep=commit'", id="alias-grep-commit"),
+        pytest.param("git config alias.t 'tag -n'", id="alias-tag-n"),
+        pytest.param("git config alias.c 'clean -n'", id="alias-clean-n"),
+        pytest.param("git -c alias.l='log -n 5' l", id="alias-dash-c-log-n"),
     ],
 )
 def test_no_verify_allows_hooks_path_reads_and_other_keys(
@@ -1229,6 +1251,16 @@ def test_no_verify_allows_hooks_path_reads_and_other_keys(
         pytest.param("git push --no-verif origin x", _BLOCK_EXIT, id="push-no-verif"),
         pytest.param("git commit --no-verbose -m x", 0, id="no-verbose"),
         pytest.param("git commit --verbose -m x", 0, id="verbose"),
+        pytest.param('git commit --no-"verify" -m x', _BLOCK_EXIT, id="split-quote"),
+        pytest.param("git commit --no-v\\erify -m x", _BLOCK_EXIT, id="split-escape"),
+        pytest.param('git commit --"no"-verify -m x', _BLOCK_EXIT, id="split-lead"),
+        pytest.param("git commit --$'no-verify' -m x", _BLOCK_EXIT, id="split-ansi"),
+        pytest.param('git commit --no-v""erify -m x', _BLOCK_EXIT, id="split-empty"),
+        pytest.param('git push --no-"verif" origin x', _BLOCK_EXIT, id="push-split"),
+        pytest.param('git commit -"n" -m x', _BLOCK_EXIT, id="short-quoted"),
+        pytest.param("git commit $(echo --no-verify) -m x", _BLOCK_EXIT, id="subst"),
+        pytest.param('git commit -m "mention --no-verify here"', 0, id="message"),
+        pytest.param("git commit -m 'no --no-verif here'", 0, id="message-abbrev"),
     ],
 )
 def test_no_verify_refuses_every_abbreviation_git_accepts(

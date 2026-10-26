@@ -5,7 +5,9 @@
 # guard for each:
 #   1. `--no-verify` on a commit or push — refused, with every abbreviation
 #      git accepts for it (`--no-veri`, `--no-verif`; from `--no-ve` up),
-#      and `-n` on a commit.
+#      and `-n` on a commit, however the word is quoted or escaped
+#      (`--no-"verify"`). A commit message that only mentions the flag is
+#      not the flag and stays allowed.
 #   2. Moving where git looks for hooks, or hiding a bypass in an alias.
 #      git reads `core.hooksPath` to find the pre-commit hook; pointed
 #      anywhere else, even for one command, the commit runs no gate and
@@ -20,9 +22,11 @@
 #      (`git config --get core.hooksPath`, which `.githooks/install.sh`
 #      does) stays allowed. An alias can carry the same bypass
 #      (`alias.x '!git -c core.hooksPath=… commit'`, `alias.nv 'commit
-#      -n'`), so a write of an `alias.*` key whose value starts with `!`,
-#      or names commit / merge / pull, `-n`, `--no-ve…` or hooksPath, or
-#      holds a value only known at run time, is refused in the same forms
+#      -n'`), so a write of an `alias.*` key is refused in the same forms
+#      when its value — quotes removed, as git reads it — starts with `!`,
+#      runs the git subcommand commit, merge or pull, holds hooksPath or a
+#      `--no-ve…` word, or is only known at run time (a `$` or a command
+#      substitution)
 #      (`-c alias.x=…`; `--config-env=alias.*` and `GIT_CONFIG_*` naming an
 #      alias always, since their value is not in the command).
 #   3. A hooks folder with nothing in it. On a commit, merge or pull, the
@@ -42,7 +46,9 @@
 # in a repo not yet bootstrapped, where there is no gate to protect; an
 # `include.path` pointing at a file that sets the key; `git config -e`;
 # a key held in a variable (`git config "$K" x`); editing `.git/config`
-# directly; aliases defined before forge was installed; and an empty or
+# directly; aliases defined before forge was installed, and an alias whose
+# value names another alias; a skip flag held in a variable
+# (`git commit $NV`); and an empty or
 # stub executable pre-commit, which passes check 3 — it proves a hook
 # exists, not that it is forge's. Check 3 judges the payload's cwd only,
 # so a command that runs git somewhere else — `git -C <other repo>`,
@@ -81,14 +87,30 @@ _block_hooks_path() {
 # blank inside a quoted word) that could run a commit past the gate. A
 # leading NEUT is a neutralised `!` (or a quoted leading blank — refused
 # alike). One copy, shared by the two awk passes below.
+#
+# git splits an alias value with its own quoting, so the value is judged
+# with `"`, `'` and `\` removed (`c"o"mmit` runs commit). Unsafe: a value
+# only known at run time (a `$`, or a command substitution — `(` in the
+# words view, `@SUBST@` once guard_git_invocations has read it), a shell
+# alias (`!…`), hooksPath anywhere, a `--no-ve…` word, or a git subcommand
+# — the first word past leading options and their values (`-c k=v`) — of
+# commit, merge or pull. `log -n 5` or `tag -n` is therefore no bypass.
 _ALIAS_UNSAFE_AWK='
-function alias_unsafe(v,   l) {
-    if (v ~ /[$(]/) return 1
-    if (substr(v, 1, 1) == "!" || substr(v, 1, 1) == NEUT) return 1
-    l = tolower(v); gsub(NEUT, " ", l)
-    if (l ~ /(^|[^a-z0-9_-])(commit|merge|pull)([^a-z0-9_-]|$)/) return 1
-    if (l ~ /(^|[ \t])-[a-z]*n[a-z]*([ \t]|$)/) return 1
-    if (l ~ /--no-ve/ || l ~ /hookspath/) return 1
+function alias_unsafe(v,   l, W, n, k, w) {
+    if (v ~ /[$(`]/ || index(v, "@SUBST@")) return 1
+    l = v; gsub(/["\047\\]/, "", l)
+    if (substr(l, 1, 1) == "!" || substr(l, 1, 1) == NEUT) return 1
+    l = tolower(l); gsub(NEUT, " ", l)
+    if (l ~ /hookspath/) return 1
+    n = split(l, W, /[ \t]+/)
+    for (k = 1; k <= n; k++) if (W[k] ~ /^--no-ve(r(i(f(y)?)?)?)?$/) return 1
+    for (k = 1; k <= n; k++) {
+        w = W[k]
+        if (w == "") continue
+        if (w ~ /^(-c|-C|--config-env|--git-dir|--work-tree|--namespace|--exec-path)$/) { k++; continue }
+        if (w ~ /^-/) continue
+        return (w ~ /^(commit|merge|pull)$/)
+    }
     return 0
 }'
 
@@ -109,15 +131,26 @@ SEGMENTS=$(guard_chunks ';&|' "$WORDS")
 if echo "$CMDPOS" | grep -qE "${GIT_ANCHOR}(commit|push)\b" \
     && ! guard_help_only "$CMDPOS" "${GIT_ANCHOR}(commit|push)\b"; then
     # `-n` is `--no-verify` for a commit but `--dry-run` for a push, so
-    # the short form counts only on the former. The long flag, and every
-    # abbreviation git accepts for it, is matched in the raw text — a
-    # quoted `"--no-verify"` is still the flag, and a quoted body naming it
-    # reads as the flag (conservative). `--no-ve` and `--no-ver` are
-    # ambiguous with `--no-verbose`, which git refuses rather than guess, so
-    # refusing them costs nothing. The short form is read from the --words
-    # view, where a separator inside a quoted body no longer ends the
-    # invocation early and hides a flag that follows it.
-    if echo "$COMMAND" | grep -qE -- '--no-verify|--no-ve(r(i(f)?)?)?([^[:alnum:]_-]|$)' \
+    # the short form counts only on the former. Both are read from the
+    # --words view, where quotes and escapes are gone (`--no-"verify"`,
+    # `--no-v\erify`, `--$'no-verify'` are the flag git receives) and a
+    # quoted message stays one word, so `-m "mention --no-verify"` is a
+    # message, not the flag. The long flag counts with every abbreviation
+    # git accepts for it: `--no-ve` and `--no-ver` are ambiguous with
+    # `--no-verbose`, which git refuses rather than guess, so refusing them
+    # costs nothing. An argument built by a command substitution is
+    # unknowable; it counts as the flag when the substitution's own words
+    # (visible in the view) hold one.
+    NV_WORD='--no-ve(r(i(f(y)?)?)?)?'
+    if { guard_git_invocations "$SEGMENTS" commit; guard_git_invocations "$SEGMENTS" push; } \
+        | NV_VIEW="$WORDS" LC_ALL=C awk -v W="^${NV_WORD}\$" -v ANYW="(^|[ \t\n(])${NV_WORD}([ \t\n)]|\$)" '
+        {
+            args = substr($0, index($0, "\t") + 1)
+            n = split(args, T, /[ \t]+/)
+            for (k = 1; k <= n; k++) if (T[k] ~ W) { hit = 1; exit }
+            if (index(args, "@SUBST@") && ENVIRON["NV_VIEW"] ~ ANYW) { hit = 1; exit }
+        }
+        END { exit hit ? 0 : 1 }' \
         || echo "$WORDS" | grep -qE "${GIT_ANCHOR}commit\b[^;&|]*[[:space:]]-[a-zA-Z]*n[a-zA-Z]*([[:space:]]|[;&|)]|$)"; then
         echo "BLOCKED: --no-verify is forbidden. Fix the violations instead of bypassing pre-commit hooks. If absolutely required, the user can run: ! $COMMAND" >&2
         exit 2
