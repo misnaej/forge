@@ -317,6 +317,7 @@ repos by `install-forge-claude-md` (guarded there by a README notice + the
 - ci-recipe.md: consumer CI recipe (channel pin + per-PR workflow + scheduled upgrade PR)
 - smart-test.md: usage guide for `forge-smart-test` — depth model, consumer guarantees, opt-in correctness extensions
 - backlog-tracks.md: backlog tracks — `track:<name>` naming, the `track:` plan line, membership via `forge-plan-check track-members`, placement limits, hub-file evidence, first run vs re-align
+- precommit-fixer.md: rationale behind `forge:precommit-fixer`'s rules — the loop and its evidence, narrow re-verify vs closing run, why tests re-run after a code or test edit, test-code caution, report-only steps
 
 ## Documentation (`docs/`)
 

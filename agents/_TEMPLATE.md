@@ -53,8 +53,8 @@ In this order:
 - **Target**: 400–800 words body (incl. frontmatter, excl. code fences).
 - **Anthropic reference**: 150–400 words. Forge gets headroom for
   repo-specific protocols but stays ≤ 2× the reference.
-- **Hard cap**: 1500 words. Above → `forge-audit-agents` flags MAJOR.
-- **MINOR threshold**: 800 words. Audit flags as trim candidate.
+- **Hard cap**: 1500 words. Above → `forge-audit-agents` flags HIGH.
+- **Target threshold**: 800 words. Above → audit flags MEDIUM (trim candidate).
 
 ## Tool sets per role
 
@@ -75,6 +75,12 @@ here). Regardless of tool set, every reporter (pure or
 with-artifact) is **report-only toward the repo and the PR**: it
 never commits, never pushes, and never posts PR comments — findings
 return to the caller, which owns remediation and posting.
+
+Every agent that holds `Edit` or `Write` carries this rule in its body:
+"Edit files only with the Edit/Write tools, never by a script or shell
+redirection; a refused edit is reported, never re-routed." A script edit
+escapes the Edit/Write-scoped hooks, and re-routing a refused edit is
+bypassing the guard that refused it (FOUNDATION §2).
 
 ## Model per role
 
@@ -278,7 +284,15 @@ rules inline.
 `forge-audit-agents` (in `forge-audit-all`) measures every agent against
 this template. Per-agent findings land in `code_health/audit_agents.log`.
 Initially non-blocking; promoted to blocking after the Layer 3 trim PRs
-converge.
+converge. The hard cap already blocks in forge itself: forge's own test
+suite fails when any shipped agent exceeds 1500 words.
+Underscore-prefixed files and a folder `README.md` without frontmatter
+are not audited (a README opening with `---` frontmatter may load as an
+agent, so it is). Paths listed in `[tool.forge.audit_agents].exclude`
+are skipped too, and the log names each one. Text a script
+injects identically into several agents, wrapped in matching
+`<!-- ns:name start -->` … `<!-- ns:name end -->` markers, is skipped by
+the copied-text check only — it still counts toward the word budget.
 
 Run standalone:
 

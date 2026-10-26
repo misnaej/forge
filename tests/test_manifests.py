@@ -440,10 +440,46 @@ def test_fixer_and_docs_agents_protect_side_effect_fixtures() -> None:
     assert "This overrides steps 1" in fixer
     assert "Human attention required" in fixer
     assert "Never rewrite a docstring to match a signature change you made" in fixer
+    assert "never refactor it inline" in fixer
     docs = " ".join(
         (REPO_ROOT / "agents" / "docs-types-checker.md").read_text().split()
     )
     assert 'never describe removed or absent setup as "not needed"' in docs
+
+
+def test_precommit_fixer_agent_re_runs_and_reports_tests() -> None:
+    """The fixer re-runs tests before closing and reports the run.
+
+    SCENARIO: the fixer reported PASS twice after an edit broke tests —
+    `forge-precommit --verdict` runs no tests, so a code or test edit had
+    no evidence behind it. The closing order puts a depth-0 smart-test run
+    before the closing full run, and the Output block carries its result.
+    EXPECTED BEHAVIOR: the closing order names the smart-test run, and the
+    Output block carries both new fields.
+    """
+    body = (REPO_ROOT / "agents" / "precommit-fixer.md").read_text()
+    unwrapped = " ".join(body.split())
+    assert "**Closing order, after your last Edit:** `forge-smart-test --depth 0`" in (
+        unwrapped
+    )
+    output = body[body.index("\n## Output\n") :]
+    assert "Tests re-run:" in output
+    assert "Test files edited:" in output
+
+
+def test_test_writer_edits_files_only_through_edit_and_write() -> None:
+    """The test writer may not edit files by script or re-route a refused edit.
+
+    SCENARIO: `forge:test-writer` edited test files through `python`
+    heredoc scripts and once rewrote a guard-refused edit as a script — a
+    script edit escapes every Edit/Write-scoped hook.
+    EXPECTED BEHAVIOR: the shipped body carries the Edit/Write-only rule.
+    """
+    body = " ".join((REPO_ROOT / "agents" / "test-writer.md").read_text().split())
+    assert (
+        "Edit files only with the Edit/Write tools, never by a script or shell "
+        "redirection; a refused edit is reported, never re-routed."
+    ) in body
 
 
 def test_plugin_registers_fixer_verdict_hook_on_subagent_stop() -> None:

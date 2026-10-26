@@ -287,6 +287,14 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "the shipped list).",
     ),
     ConfigKey(
+        ("tool", "forge", "audit_agents", "exclude"),
+        default=[],
+        description="Repo-relative fnmatch globs or directory prefixes "
+        "forge-audit-agents skips and names in its log, with --roots too "
+        "(frontmatter-less folder READMEs and underscore-prefixed files "
+        "are always skipped).",
+    ),
+    ConfigKey(
         ("tool", "forge", "pr", "docs_only_globs"),
         default=[],
         description="Extra globs a PR diff may consist entirely of and still "
