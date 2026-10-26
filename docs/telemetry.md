@@ -185,7 +185,7 @@ being the floor.
 ```bash
 forge-agent-profile                                   # this workspace's ledger
 forge-agent-profile --agent-type forge:precommit-fixer --last 20
-forge-agent-profile --transcripts ~/.claude/projects/<encoded-cwd>   # history before the hook
+forge-agent-profile --transcripts ~/.claude/projects/<encoded-cwd>   # runs the ledger never named
 forge-agent-profile --json                            # runs + per-type + per-tool rows
 ```
 
@@ -205,18 +205,40 @@ agent the ledger records. The path the ledger carries is the *parent
 session's* transcript, not the subagent's, so a transcript is read only
 when its filename names that agent — reading the recorded path as given
 would charge one session's turns and repeated calls to every agent that
-ran beneath it. A run whose transcript no longer exists reports no turn
-count rather than a borrowed one.
+ran beneath it.
 Claude Code documents that format as internal and subject to change, so
 it is read tolerantly — an unrecognised line is skipped, never an error
 — and only ever enriches a run; `--transcripts <dir>` scans a project
-directory for runs that predate the hook. Repetition is counted per
+directory for runs the ledger does not name, and can only backfill what
+Claude Code still keeps. Repetition is counted per
 prompt: an agent resumed with a follow-up message legitimately re-runs
 `git status`, so a new user prompt resets the counters.
 
+**The ledger is the durable record; transcripts are best-effort
+enrichment.** Claude Code deletes transcripts after `cleanupPeriodDays`
+(default 30, minimum 1; `0` is rejected). So the loop and turn signals
+outlive that sweep, each report also appends one JSON line per new or
+changed run to `code_health/agent_transcript_digest.jsonl` beside the
+ledger: the run's ids, the counts it read (turns, tool calls, repeat
+count and the repeated call's label, precommit runs, output tokens,
+active time) and when. A live transcript always wins — a resumed
+agent's keeps growing — and the digest stands in only once it is gone.
+A run found in neither still reports no turn count rather than a
+borrowed one. The digest is complete only for runs a report saw while
+their transcript existed, so run `forge-agent-profile` — every `/next`
+does — at least once a month.
+
+A user who wants the raw transcripts kept longer can raise
+`cleanupPeriodDays` in their own `~/.claude/settings.json`. The
+trade-off is disk use, and plaintext tool inputs and outputs kept on
+disk for longer. Forge never writes that setting. Note that the digest
+keeps the repeated call's label — up to 72 characters of a command or
+file path — after the transcript itself is deleted.
+
 Each report appends one `key=value` line (runs, types, wall, active,
 loop suspects, cap breaches) to `code_health/agent_profile_history.log`;
-`--history` renders it and `--no-history` skips the append. `/perf
+`--history` renders it and `--no-history` skips both that append and
+the digest refresh. `/perf
 analyze` runs the reporter as its fifth surface, and `/report-to-forge`
 quotes its summary as evidence when a shipped agent misbehaves — the
 summary only, since the raw ledger carries absolute paths and the

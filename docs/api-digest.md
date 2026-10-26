@@ -51,12 +51,19 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_is_resume(record: dict[str, Any]) -> bool` _(internal)_ — True for a user record carrying a new prompt rather than tool results.
 - `_call_signature(block: dict[str, Any]) -> str` _(internal)_ — Identity of a tool call: its name plus its canonicalised input.
 - `_describe_call(block: dict[str, Any]) -> str` _(internal)_ — Human label for a tool call, trimmed for a report line.
+- `_call_label(text: str) -> str` _(internal)_ — Flatten *text* to printable characters and cap it at the label width.
 - `parse_transcript(path: Path) -> TranscriptStats | None` — Extract timing and loop signals from one subagent transcript.
 - `_output_tokens(record: dict[str, Any]) -> int` _(internal)_ — Output tokens reported on an assistant record, ``0`` when absent.
 - `_is_full_precommit_run(block: dict[str, Any]) -> int` _(internal)_ — ``1`` when a ``Bash`` tool call runs ``forge-precommit`` without ``--only``.
 - `_agent_types_from_sessions(root: Path) -> dict[str, tuple[str, str | None]]` _(internal)_ — Map subagent ids to ``(agent_type, description)`` from main-session transcripts.
 - `runs_from_transcripts(root: Path) -> dict[str, AgentRun]` — Build runs from every subagent transcript under *root*.
-- `collect_runs(ledger_path: Path, transcripts_root: Path | None) -> list[AgentRun]` — Assemble every known run: ledger first, transcripts as enrichment or backfill.
+- `_digest_record(run: AgentRun, stats: TranscriptStats) -> dict[str, object]` _(internal)_ — One digest line for *run*: its ids, its transcript stats, and when.
+- `_is_count(value: object) -> bool` _(internal)_ — Whether *value* is a JSON integer (``bool`` excluded).
+- `_stats_from_digest(record: dict[str, Any]) -> TranscriptStats | None` _(internal)_ — Rebuild the stats one digest line carries, ``None`` when it is damaged.
+- `_load_digest(path: Path) -> dict[str, TranscriptStats]` _(internal)_ — Read the transcript digest: the last good line per agent id wins.
+- `_digest_is_behind(stats: TranscriptStats, known: TranscriptStats | None) -> bool` _(internal)_ — Whether *stats* says more than the digest already holds for its run.
+- `_record_digest(path: Path, runs: Iterable[AgentRun], digest: dict[str, TranscriptStats]) -> None` _(internal)_ — Append a digest line for every run whose stats are new or have grown.
+- `collect_runs(ledger_path: Path, transcripts_root: Path | None, *, record_digest: bool = True) -> list[AgentRun]` — Assemble every known run: ledger first, transcripts as enrichment or backfill.
 - `_start_of(run: AgentRun) -> datetime` _(internal)_ — A run's best-known start, for ordering (unknown sorts first).
 - `filter_runs(runs: list[AgentRun], *, agent_type: str | None = None, since: datetime | None = None, last: int | None = None) -> list[AgentRun]` — Narrow *runs* by type, start time, and recency.
 - `type_rows(runs: Iterable[AgentRun]) -> list[TypeRow]` — Aggregate wall time per agent type, costliest total first.
@@ -924,6 +931,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 > _Append-only ``key=value`` ledgers under ``code_health/``._
 
 - `append_ledger_line(path: Path, fields: Mapping[str, object], *, tail: tuple[str, str] | None = None) -> None` — Append one timestamped ``key=value`` line to *path*.
+- `append_jsonl_record(path: Path, record: Mapping[str, object]) -> None` — Append *record* to *path* as one JSON line.
 - `_plain(value: object) -> str` _(internal)_ — Render a field value as one whitespace-free token.
 - `_one_line(value: str) -> str` _(internal)_ — Fold line breaks in a tail value so the record stays one line.
 - `parse_ledger(text: str, *, tail_key: str | None = None) -> list[dict[str, str]]` — Parse ledger lines into field mappings, skipping damaged ones.

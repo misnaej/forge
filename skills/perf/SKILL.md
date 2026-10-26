@@ -58,9 +58,13 @@ Read every perf surface that exists, then summarize:
    names: per-agent-type wall and active time, the slowest runs, the
    costliest tools, **loop suspects** (one identical tool call repeated
    inside a single prompt) and **`forge:precommit-fixer` runs past its
-   three-run cap**. `--agent-type <name>` narrows to one agent,
-   `--transcripts <dir>` backfills history from before the hook. An
-   empty ledger prints one line, not a finding.
+   three-run cap**. Runs whose transcripts Claude Code has already
+   swept are backed by forge's transcript digest
+   (`code_health/agent_transcript_digest.jsonl`), so their turn counts
+   and loop suspects still show. `--agent-type <name>` narrows to one
+   agent, `--transcripts <dir>` backfills runs the ledger never named
+   (only while Claude Code still keeps them). An empty ledger prints
+   one line, not a finding.
 6. Summarize: regressed / new-slow tests, wall + peak-RSS trends per
    label, the slowest pre-commit steps, the agent types and runs that
    dominate wall time, and every loop suspect or cap breach by name.

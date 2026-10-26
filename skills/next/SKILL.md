@@ -92,7 +92,16 @@ Stop immediately and report if any step fails.
    defect the run just produced and nobody would otherwise see: name it,
    and offer `/report-to-forge` before moving on. Wall time far above
    active time is normal here (monitors, waits) and is not a finding on
-   its own. This is a read: it never blocks the phase.
+   its own. It never blocks the phase, and it is not a pure read: it
+   also refreshes forge's transcript digest
+   (`code_health/agent_transcript_digest.jsonl`), so the loop and turn
+   signals survive Claude Code's monthly transcript sweep — running
+   `/next` is what keeps that digest complete. It deletes nothing.
+   `/next` reaps no session clutter (transcripts, scratchpads,
+   worktrees, plugin copies, monitors): Claude Code sweeps that itself
+   and stale plugin copies are `forge-doctor`'s to report. Its only
+   deletions stay the existing branch pruning (`git branch -d`, `-D`
+   for a confirmed squash merge, and `--prune-remote`, Phase 1).
 
 ## Phase 2.5: Resume a `Requires:`-linked sequence
 
