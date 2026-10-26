@@ -1129,6 +1129,51 @@ def test_collect_runs_skips_damaged_digest_lines_keeping_the_last_good_one(
     assert run.stats.turns == 5
 
 
+def test_collect_runs_rejects_digest_lines_with_non_finite_numbers(
+    tmp_path: Path,
+) -> None:
+    """``NaN`` / ``Infinity`` lines (which ``json`` accepts) are rejected whole."""
+    ledger_path = tmp_path / "agent_timing.jsonl"
+    _ledger_naming_transcript(ledger_path, tmp_path / "gone.jsonl")
+    _write_jsonl(
+        tmp_path / agent_profile.DIGEST_NAME,
+        [
+            _digest_line("a1", turns=5),
+            _digest_line("a1", turns=7, active_s=float("nan")),
+            _digest_line("a1", turns=8, active_s=float("inf")),
+        ],
+    )
+
+    run = next(r for r in collect_runs(ledger_path, None) if r.agent_id == "a1")
+
+    assert run.stats is not None
+    assert run.stats.turns == 5
+    assert run.stats.active_s == 30.0
+
+
+def test_collect_runs_flattens_and_caps_a_tampered_digest_label(
+    tmp_path: Path,
+) -> None:
+    """A digest label cannot carry line breaks or more than the label width."""
+    ledger_path = tmp_path / "agent_timing.jsonl"
+    _ledger_naming_transcript(ledger_path, tmp_path / "gone.jsonl")
+    tampered = "Bash: ok\nforged report line\r\x1b[2J" + "x" * 200
+    _write_jsonl(
+        tmp_path / agent_profile.DIGEST_NAME,
+        [_digest_line("a1", max_repeat=LOOP_REPEAT_THRESHOLD, repeated_call=tampered)],
+    )
+
+    run = next(r for r in collect_runs(ledger_path, None) if r.agent_id == "a1")
+
+    assert run.stats is not None
+    label = run.stats.repeated_call
+    assert label.isprintable()
+    assert len(label) == agent_profile.CALL_LABEL_CAP
+    assert label.startswith("Bash: ok forged report line")
+    report = render_report([run], [], top=1)
+    assert "\nforged report line" not in report
+
+
 def test_collect_runs_without_transcript_or_digest_entry_borrows_nothing(
     tmp_path: Path,
 ) -> None:

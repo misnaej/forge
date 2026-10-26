@@ -56,6 +56,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import re
 import statistics
 from collections import Counter, defaultdict
@@ -753,8 +754,29 @@ def _describe_call(block: dict[str, Any]) -> str:
     detail = ""
     if isinstance(tool_input, dict):
         detail = str(tool_input.get("command") or tool_input.get("file_path") or "")
-    label = f"{block.get('name')}: {detail}".strip(": ")
-    return label[:72]
+    return _call_label(f"{block.get('name')}: {detail}".strip(": "))
+
+
+CALL_LABEL_CAP = 72
+
+
+def _call_label(text: str) -> str:
+    """Flatten *text* to printable characters and cap it at the label width.
+
+    Applied both when a label is built from a transcript and when one is
+    read back from the digest: the digest is a writable file, so a label
+    loaded from it is as untrusted as the command it came from, and a
+    line break or a long run of text would otherwise reach the report.
+
+    Args:
+        text: The raw label.
+
+    Returns:
+        *text* with every non-printable character turned into a space,
+        cut to :data:`CALL_LABEL_CAP` characters.
+    """
+    flat = "".join(ch if ch.isprintable() else " " for ch in text)
+    return flat[:CALL_LABEL_CAP]
 
 
 def parse_transcript(path: Path) -> TranscriptStats | None:
@@ -961,15 +983,19 @@ def _is_count(value: object) -> bool:
 def _stats_from_digest(record: dict[str, Any]) -> TranscriptStats | None:
     """Rebuild the stats one digest line carries, ``None`` when it is damaged.
 
-    A line with a missing or mistyped field is rejected whole rather than
-    filled with defaults: a digest stands in for a transcript nobody can
-    re-read, so a half-trusted line would report numbers no source holds.
+    A line with a missing, mistyped or non-finite field is rejected whole
+    rather than filled with defaults: a digest stands in for a transcript
+    nobody can re-read, so a half-trusted line would report numbers no
+    source holds. ``json`` accepts ``NaN`` and ``Infinity``, hence the
+    finiteness check; the label is re-flattened because the file is
+    writable by anyone with the checkout.
 
     Args:
         record: One decoded digest line.
 
     Returns:
-        The stats, or ``None`` when any field is absent or the wrong type.
+        The stats, or ``None`` when any field is absent, the wrong type,
+        or not a finite number.
     """
     active_s = record.get("active_s")
     started = _parse_ts(record.get("started"))
@@ -978,6 +1004,7 @@ def _stats_from_digest(record: dict[str, Any]) -> TranscriptStats | None:
         or not all(_is_count(record.get(name)) for name in _DIGEST_COUNTS)
         or not isinstance(active_s, int | float)
         or isinstance(active_s, bool)
+        or not math.isfinite(active_s)
         or not isinstance(record.get("repeated_call"), str)
     ):
         return None
@@ -985,7 +1012,7 @@ def _stats_from_digest(record: dict[str, Any]) -> TranscriptStats | None:
         started=started,
         ended=_parse_ts(record.get("ended")),
         active_s=float(active_s),
-        repeated_call=record["repeated_call"],
+        repeated_call=_call_label(record["repeated_call"]),
         **{name: record[name] for name in _DIGEST_COUNTS},
     )
 

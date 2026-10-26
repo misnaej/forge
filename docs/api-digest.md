@@ -51,6 +51,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_is_resume(record: dict[str, Any]) -> bool` _(internal)_ — True for a user record carrying a new prompt rather than tool results.
 - `_call_signature(block: dict[str, Any]) -> str` _(internal)_ — Identity of a tool call: its name plus its canonicalised input.
 - `_describe_call(block: dict[str, Any]) -> str` _(internal)_ — Human label for a tool call, trimmed for a report line.
+- `_call_label(text: str) -> str` _(internal)_ — Flatten *text* to printable characters and cap it at the label width.
 - `parse_transcript(path: Path) -> TranscriptStats | None` — Extract timing and loop signals from one subagent transcript.
 - `_output_tokens(record: dict[str, Any]) -> int` _(internal)_ — Output tokens reported on an assistant record, ``0`` when absent.
 - `_is_full_precommit_run(block: dict[str, Any]) -> int` _(internal)_ — ``1`` when a ``Bash`` tool call runs ``forge-precommit`` without ``--only``.
