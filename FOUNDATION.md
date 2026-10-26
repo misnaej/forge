@@ -257,8 +257,14 @@ gate.
   **checkpoint commit** first — `git add -A`, then
   `FORGE_WIP_SYNC=1 git commit -m "wip-sync: <what>"` (the gate defers to
   the next real commit; the PR squash erases the checkpoint) — and merge
-  on the clean tree. `git merge --abort` is the permitted recovery verb
-  **only after** a checkpoint secured the work (git documents it as lossy
+  on the clean tree. A merge git completes itself commits through a
+  hook forge does not install (`pre-merge-commit`), so that commit runs
+  no local gate — by design: CI runs `forge-precommit` on every PR and
+  push, the next commit's gate checks the merged state, and check logs
+  are stamped by tree, so `--freshness` and the PR evidence already read
+  pre-merge logs as stale. A conflicted merge is finished with
+  `git commit` and gated as usual. `git merge --abort` is the permitted
+  recovery verb **only after** a checkpoint secured the work (git documents it as lossy
   for uncommitted changes). Stash is no longer part of any sanctioned
   procedure. Humans: never `export FORGE_WIP_SYNC` in a persistent shell
   — it would silently defer the gate on every later commit; use it

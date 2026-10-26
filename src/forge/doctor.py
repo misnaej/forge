@@ -24,6 +24,10 @@ Checks:
      this repo's own, a machine-wide marketplace tracking another ref than
      this repo pins, and a cache verdict that had to fall back to the
      newest cached copy because no install record names this repo.
+  7. Git hooks folder (advisory) — where git will look for hooks in this
+     checkout (``core.hooksPath`` resolved, or git's default), and whether
+     a runnable ``pre-commit`` sits there: without one, git commits with
+     no forge gate at all.
 
 Usage:
     forge-doctor                              # human-readable
@@ -34,6 +38,7 @@ Usage:
 import argparse
 import importlib.metadata
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -48,8 +53,10 @@ from forge.git_utils import (
     FORGE_DIST_NAME,
     code_health_dir,
     emit,
+    git_path,
     pad_semver,
     parse_semver,
+    run_git,
 )
 from forge.upgrade import pin_revision_mismatch, pip_command
 from forge.version_surfaces import (
@@ -435,6 +442,50 @@ def _check_global_install(repo_root: Path) -> list[CheckResult]:
                 "is per machine."
             ),
         )
+    ]
+
+
+def _check_hooks_path(repo_root: Path) -> list[CheckResult]:
+    """Report the hooks folder git will use here and whether it can gate a commit.
+
+    git reads ``core.hooksPath`` — from any config scope, or a one-off
+    ``-c`` — to decide where hooks live; pointed elsewhere, a commit runs
+    no forge pre-commit at all and succeeds as if it had passed. The
+    pre-commit hook cannot report that about itself (it is the part that
+    never runs), so this check shows a human the folder git resolves and
+    whether a runnable ``pre-commit`` sits in it. Advisory, like the other
+    environment checks: a repo on another hook manager is a choice, not a
+    broken install.
+
+    Args:
+        repo_root: Checkout to inspect.
+
+    Returns:
+        One advisory result, or an empty list outside a git repo.
+    """
+    hooks = git_path(repo_root, "hooks")
+    if hooks is None:
+        return []
+    configured = run_git(
+        "config", "--get", "core.hooksPath", cwd=repo_root, check=False
+    )
+    source = f"core.hooksPath={configured}" if configured else "git's default"
+    pre_commit = hooks / "pre-commit"
+    runnable = pre_commit.is_file() and os.access(pre_commit, os.X_OK)
+    if runnable:
+        state = "pre-commit present and executable"
+    elif pre_commit.is_file():
+        state = "pre-commit present but NOT executable — git skips it"
+    else:
+        state = "no pre-commit — git commits here run no pre-commit gate"
+    detail = f"{hooks} ({source}); {state}"
+    tracked = run_git(
+        "ls-files", "--", ".githooks/pre-commit", cwd=repo_root, check=False
+    )
+    if not runnable and tracked:
+        detail += ". Fix: `install-forge-githooks`"
+    return [
+        CheckResult(name="git:hooks_path", passed=runnable, detail=detail, info=True)
     ]
 
 
@@ -950,6 +1001,7 @@ def main() -> int:
         results.extend(_check_plugin_contents(plugin_root))
 
     results.extend(_check_version_skew(Path.cwd()))
+    results.extend(_check_hooks_path(Path.cwd()))
     if not args.skip_plugin_checks:
         results.extend(_check_plugin_cache_skew(Path.cwd()))
         results.extend(_check_global_install(Path.cwd()))

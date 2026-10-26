@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -755,6 +757,7 @@ def test_global_install_advisory_leaves_exit_code_unchanged(
         "_check_gh",
         "_check_step_tools",
         "_check_version_skew",
+        "_check_hooks_path",
         "_check_plugin_cache_skew",
         "_surface_pin_revision",
         "_check_under_used_capabilities",
@@ -775,6 +778,86 @@ def test_global_install_advisory_leaves_exit_code_unchanged(
     assert doctor.main() == 0
     names = [r["name"] for r in json.loads(emitted[0])]
     assert names == ["plugin:installed", "plugin:global_install"]
+
+
+# --- _check_hooks_path() ----------------------------------------------------
+# Real git in a scratch repo (the one exception to the module's mocking
+# strategy): what is under test is how git resolves the folder.
+
+
+@pytest.fixture
+def hooks_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A scratch repo tracking `.githooks/pre-commit`, with no machine git config.
+
+    Returns:
+        The repo root.
+    """
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", os.devnull)
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    hook = tmp_path / ".githooks" / "pre-commit"
+    hook.parent.mkdir()
+    hook.write_text("#!/bin/sh\n")
+    hook.chmod(0o755)
+    subprocess.run(["git", "add", ".githooks/pre-commit"], cwd=tmp_path, check=True)
+    return tmp_path
+
+
+def test_check_hooks_path_reports_a_wired_folder(hooks_repo: Path) -> None:
+    """A configured folder holding an executable pre-commit passes, as advisory."""
+    subprocess.run(
+        ["git", "config", "core.hooksPath", ".githooks"], cwd=hooks_repo, check=True
+    )
+    [result] = doctor._check_hooks_path(hooks_repo)
+    assert result.name == "git:hooks_path"
+    assert result.info
+    assert result.passed
+    assert str(hooks_repo / ".githooks") in result.detail
+    assert "core.hooksPath=.githooks" in result.detail
+
+
+def test_check_hooks_path_flags_git_default_with_no_pre_commit(
+    hooks_repo: Path,
+) -> None:
+    """Unwired, git uses `.git/hooks`: no gate runs, and the fix is named."""
+    [result] = doctor._check_hooks_path(hooks_repo)
+    assert result.info
+    assert not result.passed
+    assert "git's default" in result.detail
+    assert "no pre-commit" in result.detail
+    assert "install-forge-githooks" in result.detail
+
+
+def test_check_hooks_path_flags_a_pre_commit_that_is_not_executable(
+    hooks_repo: Path,
+) -> None:
+    """A plain file is skipped by git, so it is reported as not runnable."""
+    subprocess.run(
+        ["git", "config", "core.hooksPath", ".githooks"], cwd=hooks_repo, check=True
+    )
+    (hooks_repo / ".githooks" / "pre-commit").chmod(0o644)
+    [result] = doctor._check_hooks_path(hooks_repo)
+    assert not result.passed
+    assert "NOT executable" in result.detail
+
+
+def test_check_hooks_path_names_no_forge_fix_for_another_hook_manager(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A repo not tracking forge's hook gets the folder, never forge's fix."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "config", "core.hooksPath", ".husky"], cwd=tmp_path, check=True
+    )
+    [result] = doctor._check_hooks_path(tmp_path)
+    assert "core.hooksPath=.husky" in result.detail
+    assert "install-forge-githooks" not in result.detail
+
+
+def test_check_hooks_path_silent_outside_a_repo(tmp_path: Path) -> None:
+    """Outside a git repo there is no hooks folder to report."""
+    assert doctor._check_hooks_path(tmp_path) == []
 
 
 # --- pad_semver() -------------------------------------------------------

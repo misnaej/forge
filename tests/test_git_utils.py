@@ -2045,6 +2045,58 @@ def test_fork_point_time_none_without_a_merge_base(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# git_path
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def no_machine_git_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the developer's global/system git config out of :func:`git_path`."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", os.devnull)
+
+
+@pytest.mark.usefixtures("no_machine_git_config")
+def test_git_path_joins_a_relative_answer_to_the_directory_git_ran_in(
+    tmp_path: Path,
+) -> None:
+    """Git's relative answer is relative to *repo_root*, from a subdirectory too."""
+    _init_git_repo(tmp_path)
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    assert git_utils.git_path(tmp_path, "hooks") == tmp_path / ".git" / "hooks"
+    resolved = git_utils.git_path(sub, "hooks")
+    assert resolved is not None
+    assert resolved.resolve() == (tmp_path / ".git" / "hooks").resolve()
+
+
+@pytest.mark.usefixtures("no_machine_git_config")
+def test_git_path_follows_core_hooks_path(tmp_path: Path) -> None:
+    """``core.hooksPath`` relocates ``hooks`` — the folder git really uses."""
+    _init_git_repo(tmp_path)
+    subprocess.run(
+        ["git", "config", "core.hooksPath", ".githooks"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    assert git_utils.git_path(tmp_path, "hooks") == tmp_path / ".githooks"
+    elsewhere = tmp_path / "abs-hooks"
+    subprocess.run(
+        ["git", "config", "core.hooksPath", str(elsewhere)],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    assert git_utils.git_path(tmp_path, "hooks") == elsewhere
+
+
+def test_git_path_none_outside_a_git_repo(tmp_path: Path) -> None:
+    """Outside a repo git answers nothing, and so does the helper."""
+    assert git_utils.git_path(tmp_path, "hooks") is None
+
+
+# ---------------------------------------------------------------------------
 # merge_in_progress
 # ---------------------------------------------------------------------------
 

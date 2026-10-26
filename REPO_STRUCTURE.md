@@ -163,7 +163,7 @@ enforcement:
 - block_git_rebase.sh: block `git rebase` and `git pull --rebase` from agents (no bypass — sync via plain base merge)
 - block_install_deps.sh: block dependency installation (pip / conda / pipenv / poetry / uv / pixi; pixi governed by a verb allowlist that fails closed, the other five by denylists)
 - block_protected_branches.sh: block direct pushes to the protected base branch (`[tool.forge].base_branch`)
-- block_no_verify.sh: block `--no-verify`
+- block_no_verify.sh: keep the pre-commit gate from being skipped — block `--no-verify`, any change or override of `core.hooksPath` (config writes, `-c` / `--config-env`, `GIT_CONFIG_*` env), and a commit / merge / pull whose resolved hooks folder has no executable pre-commit in a repo tracking `.githooks/pre-commit` (no bypass)
 - block_pr_merge.sh: block autonomous PR merges
 - block_protected_files.sh: protect foundation-owned files
 - check_commit_format.sh: enforce conventional commit format
