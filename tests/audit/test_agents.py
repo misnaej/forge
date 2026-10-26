@@ -544,6 +544,31 @@ def test_shipped_perf_optimizer_agent_passes_advisor_checks() -> None:
     assert not any("verified-at:" in f.message for f in findings)
 
 
+def test_shipped_agents_stay_under_word_hard_cap() -> None:
+    """No shipped agent exceeds the `_TEMPLATE.md` 1500-word hard cap.
+
+    The audit only reports an over-cap agent, so without this test agent
+    docs grow past the cap unnoticed. Counting goes through the audit's
+    own check, so the test and `forge-audit-agents` cannot disagree.
+    """
+    root = Path(__file__).parents[2]
+    agents = [
+        path
+        for path in sorted((root / "agents").glob("*.md"))
+        if not path.name.startswith("_")
+    ]
+    assert agents, "no shipped agents found — the cap check would pass vacuously"
+    over_cap = [
+        finding
+        for path in agents
+        for finding in audit_agents._check_word_count(
+            audit_agents._parse_agent(path, root)
+        )
+        if finding.severity is Severity.HIGH
+    ]
+    assert not over_cap, [f"{f.path}: {f.message}" for f in over_cap]
+
+
 # ---------------------------------------------------------------------------
 # _sanitize_fragment — trust-boundary guard for code_health/audit_agents.log
 #
