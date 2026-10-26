@@ -1259,6 +1259,14 @@ def test_no_verify_allows_hooks_path_reads_and_other_keys(
         pytest.param('git push --no-"verif" origin x', _BLOCK_EXIT, id="push-split"),
         pytest.param('git commit -"n" -m x', _BLOCK_EXIT, id="short-quoted"),
         pytest.param("git commit $(echo --no-verify) -m x", _BLOCK_EXIT, id="subst"),
+        pytest.param("git commit --no-verify$(true)", _BLOCK_EXIT, id="subst-glued"),
+        pytest.param(
+            "git commit --no-ve$(true) -m x", _BLOCK_EXIT, id="subst-glued-abbrev"
+        ),
+        pytest.param(
+            "git commit --no-$(echo verify) -m x", _BLOCK_EXIT, id="subst-prefix"
+        ),
+        pytest.param('git commit -m "$(cat msg)"', 0, id="subst-message"),
         pytest.param('git commit -m "mention --no-verify here"', 0, id="message"),
         pytest.param("git commit -m 'no --no-verif here'", 0, id="message-abbrev"),
     ],

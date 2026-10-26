@@ -48,7 +48,10 @@
 # a key held in a variable (`git config "$K" x`); editing `.git/config`
 # directly; aliases defined before forge was installed, and an alias whose
 # value names another alias; a skip flag held in a variable
-# (`git commit $NV`); and an empty or
+# (`git commit $NV`), built from ANSI-C escapes (`$'\x2d\x2dno-verify'`,
+# octal alike) or assembled by a substitution in other shapes
+# (`--$(echo no)-verify`; a substitution glued to the flag or to a bare
+# prefix of it, `--no-$(echo verify)`, is refused); and an empty or
 # stub executable pre-commit, which passes check 3 — it proves a hook
 # exists, not that it is forge's. Check 3 judges the payload's cwd only,
 # so a command that runs git somewhere else — `git -C <other repo>`,
@@ -147,7 +150,16 @@ if echo "$CMDPOS" | grep -qE "${GIT_ANCHOR}(commit|push)\b" \
         {
             args = substr($0, index($0, "\t") + 1)
             n = split(args, T, /[ \t]+/)
-            for (k = 1; k <= n; k++) if (T[k] ~ W) { hit = 1; exit }
+            for (k = 1; k <= n; k++) {
+                if (T[k] ~ W) { hit = 1; exit }
+                # A substitution glued to the word (`--no-verify$(true)`)
+                # expands to nothing as easily as to text: the word is
+                # judged without it, and a bare prefix of the flag with a
+                # substitution attached (`--no-$(…)`) may assemble it.
+                if (!index(T[k], "@SUBST@")) continue
+                s = T[k]; gsub(/@SUBST@/, "", s)
+                if (s ~ W || (length(s) >= 4 && index("--no-verify", s) == 1)) { hit = 1; exit }
+            }
             if (index(args, "@SUBST@") && ENVIRON["NV_VIEW"] ~ ANYW) { hit = 1; exit }
         }
         END { exit hit ? 0 : 1 }' \
