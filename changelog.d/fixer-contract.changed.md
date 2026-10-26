@@ -1,0 +1,6 @@
+bump: minor
+
+- `forge:precommit-fixer` re-runs the affected tests with `forge-smart-test --depth 0` after any edit to runtime code, a test double, a fixture or a test file, before its closing `forge-precommit` run, and reports the result in a new `Tests re-run:` Output field; a PASS after such an edit without that result is a false report. A new `Test files edited:` field lists every test-file edit, an ambiguous-character fix in a test file is allowed only as the same-code-point escape, and a complexity finding in test code is handed to a human instead of being refactored.
+- `forge:test-writer` and the agent template require every file edit to go through the Edit/Write tools, never a script or shell redirection, and a refused edit to be reported rather than re-routed.
+- The fixer's agent doc is cut from 2140 to 1341 words; the reasoning behind its rules moved to a new shipped reference page, `forge-docs/precommit-fixer.md`, mirrored into consumer repos by `install-forge-claude-md`. `forge:pr-manager` is trimmed below the 1500-word hard cap.
+- Forge's own test suite now fails when any shipped agent exceeds the 1500-word hard cap, and `agents/_TEMPLATE.md` names the severities the audit actually reports (HIGH above the cap, MEDIUM above the target).

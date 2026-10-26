@@ -83,7 +83,7 @@ Rules (sections, word cap, plain-English `## Summary` lead): [FOUNDATION §6 "PR
 
 The caller ran `forge-pr-wrapup compose` (`/pr` Step 3.92): `code_health/pr_wrapup.md` already holds every mechanical part — header, mode line, skipped or clean reporter sections, Issue Management, Code Quality, CI Status — plus `<!-- forge:fill … -->` slots. Replace each slot line and nothing else: `summary` → one plain line on what the PR does; `findings: <reporter>` → that reporter's findings, each with where and how it was dispositioned, in the exact disposition forms and compressed per [_TEMPLATE.md's report-by-exception rule](_TEMPLATE.md#reporter-agent-header-contract); `recommendation` → one line. Never edit a rendered section — re-run `compose` when its inputs changed. Run `forge-pr-wrapup validate code_health/pr_wrapup.md` until it passes. It enforces a word budget that **scales with the findings sections you fill** — a base allowance plus a per-section one, so a body that fits with three reporters reporting will not fit with one. Budget for that while writing, rather than discovering it at the end and cutting the dispositions to fit: the numbers live in `forge.pr_wrapup`, which is the authority, and `validate` reports the exact figure and overage when you exceed it. A `light` or `emergency` body is a different shape; let `validate` tell you what applies rather than assuming this cap does. Return the squash-merge message in your report; never write it into the wrap-up. Post nothing.
 
-**Comment-destined markdown is never hard-wrapped** — see [_TEMPLATE.md's reporter-agent header contract](_TEMPLATE.md#reporter-agent-header-contract) — do not restate. Applies to the slot text this agent writes.
+**Never hard-wrap the slot text** ([_TEMPLATE.md's reporter-agent header contract](_TEMPLATE.md#reporter-agent-header-contract)).
 
 ## Task: Verification (Wrap-up)
 
@@ -145,10 +145,8 @@ gh issue create --title "<title>" \
   wrap-ups; delegate verification; link issues; create issues (with approval)
 
 ### I WILL NOT (report and stop):
-- **Merge PRs** → produce squash message + wrap-up, stop —
-  [FOUNDATION §2](../FOUNDATION.md#2-core-safety-rules) (`block_pr_merge.sh` enforces)
-- Implement code fixes → **report; the main agent implements**
-- Fix lint/docstrings/naming/structure/advisories → **`precommit-fixer`**
+- **Merge PRs** ([FOUNDATION §2](../FOUNDATION.md#2-core-safety-rules))
+- Implement code fixes (below); fix pre-commit findings → **`precommit-fixer`**
 - Commit → **`git-commit-push`**; write tests → **`test-writer`**
 
 ### When PR Comments Need Code Changes:
@@ -176,8 +174,7 @@ Confirm BOTH the squash-merge message and wrap-up comment were posted — **eith
 ## Guard hooks
 
 Agent-scoped: `block_pr_merge`, `block_unverified_pr_create` (source of
-truth: `[tool.forge.agent_doc.guarded_by]`). Shared contract — what a
-block means and how to respond: [`_TEMPLATE.md` "Guard hooks"](_TEMPLATE.md#required-body-sections).
+truth: `[tool.forge.agent_doc.guarded_by]`); contract: [`_TEMPLATE.md` "Guard hooks"](_TEMPLATE.md#required-body-sections).
 
 ## Output
 
