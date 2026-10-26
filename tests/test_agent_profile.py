@@ -977,6 +977,193 @@ def test_collect_runs_orders_by_start_time_oldest_first_unknown_start_sorts_firs
 
 
 # ---------------------------------------------------------------------------
+# transcript digest — signals that outlive Claude Code's transcript sweep
+# ---------------------------------------------------------------------------
+
+
+def _ledger_naming_transcript(ledger_path: Path, transcript_path: Path) -> None:
+    """Write a one-run ledger (agent ``a1``) whose stop names *transcript_path*.
+
+    Args:
+        ledger_path: Ledger file to write.
+        transcript_path: The subagent transcript the stop event records.
+    """
+    _write_jsonl(
+        ledger_path,
+        [
+            _event(
+                event="SubagentStart",
+                ts_ms=BASE_MS,
+                agent_id="a1",
+                agent_type="forge:design-checker",
+            ),
+            _event(
+                event="SubagentStop",
+                ts_ms=BASE_MS + 1000,
+                agent_id="a1",
+                agent_type="forge:design-checker",
+                transcript_path=str(transcript_path),
+            ),
+        ],
+    )
+
+
+def _looping_transcript(path: Path, *, turns: int) -> None:
+    """Write a transcript repeating one identical ``Bash`` call *turns* times.
+
+    Args:
+        path: Transcript file to write.
+        turns: Assistant records to write, one identical call each.
+    """
+    _write_jsonl(
+        path,
+        [
+            _assistant(
+                BASE_DT + timedelta(seconds=i),
+                [_tool_use(f"t{i}", "Bash", {"command": "git status"})],
+            )
+            for i in range(turns)
+        ],
+    )
+
+
+def _digest_line(agent_id: str, **overrides: object) -> dict[str, object]:
+    """One well-formed digest record for *agent_id*, fields overridable.
+
+    Args:
+        agent_id: The run the record describes.
+        **overrides: Fields replacing the defaults.
+
+    Returns:
+        The record.
+    """
+    record: dict[str, object] = {
+        "agent_id": agent_id,
+        "session_id": "s1",
+        "started": BASE_DT.isoformat(),
+        "ended": (BASE_DT + timedelta(seconds=30)).isoformat(),
+        "active_s": 30.0,
+        "turns": 9,
+        "tool_calls": 9,
+        "max_repeat": 1,
+        "repeated_call": "Read: x",
+        "precommit_runs": 0,
+        "output_tokens": 0,
+        "digested_at": BASE_DT.isoformat(),
+    }
+    record.update(overrides)
+    return record
+
+
+def test_collect_runs_digest_keeps_loop_suspect_and_turns_after_transcript_deleted(
+    tmp_path: Path,
+) -> None:
+    """A run whose transcript was swept keeps its loop and turn signals."""
+    ledger_path = tmp_path / "agent_timing.jsonl"
+    transcript_path = tmp_path / "s1" / "subagents" / "agent-a1.jsonl"
+    _looping_transcript(transcript_path, turns=LOOP_REPEAT_THRESHOLD)
+    _ledger_naming_transcript(ledger_path, transcript_path)
+    collect_runs(ledger_path, None)
+
+    transcript_path.unlink()
+    run = next(r for r in collect_runs(ledger_path, None) if r.agent_id == "a1")
+
+    assert run.loop_suspect
+    assert run.stats is not None
+    assert run.stats.turns == LOOP_REPEAT_THRESHOLD
+    assert run.stats.repeated_call == "Bash: git status"
+
+
+def test_collect_runs_appends_a_digest_line_only_when_the_run_grew(
+    tmp_path: Path,
+) -> None:
+    """An unchanged transcript adds no line on re-report; a resumed, longer one does."""
+    ledger_path = tmp_path / "agent_timing.jsonl"
+    transcript_path = tmp_path / "s1" / "subagents" / "agent-a1.jsonl"
+    digest_path = tmp_path / agent_profile.DIGEST_NAME
+    _looping_transcript(transcript_path, turns=1)
+    _ledger_naming_transcript(ledger_path, transcript_path)
+
+    collect_runs(ledger_path, None)
+    collect_runs(ledger_path, None)
+    assert len(digest_path.read_text(encoding="utf-8").splitlines()) == 1
+
+    _looping_transcript(transcript_path, turns=3)
+    collect_runs(ledger_path, None)
+    lines = digest_path.read_text(encoding="utf-8").splitlines()
+    assert [json.loads(line)["turns"] for line in lines] == [1, 3]
+
+
+def test_collect_runs_live_transcript_beats_a_stale_digest(tmp_path: Path) -> None:
+    """While the transcript exists its numbers win over whatever the digest says."""
+    ledger_path = tmp_path / "agent_timing.jsonl"
+    transcript_path = tmp_path / "s1" / "subagents" / "agent-a1.jsonl"
+    _looping_transcript(transcript_path, turns=2)
+    _ledger_naming_transcript(ledger_path, transcript_path)
+    _write_jsonl(
+        tmp_path / agent_profile.DIGEST_NAME, [_digest_line("a1", max_repeat=99)]
+    )
+
+    run = next(r for r in collect_runs(ledger_path, None) if r.agent_id == "a1")
+
+    assert run.stats is not None
+    assert run.stats.turns == 2
+    assert run.stats.max_repeat == 2
+
+
+def test_collect_runs_skips_damaged_digest_lines_keeping_the_last_good_one(
+    tmp_path: Path,
+) -> None:
+    """Junk and mistyped digest lines are skipped; the last good line stands."""
+    ledger_path = tmp_path / "agent_timing.jsonl"
+    _ledger_naming_transcript(ledger_path, tmp_path / "gone.jsonl")
+    digest_path = tmp_path / agent_profile.DIGEST_NAME
+    _write_jsonl(digest_path, [_digest_line("a1", turns=5)])
+    with digest_path.open("a", encoding="utf-8") as fh:
+        fh.write("{not json\n")
+        fh.write(json.dumps(_digest_line("a1", turns="many")) + "\n")
+
+    run = next(r for r in collect_runs(ledger_path, None) if r.agent_id == "a1")
+
+    assert run.stats is not None
+    assert run.stats.turns == 5
+
+
+def test_collect_runs_without_transcript_or_digest_entry_borrows_nothing(
+    tmp_path: Path,
+) -> None:
+    """A run absent from both sources has no stats, even beside another run's line."""
+    ledger_path = tmp_path / "agent_timing.jsonl"
+    _ledger_naming_transcript(ledger_path, tmp_path / "gone.jsonl")
+    _write_jsonl(tmp_path / agent_profile.DIGEST_NAME, [_digest_line("a2")])
+
+    run = next(r for r in collect_runs(ledger_path, None) if r.agent_id == "a1")
+
+    assert run.stats is None
+
+
+def test_main_no_history_writes_no_digest_and_default_run_does(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``--no-history`` leaves the digest unwritten; a plain run writes it."""
+    ledger_path = code_health_dir(tmp_path) / agent_profile.LEDGER_NAME
+    transcript_path = tmp_path / "s1" / "subagents" / "agent-a1.jsonl"
+    _looping_transcript(transcript_path, turns=1)
+    _ledger_naming_transcript(ledger_path, transcript_path)
+    digest_path = code_health_dir(tmp_path) / agent_profile.DIGEST_NAME
+    monkeypatch.setattr(agent_profile, "repo_root", lambda: tmp_path)
+
+    monkeypatch.setattr("sys.argv", ["forge-agent-profile", "--no-history"])
+    assert agent_profile.main() == 0
+    assert not digest_path.exists()
+
+    monkeypatch.setattr("sys.argv", ["forge-agent-profile"])
+    assert agent_profile.main() == 0
+    records = [json.loads(line) for line in digest_path.read_text().splitlines()]
+    assert [r["agent_id"] for r in records] == ["a1"]
+
+
+# ---------------------------------------------------------------------------
 # filter_runs
 # ---------------------------------------------------------------------------
 

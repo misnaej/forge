@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 from forge.git_utils import code_health_dir
-from forge.ledger import append_ledger_line, parse_ledger
+from forge.ledger import append_jsonl_record, append_ledger_line, parse_ledger
 
 
 if TYPE_CHECKING:
@@ -81,6 +82,25 @@ def test_append_ledger_line_second_call_appends_not_overwrites(tmp_path: Path) -
     assert len(lines) == 2
     assert lines[0] == first_line
     assert "label=r2" in lines[1]
+
+
+# ---------------------------------------------------------------------------
+# append_jsonl_record
+# ---------------------------------------------------------------------------
+
+
+def test_append_jsonl_record_creates_parent_and_appends_one_line_per_record(
+    tmp_path: Path,
+) -> None:
+    """Each call adds exactly one JSON line, even when a value holds a newline."""
+    path = tmp_path / "sub" / "digest.jsonl"
+    append_jsonl_record(path, {"agent_id": "a1", "label": "x\ny"})
+    append_jsonl_record(path, {"agent_id": "a2", "turns": 3})
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert [json.loads(line) for line in lines] == [
+        {"agent_id": "a1", "label": "x\ny"},
+        {"agent_id": "a2", "turns": 3},
+    ]
 
 
 # ---------------------------------------------------------------------------

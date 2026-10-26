@@ -11,10 +11,16 @@ timestamp format, separator, or tolerance to a damaged line.
 Lines are written with two spaces between fields. An optional *tail*
 field — one whose value may itself contain spaces, such as a command
 line — is always last and is split off by the parser on its key.
+
+A ledger whose records are structured rather than flat
+(``agent_transcript_digest.jsonl``) is written one JSON object per line
+by :func:`append_jsonl_record`, with the same create-on-first-use and
+one-append-one-line guarantees.
 """
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -53,6 +59,25 @@ def append_ledger_line(
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
         fh.write("  ".join(parts) + "\n")
+
+
+def append_jsonl_record(path: Path, record: Mapping[str, object]) -> None:
+    """Append *record* to *path* as one JSON line.
+
+    Creates the parent directory on first use. JSON escapes line breaks
+    inside strings, so one append is always one line and a reader that
+    skips unparsable lines loses at most the line a crash truncated.
+    Unlike :func:`append_ledger_line`, no timestamp is added: a
+    structured record names its own time fields.
+
+    Args:
+        path: JSONL file to append to.
+        record: The object to write; values must be JSON-serializable
+            (anything else is rendered with ``str()``).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(dict(record), default=str) + "\n")
 
 
 def _plain(value: object) -> str:

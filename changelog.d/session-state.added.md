@@ -1,0 +1,6 @@
+bump: minor
+
+- `forge-agent-profile` now keeps a small per-run digest, `code_health/agent_transcript_digest.jsonl`, of what it reads from each subagent transcript (turns, tool calls, the repeated call and its count, precommit runs, output tokens, active time). Claude Code deletes transcripts after `cleanupPeriodDays` (30 days by default); a run whose transcript is gone now keeps its turn count and loop-suspect verdict from the digest instead of losing them. A live transcript still wins, a run in neither source still shows no turn count, and `--no-history` skips the digest write as well as the history line. Running the profiler at least monthly — every `/next` does — keeps the digest complete.
+- `docs/telemetry.md` explains the retention trade-off: raising `cleanupPeriodDays` in your own `~/.claude/settings.json` keeps raw transcripts longer at the cost of disk and plaintext tool output on disk; forge never writes that setting. The digest keeps the repeated call's label (up to 72 characters of a command or path) after the transcript is deleted.
+- `/next` states that it reaps no session clutter (transcripts, scratchpads, worktrees, plugin copies, monitors) — Claude Code sweeps those and `forge-doctor` reports stale plugin copies; its only deletions remain branch pruning.
+- New `forge.ledger.append_jsonl_record`, the shared one-JSON-line-per-append writer.

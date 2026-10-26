@@ -9,27 +9,37 @@ which tool calls cost the most, and whether a run looks stuck —
 re-issuing an identical tool call, or ``forge:precommit-fixer``
 exceeding the three full ``forge-precommit`` runs its contract allows.
 
-Two inputs, one primary and one best-effort:
+Three inputs, one primary and two best-effort:
 
 - ``code_health/agent_timing.jsonl`` — the ledger the
   ``log_agent_timing`` Claude Code hook appends on every
   ``SubagentStart`` / ``SubagentStop`` / ``PostToolUse`` event, plus one
   ``precommit_full_run`` line per full ``forge-precommit`` the
   ``block_fixer_recon`` hook lets the fixer run (its three-run cap).
-  Hook payloads are documented and stable; this is the source of truth
-  for run boundaries, agent types, tool durations, and fixer run counts.
+  Hook payloads are documented and stable; this is the durable source
+  of truth for run boundaries, agent types, tool durations, and fixer
+  run counts.
 - Claude Code subagent transcripts (``…/subagents/agent-<id>.jsonl``),
   located through the ledger's ``transcript_path`` fields or scanned
-  from a ``--transcripts`` directory for history that predates the
-  hook. The format is internal to Claude Code and may change between
-  releases, so it is parsed tolerantly — a line that does not look as
-  expected is skipped, never raised on — and only enriches a run with
-  turn counts, repeated-call detection, and precommit-run counts.
+  from a ``--transcripts`` directory (which can only backfill what
+  Claude Code still keeps). The format is internal to Claude Code and
+  may change between releases, so it is parsed tolerantly — a line that
+  does not look as expected is skipped, never raised on — and only
+  enriches a run with turn counts, repeated-call detection, and
+  precommit-run counts. Claude Code deletes transcripts after
+  ``cleanupPeriodDays`` (30 by default).
+- ``code_health/agent_transcript_digest.jsonl`` — this reporter's own
+  per-run digest of what it read from each transcript, one JSON line
+  per new or changed run, kept beside the ledger. A live transcript
+  always wins; the digest stands in once the transcript is gone, so
+  loop and turn signals survive Claude Code's sweep.
 
-It is a read-only reporter (always exits ``0``); each run appends one
-summary line to ``code_health/agent_profile_history.log`` so trends
-survive after the per-run output scrolls away. ``/perf`` reads it as
-one of its surfaces; ``/report-to-forge`` quotes it as evidence.
+It is a reporter (always exits ``0``) whose only writes are its own
+ledgers: each run appends one summary line to
+``code_health/agent_profile_history.log`` so trends survive after the
+per-run output scrolls away, and refreshes the transcript digest;
+``--no-history`` skips both writes. ``/perf`` reads it as one of its
+surfaces; ``/report-to-forge`` quotes it as evidence.
 
 Usage:
 
@@ -61,7 +71,7 @@ from forge.git_utils import (
     git_z_names,
     repo_root,
 )
-from forge.ledger import append_ledger_line, parse_ledger
+from forge.ledger import append_jsonl_record, append_ledger_line, parse_ledger
 from forge.text_clip import truncate
 
 
@@ -74,6 +84,7 @@ logger = logging.getLogger(__name__)
 
 LEDGER_NAME = "agent_timing.jsonl"
 HISTORY_NAME = "agent_profile_history.log"
+DIGEST_NAME = "agent_transcript_digest.jsonl"
 
 #: A gap between two consecutive records longer than this is idle time
 #: (a sleeping monitor, a human away, a laptop lid) — it counts toward
@@ -906,13 +917,157 @@ def runs_from_transcripts(root: Path) -> dict[str, AgentRun]:
     return runs
 
 
-def collect_runs(ledger_path: Path, transcripts_root: Path | None) -> list[AgentRun]:
+# --- transcript digest -----------------------------------------------------
+
+_DIGEST_COUNTS = (
+    "turns",
+    "tool_calls",
+    "max_repeat",
+    "precommit_runs",
+    "output_tokens",
+)
+
+
+def _digest_record(run: AgentRun, stats: TranscriptStats) -> dict[str, object]:
+    """One digest line for *run*: its ids, its transcript stats, and when.
+
+    Args:
+        run: The run the stats belong to.
+        stats: The stats parsed from the run's live transcript.
+
+    Returns:
+        A JSON-serializable record (datetimes as ISO strings).
+    """
+    record: dict[str, object] = {"agent_id": run.agent_id, "session_id": run.session_id}
+    record.update(asdict(stats))
+    record["started"] = _iso(stats.started)
+    record["ended"] = _iso(stats.ended)
+    record["digested_at"] = datetime.now(UTC).isoformat(timespec="seconds")
+    return record
+
+
+def _is_count(value: object) -> bool:
+    """Whether *value* is a JSON integer (``bool`` excluded).
+
+    Args:
+        value: A decoded JSON value.
+
+    Returns:
+        ``True`` for an ``int`` that is not a ``bool``.
+    """
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _stats_from_digest(record: dict[str, Any]) -> TranscriptStats | None:
+    """Rebuild the stats one digest line carries, ``None`` when it is damaged.
+
+    A line with a missing or mistyped field is rejected whole rather than
+    filled with defaults: a digest stands in for a transcript nobody can
+    re-read, so a half-trusted line would report numbers no source holds.
+
+    Args:
+        record: One decoded digest line.
+
+    Returns:
+        The stats, or ``None`` when any field is absent or the wrong type.
+    """
+    active_s = record.get("active_s")
+    started = _parse_ts(record.get("started"))
+    if (
+        started is None
+        or not all(_is_count(record.get(name)) for name in _DIGEST_COUNTS)
+        or not isinstance(active_s, int | float)
+        or isinstance(active_s, bool)
+        or not isinstance(record.get("repeated_call"), str)
+    ):
+        return None
+    return TranscriptStats(
+        started=started,
+        ended=_parse_ts(record.get("ended")),
+        active_s=float(active_s),
+        repeated_call=record["repeated_call"],
+        **{name: record[name] for name in _DIGEST_COUNTS},
+    )
+
+
+def _load_digest(path: Path) -> dict[str, TranscriptStats]:
+    """Read the transcript digest: the last good line per agent id wins.
+
+    Args:
+        path: The digest file (may not exist yet).
+
+    Returns:
+        Agent id to its most recently digested stats; damaged lines skipped.
+    """
+    digest: dict[str, TranscriptStats] = {}
+    for record in _iter_jsonl(path):
+        agent_id = record.get("agent_id")
+        stats = _stats_from_digest(record)
+        if isinstance(agent_id, str) and agent_id and stats is not None:
+            digest[agent_id] = stats
+    return digest
+
+
+def _digest_is_behind(stats: TranscriptStats, known: TranscriptStats | None) -> bool:
+    """Whether *stats* says more than the digest already holds for its run.
+
+    A resumed agent's transcript keeps growing, so a later end or more
+    turns is a change worth a new line; anything else would only repeat
+    the last one on every report.
+
+    Args:
+        stats: Stats just parsed from a live transcript.
+        known: The digest's stats for the same agent id, if any.
+
+    Returns:
+        ``True`` when the run is new to the digest or has grown since.
+    """
+    if known is None or stats.turns > known.turns:
+        return True
+    if stats.ended is None:
+        return False
+    return known.ended is None or stats.ended > known.ended
+
+
+def _record_digest(
+    path: Path, runs: Iterable[AgentRun], digest: dict[str, TranscriptStats]
+) -> None:
+    """Append a digest line for every run whose stats are new or have grown.
+
+    A write failure is logged, never raised: the digest is enrichment
+    and the reporter must still exit ``0``.
+
+    Args:
+        path: The digest file.
+        runs: Runs with their final stats.
+        digest: What the digest held before this report.
+    """
+    try:
+        for run in runs:
+            stats = run.stats
+            if stats is not None and _digest_is_behind(stats, digest.get(run.agent_id)):
+                append_jsonl_record(path, _digest_record(run, stats))
+    except OSError as exc:
+        logger.warning("could not update the transcript digest at %s: %s", path, exc)
+
+
+def collect_runs(
+    ledger_path: Path, transcripts_root: Path | None, *, record_digest: bool = True
+) -> list[AgentRun]:
     """Assemble every known run: ledger first, transcripts as enrichment or backfill.
+
+    A live transcript is always preferred — a resumed agent's keeps
+    growing — and the digest beside the ledger
+    (:data:`DIGEST_NAME`) fills in only the runs whose transcript no
+    longer resolves, so their loop and turn signals outlive Claude
+    Code's transcript sweep. A run with neither keeps ``stats`` at
+    ``None``: no borrowed numbers.
 
     Args:
         ledger_path: The hook ledger (may not exist yet).
         transcripts_root: Optional project directory to scan for
             transcripts the ledger does not name.
+        record_digest: Append changed transcript stats to the digest.
 
     Returns:
         Runs ordered by start time, oldest first.
@@ -934,6 +1089,13 @@ def collect_runs(ledger_path: Path, transcripts_root: Path | None) -> list[Agent
                 # timings; only the transcript half was missing.
                 known.stats = scanned.stats
                 known.transcript_path = scanned.transcript_path
+    digest_path = ledger_path.parent / DIGEST_NAME
+    digest = _load_digest(digest_path)
+    for run in runs.values():
+        if run.stats is None:
+            run.stats = digest.get(run.agent_id)
+    if record_digest:
+        _record_digest(digest_path, runs.values(), digest)
     return sorted(runs.values(), key=_start_of)
 
 
@@ -1306,7 +1468,8 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="forge-agent-profile",
         description=(
             "Report where agent and subagent time goes, and which files a "
-            "subagent wrote (read-only, always exits 0)."
+            "subagent wrote (writes only its own code_health/ ledgers, "
+            "always exits 0)."
         ),
     )
     parser.add_argument(
@@ -1318,8 +1481,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--transcripts",
         type=Path,
-        help="Transcripts directory "
-        "(~/.claude/projects/<encoded-cwd>) not named in ledger.",
+        help="Transcripts directory (~/.claude/projects/<encoded-cwd>) to scan "
+        "for runs the ledger does not name; it backfills only what Claude "
+        "Code still keeps.",
     )
     parser.add_argument(
         "--agent-type",
@@ -1349,7 +1513,9 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Restrict --edits to one session id (the ledger is shared per clone).",
     )
     parser.add_argument(
-        "--no-history", action="store_true", help="Do not append to the history ledger."
+        "--no-history",
+        action="store_true",
+        help="Do not append to the history ledger or refresh the transcript digest.",
     )
     return parser
 
@@ -1408,7 +1574,7 @@ def main() -> int:
     ledger_path = args.ledger or code_health_dir(root) / LEDGER_NAME
     events = list(_iter_jsonl(ledger_path)) if ledger_path.is_file() else []
     runs = filter_runs(
-        collect_runs(ledger_path, args.transcripts),
+        collect_runs(ledger_path, args.transcripts, record_digest=not args.no_history),
         agent_type=args.agent_type,
         since=since,
         last=args.last,

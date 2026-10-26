@@ -32,7 +32,7 @@ usage: forge-agent-profile [-h] [--ledger LEDGER] [--transcripts TRANSCRIPTS]
                            [--no-history]
 
 Report where agent and subagent time goes, and which files a subagent wrote
-(read-only, always exits 0).
+(writes only its own code_health/ ledgers, always exits 0).
 
 options:
   -h, --help            show this help message and exit
@@ -41,7 +41,8 @@ options:
                         $FORGE_CODE_HEALTH_DIR when set).
   --transcripts TRANSCRIPTS
                         Transcripts directory (~/.claude/projects/<encoded-
-                        cwd>) not named in ledger.
+                        cwd>) to scan for runs the ledger does not name; it
+                        backfills only what Claude Code still keeps.
   --agent-type AGENT_TYPE
                         Only runs of this agent type (e.g. forge:precommit-
                         fixer).
@@ -55,7 +56,8 @@ options:
                         the caller.
   --session SESSION     Restrict --edits to one session id (the ledger is
                         shared per clone).
-  --no-history          Do not append to the history ledger.
+  --no-history          Do not append to the history ledger or refresh the
+                        transcript digest.
 ```
 
 ## forge-audit-agents
