@@ -6,11 +6,23 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 from forge import precommit, run_context
+from forge.pr_delta import fenced_line_indexes
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_DIR = REPO_ROOT / ".claude-plugin"
+
+# GitHub listings that silently stop at a default page (30 rows), and the
+# flag that makes each one complete. `gh … list --head <branch>` asks for
+# one branch's PR, so it is never truncated.
+_GH_LIST_RE = re.compile(r"\bgh\s+(?:issue|pr|run|release|label|gist|repo)\s+list\b")
+_GH_SEARCH_RE = re.compile(r"\bgh\s+search\b")
+_GH_API_COMMENTS_RE = re.compile(r"\bgh\s+api\b.*/(?:comments|reviews)\b")
+_LIMIT_RE = re.compile(r"(?:--limit|-L)\b")
+_POST_MARKERS = ("--method POST", "-X POST", "-f body=")
 
 
 def test_plugin_json_present_and_well_formed() -> None:
@@ -498,3 +510,123 @@ def test_plugin_registers_fixer_verdict_hook_on_subagent_stop() -> None:
     matcher = matching[0].get("matcher", "")
     assert re.search(matcher, "precommit-fixer")
     assert re.search(matcher, "forge:precommit-fixer")
+
+
+def _fenced_commands(text: str) -> list[tuple[int, str]]:
+    r"""Return each fenced command in *text*, ``\\`` continuations joined.
+
+    Args:
+        text: A markdown document.
+
+    Returns:
+        ``(first line number, joined command)`` per command; shell
+        comment lines are dropped, since they name commands without
+        running them.
+    """
+    lines = text.splitlines()
+    fenced = fenced_line_indexes(lines)
+    commands: list[tuple[int, str]] = []
+    parts: list[str] = []
+    first = 0
+    for i, line in enumerate(lines):
+        if i not in fenced:
+            continue
+        if not parts:
+            first = i + 1
+        stripped = line.rstrip()
+        parts.append(stripped.removesuffix("\\"))
+        if stripped.endswith("\\"):
+            continue
+        commands.append((first, " ".join(parts)))
+        parts = []
+    if parts:
+        commands.append((first, " ".join(parts)))
+    return [(n, cmd) for n, cmd in commands if not cmd.lstrip().startswith("#")]
+
+
+def _unbounded_listing(command: str) -> str | None:
+    """Return why *command* reads a GitHub listing that may stop at 30 rows.
+
+    Covered, and nothing else: ``gh issue|pr|run|release|label|gist|repo
+    list`` without ``--limit``/``-L`` (``--head`` exempt); ``gh search``
+    without ``--limit``/``-L``; and a ``gh api`` path containing
+    ``/comments`` or ``/reviews`` without ``--paginate``, unless it posts
+    (``--method POST``, ``-X POST``, ``-f body=``). Other ``gh api``
+    listings and GraphQL queries are not checked.
+
+    Args:
+        command: One joined shell command.
+
+    Returns:
+        The missing bound, or ``None`` when the command is bounded or is
+        not a listing.
+    """
+    if (
+        _GH_LIST_RE.search(command)
+        and not _LIMIT_RE.search(command)
+        and "--head" not in command
+    ):
+        return "`gh <noun> list` without `--limit`"
+    if _GH_SEARCH_RE.search(command) and not _LIMIT_RE.search(command):
+        return "`gh search` without `--limit`"
+    if (
+        _GH_API_COMMENTS_RE.search(command)
+        and "--paginate" not in command
+        and not any(marker in command for marker in _POST_MARKERS)
+    ):
+        return "`gh api …/comments|/reviews` GET without `--paginate`"
+    return None
+
+
+@pytest.mark.parametrize(
+    ("snippet", "flagged"),
+    [
+        ("```bash\ngh pr list --state open --json number\n```", True),
+        ("```bash\ngh pr list --state open \\\n    --limit 1000 --json n\n```", False),
+        ("```bash\ngh pr list --head feat/x --json number\n```", False),
+        ("```bash\ngh run list --workflow ci.yml\n```", True),
+        ("```bash\ngh release list -L 5\n```", False),
+        ("```bash\ngh search issues --author=@me \\\n    --json url\n```", True),
+        ("```bash\ngh api repos/o/r/pulls/1/comments --jq '.[]'\n```", True),
+        ("```bash\ngh api repos/o/r/pulls/1/comments/2/replies -X POST\n```", False),
+        ("```bash\n# a comment naming gh issue list\n```", False),
+        ("Prose naming `gh issue list` outside a fence.", False),
+    ],
+)
+def test_unbounded_listing_scanner_flags_only_unbounded_fenced_reads(
+    snippet: str, *, flagged: bool
+) -> None:
+    """The scanner reads fenced commands whole and judges only GET listings.
+
+    Args:
+        snippet: A markdown fragment.
+        flagged: Whether the fragment holds an unbounded listing.
+    """
+    found = [cmd for _, cmd in _fenced_commands(snippet) if _unbounded_listing(cmd)]
+    assert bool(found) is flagged
+
+
+def test_shipped_agents_and_skills_bound_every_github_listing() -> None:
+    """Every GitHub listing in a shipped agent or skill reads the whole list.
+
+    SCENARIO: agents read review comments, open PRs and search results
+    through listings that stop at 30 rows without saying so; comments
+    past the 30th never got a reply.
+    EXPECTED BEHAVIOR: no fenced command trips `_unbounded_listing` (its
+    docstring lists exactly what is covered) — review comments go through
+    `forge-pr-review-comments` instead.
+    """
+    docs = sorted(
+        [
+            *(REPO_ROOT / "agents").glob("*.md"),
+            *(REPO_ROOT / "skills").glob("*/SKILL.md"),
+        ]
+    )
+    assert docs, "expected shipped agents and skills, glob returned none"
+    offenders = [
+        f"{path.relative_to(REPO_ROOT)}:{line}: {why}: {cmd.strip()}"
+        for path in docs
+        for line, cmd in _fenced_commands(path.read_text())
+        if (why := _unbounded_listing(cmd))
+    ]
+    assert not offenders, "unbounded GitHub listings:\n" + "\n".join(offenders)
