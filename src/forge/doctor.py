@@ -64,14 +64,17 @@ from forge.version_surfaces import (
     SOURCE_MISMATCH_REMEDIATION,
     STALE_CACHE_REMEDIATION,
     PluginCacheStatus,
+    checkout_plugin_current,
     find_install_dir,
     find_plugin_cache,
     hook_sidecar_version,
+    pinned_marketplace,
     pip_version,
     plugin_cache_status,
     plugin_records,
     read_json,
     safe_text,
+    target_plugin_version,
 )
 
 
@@ -233,6 +236,47 @@ def _check_plugin_install(plugin_name: str) -> CheckResult:
     return CheckResult(name="plugin:installed", passed=True, detail=str(found))
 
 
+def _check_checkout_plugin(repo_root: Path) -> list[CheckResult]:
+    """Report whether this checkout has its own install of its forge release.
+
+    The same judgment ``forge-plugin-sync`` acts on
+    (:func:`forge.version_surfaces.checkout_plugin_current`). Always one
+    line when a release is pinned, so the ``version_skew`` line can point
+    here without pointing at nothing.
+
+    Args:
+        repo_root: Checkout root.
+
+    Returns:
+        One result — passed when current, an advisory naming
+        ``forge-plugin-sync`` otherwise — or none when the checkout pins
+        no release (no manifest version, no ``forge-scripts`` tag pin).
+    """
+    version = target_plugin_version(repo_root)
+    if version is None:
+        return []
+    key = f"forge@{pinned_marketplace(version)}"
+    if checkout_plugin_current(repo_root, version):
+        return [
+            CheckResult(
+                name="plugin:checkout",
+                passed=True,
+                detail=f"{key} {version} installed for this checkout",
+            )
+        ]
+    return [
+        CheckResult(
+            name="plugin:checkout",
+            passed=False,
+            info=True,
+            detail=(
+                f"this checkout has no install of forge {version} ({key}) — "
+                f"run `{SKEW_REMEDIATION['plugin cache']}`"
+            ),
+        )
+    ]
+
+
 def _check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]:
     """Report a Claude Code plugin cache lagging what should be loaded.
 
@@ -243,7 +287,7 @@ def _check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]:
 
     Two findings, two remediations, because the causes differ. A repo that
     ships the plugin can be ``"behind"`` — its cache declares an older
-    version, which ``/plugin update`` moves. A consumer gets
+    version, which ``forge-plugin-sync`` replaces. A consumer gets
     ``"stale-content"``: the declared version has not moved and cannot, so
     the only advice that can succeed is discarding the slot. A consumer
     whose machine-wide marketplace tracks another ref gets
@@ -550,7 +594,7 @@ def _check_version_skew(repo_root: Path) -> list[CheckResult]:
                 passed=True,
                 detail=(
                     f"aligned at v{cur} across {aligned} — "
-                    "plugin not compared, see version_skew:plugin_cache"
+                    "plugin not compared, see plugin:checkout"
                 ),
             )
         ]
@@ -1002,6 +1046,7 @@ def main() -> int:
 
     results.extend(_check_version_skew(Path.cwd()))
     if not args.skip_plugin_checks:
+        results.extend(_check_checkout_plugin(Path.cwd()))
         results.extend(_check_plugin_cache_skew(Path.cwd()))
         results.extend(_check_global_install(Path.cwd()))
     results.extend(_surface_pin_revision(Path.cwd()))

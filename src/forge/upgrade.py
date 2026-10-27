@@ -16,8 +16,8 @@ shortcut via ``--apply``.
   pixi lock.
 - **Phase 2** — ``forge-upgrade --continue``. After the user has run
   the printed install command, runs ``install-forge-bootstrap`` to
-  re-sync managed artifacts and prints the Claude Code plugin update
-  reminder.
+  re-sync managed artifacts (its ``plugin`` step runs
+  ``forge-plugin-sync``) and prints the session-restart reminder.
 - **One-shot** — ``forge-upgrade --apply``. For human-run setup
   scripts only: rewrites the pin, runs the force-reinstall pip
   command, then runs the bootstrap; refused in a pixi-locked repo. The
@@ -873,10 +873,10 @@ def _run_phase2(root: Path) -> int:
 
     if rc == 0:
         logger.info("")
-        logger.info("If you use Claude Code, finish the upgrade with:")
-        logger.info("  /plugin update forge@forge")
-        logger.info("  /reload-plugins")
-        logger.info("Monitor changes still need a session restart.")
+        logger.info(
+            "If you use Claude Code, finish with `forge-plugin-sync` (bootstrap "
+            "already ran it), then restart the Claude Code session."
+        )
         _print_upgrade_notes()
     return rc
 

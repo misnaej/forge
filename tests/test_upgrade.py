@@ -349,7 +349,8 @@ def test_continue_calls_bootstrap(
     assert rc == 0
     assert captured["calls"] == 1
     msgs = " ".join(r.getMessage() for r in caplog.records)
-    assert "/plugin update forge@forge" in msgs
+    assert "forge-plugin-sync" in msgs
+    assert "restart the Claude Code session" in msgs
 
 
 def test_pin_revision_mismatch_returns_pair_on_mismatch(

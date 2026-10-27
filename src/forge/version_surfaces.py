@@ -87,35 +87,30 @@ UNPRINTABLE: Final[str] = "<unprintable>"
 SKEW_REMEDIATION: Final[dict[str, str]] = {
     "pip package": "forge-upgrade --apply",
     "git hooks": "install-forge-githooks",
-    "plugin cache": "/plugin update forge@forge (then /reload-plugins)",
+    "plugin cache": "forge-plugin-sync (then restart the session)",
 }
 
-# The remediation for a cache slot holding stale *content*. It cannot be
-# ``/plugin update``: that command compares declared manifest versions, and
-# a frozen declared version is exactly the condition here — the update
-# reports "already current" while the slot keeps whatever it was first
-# filled with. Only discarding the slot (or moving the clone it is filled
-# from) converges.
+# The remediation for a shared cache slot holding stale *content*.
+# ``/plugin update`` cannot clear it: it compares declared manifest
+# versions, and a frozen declared version is exactly the condition here.
+# A per-version install pinned to its release commit replaces the shared
+# slot for this checkout without touching it for anyone else.
 STALE_CACHE_REMEDIATION: Final[str] = (
-    "delete ~/.claude/plugins/cache/{plugin}/ and restart the session "
-    "(move the marketplace ref first if the clone is behind too) — "
-    "`/plugin update` compares declared versions and reports no change"
+    "run `forge-plugin-sync` and restart the session: it installs this "
+    "checkout's own copy, pinned to its release commit — `/plugin update` "
+    "compares declared versions and reports no change for the shared "
+    "{plugin} slot"
 )
 
-# The remediation when the machine-wide marketplace registration points at
-# a different ref than this repo pins. Every repo on the machine updates
-# from that one registration, so ``/plugin update`` fetches from the wrong
-# ref and no per-repo command converges; only re-pointing the
-# registration does — and that moves the source for every repo.
+# The remediation when the shared ``forge`` marketplace registration
+# points at another ref than this repo pins. Every repo that uses that
+# registration updates from it, so no command re-pointing it is safe for
+# all of them; a per-version marketplace no other repo can re-point is.
 SOURCE_MISMATCH_REMEDIATION: Final[str] = (
-    "`/plugin update` cannot fix this — it fetches from the registered "
-    "source. Re-point the machine-wide marketplace: `claude plugin "
-    "marketplace remove {plugin}`, then `claude plugin marketplace add "
-    "{repo}#{ref}` and `claude plugin install {plugin}@{plugin}` (removing "
-    "the marketplace also uninstalls the plugin) — or edit the "
-    "`extraKnownMarketplaces` ref in ~/.claude/settings.json. The "
-    "registration is shared, so this changes the source for every repo "
-    "on this machine"
+    "`/plugin update` cannot fix this — it fetches from the shared "
+    "registration. Run `forge-plugin-sync` and restart the session: it "
+    "installs this checkout's own copy from a marketplace named after its "
+    "release, which no other repo on this machine can re-point"
 )
 
 
@@ -474,20 +469,163 @@ def plugin_records(
         unreadable or malformed — never an exception, since every caller
         runs inside an advisory.
     """
+    return [record for _, record in _keyed_records(plugin, plugins_file)]
+
+
+def _keyed_records(
+    plugin: str, plugins_file: Path | None = None
+) -> list[tuple[str, dict[str, object]]]:
+    """Install records for *plugin*, each with the key it is filed under.
+
+    The key says which marketplace a record came from, which
+    :func:`plugin_records` drops and :func:`checkout_installs` needs.
+
+    Args:
+        plugin: As for :func:`plugin_records`.
+        plugins_file: As for :func:`plugin_records`.
+
+    Returns:
+        ``(key, record)`` pairs in file order; empty on any read problem.
+    """
     path = INSTALLED_PLUGINS if plugins_file is None else plugins_file
     data, err = read_json(path)
     plugins = data.get("plugins") if err is None else None
     if not isinstance(plugins, dict):
         return []
-    records: list[dict[str, object]] = []
+    records: list[tuple[str, dict[str, object]]] = []
     for key, value in plugins.items():
         if not isinstance(key, str) or (
             key != plugin and key.partition("@")[0] != plugin
         ):
             continue
         entries = value if isinstance(value, list) else [value]
-        records.extend(entry for entry in entries if isinstance(entry, dict))
+        records.extend((key, entry) for entry in entries if isinstance(entry, dict))
     return records
+
+
+# Prefix of the marketplace a checkout's own forge install comes from:
+# ``forge-v<major>-<minor>-<patch>``. Claude Code keeps one marketplace per
+# name per machine, so while every version shared the name ``forge``,
+# checkouts on different versions overwrote each other's source. A name
+# per version cannot collide, and a name always means the same content.
+PINNED_MARKETPLACE_PREFIX: Final[str] = "forge-v"
+
+_RELEASE_REF = re.compile(r"v(\d+\.\d+\.\d+)")
+# Exact, unlike parse_semver: the version becomes a directory name and a
+# `claude` argument, and a git hook acts on whatever a branch's manifest says.
+_RELEASE_VERSION = re.compile(r"\d+\.\d+\.\d+")
+
+
+def pinned_marketplace(version: str) -> str:
+    """Return the per-version marketplace name for forge *version*.
+
+    Args:
+        version: A release version, ``X.Y.Z``.
+
+    Returns:
+        ``forge-vX-Y-Z`` — dots become dashes, so the name is one token.
+    """
+    return PINNED_MARKETPLACE_PREFIX + version.replace(".", "-")
+
+
+def target_plugin_version(repo_root: Path) -> str | None:
+    """Return the forge release this checkout should run as its plugin.
+
+    A plugin repo (forge itself) runs the version its own manifest names:
+    under fragments mode that is the latest release tag, except on a
+    release-assembly commit, whose manifest names the release about to be
+    tagged. A consumer runs the release its ``forge-scripts`` pin names.
+
+    Args:
+        repo_root: Checkout root.
+
+    Returns:
+        ``X.Y.Z``, or ``None`` when no release is named — no manifest
+        version (or one that is not exactly ``X.Y.Z``) and no pin, or a
+        pin on a branch, which names no fixed content to install.
+    """
+    manifest = repo_root / MANIFEST_AREA
+    if manifest.is_file():
+        data, err = read_json(manifest)
+        version = data.get("version") if err is None else None
+        if isinstance(version, str) and _RELEASE_VERSION.fullmatch(version):
+            return version
+        return None
+    pin = find_pin(repo_root)
+    match = _RELEASE_REF.fullmatch(pin.ref) if pin is not None else None
+    return match.group(1) if match else None
+
+
+class CheckoutInstall(NamedTuple):
+    """One forge install Claude Code recorded for a single checkout.
+
+    Attributes:
+        key: The ``forge@<marketplace>`` key the record is filed under.
+        scope: ``local`` or ``project``.
+        version: The installed version.
+    """
+
+    key: str
+    scope: str
+    version: str
+
+
+def checkout_installs(
+    repo_root: Path, plugins_file: Path | None = None
+) -> list[CheckoutInstall]:
+    """Return every forge install recorded for *repo_root* alone.
+
+    User-scope records are left out: they belong to every checkout, and
+    :func:`plugin_installs` already reports them.
+
+    Args:
+        repo_root: Checkout root.
+        plugins_file: Record file to read; defaults to
+            :data:`INSTALLED_PLUGINS`.
+
+    Returns:
+        The installs in file order; records whose install directory no
+        longer exists are ignored.
+    """
+    target = _resolved(repo_root)
+    found: list[CheckoutInstall] = []
+    for key, record in _keyed_records("forge", plugins_file):
+        install = _install_from_record(record)
+        project = record.get("projectPath")
+        if (
+            install is None
+            or install.scope == "user"
+            or not isinstance(project, str)
+            or _resolved(Path(project)) != target
+        ):
+            continue
+        found.append(CheckoutInstall(key, install.scope, install.version))
+    return found
+
+
+def checkout_plugin_current(
+    repo_root: Path, version: str, plugins_file: Path | None = None
+) -> bool:
+    """Say whether *repo_root* has its own install of forge *version*.
+
+    The one judgment ``forge-plugin-sync``, ``forge-doctor`` and the
+    ``plugin_sync`` pre-commit step share: current means a record for
+    this checkout under the per-version marketplace, at that version.
+
+    Args:
+        repo_root: Checkout root.
+        version: Target release, ``X.Y.Z``.
+        plugins_file: Record file to read; defaults to
+            :data:`INSTALLED_PLUGINS`.
+
+    Returns:
+        ``True`` when such a record exists.
+    """
+    want = f"forge@{pinned_marketplace(version)}"
+    return any(
+        install.key == want and install.version == version
+        for install in checkout_installs(repo_root, plugins_file)
+    )
 
 
 def plugin_installs(repo_root: Path, plugin_name: str) -> PluginInstalls:

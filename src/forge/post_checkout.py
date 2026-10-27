@@ -20,7 +20,10 @@ asymmetry between the two entrypoints is intentional: ``post-merge``
 additionally backgrounds ``install-forge-githooks --refresh`` because
 a ``git pull`` is the common trigger for a forge-scripts upgrade. A
 branch checkout does not change the installed forge-scripts version,
-so no self-refresh is needed here.
+so no self-refresh is needed here. Both entrypoints end with
+``forge-plugin-sync --quiet`` (:func:`forge._hook_helpers.run_plugin_sync`),
+because a branch can pin a different forge release than the one this
+checkout's Claude Code plugin is on.
 """
 
 from __future__ import annotations
@@ -29,7 +32,11 @@ import argparse
 import logging
 import sys
 
-from forge._hook_helpers import run_foundation_drift_check, run_hook_extensions
+from forge._hook_helpers import (
+    run_foundation_drift_check,
+    run_hook_extensions,
+    run_plugin_sync,
+)
 from forge.git_utils import configure_cli_logging
 from forge.run_context import is_ci, is_non_interactive
 
@@ -99,6 +106,7 @@ def main(argv: list[str] | None = None) -> int:
     # (#177). Symmetric with post-merge.
     if not is_ci():
         run_hook_extensions("post-checkout")
+        run_plugin_sync("post-checkout")
     return rc
 
 

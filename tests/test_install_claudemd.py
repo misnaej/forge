@@ -1104,7 +1104,7 @@ def test_check_upstream_warns_when_plugin_behind(
         )
     msg = "\n".join(r.getMessage() for r in caplog.records)
     assert "Claude plugin 'forge'" in msg
-    assert "/plugin" in msg
+    assert "forge-plugin-sync" in msg
 
 
 def test_check_upstream_silent_when_in_sync(

@@ -89,6 +89,53 @@ def test_drift_check_logs_hint_on_non_zero_exit_but_returns_zero(
     assert "run `install-forge-claude-md` to sync" in msgs
 
 
+def test_plugin_sync_is_skipped_silently_when_cli_absent(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An older forge-scripts without ``forge-plugin-sync`` costs the hook nothing."""
+    monkeypatch.setattr(_hook_helpers.shutil, "which", lambda _n: None)
+    captured = CapturedCalls()
+    monkeypatch.setattr(
+        _hook_helpers.subprocess,
+        "run",
+        make_fake_run(returncode=1, captured=captured),
+    )
+    with caplog.at_level("INFO"):
+        _hook_helpers.run_plugin_sync("post-merge")
+    assert not caplog.records
+    assert captured.calls == []
+
+
+def test_plugin_sync_runs_the_cli_quietly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The hook asks for ``--quiet`` so an unchanged checkout prints nothing."""
+    monkeypatch.setattr(_hook_helpers.shutil, "which", lambda _n: "/fake/bin")
+    captured = CapturedCalls()
+    monkeypatch.setattr(
+        _hook_helpers.subprocess,
+        "run",
+        make_fake_run(returncode=0, captured=captured),
+    )
+    _hook_helpers.run_plugin_sync("post-checkout")
+    assert captured.calls == [["forge-plugin-sync", "--quiet"]]
+
+
+def test_plugin_sync_failure_warns_but_never_raises(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failing sync must not fail the git operation that triggered the hook."""
+    monkeypatch.setattr(_hook_helpers.shutil, "which", lambda _n: "/fake/bin")
+    monkeypatch.setattr(_hook_helpers.subprocess, "run", make_fake_run(returncode=2))
+    with caplog.at_level("WARNING"):
+        _hook_helpers.run_plugin_sync("post-merge")  # must not raise
+    msgs = "\n".join(r.getMessage() for r in caplog.records)
+    assert "post-merge" in msgs
+    assert "forge-plugin-sync exited 2" in msgs
+
+
 def test_runs_executable_extension(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

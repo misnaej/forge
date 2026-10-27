@@ -20,37 +20,6 @@ if TYPE_CHECKING:
     import pytest
 
 
-def _write_pin(repo_root: Path, ref: str) -> None:
-    """Write a pyproject.toml carrying a forge-scripts pin at *ref*.
-
-    Args:
-        repo_root: Directory to write ``pyproject.toml`` into.
-        ref: The git ref the forge-scripts pin points at.
-    """
-    (repo_root / "pyproject.toml").write_text(
-        "[project.optional-dependencies]\n"
-        f'dev = ["forge-scripts @ git+https://github.com/misnaej/forge.git@{ref}"]\n',
-        encoding="utf-8",
-    )
-
-
-def test_resolve_ref_flag_wins(tmp_path: Path) -> None:
-    """An explicit --ref beats both the pip pin and the default."""
-    _write_pin(tmp_path, "dev")
-    assert ics._resolve_ref(tmp_path, "v9.9.9") == "v9.9.9"
-
-
-def test_resolve_ref_auto_matches_pip_pin(tmp_path: Path) -> None:
-    """With no --ref, the marketplace ref tracks the forge-scripts pip pin."""
-    _write_pin(tmp_path, "dev")
-    assert ics._resolve_ref(tmp_path, None) == "dev"
-
-
-def test_resolve_ref_defaults_to_main(tmp_path: Path) -> None:
-    """No --ref and no pin → 'main'."""
-    assert ics._resolve_ref(tmp_path, None) == "main"
-
-
 def test_load_settings_absent_seeds_scaffold(tmp_path: Path) -> None:
     """A missing settings file seeds the empty-hook scaffold (not bare {}).
 
@@ -70,31 +39,42 @@ def test_load_settings_malformed_is_none(tmp_path: Path) -> None:
     assert ics._load_settings(path) is None
 
 
-def test_merge_preserves_existing_keys() -> None:
-    """Merge keeps other keys, marketplaces, and enabledPlugins entries."""
+def test_merge_turns_shared_forge_off_and_preserves_the_rest() -> None:
+    """Merge drops forge's marketplace, disables forge@forge, keeps the rest."""
     existing: dict[str, object] = {
         "permissions": {"allow": ["x"]},
-        "extraKnownMarketplaces": {"other": {"source": "y"}},
-        "enabledPlugins": {"other@m": True},
+        "extraKnownMarketplaces": {
+            "other": {"source": "y"},
+            "forge": {"source": {"source": "github", "ref": "main"}},
+        },
+        "enabledPlugins": {"other@m": True, "forge@forge": True},
     }
-    merged = ics._merge(existing, "dev")
+    merged = ics._merge(existing)
     assert merged["permissions"] == {"allow": ["x"]}
-    markets = merged["extraKnownMarketplaces"]
-    plugins = merged["enabledPlugins"]
-    assert isinstance(markets, dict)
-    assert isinstance(plugins, dict)
-    assert markets["other"] == {"source": "y"}
-    assert plugins["other@m"] is True
-    assert plugins["forge@forge"] is True
-    assert markets["forge"]["source"]["ref"] == "dev"  # type: ignore[index]
+    assert merged["extraKnownMarketplaces"] == {"other": {"source": "y"}}
+    assert merged["enabledPlugins"] == {"other@m": True, "forge@forge": False}
 
 
-def test_is_current_true_when_block_present_and_ref_matches() -> None:
-    """`_is_current` is True only when the marketplace ref AND enable match."""
-    settings = ics._merge({}, "main")
-    assert ics._is_current(settings, "main") is True
-    assert ics._is_current(settings, "dev") is False  # ref drift
-    assert ics._is_current({}, "main") is False
+def test_merge_drops_marketplaces_key_left_empty() -> None:
+    """A marketplaces map holding only forge's entry is removed whole."""
+    merged = ics._merge({"extraKnownMarketplaces": {"forge": {}}})
+    assert "extraKnownMarketplaces" not in merged
+
+
+def test_is_current_only_when_marketplace_gone_and_plugin_disabled() -> None:
+    """`_is_current` needs both: no forge marketplace and forge@forge false."""
+    assert ics._is_current(ics._merge({})) is True
+    assert ics._is_current({"enabledPlugins": {"forge@forge": True}}) is False
+    assert ics._is_current({}) is False
+    assert (
+        ics._is_current(
+            {
+                "extraKnownMarketplaces": {"forge": {}},
+                "enabledPlugins": {"forge@forge": False},
+            }
+        )
+        is False
+    )
 
 
 def test_main_writes_block_when_absent(
@@ -102,21 +82,21 @@ def test_main_writes_block_when_absent(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """main() creates .claude/settings.json enabling the plugin.
+    """main() creates .claude/settings.json with the shared plugin off.
 
-    MOCK SETUP: get_repo_root pinned to tmp_path (no pyproject → ref main);
-    argv is the bare invocation.
-    EXPECTED BEHAVIOR: the write also points at ``forge-doctor``, where a
-    machine-wide install that overrides this per-repo block is detected.
+    MOCK SETUP: get_repo_root pinned to tmp_path; argv is the bare
+    invocation.
+    EXPECTED BEHAVIOR: the write points at ``forge-plugin-sync``, which
+    installs this checkout's own forge.
     """
     monkeypatch.setattr(ics, "get_repo_root", lambda: tmp_path)
     monkeypatch.setattr(ics.sys, "argv", ["install-forge-claude-settings"])
     caplog.set_level(logging.INFO)
     assert ics.main() == 0
-    assert "forge-doctor" in caplog.text
+    assert "forge-plugin-sync" in caplog.text
     written = json.loads((tmp_path / ".claude" / "settings.json").read_text())
-    assert written["enabledPlugins"]["forge@forge"] is True
-    assert written["extraKnownMarketplaces"]["forge"]["source"]["ref"] == "main"
+    assert written["enabledPlugins"]["forge@forge"] is False
+    assert "extraKnownMarketplaces" not in written
     # Fresh-repo write seeds the empty-hook scaffold too, so a later
     # install-forge-claude-md run does not find a hooks-less file it skips.
     assert written["hooks"] == {"PreToolUse": [], "PostToolUse": []}

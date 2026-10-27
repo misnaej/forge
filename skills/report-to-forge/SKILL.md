@@ -46,8 +46,8 @@ plugin slot at startup and nothing exposes which one; a stale slot runs
 an older agent or skill that still works, which is how a report ends up
 describing behaviour from one version while naming another. State
 plainly: which slot is installed, that the running slot is
-undetermined, and whether the session was restarted since the last
-plugin update. A maintainer can work with "unknown"; they cannot work
+undetermined, and whether the session was restarted since
+`forge-plugin-sync` last changed the install. A maintainer can work with "unknown"; they cannot work
 with a number that is confidently wrong. Why the running slot is
 unknowable: FOUNDATION §11 "Plugin staleness".
 

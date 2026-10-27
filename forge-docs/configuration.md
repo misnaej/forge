@@ -531,21 +531,23 @@ export FORGE_NO_AUTO_REBUILD=1
 > argv via `shlex.split` (never `shell=True`) and never in CI, but treat it as
 > trusted-repo-only config.
 
-## `[tool.forge.plugin_sync]` — plugin-cache freshness gate (self-skipping)
+## `[tool.forge.plugin_sync]` — checkout plugin install gate (self-skipping)
 
 A repo that ships a Claude Code plugin (`.claude-plugin/plugin.json`) runs its
-agents and hooks from Claude Code's **cache**, not from the tree. After a plugin
-release merges, every session keeps the old cache until someone runs
-`/plugin update <plugin>@<marketplace>` and `/reload-plugins` — commands no git
-hook can run. The `plugin_sync` step compares the cached plugin's version with
-the manifest's and names those commands when the cache lags. It self-skips when
-the repo ships no plugin, when the plugin is not installed locally, and in
-CI (FOUNDATION §15) — deliberately not any non-interactive run, since an
-agent-driven session is exactly the context that reads this cache.
+agents and hooks from Claude Code's plugin install, not from the tree. Each
+checkout installs its own copy of the release its manifest names with
+`forge-plugin-sync`, from a per-version marketplace (`forge-vX-Y-Z`); the
+`post-merge` / `post-checkout` hooks and `install-forge-bootstrap` normally run
+it on their own. The `plugin_sync` step judges whether **this checkout has its
+own install of the release its manifest names**, and when it does not, names
+the remedy: `forge-plugin-sync`, then restart the session. It self-skips when
+the repo ships no plugin, when Claude Code is not installed, and in CI
+(FOUNDATION §15) — deliberately not any non-interactive run, since an
+agent-driven session is exactly the context that loads this install.
 
 | Key | Default | Meaning | Set it when |
 |---|---|---|---|
-| `blocking` | `false` | A lagging cache fails the commit (`true`) or renders as a WARN (`false`). | Your sessions must run the plugin the tree declares. Forge sets `true` — it ships the plugin it runs. |
+| `blocking` | `false` | A checkout without its own install of the release fails the commit (`true`) or renders as a WARN (`false`). | Your sessions must run the plugin the tree declares and your manifest never names an unpublished release. Forge keeps `false`: under rolling-next its release commits name a version no sync can fetch yet. |
 
 `env_sync` (above) carries two sibling checks for the other install surfaces:
 the editable install on `PATH` must be **this** clone (parallel dev clones each

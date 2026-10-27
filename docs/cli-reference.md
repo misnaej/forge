@@ -561,6 +561,21 @@ options:
   -h, --help            show this help message and exit
 ```
 
+## forge-plugin-sync
+
+```text
+usage: forge-plugin-sync [-h] [--check] [--quiet]
+
+Install this checkout's own copy of its forge release as its Claude Code
+plugin, from a per-version marketplace, so repos on different releases never
+overwrite each other.
+
+options:
+  -h, --help  show this help message and exit
+  --check     report only; exit 1 when this checkout is not on its release
+  --quiet     print only changes and failures (for git hooks)
+```
+
 ## forge-post-checkout
 
 ```text
@@ -943,8 +958,8 @@ options:
   --check      Dry-run. Each step that supports --check runs in check mode;
                others just print their intent.
   --skip SLUG  Skip a step by slug. Repeatable. Known slugs: githooks, claude-
-               md, claude-settings, labels, readme-badges, api-digest, cli-
-               reference, c4, audit-deps, doctor, config.
+               md, claude-settings, plugin, labels, readme-badges, api-digest,
+               cli-reference, c4, audit-deps, doctor, config.
   --strict     Abort on the first failed step. Default is continue-on-fail.
 ```
 
@@ -975,16 +990,14 @@ options:
 ## install-forge-claude-settings
 
 ```text
-usage: install-forge-claude-settings [-h] [--ref REF] [--check]
+usage: install-forge-claude-settings [-h] [--check]
 
-Enable the forge Claude Code plugin in this repo by writing the marketplace +
-enabledPlugins block to .claude/settings.json (per-repo, never global).
-Idempotent and merge-preserving.
+Turn off the shared forge@forge plugin and marketplace in this repo's
+.claude/settings.json; each checkout installs its own release with forge-
+plugin-sync. Idempotent and merge-preserving.
 
 options:
   -h, --help  show this help message and exit
-  --ref REF   Marketplace ref (branch/tag) to pin. Defaults to the forge-
-              scripts pip-pin ref in pyproject.toml, else 'main'.
   --check     Verify the block is present without writing (exit 1 on drift).
 ```
 

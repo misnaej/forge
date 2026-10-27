@@ -82,7 +82,7 @@ def test_runs_hook_extensions_on_non_tty_local_checkout(
     calls: list[str] = []
     monkeypatch.setattr(post_checkout, "run_hook_extensions", calls.append)
     assert post_checkout.main(["prev", "new", "1"]) == 0
-    assert captured.calls == []
+    assert captured.calls == [["forge-plugin-sync", "--quiet"]]
     assert calls == ["post-checkout"]
 
 

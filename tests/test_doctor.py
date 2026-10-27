@@ -18,7 +18,7 @@ from unittest.mock import patch
 import pytest
 
 from forge import doctor, git_utils, precommit, version_surfaces
-from tests.conftest import make_fake_run
+from tests.conftest import make_fake_run, manifest_repo, write_install
 
 
 if TYPE_CHECKING:
@@ -310,7 +310,7 @@ def test_version_skew_aligned_normalizes_dev_suffix(
     assert not results[0].info
     assert "aligned at v2.23.1" in results[0].detail
     assert "plugin not compared" in results[0].detail
-    assert "version_skew:plugin_cache" in results[0].detail
+    assert "plugin:checkout" in results[0].detail
 
 
 def test_version_skew_flags_lagging_surface_as_advisory(
@@ -431,7 +431,7 @@ def test_plugin_cache_skew_flags_lagging_cache(
     assert all(r.info for r in results)  # advisory only — never sways exit code
     assert "2.22.0" in results[0].detail
     assert "2.23.1" in results[0].detail
-    assert "/plugin update forge@forge" in results[0].detail
+    assert "forge-plugin-sync" in results[0].detail
 
 
 def test_plugin_cache_skew_empty_when_not_behind(
@@ -520,7 +520,7 @@ def test_plugin_cache_skew_names_stale_areas_for_a_consumer(
     detail = results[0].detail
     assert "agents, claude-hooks" in detail
     assert "v6.11.0" in detail
-    assert "~/.claude/plugins/cache/forge/" in detail
+    assert "forge-plugin-sync" in detail
     assert "/plugin update forge@forge (then /reload-plugins)" not in detail
 
 
@@ -548,7 +548,7 @@ def test_plugin_cache_skew_reports_unknown_content_with_fallback(
     assert [r.name for r in results] == ["version_skew:plugin_cache", "plugin:own_copy"]
     assert all(r.info for r in results)
     assert "unknown" in results[0].detail
-    assert "~/.claude/plugins/cache/forge/" in results[0].detail
+    assert "forge-plugin-sync" in results[0].detail
 
 
 def test_plugin_manifests_do_not_echo_crafted_names(tmp_path: Path) -> None:
@@ -606,8 +606,8 @@ def test_plugin_cache_skew_explains_a_source_mismatch(
     detail = results[0].detail
     assert "tracks main" in detail
     assert "cannot fix" in detail
-    assert "claude plugin marketplace remove forge" in detail
-    assert "claude plugin marketplace add misnaej/forge#v9.0.0" in detail
+    assert "forge-plugin-sync" in detail
+    assert "no other repo on this machine can re-point" in detail
 
 
 # --- _check_global_install() ---------------------------------------------
@@ -967,3 +967,37 @@ def test_surface_pin_revision_empty_when_no_mismatch(
     monkeypatch.setattr(doctor, "pin_revision_mismatch", lambda _root: None)
 
     assert doctor._surface_pin_revision(tmp_path) == []
+
+
+def test_check_checkout_plugin_passes_when_installed(
+    tmp_path: Path, claude_home: Path
+) -> None:
+    """A recorded install of the pinned release for this checkout is a pass."""
+    repo = manifest_repo(tmp_path, "1.2.3")
+    write_install(claude_home, repo, "1.2.3")
+
+    results = doctor._check_checkout_plugin(repo)
+
+    assert [(r.name, r.passed) for r in results] == [("plugin:checkout", True)]
+
+
+def test_check_checkout_plugin_advises_forge_plugin_sync_when_missing(
+    tmp_path: Path,
+) -> None:
+    """No install for the checkout is an advisory (not a failure) naming the fix."""
+    repo = manifest_repo(tmp_path, "1.2.3")
+
+    results = doctor._check_checkout_plugin(repo)
+
+    assert len(results) == 1
+    assert results[0].name == "plugin:checkout"
+    assert results[0].passed is False
+    assert results[0].info is True
+    assert "forge-plugin-sync" in results[0].detail
+
+
+def test_check_checkout_plugin_is_silent_without_a_pinned_release(
+    tmp_path: Path,
+) -> None:
+    """No manifest version and no tag pin: nothing to judge, nothing reported."""
+    assert doctor._check_checkout_plugin(tmp_path) == []

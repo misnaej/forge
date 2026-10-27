@@ -257,6 +257,67 @@ def claude_home(
     return claude_dir
 
 
+def manifest_repo(tmp_path: Path, version: str) -> Path:
+    """Make a checkout whose plugin manifest names *version*.
+
+    Args:
+        tmp_path: Pytest temp directory.
+        version: Manifest ``version``.
+
+    Returns:
+        The checkout root, ``<tmp_path>/repo``.
+    """
+    repo = tmp_path / "repo"
+    (repo / ".claude-plugin").mkdir(parents=True)
+    (repo / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "forge", "version": version}), encoding="utf-8"
+    )
+    return repo
+
+
+def write_install(
+    claude_home: Path,
+    repo: Path | None,
+    version: str,
+    *,
+    key: str | None = None,
+    scope: str = "local",
+) -> Path:
+    """Append one forge install record to the fake ``installed_plugins.json``.
+
+    Writes the record the way Claude Code does and creates its install
+    directory, because a record whose directory is missing is ignored by
+    the readers.
+
+    Args:
+        claude_home: The fake ``~/.claude`` from the ``claude_home`` fixture.
+        repo: The checkout the record belongs to; ``None`` for a user-scope
+            record, which carries no ``projectPath``.
+        version: The version the record names.
+        key: The plugin key to file it under; defaults to the per-version
+            marketplace key for *version*.
+        scope: ``local``, ``project`` or ``user``.
+
+    Returns:
+        The install directory the record names.
+    """
+    key = key or f"forge@forge-v{version.replace('.', '-')}"
+    install_dir = claude_home / "plugins" / "cache" / key / version
+    install_dir.mkdir(parents=True, exist_ok=True)
+    path = claude_home / "plugins" / "installed_plugins.json"
+    data = (
+        json.loads(path.read_text(encoding="utf-8"))
+        if path.is_file()
+        else {"version": 2, "plugins": {}}
+    )
+    record = {"scope": scope, "installPath": str(install_dir), "version": version}
+    if repo is not None:
+        record["projectPath"] = str(repo)
+    data["plugins"].setdefault(key, []).append(record)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return install_dir
+
+
 @pytest.fixture(autouse=True)
 def _git_identity(monkeypatch: pytest.MonkeyPatch) -> None:
     """Give every test a git identity in its own environment.
