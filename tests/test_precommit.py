@@ -37,7 +37,6 @@ from forge import (
     precommit,
     regen_docs,
     verify_test_naming,
-    version_surfaces,
 )
 from forge.audit import common as audit_common
 from forge.pip_audit_json import AuditRun
@@ -53,6 +52,7 @@ from tests.conftest import (
     init_single_track_repo,
     log_body,
     timing_log,
+    write_install,
 )
 
 
@@ -3955,169 +3955,116 @@ def test_step_plugin_sync_does_not_skip_when_non_interactive_but_not_ci(
     interactive distinction applies here too. A Claude Code agent
     session has no controlling terminal, so ``is_non_interactive()``
     reads True unconditionally there even though it is not CI — the
-    case the cache-freshness check most needs to run in, since the
-    cache it guards is what the agent session itself reads.
+    case the install-currency check most needs to run in, since the
+    install it guards is what the agent session itself reads.
 
     SCENARIO: is_non_interactive→True (simulating an agent session's
-    absent tty) but is_ci→False, with no cached plugin install — the
-    precheck must not treat this as CI.
+    absent tty) but is_ci→False, with ``claude`` installed and no install
+    recorded for the checkout — the precheck must not treat this as CI.
     MOCK SETUP: is_ci stubbed to False; is_non_interactive stubbed to
-    True; a plugin manifest is written so the "no plugin shipped" skip
-    doesn't fire first; find_plugin_cache/plugin_cache_version stubbed to
-    None so the step falls through to the "not cached" skip rather than
-    the CI skip.
-    EXPECTED BEHAVIOR: the step proceeds past the CI precheck — its
-    output is not the "(CI — skipped)" text, even though it still skips
-    for the unrelated reason of no cached install.
+    True; ``claude`` found on PATH; a plugin manifest is written so the
+    "no plugin shipped" skip doesn't fire first.
+    EXPECTED BEHAVIOR: the step proceeds past the CI precheck and reaches
+    its verdict — a non-blocking WARN, not the "(CI — skipped)" text.
     """
     _write_plugin_manifest(tmp_path, "2.9.0")
     monkeypatch.setattr(precommit, "is_ci", lambda: False)
     monkeypatch.setattr(precommit, "is_non_interactive", lambda: True)
-    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: None)
-    monkeypatch.setattr(version_surfaces, "plugin_cache_version", lambda _root: None)
+    monkeypatch.setattr(precommit.shutil, "which", lambda _n: "/bin/claude")
     result = precommit.step_plugin_sync(tmp_path)
-    assert result.passed
-    assert result.skipped
+    assert not result.skipped
+    assert not result.passed
+    assert result.non_blocking
     assert "(CI — skipped)" not in result.output
-    assert "not installed" in result.output
 
 
-def test_step_plugin_sync_skips_when_not_cached(
+def test_step_plugin_sync_skips_when_claude_not_installed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No cached install of the plugin → skip mentioning it isn't installed."""
+    """Without Claude Code there is no plugin to be current or stale."""
     _write_plugin_manifest(tmp_path, "2.9.0")
     monkeypatch.setattr(precommit, "is_ci", lambda: False)
-    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: None)
-    monkeypatch.setattr(version_surfaces, "plugin_cache_version", lambda _root: None)
+    monkeypatch.setattr(precommit.shutil, "which", lambda _n: None)
     result = precommit.step_plugin_sync(tmp_path)
     assert result.passed
     assert result.skipped
     assert "not installed" in result.output
 
 
-def test_step_plugin_sync_passes_when_cache_matches_manifest(
+def test_step_plugin_sync_passes_when_checkout_has_its_own_install(
     tmp_path: Path,
+    claude_home: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A cache version equal to the manifest's is current — no failure."""
-    _write_plugin_manifest(tmp_path, "2.9.0")
+    """A recorded install of the manifest's release for this checkout passes."""
+    repo = tmp_path / "repo"
+    _write_plugin_manifest(repo, "2.9.0")
+    write_install(claude_home, repo, "2.9.0")
     monkeypatch.setattr(precommit, "is_ci", lambda: False)
-    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: tmp_path)
-    monkeypatch.setattr(version_surfaces, "plugin_cache_version", lambda _root: "2.9.0")
-    result = precommit.step_plugin_sync(tmp_path)
+    monkeypatch.setattr(precommit.shutil, "which", lambda _n: "/bin/claude")
+    result = precommit.step_plugin_sync(repo)
     assert result.passed
     assert not result.skipped
-    assert "current" in result.output
-
-
-def test_step_plugin_sync_passes_when_cache_ahead_of_manifest(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A cache version ahead of the manifest is also current — no failure."""
-    _write_plugin_manifest(tmp_path, "2.9.0")
-    monkeypatch.setattr(precommit, "is_ci", lambda: False)
-    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: tmp_path)
-    monkeypatch.setattr(
-        version_surfaces, "plugin_cache_version", lambda _root: "2.10.0"
-    )
-    result = precommit.step_plugin_sync(tmp_path)
-    assert result.passed
+    assert "2.9.0" in result.output
 
 
 def test_step_plugin_sync_names_an_unparsed_verdict_truthfully(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An unparseable cached version passes but is never called "current".
+    """A manifest version that is no release passes but is never called a match.
 
-    MOCK SETUP: manifest 2.9.0; the cached version reads ``not-a-version``.
-    EXPECTED BEHAVIOR: passes (only "behind" fails), and the line names
-    the ``unparsed`` verdict instead of claiming the cache is current.
+    MOCK SETUP: manifest version ``banana``; ``claude`` on PATH.
+    EXPECTED BEHAVIOR: passes (nothing can be compared), and the line says
+    the version was not compared instead of claiming a plugin match.
     """
-    _write_plugin_manifest(tmp_path, "2.9.0")
+    _write_plugin_manifest(tmp_path, "banana")
     monkeypatch.setattr(precommit, "is_ci", lambda: False)
-    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: tmp_path)
-    monkeypatch.setattr(
-        version_surfaces, "plugin_cache_version", lambda _root: "not-a-version"
-    )
+    monkeypatch.setattr(precommit.shutil, "which", lambda _n: "/bin/claude")
     result = precommit.step_plugin_sync(tmp_path)
     assert result.passed
-    assert "not compared (unparsed)" in result.output
-    assert "is current" not in result.output
+    assert "not compared" in result.output
+    assert "is this checkout's plugin" not in result.output
 
 
-def test_step_plugin_sync_warns_when_behind_and_unconfigured(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Lagging cache with no [tool.forge.plugin_sync] config is WARN, not block."""
-    _write_plugin_manifest(tmp_path, "2.9.0")
-    monkeypatch.setattr(precommit, "is_ci", lambda: False)
-    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: tmp_path)
-    monkeypatch.setattr(version_surfaces, "plugin_cache_version", lambda _root: "2.8.0")
-    result = precommit.step_plugin_sync(tmp_path)
-    assert not result.passed
-    assert result.non_blocking
-    assert "⚠️" in result.output
-
-
-def test_step_plugin_sync_judges_this_repos_own_install(
+@pytest.mark.parametrize(
+    "other_repo_has_install", [False, True], ids=["no-record", "only-another-repos"]
+)
+def test_step_plugin_sync_warns_when_checkout_has_no_install(
     tmp_path: Path,
     claude_home: Path,
     monkeypatch: pytest.MonkeyPatch,
+    *,
+    other_repo_has_install: bool,
 ) -> None:
-    """A repo's own install record decides the verdict, not the newest copy.
+    """No install for this checkout is WARN, however many other repos have one.
 
-    SCENARIO: another repo on the machine fetched the current release, so
-    the newest cached copy matches the manifest while this repo still
-    loads an older one.
-    MOCK SETUP: manifest 2.9.0; the newest-copy lookup answers 2.9.0; the
-    install record for this repo names a 2.8.0 copy.
-    EXPECTED BEHAVIOR: a WARN naming 2.8.0 — the repo is behind.
+    Args:
+        other_repo_has_install: Whether another repo has an install record.
     """
     repo = tmp_path / "repo"
     _write_plugin_manifest(repo, "2.9.0")
-    own = tmp_path / "cache" / "2.8.0"
-    _write_plugin_manifest(own, "2.8.0")
-    (claude_home / "plugins").mkdir(parents=True)
-    (claude_home / "plugins" / "installed_plugins.json").write_text(
-        json.dumps(
-            {
-                "plugins": {
-                    "forge@forge": [
-                        {
-                            "scope": "project",
-                            "projectPath": str(repo),
-                            "installPath": str(own),
-                            "version": "2.8.0",
-                        }
-                    ]
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
+    if other_repo_has_install:
+        write_install(claude_home, tmp_path / "other", "2.9.0")
     monkeypatch.setattr(precommit, "is_ci", lambda: False)
-    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: repo)
-    monkeypatch.setattr(version_surfaces, "plugin_cache_version", lambda _root: "2.9.0")
+    monkeypatch.setattr(precommit.shutil, "which", lambda _n: "/bin/claude")
     result = precommit.step_plugin_sync(repo)
     assert not result.passed
-    assert "2.8.0" in result.output
+    assert result.non_blocking
+    assert "⚠️" in result.output
+    assert "forge-plugin-sync" in result.output
 
 
 def test_step_plugin_sync_blocks_when_behind_and_configured_blocking(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """[tool.forge.plugin_sync].blocking = true escalates a lagging cache to a block."""
+    """A ``[tool.forge.plugin_sync].blocking = true`` config escalates to a block."""
     _write_plugin_manifest(tmp_path, "2.9.0")
     _write_pyproject(tmp_path, "[tool.forge.plugin_sync]\nblocking = true\n")
     monkeypatch.setattr(precommit, "is_ci", lambda: False)
-    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: tmp_path)
-    monkeypatch.setattr(version_surfaces, "plugin_cache_version", lambda _root: "2.8.0")
+    monkeypatch.setattr(precommit.shutil, "which", lambda _n: "/bin/claude")
     result = precommit.step_plugin_sync(tmp_path)
     assert not result.passed
     assert not result.non_blocking
@@ -4195,20 +4142,19 @@ def test_step_plugin_sync_skips_when_emergency_armed(
 ) -> None:
     """An armed emergency sentinel skips plugin_sync where it would otherwise block.
 
-    SCENARIO: the same lagging-cache-plus-blocking setup as
+    SCENARIO: the same missing-install-plus-blocking setup as
     ``test_step_plugin_sync_blocks_when_behind_and_configured_blocking``,
     plus a freshly armed sentinel — proving the skip fires on the gate
     that would otherwise hard-fail, not one that already passes.
-    MOCK SETUP: is_ci→False; manifest at 2.9.0; [tool.forge.plugin_sync]
-    blocking=true; cache reports 2.8.0 (behind); a real armed sentinel
-    written via ``emergency.write_state``.
+    MOCK SETUP: is_ci→False; ``claude`` on PATH; manifest at 2.9.0;
+    [tool.forge.plugin_sync] blocking=true; no install recorded for the
+    checkout; a real armed sentinel written via ``emergency.write_state``.
     EXPECTED BEHAVIOR: passed True, skipped True, ledger number in output.
     """
     _write_plugin_manifest(tmp_path, "2.9.0")
     _write_pyproject(tmp_path, "[tool.forge.plugin_sync]\nblocking = true\n")
     monkeypatch.setattr(precommit, "is_ci", lambda: False)
-    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: tmp_path)
-    monkeypatch.setattr(version_surfaces, "plugin_cache_version", lambda _root: "2.8.0")
+    monkeypatch.setattr(precommit.shutil, "which", lambda _n: "/bin/claude")
     _write_emergency_sentinel(tmp_path, hours=1)
 
     result = precommit.step_plugin_sync(tmp_path)
@@ -4224,7 +4170,7 @@ def test_step_plugin_sync_skips_when_emergency_spent_but_unexpired(
 ) -> None:
     """A spent-but-unexpired sentinel still stands plugin_sync down.
 
-    SCENARIO: the same lagging-cache-plus-blocking setup as
+    SCENARIO: the same missing-install-plus-blocking setup as
     ``test_step_plugin_sync_skips_when_emergency_armed``, but the
     sentinel's one allowed publication has already been consumed
     (``spent=True``) while it is still unexpired — the exact shape a
@@ -4233,16 +4179,16 @@ def test_step_plugin_sync_skips_when_emergency_spent_but_unexpired(
     before it, a spent sentinel read as "not armed" and this fixture
     would fail closed with ⛔, defeating the emergency for the
     conflicts and follow-up commits that arrive after publication.
-    MOCK SETUP: is_ci→False; manifest at 2.9.0; [tool.forge.plugin_sync]
-    blocking=true; cache reports 2.8.0 (behind); a real spent-but-
-    unexpired sentinel written via ``emergency.write_state``.
+    MOCK SETUP: is_ci→False; ``claude`` on PATH; manifest at 2.9.0;
+    [tool.forge.plugin_sync] blocking=true; no install recorded for the
+    checkout; a real spent-but-unexpired sentinel written via
+    ``emergency.write_state``.
     EXPECTED BEHAVIOR: passed True, skipped True, ledger number in output.
     """
     _write_plugin_manifest(tmp_path, "2.9.0")
     _write_pyproject(tmp_path, "[tool.forge.plugin_sync]\nblocking = true\n")
     monkeypatch.setattr(precommit, "is_ci", lambda: False)
-    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: tmp_path)
-    monkeypatch.setattr(version_surfaces, "plugin_cache_version", lambda _root: "2.8.0")
+    monkeypatch.setattr(precommit.shutil, "which", lambda _n: "/bin/claude")
     _write_emergency_sentinel(tmp_path, hours=1, spent=True)
 
     result = precommit.step_plugin_sync(tmp_path)

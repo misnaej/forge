@@ -22,6 +22,7 @@ def test_steps_in_expected_order() -> None:
         "githooks",
         "claude-md",
         "claude-settings",
+        "plugin",
         "labels",
         "readme-badges",
         "api-digest",
@@ -197,8 +198,8 @@ def test_main_continue_on_fail_runs_every_step(
     argv = ["install-forge-bootstrap", "--skip", "labels"]
     with patch.object(install_bootstrap.sys, "argv", argv):
         rc = install_bootstrap.main()
-    # Nine non-gated steps (incl. config), each fails with rc=1.
-    assert rc == 9
+    # Ten non-gated steps (incl. config and plugin), each fails with rc=1.
+    assert rc == 10
 
 
 def test_doctor_and_audit_deps_skip_in_ci(
@@ -207,7 +208,7 @@ def test_doctor_and_audit_deps_skip_in_ci(
 ) -> None:
     """In a non-interactive context, doctor + audit-deps self-skip cleanly.
 
-    Asserts: the other four non-gated steps still execute, doctor and
+    Asserts: the non-gated steps still execute, doctor and
     audit-deps CLIs are absent from the captured subprocess calls, and
     the failure count reflects only the non-gated steps. The bootstrap
     invocation succeeds without ``--skip doctor --skip audit-deps``
@@ -226,9 +227,10 @@ def test_doctor_and_audit_deps_skip_in_ci(
     argv = ["install-forge-bootstrap", "--skip", "labels"]
     with patch.object(install_bootstrap.sys, "argv", argv):
         rc = install_bootstrap.main()
-    # Six failing steps: githooks, claude-md, claude-settings, readme-badges,
-    # api-digest, cli-reference. `doctor` + `audit-deps` self-skip (CI gate).
-    assert rc == 6
+    # Seven failing steps: githooks, claude-md, claude-settings, plugin,
+    # readme-badges, api-digest, cli-reference.
+    # `doctor` + `audit-deps` self-skip (CI gate).
+    assert rc == 7
     invoked_clis = {call[0] for call in captured.calls}
     assert "forge-doctor" not in invoked_clis
     assert "forge-audit-deps" not in invoked_clis

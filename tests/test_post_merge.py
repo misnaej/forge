@@ -81,7 +81,7 @@ def test_runs_hook_extensions_on_non_tty_local_pull(
     calls: list[str] = []
     monkeypatch.setattr(post_merge, "run_hook_extensions", calls.append)
     assert post_merge.main([]) == 0
-    assert captured.calls == []
+    assert captured.calls == [["forge-plugin-sync", "--quiet"]]
     assert calls == ["post-merge"]
 
 

@@ -884,13 +884,14 @@ def _render_channel_warning(
 
 
 def _append_channel_hint(warning: str, settings_file: Path) -> str:
-    """Append a channel-switch hint to *warning* when a marketplace ref is set.
+    """Append a shared-marketplace hint to *warning* when a marketplace ref is set.
 
-    The hint links the symptom ("plugin behind") to its likely cause
-    (the upstream Claude Code marketplace ref-cache bug) by pointing
-    at the workaround in ``docs/claude-code-plugin.md``. Consumers
-    without an explicit channel ``ref`` cannot be hitting the
-    cache-freeze symptom, so the hint is suppressed for them.
+    The hint links the symptom ("plugin behind") to its likely cause:
+    the shared ``forge`` marketplace is one registration per machine,
+    so its ref may be another repo's. ``forge-plugin-sync`` installs
+    from a per-version marketplace instead. Consumers without an
+    explicit ``ref`` are not on that shared registration, so the hint
+    is suppressed for them.
 
     Args:
         warning: The base plugin-behind warning text already composed
@@ -907,10 +908,11 @@ def _append_channel_hint(warning: str, settings_file: Path) -> str:
     return (
         f"{warning}\n\n"
         f"    Configured marketplace ref: '{configured_channel}'. "
-        "If the plugin version stays pinned after `/plugin update "
-        "forge@forge`, this is likely the marketplace ref-cache "
-        "freeze — see the channel-switch section in "
-        "`docs/claude-code-plugin.md` for the manual workaround."
+        "The shared `forge` marketplace is one registration per machine, "
+        "so updating it can fetch another repo's release. Run "
+        "`forge-plugin-sync` instead: it installs this checkout's own "
+        "copy from a marketplace named after its release (see "
+        "`docs/claude-code-plugin.md`)."
     )
 
 
@@ -931,10 +933,8 @@ def check_upstream(
 
     When the consumer has an explicit marketplace ``ref`` configured
     in ``~/.claude/settings.json`` and the plugin warning fires, an
-    extra line points at the channel-switch workaround documented in
-    ``docs/claude-code-plugin.md`` — the symptom (plugin behind)
-    matches the upstream Claude Code marketplace ref-cache bug whose
-    workaround consumers otherwise have to discover by hand.
+    extra line explains that the shared ``forge`` marketplace may track
+    another repo's ref and points at ``forge-plugin-sync``.
 
     Throttled to once per ``cache_ttl_hours`` via
     ``~/.cache/forge/upstream_check.json``. Network / gh-auth failures
@@ -993,9 +993,8 @@ def check_upstream(
     upgrade_main = "forge-upgrade --apply --channel main"
     upgrade_dev = "forge-upgrade --apply --channel dev"
     plugin_upgrade = (
-        "run `/plugin update forge@forge`, then `/reload-plugins` "
-        "(or restart the session via Cmd+R / new conversation) so the "
-        "new agents register. Monitor changes still need a full restart."
+        "run `forge-plugin-sync`, then restart the Claude Code session "
+        "so the new agents, skills and hooks load."
     )
 
     if forge_scripts_version:

@@ -137,6 +137,11 @@ STEPS: tuple[Step, ...] = (
         cli="install-forge-claude-settings",
         supports_check=True,
     ),
+    # After claude-settings: that step turns the shared forge@forge plugin
+    # off, which must happen before this checkout gets its own install.
+    # Ungated: the CLI skips itself in CI and when `claude` is absent, and
+    # an agent session (no tty) is exactly where it must still run.
+    Step(slug="plugin", cli="forge-plugin-sync", supports_check=True),
     Step(slug="labels", cli="install-forge-labels", gate=_gate_labels),
     Step(
         slug="readme-badges",

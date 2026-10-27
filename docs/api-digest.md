@@ -15,6 +15,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 - `run_foundation_drift_check(hook_name: str) -> int` — Run ``install-forge-claude-md --check --quiet``.
 - `run_hook_extensions(hook_name: str) -> None` — Run consumer extension scripts under ``.githooks/<hook_name>.d/``.
+- `run_plugin_sync(hook_name: str) -> None` — Run ``forge-plugin-sync --quiet`` so this checkout keeps its release.
 
 ## `forge.agent_profile`
 
@@ -471,6 +472,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_check_gh() -> list[CheckResult]` _(internal)_ — Check `gh` is installed and authenticated.
 - `_validate_plugin_name(name: str) -> str` _(internal)_ — Argparse ``type`` for ``--plugin-name`` — reject a cache-escaping value.
 - `_check_plugin_install(plugin_name: str) -> CheckResult` _(internal)_ — Verify Claude Code has installed the named plugin locally.
+- `_check_checkout_plugin(repo_root: Path) -> list[CheckResult]` _(internal)_ — Report whether this checkout has its own install of its forge release.
 - `_check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]` _(internal)_ — Report a Claude Code plugin cache lagging what should be loaded.
 - `_stale_cache_advisory(status: PluginCacheStatus) -> CheckResult` _(internal)_ — Wrap a ``"stale-content"`` verdict as an advisory naming the harm.
 - `_content_unknown_advisory(status: PluginCacheStatus) -> CheckResult` _(internal)_ — Wrap a ``"content-unknown"`` verdict as an advisory saying what to check.
@@ -837,12 +839,11 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 ## `forge.install_claude_settings`
 
-> _install-forge-claude-settings — enable the forge plugin per repo._
+> _install-forge-claude-settings — keep the shared forge plugin off in this repo._
 
-- `_resolve_ref(repo_root: Path, cli_ref: str | None) -> str` _(internal)_ — Resolve the marketplace ref: ``--ref`` → pip-pin ref → ``"main"``.
 - `_load_settings(path: Path) -> dict[str, object] | None` _(internal)_ — Return the parsed ``.claude/settings.json``.
-- `_is_current(settings: dict[str, object], ref: str) -> bool` _(internal)_ — Return True when the forge marketplace (at *ref*) and plugin enable are set.
-- `_merge(settings: dict[str, object], ref: str) -> dict[str, object]` _(internal)_ — Return *settings* with forge's marketplace + plugin enable merged in.
+- `_is_current(settings: dict[str, object]) -> bool` _(internal)_ — Return True when the shared forge marketplace and plugin are off.
+- `_merge(settings: dict[str, object]) -> dict[str, object]` _(internal)_ — Return *settings* with the shared forge marketplace and plugin turned off.
 - `main() -> int` — CLI entry point.
 
 ## `forge.install_claudemd`
@@ -872,7 +873,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_fetch_upstream_channel_tags() -> ChannelTags` _(internal)_ — Query GitHub for the latest tag on each forge release channel.
 - `_is_behind(installed: str | None, latest: str | None) -> bool` _(internal)_ — Return ``True`` when *installed* is strictly older than *latest*.
 - `_render_channel_warning(*, installed: str, subject: str, tags: ChannelTags, upgrade_hint_main: str, upgrade_hint_dev: str) -> str | None` _(internal)_ — Build the channel-aware warning text, or ``None`` when not behind.
-- `_append_channel_hint(warning: str, settings_file: Path) -> str` _(internal)_ — Append a channel-switch hint to *warning* when a marketplace ref is set.
+- `_append_channel_hint(warning: str, settings_file: Path) -> str` _(internal)_ — Append a shared-marketplace hint to *warning* when a marketplace ref is set.
 - `check_upstream(*, plugins_file: Path | None = None, settings_file: Path | None = None, cache_ttl_hours: int = _UPSTREAM_CACHE_TTL_HOURS_DEFAULT, fetch: Callable[[], ChannelTags] = _fetch_upstream_channel_tags) -> None` — Warn (only) when the installed forge is behind either release channel.
 - `warn_claudemd_missing_include(claudemd_path: Path) -> None` — Log a warning when ``CLAUDE.md`` lacks the ``@FOUNDATION.md`` include.
 - `migrate_inline_block(claudemd_path: Path) -> bool` — Convert a v1.1.2-style inline-block ``CLAUDE.md`` to the split layout.
@@ -1127,6 +1128,23 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `git_merge_probe(root: Path) -> Callable[[str, str], bool | None]` — Return a merge probe over *root*'s object store.
 - `fetch_pr_heads(root: Path, prs: Sequence[OpenPR], report: Report) -> list[OpenPR]` — Fetch each PR's head commit so it can be probed; drop the failures.
 
+## `forge.plugin_sync`
+
+> _forge-plugin-sync — give this checkout its own install of its forge release._
+
+- `marketplace_dir(name: str) -> Path` — Return the shared directory holding marketplace *name*.
+- `marketplace_manifest(version: str, commit: str) -> dict[str, object]` — Return the ``marketplace.json`` content for forge *version*.
+- `write_marketplace(version: str, commit: str) -> Path` — Write the per-version marketplace and return its directory.
+- `resolve_commit(version: str) -> str | None` — Ask GitHub which commit release tag ``v<version>`` points at.
+- `_printable(text: str) -> str` _(internal)_ — Return *text* with control characters escaped, capped in length.
+- `_claude(args: list[str], cwd: Path) -> tuple[bool, str]` _(internal)_ — Run ``claude plugin <args> --json`` in *cwd*.
+- `_refusal(root: Path) -> str | None` _(internal)_ — Name a setup this command must not install alongside, if any.
+- `_run_install_steps(root: Path, directory: Path, name: str) -> bool` _(internal)_ — Register the per-version marketplace and install the plugin from it.
+- `_remove_stale_installs(root: Path, name: str) -> None` _(internal)_ — Uninstall this checkout's older local forge installs.
+- `_install(root: Path, version: str, name: str) -> int` _(internal)_ — Write the release marketplace, install it, and verify the result.
+- `sync(root: Path, *, check: bool = False, quiet: bool = False) -> int` — Bring *root*'s own forge plugin install onto its target release.
+- `main(argv: list[str] | None = None) -> int` — Parse arguments and run :func:`sync` on the current repo.
+
 ## `forge.post_checkout`
 
 > _forge-post-checkout — runs forge's managed post-checkout git-hook logic._
@@ -1339,7 +1357,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_env_sync_precheck(repo_root: Path) -> StepResult | None` _(internal)_ — Return the result that ends ``env_sync`` early, or ``None`` to continue.
 - `_emergency_skip(repo_root: Path, step_name: str) -> StepResult | None` _(internal)_ — Stand this step down while an emergency sentinel is armed.
 - `step_env_sync(repo_root: Path) -> StepResult` — Fail fast when the local install is stale vs the repo's declared CLIs.
-- `step_plugin_sync(repo_root: Path) -> StepResult` — Block when the cached Claude Code plugin is older than the repo's manifest.
+- `_plugin_sync_skip(repo_root: Path) -> StepResult | None` _(internal)_ — Return the skipped ``plugin_sync`` result when the gate does not apply.
+- `step_plugin_sync(repo_root: Path) -> StepResult` — Flag a checkout whose own forge plugin install is not its release.
 - `step_ruff(repo_root: Path) -> StepResult` — Run ``fix-forge-ruff`` — owns the ruff phase end-to-end.
 - `step_docstrings(repo_root: Path) -> StepResult` — Run ``verify-forge-docstrings`` over the resolved scope.
 - `step_docstring_coverage(repo_root: Path) -> StepResult` — Run ``verify-forge-docstring-coverage`` — full-codebase % reporter.
@@ -1911,6 +1930,12 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `class PluginInstall` — One install record from ``installed_plugins.json``.
 - `class PluginInstalls` — Which installed copies of a plugin bear on one repo.
 - `plugin_records(plugin: str, plugins_file: Path | None = None) -> list[dict[str, object]]` — Raw install records Claude Code keeps for *plugin*.
+- `_keyed_records(plugin: str, plugins_file: Path | None = None) -> list[tuple[str, dict[str, object]]]` _(internal)_ — Install records for *plugin*, each with the key it is filed under.
+- `pinned_marketplace(version: str) -> str` — Return the per-version marketplace name for forge *version*.
+- `target_plugin_version(repo_root: Path) -> str | None` — Return the forge release this checkout should run as its plugin.
+- `class CheckoutInstall` — One forge install Claude Code recorded for a single checkout.
+- `checkout_installs(repo_root: Path, plugins_file: Path | None = None) -> list[CheckoutInstall]` — Return every forge install recorded for *repo_root* alone.
+- `checkout_plugin_current(repo_root: Path, version: str, plugins_file: Path | None = None) -> bool` — Say whether *repo_root* has its own install of forge *version*.
 - `plugin_installs(repo_root: Path, plugin_name: str) -> PluginInstalls` — Find the installed copies of *plugin_name* that bear on *repo_root*.
 - `_install_from_record(record: dict[str, object]) -> PluginInstall | None` _(internal)_ — Build a :class:`PluginInstall` from one raw record.
 - `_resolved(path: Path) -> Path` _(internal)_ — Return *path* resolved, or unchanged when resolution fails.

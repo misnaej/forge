@@ -954,11 +954,10 @@ reported as a finding, never routed around (§2 "On deviation").
 
 When a forge release renames or adds an agent, an already-running session keeps
 the **cached** plugin from startup. Symptom: `Agent type 'forge:<name>' not found`
-though the agent is on disk — the cache
-(`~/.claude/plugins/cache/forge/forge/<version>/`) is behind. Recovery: `/plugin
-update forge@forge`, then `/reload-plugins` — agents, hooks, and MCP / LSP
-servers reload reliably; **skills and monitors may need a full session
-restart**. That is the recovery for this loud symptom, where a stale
+though the agent is on disk — this checkout's install is behind its
+release. Recovery: `forge-plugin-sync` (the post-merge / post-checkout
+hooks usually ran it already), then restart the session — a reload
+does not reliably rebind skills or monitors. That is the recovery for this loud symptom, where a stale
 surface announces itself; it is not the general rule, and "restart once
 something looks stale" is not safe to generalise from — see below, where
 the usual case produces nothing to notice. The
@@ -993,17 +992,15 @@ truthfully answered that nothing was out of date.
 
 **A repo can also load the wrong copy outright.** The plugin loads fine,
 behaves like an old release, and every update says current — restarting
-changes nothing. Two causes, both machine-wide. First, a **global
-(user-scope) install** beside the repo's own can shadow it; recovery is
-removing it (`claude plugin uninstall forge@forge --scope user`) — a
-per-repo `enabledPlugins` `false` is no fix, since project settings
-override user settings and it disables forge in that repo entirely.
-Second, the **marketplace registration** is one per machine, tracking
-whatever ref the first repo registered — `/plugin update` fetches from
-it, so a repo pinning another ref needs it re-pointed. `forge-doctor`
-reports the global install when the repo enables forge and the mismatch
-when the repo pins forge, and judges this repo's own install record when
-one exists (else it says the verdict came from the newest cached copy).
+changes nothing. The cause is a **global (user-scope) install** beside
+the checkout's own, shadowing it; recovery is removing it (`claude
+plugin uninstall forge@forge --scope user`) — `forge-plugin-sync`
+refuses to install until it is gone. A shared machine-wide marketplace
+registration, which once let one repo's release overwrite another's,
+cannot cause it: `forge-plugin-sync` installs from a marketplace named
+after the release (`forge-vX-Y-Z`), so each release has its own.
+`forge-doctor` reports the global install, and its `plugin:checkout`
+line says whether this checkout has its own install of its release.
 
 ### Consumer Claude Code hook path convention
 

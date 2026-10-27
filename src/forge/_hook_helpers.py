@@ -111,3 +111,25 @@ def run_hook_extensions(hook_name: str) -> None:
                 script.name,
                 proc.returncode,
             )
+
+
+def run_plugin_sync(hook_name: str) -> None:
+    """Run ``forge-plugin-sync --quiet`` so this checkout keeps its release.
+
+    A merge or branch switch can change the forge release a checkout
+    pins; syncing here moves its Claude Code plugin with it, where a
+    separate manual step was routinely forgotten. Quiet when nothing
+    changes; a failure prints the CLI's own message and is not
+    propagated — a managed git hook must never fail the underlying git
+    operation over it. An absent CLI (an older forge-scripts) is skipped.
+
+    Args:
+        hook_name: Managed hook short name, for the failure log line.
+    """
+    if shutil.which("forge-plugin-sync") is None:
+        return
+    proc = subprocess.run(["forge-plugin-sync", "--quiet"], check=False)
+    if proc.returncode != 0:
+        logger.warning(
+            "[forge] %s: forge-plugin-sync exited %d", hook_name, proc.returncode
+        )

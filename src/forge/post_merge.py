@@ -25,6 +25,11 @@ pull`` (VS Code terminal, tmux, piped shell).
    :func:`forge._hook_helpers.run_hook_extensions` — a sanctioned
    drop-in point that survives every refresh (the installer never
    touches the ``.d`` subdirectory). *[runs in any non-CI context]*
+5. ``forge-plugin-sync --quiet`` via
+   :func:`forge._hook_helpers.run_plugin_sync` — a merge that changes
+   the pinned forge release moves this checkout's Claude Code plugin
+   with it. After the extensions, so an environment refresh one of them
+   runs lands first. *[runs in any non-CI context]*
 """
 
 from __future__ import annotations
@@ -36,7 +41,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-from forge._hook_helpers import run_foundation_drift_check, run_hook_extensions
+from forge._hook_helpers import (
+    run_foundation_drift_check,
+    run_hook_extensions,
+    run_plugin_sync,
+)
 from forge.git_utils import configure_cli_logging
 from forge.next_prep import tag_staleness_warning
 from forge.run_context import is_ci, is_non_interactive
@@ -121,6 +130,7 @@ def main(argv: list[str] | None = None) -> int:
     # terminals (#177). Symmetric with post-checkout.
     if not is_ci():
         run_hook_extensions("post-merge")
+        run_plugin_sync("post-merge")
     return rc
 
 

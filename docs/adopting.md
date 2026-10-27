@@ -26,9 +26,11 @@ the hook or agent runs**. Both higher layers shell out to its CLIs:
   until they install layer 1.
 - **Layer 3 (plugin)** — the agents/skills orchestrate the CLIs
   (`forge:precommit-fixer` → `forge-precommit`, `forge:git-commit-push` →
-  the gate, …). The plugin is **enabled per repo** (Track 3), but its
-  marketplace source is registered **once per machine** (`~/.claude`),
-  and it drives CLIs that must exist in **each repo's** env. *Downside:*
+  the gate, …). The plugin is **installed per checkout** (Track 3), from
+  a marketplace named after the release it pins — Claude Code registers
+  each marketplace name once per machine, so one name per release keeps
+  repos on different releases apart — and it drives CLIs that must exist
+  in **each repo's** env. *Downside:*
   enable the plugin in a repo whose env lacks `forge-scripts`, and the
   agents fail the moment they invoke a CLI. The
   plugin's pure **safety hooks** (`block_*`, `check_*`) are the exception —
@@ -94,44 +96,39 @@ edited this — leave it"). Add repo-specific steps in
 installer never touches) or by editing the wrapper directly — see
 [`customizing-precommit.md`](customizing-precommit.md).
 
-## Track 3 — add the Claude Code plugin (enable it **per repo**)
+## Track 3 — add the Claude Code plugin (one install **per checkout**)
 
 Agents, skills, and safety hooks, in Claude Code only. The agents shell
 out to the layer-1 CLIs, so the plugin is only useful where
-`forge-scripts` is installed — **enable it per repo, not globally**, so it
-stays inactive everywhere else.
+`forge-scripts` is installed — **install it per checkout, never
+globally**, so it stays inactive everywhere else.
 
-Let forge write the per-repo enablement for you:
+`install-forge-bootstrap` does it for you (its `plugin` step):
 
 ```bash
-install-forge-claude-settings        # writes/merges .claude/settings.json
-# install-forge-claude-settings --ref v1.2.0   # pin the plugin to a tag
+forge-plugin-sync           # install this checkout's release (no-op when current)
+forge-plugin-sync --check   # report only (exit 1 when not on its release)
 ```
 
-It's idempotent and **merge-preserving** (your other `.claude/settings.json`
-keys are untouched), and `install-forge-bootstrap` runs it automatically.
-The marketplace `ref` defaults to your `forge-scripts` pip-pin channel
-(so the plugin tracks the package), falling back to `main`; override with
-`--ref`. `--check` verifies it without writing (for CI). It writes:
+It installs, for this checkout only (`--scope local`), the release your
+`forge-scripts @ git+...@vX.Y.Z` pin names — a branch pin is refused,
+so pin a release tag — from a marketplace named after that release
+(`forge-vX-Y-Z`). The `post-merge` / `post-checkout` hooks re-run it, so
+moving the pin moves the plugin; after a change, restart the Claude Code
+session. The committed `.claude/settings.json` keeps the shared plugin
+off: `install-forge-claude-settings` (also a bootstrap step; `--check`
+verifies without writing) removes forge's `extraKnownMarketplaces` entry
+and writes `{ "enabledPlugins": { "forge@forge": false } }`, merging
+around your other keys. Details and the refusals:
+[`claude-code-plugin.md`](claude-code-plugin.md).
 
-```jsonc
-{
-  "extraKnownMarketplaces": {
-    "forge": { "source": { "source": "github", "repo": "misnaej/forge", "ref": "main" } }
-  },
-  "enabledPlugins": { "forge@forge": true }
-}
-```
+> **Avoid a global `/plugin install forge@forge`.** A user-scope install
+> is active in **every** repo, its agents then error in repos that lack
+> `forge-scripts`, and beside a checkout's own copy two plugins named
+> `forge` drop hooks — so `forge-plugin-sync` refuses to run until it
+> is removed.
 
-Claude Code prompts to trust + install on first session in that repo; the
-plugin then loads **only here**.
-
-> **Avoid the global `/plugin install forge@forge`.** A global install is
-> active in **every** repo (opt-out), so its agents then error in repos
-> that lack `forge-scripts`. Per-repo enablement is opt-in — the model
-> below depends on it.
-
-**Verify:** `forge-doctor` reports `plugin:installed` + populated
+**Verify:** `forge-doctor` reports `plugin:checkout`, `plugin:installed` + populated
 `agents/` / `skills/` / `claude-hooks/`. Consumer-specific Claude Code
 hooks live under `.claude/hooks/` with `${CLAUDE_PROJECT_DIR}`-rooted
 paths — see [`claude-code-plugin.md`](claude-code-plugin.md).
@@ -144,9 +141,9 @@ errors). The problem only arises from a **global** install. If forge was
 installed globally on your machine and you hit agent errors in a non-forge
 repo, pick one:
 
-- **Switch to the per-repo model** — uninstall the global plugin
-  (`/plugin uninstall forge@forge`); afterwards only repos that carry the
-  `enabledPlugins` block above load it.
+- **Switch to the per-checkout model** — uninstall the global plugin
+  (`claude plugin uninstall forge@forge --scope user`); afterwards only
+  checkouts that ran `forge-plugin-sync` load it.
 - **Disable it for that one repo** — commit to its `.claude/settings.json`:
   ```jsonc
   { "enabledPlugins": { "forge@forge": false } }
@@ -241,10 +238,16 @@ existed, kept the earlier release's files. `/plugin update` compares
 version names only, so it reports "already at the latest version" and
 changes nothing, while every version check stays green. `forge-doctor`
 flags the slot when its content (agents, skills, hooks or manifest)
-differs from the pinned release. The fix is
-to discard the slot so it refills from the pin:
+differs from the pinned release.
 
-1. Move your plugin pin (marketplace ref) to an adoptable tag.
+The fix is first `forge-plugin-sync`: after you move the `forge-scripts`
+pin to an adoptable tag, it installs that release from its own
+per-version marketplace, pinned to the tag's commit, so the install
+lands in a slot of its own rather than the stale one. Then restart the
+Claude Code session. Only if `forge-doctor` still flags the slot,
+discard it so it refills from the pin:
+
+1. Confirm the `forge-scripts` pin names an adoptable tag.
 2. Delete the whole forge cache directory — the stale content sits
    under a version name that looks current:
    `rm -rf ~/.claude/plugins/cache/forge/`

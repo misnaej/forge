@@ -61,6 +61,7 @@ forge-release = "forge.release:main"
 forge-changelog = "forge.changelog_fragments:main"
 forge-smart-test = "forge.smart_test.cli:main"
 forge-precommit = "forge.precommit:main"
+forge-plugin-sync = "forge.plugin_sync:main"
 forge-post-merge = "forge.post_merge:main"
 forge-post-checkout = "forge.post_checkout:main"
 install-forge-githooks = "forge.install_githooks:main"
@@ -206,10 +207,10 @@ rebuild_command = "./dev/setup.sh"
 
 [tool.forge.plugin_sync]
 # Advisory here, despite forge shipping the plugin it runs. The step
-# compares the cache against `plugin.json`, and a release PR's whole job
-# is to bump that field — so every release commit looked stale and was
-# refused, with a remedy (`/plugin update`) that re-reads the same
-# unpublished number and can never converge. The gate blocked the only
+# checks this checkout's install against `plugin.json`, and a release
+# PR's whole job is to bump that field — so every release commit looked
+# stale and was refused, with a remedy (`forge-plugin-sync`) that cannot
+# fetch a release not yet tagged and so can never converge. The gate blocked the only
 # commit that could satisfy it. A warning still names a genuinely cold
 # cache; blocking made the release unlandable.
 blocking = false

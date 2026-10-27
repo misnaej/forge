@@ -8,115 +8,75 @@ pre-commit hook to work.
 > marketplaces side-by-side; agents live in distinct namespaces
 > (`forge:<name>` for canonical, `<fork>:<name>` for the fork).
 
-## Install — enable it **per repo** (recommended)
+## Install — one copy per checkout, at the release it pins
 
 If your team uses [Claude Code](https://claude.com/claude-code) and
 wants the agents (`pr-manager`, `precommit-fixer`, `git-commit-push`, etc.)
-and slash commands (`/commit`, `/pr`, `/next`, …):
-
-Enable it in the **consumer repo's** `.claude/settings.json`, so the plugin
-loads only in that repo. Its agents shell out to `forge-scripts`, so it is
-only useful where that's installed — a per-repo enable keeps it inactive
-(and error-free) everywhere else.
-
-The simplest way is to let forge write/verify the block (idempotent,
-merge-preserving; also run by `install-forge-bootstrap`):
+and slash commands (`/commit`, `/pr`, `/next`, …), each checkout installs
+forge for itself:
 
 ```bash
-install-forge-claude-settings        # marketplace ref tracks your pip pin, else main
-install-forge-claude-settings --ref main   # or pin a ref explicitly
-install-forge-claude-settings --check      # verify only (CI / drift)
+forge-plugin-sync           # install this checkout's release (no-op when current)
+forge-plugin-sync --check   # report only; exit 1 when not on its release
 ```
 
-It writes:
+**It runs on its own.** `install-forge-bootstrap` runs it as its `plugin`
+step (after `claude-settings`), so `forge-upgrade` and forge's own
+`dev/setup.sh` do too; the `post-merge` and `post-checkout` git hooks run
+it quietly after every pull and branch switch. When it changes the
+install it prints *restart the Claude Code session to load it* — the
+restart is the only manual step. It skips silently when `claude` is not
+installed, and in CI.
+
+**Which release.** A consumer gets the release its `forge-scripts @
+git+...@vX.Y.Z` pin names; a pin on a branch names no fixed content, so
+the command refuses (exit 2) — pin a release tag. In forge's own repo it
+is the version `.claude-plugin/plugin.json` names, which is always the
+latest tag.
+
+**Why per checkout.** Claude Code keeps one marketplace registration per
+*name* for the whole machine. While every repo registered forge under the
+one name `forge`, repos on different releases overwrote each other's
+source, and `/plugin update` fetched whichever release the last repo had
+named while reporting it current. `forge-plugin-sync` instead installs
+from a marketplace named after the release — `forge-v10-4-0` for 10.4.0
+— a one-plugin `marketplace.json` under
+`$XDG_CACHE_HOME/forge/marketplaces/<name>/` (default `~/.cache`) that
+pins both the tag and its commit. Two repos on different releases use
+two different marketplaces and can no longer collide. Every change goes
+through Claude Code's own `claude plugin marketplace add … --scope local`
+and `claude plugin install forge@<name> --scope local`, after which this
+checkout's older per-version install is uninstalled; no Claude Code file
+is edited by hand and no cache slot is deleted. Agents keep their
+`forge:<name>` names.
+
+**The committed settings turn the shared plugin off.**
+`install-forge-claude-settings` (also a bootstrap step) removes forge's
+entry from `extraKnownMarketplaces` in the repo's `.claude/settings.json`
+and writes:
 
 ```jsonc
-{
-  "extraKnownMarketplaces": {
-    "forge": {
-      "source": { "source": "github", "repo": "misnaej/forge", "ref": "main" }
-    }
-  },
-  "enabledPlugins": { "forge@forge": true }
-}
+{ "enabledPlugins": { "forge@forge": false } }
 ```
 
-Claude Code prompts to trust + install on first session in that repo. (The
-one-liner `/plugin install forge@forge --scope project` writes an
-equivalent block by hand.)
+Idempotent and merge-preserving; `--check` verifies without writing (CI /
+drift).
 
-> **Don't install globally.** `/plugin install forge@forge` without
-> `--scope project` installs into `~/.claude` and is active in **every**
-> repo (opt-out), so the agents then error in repos that lack
-> `forge-scripts`. Scope it per repo instead — [`adopting.md`](adopting.md)
-> Track 3 covers the rationale and how to keep it out of (or disabled in)
-> non-forge repos.
+**Refusals.** Two enabled plugins named `forge` make Claude Code drop
+hooks, so `forge-plugin-sync` refuses to install while either exists:
 
-**The marketplace source is per machine, not per repo.** Enabling is per
-repo, but Claude Code keeps one registration per marketplace for the
-whole machine (`~/.claude/plugins/known_marketplaces.json`), and the
-first repo to register `forge` sets the ref every other repo updates
-from. A repo pinned to a tag on a machine registered at `main` (or the
-reverse) updates from the wrong ref, and `/plugin update` reports it
-current; each repo keeps whichever cached copy it last fetched. Claude
-Code offers no per-repo source pin, so forge detects this instead:
-`forge-doctor` reports a source mismatch naming both refs in a repo that
-pins `forge-scripts`, and a global install beside the repo's own in a
-repo that enables forge. The fix for a mismatch is re-pointing the
-registration — which moves it for every repo on the machine:
+- a user-scope forge install, which loads in every repo — remove it with
+  `claude plugin uninstall forge@forge --scope user`
+  ([`adopting.md`](adopting.md) Track 3 covers keeping forge out of
+  non-forge repos);
+- a tracked `.claude/settings.json` enabling any `forge@…` — run
+  `install-forge-claude-settings`.
 
-```
-claude plugin marketplace remove forge
-claude plugin marketplace add misnaej/forge#<ref>
-claude plugin install forge@forge     # removing the marketplace uninstalls it
-```
-
-or edit the `extraKnownMarketplaces` ref in `~/.claude/settings.json`
-(see [below](#changing-the-marketplace-ref)).
-
-To pin a specific plugin version (recommended):
-
-```jsonc
-// ~/.claude/installed_plugins.json
-{ "forge@forge": { "version": "v1.2.5" } }
-```
-
-Keep two version pins aligned: the pip `forge-scripts @ ...@vX.Y.Z` dep
-and the Claude plugin version. Releases bump both together.
-
-## Changing the marketplace `ref`
-
-To change the ref the forge marketplace is pinned to (`main` ↔ a
-specific tag, or a fork's branch), editing the `ref`
-field in `~/.claude/settings.json` and running `/plugin marketplace
-update forge` is **not enough**. Claude Code keeps the cached
-marketplace `ref` frozen at the value it was first registered with.
-The verified workaround is a five-command sequence; the order matters
-and skipping the install step silently leaves the consumer with zero
-forge skills loaded.
-
-```
-/plugin marketplace remove forge
-/plugin marketplace add misnaej/forge
-```
-
-Then edit `~/.claude/settings.json` by hand: in the `forge.source`
-block, add or change `"ref"` to the target (e.g. `"main"` or a tag).
-This is the step that actually changes the pin — the slash commands
-alone cannot update an already-cached marketplace `ref`.
-
-```
-/plugin marketplace update forge
-/plugin install forge@forge        # CRITICAL — marketplace remove also
-                                   # uninstalls the plugin
-/reload-plugins
-```
-
-The `/plugin install forge@forge` step is the footgun. `/plugin marketplace remove` evicts the
-plugin from `~/.claude/installed_plugins.json` along with the
-marketplace entry. Without `/plugin install forge@forge` after the
-re-add, `/reload-plugins` finds nothing to load and returns silently —
-no error, no warning. The agent ecosystem just stops working.
+**Where staleness shows.** `forge-doctor` prints a `plugin:checkout`
+line saying whether this checkout has its own install of its release,
+and the `plugin_sync` pre-commit step (advisory by default) judges the
+same thing. Both name `forge-plugin-sync (then restart the session)` as
+the remedy.
 
 ### The `/reload-plugins` `0 skills` counter
 
@@ -139,10 +99,6 @@ the same way, and its content is what the session executes. Nothing
 distinguishes the two from inside the session — see FOUNDATION §11
 "Plugin staleness", which is why a restart, not a reload, is the
 terminal step of a plugin-moving upgrade.
-
-The underlying caching behaviour is an upstream Claude Code issue.
-Forge tracks it in issue #71; this section will be removed when the
-upstream fix ships.
 
 ## Consumer `CLAUDE.md`
 

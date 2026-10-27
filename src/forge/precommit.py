@@ -75,6 +75,7 @@ import logging
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -142,10 +143,11 @@ from forge.text_clip import truncate
 from forge.version_surfaces import (
     DIST_NAME,
     SKEW_REMEDIATION,
+    checkout_plugin_current,
     editable_install_origin,
     hook_sidecar_version,
     pip_version,
-    plugin_cache_status,
+    target_plugin_version,
 )
 
 
@@ -762,36 +764,18 @@ def step_env_sync(repo_root: Path) -> StepResult:
     )
 
 
-def step_plugin_sync(repo_root: Path) -> StepResult:
-    """Block when the cached Claude Code plugin is older than the repo's manifest.
-
-    A repo that ships a plugin runs its agents and hooks from Claude Code's
-    cache, not from the tree — so after a plugin release merges, every
-    session keeps the old cache until someone runs the update. Nothing in
-    a git hook can do that (``/plugin update`` is a session command), so
-    the gate names it. It is advisory by default, and advisory in forge's
-    own repo too: under rolling-next the manifest is bumped before the
-    version it names is published anywhere the update could fetch, so a
-    blocking gate here refused release commits over a condition their own
-    remedy could not clear. ``[tool.forge.plugin_sync].blocking = true``
-    opts back into refusing. Self-skips when the repo ships no plugin,
-    when the plugin is not installed locally, in CI (FOUNDATION §15), and
-    while an emergency sentinel is armed (see :func:`_emergency_skip`).
-
-    ``is_ci()``, never ``is_non_interactive()``: the cache this gate
-    guards is read by Claude Code sessions, so an agent-driven commit is
-    the case it most needs to cover. The tty-inclusive predicate is true
-    in every such session, which left the gate skipped exactly there.
+def _plugin_sync_skip(repo_root: Path) -> StepResult | None:
+    """Return the skipped ``plugin_sync`` result when the gate does not apply.
 
     Args:
         repo_root: Git repo root.
 
     Returns:
-        ``StepResult`` — skipped when nothing applies; failed (blocking or
-        WARN per config) when the cache lags ``.claude-plugin/plugin.json``.
+        A skipped ``StepResult`` when the repo ships no plugin, runs in CI,
+        has an armed emergency sentinel, or lacks ``claude``; ``None`` when
+        the gate must judge the install.
     """
-    manifest = repo_root / ".claude-plugin" / "plugin.json"
-    if not manifest.is_file():
+    if not (repo_root / ".claude-plugin" / "plugin.json").is_file():
         return StepResult(
             name="plugin_sync",
             passed=True,
@@ -808,38 +792,72 @@ def step_plugin_sync(repo_root: Path) -> StepResult:
     armed = _emergency_skip(repo_root, "plugin_sync")
     if armed is not None:
         return armed
-    status = plugin_cache_status(repo_root)
-    plugin_name, cached = status.plugin_name, status.cached
-    manifest_version = status.declared
-    if status.state == "uncached":
+    if shutil.which("claude") is None:
         return StepResult(
             name="plugin_sync",
             passed=True,
-            output=f"({plugin_name} plugin not installed in Claude Code — skipped)",
+            output="(Claude Code not installed — skipped)",
             skipped=True,
         )
-    if status.state != "behind":
-        # Only "behind" fails this step; every other verdict passes, but
-        # the line still names the verdict — "current" printed for an
-        # unparseable version would be a claim nothing checked.
-        verdict = (
-            "is current"
-            if status.state == "current"
-            else f"not compared ({status.state})"
-        )
+    return None
+
+
+def step_plugin_sync(repo_root: Path) -> StepResult:
+    """Flag a checkout whose own forge plugin install is not its release.
+
+    A repo that ships a plugin runs its agents and hooks from the Claude
+    Code plugin install, not from the tree — so after a release merges,
+    a checkout keeps the old plugin until ``forge-plugin-sync`` installs
+    the new one, which the post-merge / post-checkout hooks and
+    ``dev/setup.sh`` normally do on their own. The read-only twin of that
+    command: both judge with
+    :func:`forge.version_surfaces.checkout_plugin_current`. Advisory by
+    default — under rolling-next the manifest names a version before it
+    is published anywhere a sync could fetch, and a blocking gate refused
+    the release commits that would publish it.
+    ``[tool.forge.plugin_sync].blocking = true`` opts back into refusing.
+    Self-skips when the repo ships no plugin, when ``claude`` is not
+    installed, in CI (FOUNDATION §15), and while an emergency sentinel is
+    armed (see :func:`_emergency_skip`).
+
+    ``is_ci()``, never ``is_non_interactive()``: the install this gate
+    guards is read by Claude Code sessions, so an agent-driven commit is
+    the case it most needs to cover. The tty-inclusive predicate is true
+    in every such session, which left the gate skipped exactly there.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``StepResult`` — skipped when nothing applies; failed (blocking or
+        WARN per config) when this checkout has no install of the release
+        ``.claude-plugin/plugin.json`` names.
+    """
+    skipped = _plugin_sync_skip(repo_root)
+    if skipped is not None:
+        return skipped
+    version = target_plugin_version(repo_root)
+    if version is None:
         return StepResult(
             name="plugin_sync",
             passed=True,
-            output=f"plugin cache {cached} {verdict} (manifest {manifest_version}).",
+            output="plugin manifest version unreadable — not compared.",
+        )
+    if checkout_plugin_current(repo_root, version):
+        return StepResult(
+            name="plugin_sync",
+            passed=True,
+            output=f"forge {version} is this checkout's plugin.",
         )
     blocking = bool(_forge_step_config(repo_root, "plugin_sync").get("blocking", False))
     return StepResult(
         name="plugin_sync",
         passed=False,
         output=(
-            f"{'⛔' if blocking else '⚠️ '} Cached {plugin_name} plugin is {cached}; "
-            f"this repo's manifest says {manifest_version}. Your session runs "
-            f"stale agents and hooks — run `{SKEW_REMEDIATION['plugin cache']}`."
+            f"{'⛔' if blocking else '⚠️ '} This checkout has no install of forge "
+            f"{version}, the release its manifest names. Your session runs "
+            f"another release's agents and hooks — run "
+            f"`{SKEW_REMEDIATION['plugin cache']}`."
         ),
         non_blocking=not blocking,
     )

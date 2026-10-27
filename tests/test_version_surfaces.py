@@ -10,11 +10,12 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
 
 from forge import version_surfaces
+from tests.conftest import write_install
 
 
 if TYPE_CHECKING:
@@ -1189,3 +1190,161 @@ def test_plugin_cache_status_replaces_unsafe_text(
     assert status.plugin_name == version_surfaces.UNPRINTABLE
     assert status.registered_ref == version_surfaces.UNPRINTABLE
     assert status.source_ref == "v6.11.0"
+
+
+# ---------------------------------------------------------------------------
+# per-checkout plugin install — target release and install records
+# ---------------------------------------------------------------------------
+
+
+def _write_manifest_version(repo: Path, content: str) -> None:
+    """Write a raw ``.claude-plugin/plugin.json`` into *repo*.
+
+    Args:
+        repo: Checkout root.
+        content: The file's exact text.
+    """
+    (repo / ".claude-plugin").mkdir(parents=True, exist_ok=True)
+    (repo / ".claude-plugin" / "plugin.json").write_text(content, encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("version", "expected"),
+    [("1.2.3", "forge-v1-2-3"), ("10.0.14", "forge-v10-0-14")],
+)
+def test_pinned_marketplace_turns_dots_into_dashes(version: str, expected: str) -> None:
+    """The name is one token and always says which release it serves.
+
+    Args:
+        version: Release version string, dotted.
+        expected: Marketplace name the version maps to.
+    """
+    assert version_surfaces.pinned_marketplace(version) == expected
+
+
+def test_target_plugin_version_is_the_manifest_version(tmp_path: Path) -> None:
+    """A plugin repo runs the release its own manifest names, pin or not."""
+    _write_consumer_pin(tmp_path, "v9.9.9")
+    _write_manifest_version(tmp_path, '{"name": "forge", "version": "1.2.3"}')
+
+    assert version_surfaces.target_plugin_version(tmp_path) == "1.2.3"
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    ['{"name": "forge", "version": "banana"}', '{"name": "forge"}', "{not json"],
+    ids=["unparsable-version", "no-version", "malformed"],
+)
+def test_target_plugin_version_does_not_fall_back_to_the_pin(
+    tmp_path: Path, manifest: str
+) -> None:
+    """A manifest that cannot name a release is unknown, never the pin's release.
+
+    Args:
+        manifest: Raw manifest file content that names no usable version.
+    """
+    _write_consumer_pin(tmp_path, "v9.9.9")
+    _write_manifest_version(tmp_path, manifest)
+
+    assert version_surfaces.target_plugin_version(tmp_path) is None
+
+
+@pytest.mark.parametrize(
+    ("ref", "expected"),
+    [("v2.3.4", "2.3.4"), ("main", None)],
+    ids=["tag-pin", "branch-pin"],
+)
+def test_target_plugin_version_of_a_consumer_is_its_tag_pin(
+    tmp_path: Path, ref: str, expected: str | None
+) -> None:
+    """A consumer runs the tag its pin names; a branch names no fixed content.
+
+    Args:
+        ref: Pinned git ref (tag or branch).
+        expected: Release version the ref resolves to, or None for a branch.
+    """
+    _write_consumer_pin(tmp_path, ref)
+
+    assert version_surfaces.target_plugin_version(tmp_path) == expected
+
+
+def test_target_plugin_version_without_manifest_or_pin_is_none(
+    tmp_path: Path,
+) -> None:
+    """Nothing names a release."""
+    assert version_surfaces.target_plugin_version(tmp_path) is None
+
+
+def test_checkout_installs_returns_only_this_checkouts_own_records(
+    tmp_path: Path, claude_home: Path
+) -> None:
+    """Another repo's, the user-scope and vanished-directory records are not ours.
+
+    SCENARIO: one machine-wide record file holds four records; only one is
+    this checkout's. The checkout is reached through a symlink, as Claude
+    Code may have recorded the resolved path.
+    """
+    real = tmp_path / "repo"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real, target_is_directory=True)
+    write_install(claude_home, real, "1.2.3")
+    write_install(claude_home, tmp_path / "other", "1.1.0")
+    write_install(claude_home, None, "1.0.0", key="forge@forge", scope="user")
+    gone = write_install(claude_home, real, "0.5.0")
+    gone.rmdir()
+
+    installs = version_surfaces.checkout_installs(link)
+
+    assert installs == [
+        version_surfaces.CheckoutInstall("forge@forge-v1-2-3", "local", "1.2.3")
+    ]
+
+
+class InstallHome(NamedTuple):
+    """The temp directory and the machine's Claude Code records for one check."""
+
+    tmp_path: Path
+    claude_home: Path
+
+
+@pytest.fixture
+def install_home(tmp_path: Path, claude_home: Path) -> InstallHome:
+    """Bundle the temp directory and the Claude Code records for one install check."""
+    return InstallHome(tmp_path, claude_home)
+
+
+@pytest.mark.parametrize(
+    ("key", "version", "own_repo", "expected"),
+    [
+        ("forge@forge-v1-2-3", "1.2.3", True, True),
+        ("forge@forge", "1.2.3", True, False),
+        ("forge@forge-v1-2-3", "1.2.2", True, False),
+        ("forge@forge-v1-2-3", "1.2.3", False, False),
+    ],
+    ids=["own-install", "shared-marketplace-key", "wrong-version", "other-repo"],
+)
+def test_checkout_plugin_current_needs_this_repos_install_of_the_release(
+    install_home: InstallHome,
+    key: str,
+    version: str,
+    *,
+    own_repo: bool,
+    expected: bool,
+) -> None:
+    """Current means the per-version key, at that version, for this checkout.
+
+    Args:
+        key: Install record key under test.
+        version: Release version recorded for the install.
+        own_repo: Whether the install record belongs to this checkout.
+        expected: Whether the checkout counts as current.
+    """
+    tmp_path, claude_home = install_home
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    write_install(
+        claude_home, repo if own_repo else tmp_path / "other", version, key=key
+    )
+
+    assert version_surfaces.checkout_plugin_current(repo, "1.2.3") is expected

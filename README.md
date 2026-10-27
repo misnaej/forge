@@ -596,11 +596,10 @@ pip install --upgrade --force-reinstall --no-deps \
 # 2. Re-sync every managed artifact in one call (idempotent):
 install-forge-bootstrap
 
-# 3. (If you use Claude Code) bump the plugin pin:
-#    ~/.claude/installed_plugins.json → { "forge@forge": { "version": "v1.3.0" } }
-#    Then: /plugin update forge@forge
-#          /reload-plugins      # rebinds agents, hooks and MCP/LSP servers
-#                               # in this session
+# 3. (If you use Claude Code) nothing to type: step 2 ran
+#    `forge-plugin-sync`, which installs this checkout's own copy of the
+#    release the pin names (docs/claude-code-plugin.md). Run it yourself
+#    only to retry a failed sync.
 #
 # 3b. RESTART THE SESSION. This is the last required step of any upgrade
 #     that moved the plugin, not a footnote. A session binds its plugin

@@ -61,12 +61,13 @@ Checked on every commit by `verify-forge-repo-structure`: every listed file and 
      doc generators
    - doctor.py: `forge-doctor` — environment diagnostics
    - version_surfaces.py: the three version surfaces of one forge install (pip package, git-hook sidecar, cached Claude Code plugin) plus the editable-install origin and the per-surface remediation strings — read once here for `forge-doctor`'s advisory and `forge-precommit`'s `env_sync` / `plugin_sync` gates
+   - plugin_sync.py: `forge-plugin-sync` — installs this checkout's own forge release as its Claude Code plugin from a per-version marketplace
    - install_githooks.py: `install-forge-githooks` — git hook installer (managed marker carries `body-sha` only — never the forge version, so wrappers stay byte-stable across bumps; the version lives in the gitignored `.forge-hook-version` sidecar; modified wrappers survive refresh)
    - post_merge.py: `forge-post-merge` — managed post-merge git-hook entrypoint (foundation drift check + backgrounded self-refresh of hook wrappers)
    - post_checkout.py: `forge-post-checkout` — managed post-checkout git-hook entrypoint (branch-flag-guarded foundation drift check)
    - _hook_helpers.py: private shared helper used by `post_merge` and `post_checkout` (drift-check sequence)
    - install_claudemd.py: `install-forge-claude-md` — CLAUDE.md scaffolder
-   - install_claude_settings.py: `install-forge-claude-settings` — write/verify `.claude/settings.json` per-repo plugin enablement (marketplace + `enabledPlugins`); ref tracks the pip pin; idempotent + merge-preserving; `--check` mode
+   - install_claude_settings.py: `install-forge-claude-settings` — write/verify `.claude/settings.json` keeping the shared forge plugin off (removes forge's `extraKnownMarketplaces` entry, sets `enabledPlugins["forge@forge"]` to `false`); idempotent + merge-preserving; `--check` mode
    - claude_settings_schema.py: shared `.claude/settings.json` forge-block schema (marketplace key path, `forge@forge` id, scaffold) — single source of truth for the write side (install_claude_settings) and read side (install_claudemd channel detection)
    - install_labels.py: `install-forge-labels` — GitHub label installer
    - install_bootstrap.py: `install-forge-bootstrap` — one-shot umbrella that runs every installer + generator in dependency order
@@ -286,6 +287,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_smart_test_superset.py: regression harness checking the union of forge-smart-test's three selection channels covers every guaranteed test-to-code link
    - test_telemetry.py: tests for telemetry (the resource-profiling wrapper)
    - test_version_surfaces.py: tests for version_surfaces (the three install-version readers)
+   - test_plugin_sync.py: tests for plugin_sync (forge-plugin-sync target resolution, per-version marketplace, refusals, `--check`)
 
 2. **Audit Tests (`tests/audit/`)**
    - test_agents.py: tests for audit.agents
