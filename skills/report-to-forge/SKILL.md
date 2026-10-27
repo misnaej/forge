@@ -29,7 +29,9 @@ grep -n "forge" pyproject.toml | grep -i "git+\|forge-scripts"   # the pin
 ```
 
 Record: the installed `forge-scripts` version, the `pyproject.toml`
-pin, and the plugin slot `forge-doctor` reports — and **flag any
+pin, and the plugin install `forge-doctor`'s `plugin:installed` line
+names (this checkout's `forge@forge-vX-Y-Z` record and its directory)
+with its `plugin:checkout` verdict — and **flag any
 mismatch explicitly**; skew is itself often the bug. Use the CLI's
 output, never a hand-rolled probe (FOUNDATION §2).
 
@@ -37,8 +39,9 @@ output, never a hand-rolled probe (FOUNDATION §2).
 evidence of the same thing.** `version_skew` compares the pip package
 against the git hooks and says so; it excludes the plugin by design, so
 it can report alignment while the plugin differs — it is not a
-whole-install verdict and must not be quoted as one. The plugin row
-names the slot that is *installed*.
+whole-install verdict and must not be quoted as one. The plugin rows
+name the install recorded for this checkout — what is *installed*, not
+what the session loaded.
 
 **The version the session is actually running is not knowable, and the
 report says so rather than implying otherwise.** A session binds its

@@ -696,6 +696,15 @@ reversal of OCP: OCP adds genuinely new capability without touching stable
 code; this rule covers compensating for an interface you control that is
 wrong.)
 
+**A change removes what it supersedes.** Whatever a change replaces or
+makes dead — code paths, checks, docs, tests, config — is removed in the
+same PR. A follow-up issue records work the change did *not* create, such
+as a pre-existing problem found along the way; it never holds cleanup the
+change itself made necessary. If that cleanup makes the PR too large to
+review, split before opening (stacked PRs), never defer it past the
+merge. Deferred cleanup is the cleanup that does not happen, and until it
+does every reader meets two systems where there should be one.
+
 **Mechanical first.** Classify each step of new work — an agent, a skill
 step, a CLI — as mechanical or judgment. A step whose output depends only
 on the working tree, GitHub state and text the caller supplies is
@@ -999,8 +1008,11 @@ refuses to install until it is gone. A shared machine-wide marketplace
 registration, which once let one repo's release overwrite another's,
 cannot cause it: `forge-plugin-sync` installs from a marketplace named
 after the release (`forge-vX-Y-Z`), so each release has its own.
-`forge-doctor` reports the global install, and its `plugin:checkout`
-line says whether this checkout has its own install of its release.
+`forge-doctor` reports on this checkout's own install, never a slot
+shared between repos: `plugin:installed` is this checkout's
+`forge@forge-vX-Y-Z` record, `plugin:checkout` says whether that is the
+release the checkout names, and a global install is reported beside
+them.
 
 ### Consumer Claude Code hook path convention
 

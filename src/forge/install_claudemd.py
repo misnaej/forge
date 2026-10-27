@@ -45,14 +45,9 @@ import re
 import sys
 from datetime import UTC, datetime, timedelta
 from importlib import metadata, resources
-from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
-from forge.claude_settings_schema import (
-    PLUGIN_KEY,
-    read_marketplace_ref,
-    scaffold,
-)
+from forge.claude_settings_schema import scaffold
 from forge.git_utils import (
     _FORGE_GITHUB_REPO,
     configure_cli_logging,
@@ -62,11 +57,11 @@ from forge.git_utils import (
     repo_root,
 )
 from forge.run_context import is_non_interactive
-from forge.version_surfaces import plugin_records
 
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
 
 configure_cli_logging()
@@ -570,52 +565,6 @@ def _installed_forge_scripts_version() -> str | None:
         return None
 
 
-def _installed_plugin_version(plugins_file: Path | None = None) -> str | None:
-    """Read the installed Claude Code plugin version from the manifest.
-
-    Parsing — both on-disk record shapes and every degradation — is the
-    shared :func:`forge.version_surfaces.plugin_records`, so this warning
-    and ``forge-doctor`` read the record the same way.
-
-    Args:
-        plugins_file: Path to ``~/.claude/plugins/installed_plugins.json``;
-            ``None`` reads :data:`forge.version_surfaces.INSTALLED_PLUGINS`.
-
-    Returns:
-        The version of the latest ``forge@forge`` record carrying a
-        version, or ``None`` if the file does not exist, is malformed, or
-        lists no such record.
-    """
-    for record in reversed(plugin_records(PLUGIN_KEY, plugins_file)):
-        version = record.get("version")
-        if version:
-            return str(version)
-    return None
-
-
-def _read_configured_channel(settings_path: Path) -> str | None:
-    """Return the marketplace ``ref`` consumers set to track a forge release channel.
-
-    Navigates ``extraKnownMarketplaces.forge.source.ref`` in the
-    consumer's Claude Code settings file.
-
-    Args:
-        settings_path: Path to ``~/.claude/settings.json``.
-
-    Returns:
-        The configured ref (typically ``"dev"`` or ``"main"``), or
-        ``None`` when no ref is set or any read step fails (missing
-        file, malformed JSON, missing/wrong-typed keys).
-    """
-    if not settings_path.is_file():
-        return None
-    try:
-        data = json.loads(settings_path.read_text())
-    except (OSError, json.JSONDecodeError):
-        return None
-    return read_marketplace_ref(data) if isinstance(data, dict) else None
-
-
 def _upstream_cache_path() -> Path:
     """Return the upstream-version-check cache file path.
 
@@ -816,10 +765,9 @@ def _render_channel_warning(
     identical rows.
 
     Args:
-        installed: Installed version string (e.g. forge-scripts version
-            or plugin version).
+        installed: Installed version string (the forge-scripts version).
         subject: Human label for the *installed* artifact — e.g.
-            ``"forge-scripts"`` or ``"Claude plugin 'forge'"``.
+            ``"forge-scripts"``.
         tags: Channel-tag snapshot from the upstream query.
         upgrade_hint_main: Shell or UI command to upgrade to ``main``.
         upgrade_hint_dev: Shell or UI command to upgrade to ``dev``.
@@ -882,47 +830,12 @@ def _render_channel_warning(
     return "\n".join(lines)
 
 
-def _append_channel_hint(warning: str, settings_file: Path) -> str:
-    """Append a shared-marketplace hint to *warning* when a marketplace ref is set.
-
-    The hint links the symptom ("plugin behind") to its likely cause:
-    the shared ``forge`` marketplace is one registration per machine,
-    so its ref may be another repo's. ``forge-plugin-sync`` installs
-    from a per-version marketplace instead. Consumers without an
-    explicit ``ref`` are not on that shared registration, so the hint
-    is suppressed for them.
-
-    Args:
-        warning: The base plugin-behind warning text already composed
-            by :func:`_render_channel_warning`.
-        settings_file: Path to ``~/.claude/settings.json``.
-
-    Returns:
-        The warning with the hint appended when a marketplace ``ref``
-        is configured; otherwise the warning unchanged.
-    """
-    configured_channel = _read_configured_channel(settings_file)
-    if configured_channel is None:
-        return warning
-    return (
-        f"{warning}\n\n"
-        f"    Configured marketplace ref: '{configured_channel}'. "
-        "The shared `forge` marketplace is one registration per machine, "
-        "so updating it can fetch another repo's release. Run "
-        "`forge-plugin-sync` instead: it installs this checkout's own "
-        "copy from a marketplace named after its release (see "
-        "`docs/claude-code-plugin.md`)."
-    )
-
-
 def check_upstream(
     *,
-    plugins_file: Path | None = None,
-    settings_file: Path | None = None,
     cache_ttl_hours: int = _UPSTREAM_CACHE_TTL_HOURS_DEFAULT,
     fetch: Callable[[], ChannelTags] = _fetch_upstream_channel_tags,
 ) -> None:
-    """Warn (only) when the installed forge is behind either release channel.
+    """Warn (only) when the installed forge-scripts is behind either release channel.
 
     Channel-aware: queries the latest tag on both forge ``main`` (slow,
     minor-only) and ``dev`` (fast, every patch). A consumer pinned to
@@ -930,10 +843,11 @@ def check_upstream(
     to ``dev`` sees the latest patch. The warning text explains the
     cadence trade-off so consumers can pick the channel that fits.
 
-    When the consumer has an explicit marketplace ``ref`` configured
-    in ``~/.claude/settings.json`` and the plugin warning fires, an
-    extra line explains that the shared ``forge`` marketplace may track
-    another repo's ref and points at ``forge-plugin-sync``.
+    Only the pip package is compared. The Claude Code plugin is not: each
+    checkout installs the release its own pin names (``forge-plugin-sync``),
+    so a plugin behind upstream is a pin behind upstream, which this
+    warning already reports; ``forge-doctor``'s ``plugin:checkout`` line
+    says whether the install matches the pin.
 
     Throttled to once per ``cache_ttl_hours`` via
     ``~/.cache/forge/upstream_check.json``. Network / gh-auth failures
@@ -945,10 +859,6 @@ def check_upstream(
     network call that has no value to a CI runner.
 
     Args:
-        plugins_file: Path to ``~/.claude/plugins/installed_plugins.json``.
-            Default reads :data:`forge.version_surfaces.INSTALLED_PLUGINS`.
-        settings_file: Path to ``~/.claude/settings.json``. Default
-            reads the real file under ``~/.claude``.
         cache_ttl_hours: Throttle window. Tests pass a small value to
             bypass throttling.
         fetch: Override the upstream-query callable for tests. Must
@@ -960,9 +870,6 @@ def check_upstream(
     # `gh api` network call to the install path. Skip cleanly.
     if is_non_interactive():
         return
-
-    if settings_file is None:
-        settings_file = Path.home() / ".claude" / "settings.json"
 
     cache_path = _upstream_cache_path()
     tags = _read_upstream_cache(cache_path, ttl_hours=cache_ttl_hours)
@@ -981,7 +888,6 @@ def check_upstream(
         _write_upstream_cache(cache_path, tags)
 
     forge_scripts_version = _installed_forge_scripts_version()
-    plugin_version = _installed_plugin_version(plugins_file)
 
     # Recommend the forge-upgrade wrapper, not raw pip. The wrapper
     # rewrites the pyproject.toml pin + runs `pip install --force-
@@ -991,10 +897,6 @@ def check_upstream(
     # agents to bypass the wrapper.
     upgrade_main = "forge-upgrade --apply --channel main"
     upgrade_dev = "forge-upgrade --apply --channel dev"
-    plugin_upgrade = (
-        "run `forge-plugin-sync`, then restart the Claude Code session "
-        "so the new agents, skills and hooks load."
-    )
 
     if forge_scripts_version:
         warning = _render_channel_warning(
@@ -1006,17 +908,6 @@ def check_upstream(
         )
         if warning is not None:
             logger.warning(warning)
-
-    if plugin_version:
-        warning = _render_channel_warning(
-            installed=plugin_version,
-            subject="Claude plugin 'forge'",
-            tags=tags,
-            upgrade_hint_main=plugin_upgrade,
-            upgrade_hint_dev=plugin_upgrade,
-        )
-        if warning is not None:
-            logger.warning(_append_channel_hint(warning, settings_file))
 
 
 # ---------------------------------------------------------------------------

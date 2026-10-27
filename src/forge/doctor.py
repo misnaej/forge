@@ -7,23 +7,23 @@ Checks:
   1. ``forge-scripts`` CLI entry points on PATH (pip package installed).
   2. ``gh`` CLI installed and authenticated (needed by
      ``install-forge-labels`` and any GitHub-aware workflow).
-  3. (Plugin checks, optional) — only run when a Claude Code plugin
-     cache for the configured plugin name is present:
-     a. Plugin directory found under ``~/.claude/plugins/cache/``.
+  3. Plugin checks (``--skip-plugin-checks`` turns them off) — all read
+     this checkout's own install, as Claude Code recorded it:
+     a. An install of the plugin is recorded for this checkout (for a
+        non-forge ``--plugin-name``, a user-scope install also counts).
      b. ``plugin.json`` and ``marketplace.json`` present and well-formed.
      c. ``agents/``, ``skills/``, ``claude-hooks/`` directories populated.
-  4. Version skew across install surfaces (#184) — the pip package and the
-     git-hook sidecar should share a version, and the cached Claude Code
-     plugin (checked separately) should match this repo's own manifest; a
-     lagging surface is reported as an advisory with the exact command to
-     converge it (never fails the exit code — the report line is the signal).
+  4. Version skew across install surfaces — the pip package and the
+     git-hook sidecar should share a version, and this checkout's plugin
+     install (checked separately, ``plugin:checkout``) should be the
+     release the checkout names; a lagging surface is reported as an
+     advisory with the exact command to converge it (never fails the exit
+     code — the report line is the signal).
   5. Pre-commit step tools (opt-in steps only) — the tool for each enabled
      step is on PATH, and its installed version is not below this repo's
      pinned floor; both are advisories, never a failing exit code.
-  6. Plugin scope (advisories) — a machine-wide forge install alongside
-     this repo's own, a machine-wide marketplace tracking another ref than
-     this repo pins, and a cache verdict that had to fall back to the
-     newest cached copy because no install record names this repo.
+  6. Global install (advisory) — forge installed or enabled for the whole
+     user account beside this checkout's own copy.
   7. Git hooks folder (advisory) — where git will look for hooks in this
      checkout (``core.hooksPath`` resolved, or git's default), and whether
      a runnable ``pre-commit`` sits there: without one, git commits with
@@ -47,7 +47,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from forge import config
-from forge.claude_settings_schema import PLUGIN_KEY
 from forge.config import installed_console_scripts
 from forge.git_utils import (
     FORGE_DIST_NAME,
@@ -61,18 +60,17 @@ from forge.git_utils import (
 from forge.upgrade import pin_revision_mismatch, pip_command
 from forge.version_surfaces import (
     SKEW_REMEDIATION,
-    SOURCE_MISMATCH_REMEDIATION,
-    STALE_CACHE_REMEDIATION,
-    PluginCacheStatus,
+    UNPRINTABLE,
+    CheckoutInstall,
+    checkout_installs,
     checkout_plugin_current,
-    find_install_dir,
-    find_plugin_cache,
+    enabled_forge_keys,
+    global_forge_keys,
     hook_sidecar_version,
     pinned_marketplace,
     pip_version,
-    plugin_cache_status,
-    plugin_records,
     read_json,
+    resolve_install,
     safe_text,
     target_plugin_version,
 )
@@ -82,16 +80,6 @@ from forge.version_surfaces import (
 # surface (e.g. a pip-only consumer with no git hooks) has nothing to
 # compare against and must be skipped, not flagged.
 _MIN_SURFACES_TO_COMPARE = 2
-
-# Claude Code's user-scope settings: ``enabledPlugins`` here turns a plugin
-# on in every repo on the machine, the other half of a global install.
-USER_SETTINGS = Path.home() / ".claude" / "settings.json"
-
-# Verdicts that judged a cached copy — the only ones a fallback to the
-# newest copy can have misdescribed.
-_CACHE_VERDICTS = frozenset(
-    {"current", "behind", "unparsed", "stale-content", "content-unknown"}
-)
 
 
 @dataclass
@@ -177,25 +165,22 @@ def _check_gh() -> list[CheckResult]:
     ]
 
 
-# A plugin name is joined under ``~/.claude/plugins/cache/`` as a single
-# path component, so it must be a bare directory name. The charset excludes
-# both path separators (``/`` / ``\``) — so the value can never split into
-# multiple components — and, by requiring a leading alphanumeric, a bare
-# ``..``. Those two together fully bar a parent-escaping ``..`` component
-# from ever forming; a ``..`` *substring* like ``a..b`` is a harmless
-# literal directory name and is allowed. ``\Z`` (not ``$``) also rejects a
-# trailing newline, which ``$`` would admit.
+# A plugin name is a bare identifier: Claude Code files installs under
+# ``<name>@<marketplace>`` and names cache directories after it, and the
+# report echoes it. The charset excludes path separators (``/`` / ``\``)
+# and, by requiring a leading alphanumeric, a bare ``..``; a ``..``
+# *substring* like ``a..b`` is a harmless literal and is allowed. ``\Z``
+# (not ``$``) also rejects a trailing newline, which ``$`` would admit.
 _SAFE_PLUGIN_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 
 
 def _validate_plugin_name(name: str) -> str:
-    """Argparse ``type`` for ``--plugin-name`` — reject a cache-escaping value.
+    """Argparse ``type`` for ``--plugin-name`` — reject a non-identifier value.
 
-    ``--plugin-name`` is joined straight onto ``~/.claude/plugins/cache/`` as
-    one path component, so a value carrying a path separator (which would
-    split it into multiple components, one possibly ``..``) or a bare ``..``
-    could point the plugin reads at an arbitrary directory (#200). Fail
-    loudly at parse time rather than silently reading the wrong tree.
+    A value carrying a path separator, an ``@`` or a bare ``..`` is not a
+    plugin name, and matching install records against it would either
+    find nothing or the wrong plugin. Fail loudly at parse time rather
+    than report on something the user did not ask about.
 
     Args:
         name: The raw ``--plugin-name`` argument.
@@ -217,23 +202,40 @@ def _validate_plugin_name(name: str) -> str:
     return name
 
 
-def _check_plugin_install(plugin_name: str) -> CheckResult:
-    """Verify Claude Code has installed the named plugin locally.
+def _check_plugin_install(
+    install: CheckoutInstall | None, plugin_name: str
+) -> CheckResult:
+    """Report the install this checkout loads, as Claude Code recorded it.
 
     Args:
+        install: The install :func:`forge.version_surfaces.resolve_install`
+            chose for this checkout, or ``None`` when there is none.
         plugin_name: Plugin identifier (e.g. ``"forge"``).
 
     Returns:
-        A ``CheckResult`` for the plugin install status.
+        A blocking ``CheckResult``: passed with the record's key, version
+        and directory, failed naming the command that installs one.
     """
-    found = find_plugin_cache(plugin_name)
-    if found is None:
-        return CheckResult(
-            name="plugin:installed",
-            passed=False,
-            detail=(f"{plugin_name} not in ~/.claude/plugins/cache/ or marketplaces/."),
-        )
-    return CheckResult(name="plugin:installed", passed=True, detail=str(found))
+    if install is None:
+        if plugin_name == "forge":
+            detail = (
+                "no forge install is recorded for this checkout — run "
+                f"`{SKEW_REMEDIATION['plugin']}`"
+            )
+        else:
+            detail = (
+                f"no {plugin_name} install is recorded for this checkout or "
+                "for your user account"
+            )
+        return CheckResult(name="plugin:installed", passed=False, detail=detail)
+    return CheckResult(
+        name="plugin:installed",
+        passed=True,
+        detail=(
+            f"{safe_text(install.key)} {safe_text(install.version)} "
+            f"({install.scope or 'unknown'} scope) at {install.install_dir}"
+        ),
+    )
 
 
 def _check_checkout_plugin(repo_root: Path) -> list[CheckResult]:
@@ -271,219 +273,56 @@ def _check_checkout_plugin(repo_root: Path) -> list[CheckResult]:
             info=True,
             detail=(
                 f"this checkout has no install of forge {version} ({key}) — "
-                f"run `{SKEW_REMEDIATION['plugin cache']}`"
+                f"run `{SKEW_REMEDIATION['plugin']}`"
             ),
         )
     ]
 
 
-def _check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]:
-    """Report a Claude Code plugin cache lagging what should be loaded.
-
-    The verdict itself lives in
-    :func:`forge.version_surfaces.plugin_cache_status`, shared with the
-    ``plugin_sync`` pre-commit step so both name the same remediation for
-    the same condition; this wraps it as an advisory.
-
-    Two findings, two remediations, because the causes differ. A repo that
-    ships the plugin can be ``"behind"`` — its cache declares an older
-    version, which ``forge-plugin-sync`` replaces. A consumer gets
-    ``"stale-content"``: the declared version has not moved and cannot, so
-    the only advice that can succeed is discarding the slot. A consumer
-    whose machine-wide marketplace tracks another ref gets
-    ``"source-mismatch"``, which no per-repo command clears.
-
-    Args:
-        repo_root: Repo whose manifest ships the plugin, or a consumer
-            repo whose pin names the content that should be loaded.
-
-    Returns:
-        One advisory result per finding — plus one saying the verdict came
-        from the newest cached copy when no install record names this
-        repo — otherwise an empty list: no plugin, no cache and an
-        unreadable version are all "nothing to say", not findings.
-    """
-    status = plugin_cache_status(repo_root)
-    results: list[CheckResult] = []
-    if status.state == "stale-content":
-        results.append(_stale_cache_advisory(status))
-    elif status.state == "source-mismatch":
-        results.append(_source_mismatch_advisory(status))
-    elif status.state == "content-unknown":
-        results.append(_content_unknown_advisory(status))
-    elif status.state == "behind":
-        results.append(
-            CheckResult(
-                name="version_skew:plugin_cache",
-                passed=False,
-                info=True,
-                detail=(
-                    f"plugin cache at v{status.cached}, behind this repo's "
-                    f"manifest v{status.declared} — run "
-                    f"`{SKEW_REMEDIATION['plugin cache']}`"
-                ),
-            )
-        )
-    if status.fallback and status.state in _CACHE_VERDICTS:
-        results.append(
-            CheckResult(
-                name="plugin:own_copy",
-                passed=False,
-                info=True,
-                detail=(
-                    "no install record names this repo, so the plugin cache "
-                    f"verdict above judged the newest cached copy "
-                    f"(v{status.cached}), which may be another repo's — not "
-                    "necessarily the copy this repo loads"
-                ),
-            )
-        )
-    return results
-
-
-def _stale_cache_advisory(status: PluginCacheStatus) -> CheckResult:
-    """Wrap a ``"stale-content"`` verdict as an advisory naming the harm.
-
-    Args:
-        status: The ``"stale-content"`` verdict, carrying the content
-            areas that differ.
-
-    Returns:
-        An advisory ``CheckResult`` naming the differing areas — where the
-        running plugin departs from the pinned one — and a remediation
-        that can converge.
-    """
-    areas = ", ".join(status.stale_areas)
-    return CheckResult(
-        name="version_skew:plugin_cache",
-        passed=False,
-        info=True,
-        detail=(
-            f"STALE PLUGIN: cache slot v{status.cached} does not carry the "
-            f"content pinned at {status.declared} — differs in: {areas}. "
-            f"{STALE_CACHE_REMEDIATION.format(plugin=status.plugin_name)}"
-        ),
-    )
-
-
-def _content_unknown_advisory(status: PluginCacheStatus) -> CheckResult:
-    """Wrap a ``"content-unknown"`` verdict as an advisory saying what to check.
-
-    Silence here would read as "current", which nothing established.
-
-    Args:
-        status: The ``"content-unknown"`` verdict.
-
-    Returns:
-        An advisory ``CheckResult`` with the manual check and the
-        slot-clearing remediation.
-    """
-    return CheckResult(
-        name="version_skew:plugin_cache",
-        passed=False,
-        info=True,
-        detail=(
-            f"plugin cache v{status.cached} could not be compared with the "
-            f"content pinned at {status.declared}: a plugin tree exceeded the "
-            "hashing size caps, so whether the loaded copy is current is "
-            "unknown. Compare the cache slot with the pinned release by hand, "
-            f"or {STALE_CACHE_REMEDIATION.format(plugin=status.plugin_name)}"
-        ),
-    )
-
-
-def _source_mismatch_advisory(status: PluginCacheStatus) -> CheckResult:
-    """Wrap a ``"source-mismatch"`` verdict as an advisory naming both refs.
-
-    Args:
-        status: The ``"source-mismatch"`` verdict, carrying the ref this
-            repo pins and the ref the machine-wide registration tracks.
-
-    Returns:
-        An advisory ``CheckResult`` with the re-pointing remediation.
-    """
-    remediation = SOURCE_MISMATCH_REMEDIATION.format(
-        plugin=status.plugin_name,
-        repo=status.source_repo or "<owner/repo>",
-        ref=status.source_ref,
-    )
-    return CheckResult(
-        name="plugin:source",
-        passed=False,
-        info=True,
-        detail=(
-            f"PLUGIN SOURCE MISMATCH: this repo pins {status.source_ref}, but "
-            f"the machine-wide {status.plugin_name} marketplace tracks "
-            f"{status.registered_ref} — every repo on this machine updates "
-            "from that one registration, so this repo can run another "
-            f"release while updates report it current. {remediation}"
-        ),
-    )
-
-
-def _enabled_in(settings_path: Path) -> bool | None:
-    """Return ``enabledPlugins["forge@forge"]`` from a settings file.
-
-    Args:
-        settings_path: A Claude Code ``settings.json``-shaped file.
-
-    Returns:
-        The boolean the file sets, or ``None`` when the file is absent,
-        unreadable, not a JSON object, or sets nothing for forge.
-    """
-    data, err = read_json(settings_path)
-    enabled = data.get("enabledPlugins") if err is None else None
-    if not isinstance(enabled, dict):
-        return None
-    value = enabled.get(PLUGIN_KEY)
-    return value if isinstance(value, bool) else None
-
-
 def _check_global_install(repo_root: Path) -> list[CheckResult]:
-    """Flag a machine-wide forge install alongside this repo's own.
+    """Flag a forge installed for the whole user account beside this checkout's own.
 
-    Claude Code offers no way to keep a user-scope plugin out of a repo
-    that enables its own copy, nor to pin a plugin per repo, so a global
-    install can shadow the repo's copy: the repo then runs an older forge
-    while every update reports it current. Which copy wins is Claude
-    Code's decision and not observable here, so the finding is that both
-    are present — never a claim about which loads.
+    A user-scope plugin loads in every repo, and Claude Code offers no way
+    to keep it out of one that has its own copy, so the global copy can
+    shadow the checkout's: the checkout then runs another forge while every
+    update reports it current. Which copy wins is Claude Code's decision
+    and not observable here, so the finding is that both are present —
+    never a claim about which loads. The judgment of "global" is
+    :func:`forge.version_surfaces.global_forge_keys`, the same one
+    ``forge-plugin-sync`` refuses to install beside.
 
     Args:
-        repo_root: Repo whose ``.claude/settings.json`` and
-            ``.claude/settings.local.json`` say whether it enables forge.
+        repo_root: Checkout whose own install records and
+            ``.claude/settings(.local).json`` say whether it has a forge.
 
     Returns:
         One advisory result when forge is installed or enabled at user
-        scope and this repo also enables it; otherwise an empty list.
+        scope and this checkout has its own forge too; otherwise an empty
+        list.
     """
     claude_dir = repo_root / ".claude"
-    local = _enabled_in(claude_dir / "settings.local.json")
-    repo_enabled = (
-        local if local is not None else _enabled_in(claude_dir / "settings.json")
+    own = checkout_installs(repo_root) or enabled_forge_keys(
+        claude_dir / "settings.json", claude_dir / "settings.local.json"
     )
-    if not repo_enabled:
+    keys = [safe_text(key) or UNPRINTABLE for key in global_forge_keys()]
+    if not own or not keys:
         return []
-    user_record = any(
-        record.get("scope") == "user" for record in plugin_records(PLUGIN_KEY)
+    commands = "; ".join(
+        f"`claude plugin uninstall {key} --scope user`" for key in keys
     )
-    if not user_record and not _enabled_in(USER_SETTINGS):
-        return []
     return [
         CheckResult(
             name="plugin:global_install",
             passed=False,
             info=True,
             detail=(
-                "forge is installed or enabled machine-wide (user scope) and "
-                "this repo enables its own copy too — the global copy can "
-                "shadow this repo's, so it may run an older forge while every "
-                "update reports it current. Fix: `claude plugin uninstall "
-                f"{PLUGIN_KEY} --scope user` and keep forge enabled per repo "
-                "(a per-repo enabledPlugins false is no fix: it turns forge "
-                "off in that repo entirely). "
-                "The pip package is per environment, but the plugin source "
-                "is per machine."
+                f"forge is installed or enabled for your whole user account "
+                f"({', '.join(keys)}) and this checkout has its own copy too — "
+                "the global copy can shadow this checkout's, so it may run "
+                "another forge while every update reports it current. Fix: "
+                f"{commands}, and keep forge installed per checkout "
+                "(`forge-plugin-sync`). A per-repo enabledPlugins false is no "
+                "fix: it turns forge off in that repo entirely."
             ),
         )
     ]
@@ -551,9 +390,9 @@ def _check_version_skew(repo_root: Path) -> list[CheckResult]:
     legitimately predates an install — FOUNDATION §15); the remediation line in
     the report is the actionable signal, not the exit code.
 
-    The plugin cache is judged against the manifest in :func:`_check_plugin_cache_skew`,
-    not here — pip and git hooks are one line (both derive from installed
-    forge-scripts), while the plugin version is the manifest's (which fragments
+    The plugin is judged in :func:`_check_checkout_plugin`, not here — pip and
+    git hooks are one line (both derive from installed forge-scripts), while
+    the plugin's version is the release the checkout names (which fragments
     mode parks at the latest tag by design). Comparing them made a warning that
     named a command, and the command answered that nothing was out of date:
     both true, and never convergent.
@@ -648,20 +487,20 @@ def _surface_pin_revision(root: Path) -> list[CheckResult]:
 
 
 def _check_plugin_manifests(
-    plugin_root: Path | None,
+    install_dir: Path | None,
     plugin_name: str,
 ) -> list[CheckResult]:
-    """Validate plugin.json + marketplace.json under the installed plugin root.
+    """Validate plugin.json + marketplace.json in the install this checkout loads.
 
     Args:
-        plugin_root: Root directory of the installed plugin, or None if not found.
+        install_dir: The install's directory, or None when none is recorded.
         plugin_name: Expected plugin name to match against ``plugin.json`` /
             ``marketplace.json``.
 
     Returns:
         List of check results for plugin.json and marketplace.json validation.
     """
-    if plugin_root is None:
+    if install_dir is None:
         return [
             CheckResult(
                 name="plugin.json", passed=False, detail="plugin not installed"
@@ -671,20 +510,7 @@ def _check_plugin_manifests(
             ),
         ]
 
-    install_dir = find_install_dir(plugin_root)
-    manifest_dir = (install_dir / ".claude-plugin") if install_dir else None
-    if manifest_dir is None:
-        return [
-            CheckResult(
-                name="plugin.json", passed=False, detail="no .claude-plugin/ dir found"
-            ),
-            CheckResult(
-                name="marketplace.json",
-                passed=False,
-                detail="no .claude-plugin/ dir found",
-            ),
-        ]
-
+    manifest_dir = install_dir / ".claude-plugin"
     plugin_data, plugin_err = read_json(manifest_dir / "plugin.json")
     market_data, market_err = read_json(manifest_dir / "marketplace.json")
 
@@ -716,35 +542,24 @@ def _check_plugin_manifests(
     ]
 
 
-def _check_plugin_contents(plugin_root: Path | None) -> list[CheckResult]:
+def _check_plugin_contents(install_dir: Path | None) -> list[CheckResult]:
     """Verify the expected plugin sub-directories contain files.
 
     Args:
-        plugin_root: Root directory of the installed plugin, or None if not found.
+        install_dir: The install's directory, or None when none is recorded.
 
     Returns:
         List of check results for each expected plugin directory.
     """
-    if plugin_root is None:
+    if install_dir is None:
         return [
             CheckResult(name=f"plugin/{d}", passed=False, detail="plugin not installed")
             for d in EXPECTED_PLUGIN_DIRS
         ]
 
-    plugin_dir = find_install_dir(plugin_root)
-    if plugin_dir is None:
-        return [
-            CheckResult(
-                name=f"plugin/{d}",
-                passed=False,
-                detail="plugin dir layout unrecognised",
-            )
-            for d in EXPECTED_PLUGIN_DIRS
-        ]
-
     results = []
     for d in EXPECTED_PLUGIN_DIRS:
-        sub = plugin_dir / d
+        sub = install_dir / d
         present = sub.is_dir() and any(sub.iterdir())
         count = sum(1 for _ in sub.iterdir()) if sub.is_dir() else 0
         results.append(
@@ -1014,9 +829,10 @@ def main() -> int:
         default="forge",
         type=_validate_plugin_name,
         help=(
-            "Claude Code plugin name to check (default: forge). The plugin "
-            "checks self-skip if no install is found, so consumers who don't "
-            "use Claude Code can ignore this flag."
+            "Claude Code plugin name to check (default: forge): its install "
+            "recorded for this checkout, or for a plugin other than forge a "
+            "user-scope install. Consumers who don't use Claude Code pass "
+            "--skip-plugin-checks."
         ),
     )
     parser.add_argument(
@@ -1034,20 +850,16 @@ def main() -> int:
     results.extend(_check_gh())
     results.extend(_check_step_tools(Path.cwd()))
 
-    plugin_root: Path | None = None
     if not args.skip_plugin_checks:
-        plugin_check = _check_plugin_install(args.plugin_name)
-        results.append(plugin_check)
-        plugin_root = (
-            find_plugin_cache(args.plugin_name) if plugin_check.passed else None
-        )
-        results.extend(_check_plugin_manifests(plugin_root, args.plugin_name))
-        results.extend(_check_plugin_contents(plugin_root))
+        install = resolve_install(Path.cwd(), args.plugin_name)
+        install_dir = install.install_dir if install is not None else None
+        results.append(_check_plugin_install(install, args.plugin_name))
+        results.extend(_check_plugin_manifests(install_dir, args.plugin_name))
+        results.extend(_check_plugin_contents(install_dir))
 
     results.extend(_check_version_skew(Path.cwd()))
     if not args.skip_plugin_checks:
         results.extend(_check_checkout_plugin(Path.cwd()))
-        results.extend(_check_plugin_cache_skew(Path.cwd()))
         results.extend(_check_global_install(Path.cwd()))
     results.extend(_surface_pin_revision(Path.cwd()))
     results.extend(_check_hooks_path(Path.cwd()))

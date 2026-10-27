@@ -60,7 +60,7 @@ Checked on every commit by `verify-forge-repo-structure`: every listed file and 
    - gen_common.py: shared drift-check helper for the `forge-gen-*`
      doc generators
    - doctor.py: `forge-doctor` — environment diagnostics
-   - version_surfaces.py: the three version surfaces of one forge install (pip package, git-hook sidecar, cached Claude Code plugin) plus the editable-install origin and the per-surface remediation strings — read once here for `forge-doctor`'s advisory and `forge-precommit`'s `env_sync` / `plugin_sync` gates
+   - version_surfaces.py: the version surfaces of one forge install (pip package, git-hook sidecar, this checkout's own Claude Code plugin install) plus the editable-install origin, the install-record and global-install readers, and the per-surface remediation strings — read once here for `forge-doctor`, `forge-plugin-sync` and `forge-precommit`'s `env_sync` / `plugin_sync` gates
    - plugin_sync.py: `forge-plugin-sync` — installs this checkout's own forge release as its Claude Code plugin from a per-version marketplace
    - install_githooks.py: `install-forge-githooks` — git hook installer (managed marker carries `body-sha` only — never the forge version, so wrappers stay byte-stable across bumps; the version lives in the gitignored `.forge-hook-version` sidecar; modified wrappers survive refresh)
    - post_merge.py: `forge-post-merge` — managed post-merge git-hook entrypoint (foundation drift check + backgrounded self-refresh of hook wrappers)
@@ -68,7 +68,7 @@ Checked on every commit by `verify-forge-repo-structure`: every listed file and 
    - _hook_helpers.py: private shared helper used by `post_merge` and `post_checkout` (drift-check sequence)
    - install_claudemd.py: `install-forge-claude-md` — CLAUDE.md scaffolder
    - install_claude_settings.py: `install-forge-claude-settings` — write/verify `.claude/settings.json` keeping the shared forge plugin off (removes forge's `extraKnownMarketplaces` entry, sets `enabledPlugins["forge@forge"]` to `false`); idempotent + merge-preserving; `--check` mode
-   - claude_settings_schema.py: shared `.claude/settings.json` forge-block schema (marketplace key path, `forge@forge` id, scaffold) — single source of truth for the write side (install_claude_settings) and read side (install_claudemd channel detection)
+   - claude_settings_schema.py: shared `.claude/settings.json` forge-block schema (shared marketplace key, `forge@forge` id, scaffold) — single source of truth for the CLIs that write that block (install_claude_settings, install_claudemd)
    - install_labels.py: `install-forge-labels` — GitHub label installer
    - install_bootstrap.py: `install-forge-bootstrap` — one-shot umbrella that runs every installer + generator in dependency order
    - upgrade.py: `forge-upgrade` — two-phase consumer upgrade flow (rewrite pin → user runs pip → `--continue` re-syncs artifacts)
@@ -226,7 +226,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_install_claude_settings.py: tests for install_claude_settings
    - test_claude_hooks.py: black-box tests for the `claude-hooks/*.sh` safety hooks (subprocess + JSON stdin)
    - command_positions_snapshot.json: saved output of the shared command scanner over a command corpus, pinned by `tests/test_claude_hooks.py`; regenerate with `FORGE_UPDATE_SNAPSHOT=1`
-   - test_claude_settings_schema.py: tests for the shared claude_settings_schema module (scaffold copy, write/read round-trip)
+   - test_claude_settings_schema.py: tests for the shared claude_settings_schema module (scaffold copy)
    - test_upgrade.py: tests for upgrade (forge-upgrade CLI)
    - test_resync.py: tests for resync (forge-resync CLI)
    - test_install_githooks.py: tests for install_githooks
@@ -286,7 +286,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_smart_test_lifecycle.py: tests for smart_test.lifecycle (development markers, lifecycle skips, full-run stamp and history)
    - test_smart_test_superset.py: regression harness checking the union of forge-smart-test's three selection channels covers every guaranteed test-to-code link
    - test_telemetry.py: tests for telemetry (the resource-profiling wrapper)
-   - test_version_surfaces.py: tests for version_surfaces (the three install-version readers)
+   - test_version_surfaces.py: tests for version_surfaces (install-version, install-record and global-install readers)
    - test_plugin_sync.py: tests for plugin_sync (forge-plugin-sync target resolution, per-version marketplace, refusals, `--check`)
 
 2. **Audit Tests (`tests/audit/`)**

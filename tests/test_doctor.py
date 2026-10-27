@@ -281,11 +281,11 @@ def test_version_skew_aligned_normalizes_dev_suffix(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Same X.Y.Z across all three surfaces reports aligned, dev-suffix and all.
+    """Same X.Y.Z across pip and the git hooks reports aligned, dev-suffix and all.
 
     MOCK SETUP: pip reports an editable-install dev suffix
-    (``2.23.1.dev2+gabc``), the hook sidecar and plugin.json report bare
-    ``2.23.1`` — parse_semver normalizes all three to the same triple.
+    (``2.23.1.dev2+gabc``), the hook sidecar reports bare ``2.23.1`` —
+    parse_semver normalizes both to the same triple.
     """
     monkeypatch.setattr(
         version_surfaces.metadata, "version", lambda _dist: "2.23.1.dev2+gabc"
@@ -295,12 +295,6 @@ def test_version_skew_aligned_normalizes_dev_suffix(
     (githooks / version_surfaces.HOOK_VERSION_SIDECAR).write_text(
         "2.23.1", encoding="utf-8"
     )
-    install_dir = tmp_path / "plugin" / "2.23.1"
-    (install_dir / ".claude-plugin").mkdir(parents=True)
-    (install_dir / ".claude-plugin" / "plugin.json").write_text(
-        json.dumps({"version": "2.23.1"}), encoding="utf-8"
-    )
-    monkeypatch.setattr(version_surfaces, "find_install_dir", lambda _root: install_dir)
 
     results = doctor._check_version_skew(tmp_path)
 
@@ -321,11 +315,10 @@ def test_version_skew_flags_lagging_surface_as_advisory(
 
     A lagging surface is always reported as advisory (``info=True``,
     ``passed=False``) — it carries the remediation but never sways the exit
-    code, regardless of interactive vs. CI context. The plugin cache is no
-    longer part of this comparison (it's judged against the repo's own
-    manifest by :func:`doctor._check_plugin_cache_skew` instead) — only pip
-    and the git hooks derive from the same installed line, so pip is the
-    single "current" surface here.
+    code, regardless of interactive vs. CI context. The plugin is not part
+    of this comparison (``plugin:checkout`` judges it against the release
+    the checkout names) — only pip and the git hooks derive from the same
+    installed line, so pip is the single "current" surface here.
 
     MOCK SETUP: pip reports v2.23.1; the git-hook sidecar reports the
     older v2.22.0.
@@ -371,184 +364,133 @@ def test_version_skew_drops_unparseable_surface(
 ) -> None:
     """Unparseable version is excluded from comparison.
 
-    MOCK SETUP: pip + hooks report the same valid v2.23.1; the plugin
-    install dir name is "garbage" (unparseable) with no plugin.json, so
-    parse_semver returns None for it and it's dropped from comparison —
-    the remaining two surfaces still align.
+    MOCK SETUP: pip reports a valid v2.23.1; the hook sidecar holds
+    "garbage", which parse_semver rejects, so it is dropped — leaving one
+    surface, with nothing to compare it against.
     """
     monkeypatch.setattr(version_surfaces.metadata, "version", lambda _dist: "2.23.1")
     githooks = tmp_path / ".githooks"
     githooks.mkdir()
     (githooks / version_surfaces.HOOK_VERSION_SIDECAR).write_text(
-        "2.23.1", encoding="utf-8"
+        "garbage", encoding="utf-8"
     )
-    install_dir = tmp_path / "plugin" / "garbage"
-    install_dir.mkdir(parents=True)
-    monkeypatch.setattr(version_surfaces, "find_install_dir", lambda _root: install_dir)
 
     results = doctor._check_version_skew(tmp_path)
 
     assert len(results) == 1
     assert results[0].passed
-    assert not results[0].info
-    assert "aligned at v2.23.1" in results[0].detail
+    assert results[0].info
+    assert "only the pip package surface" in results[0].detail
 
 
-# --- _check_plugin_cache_skew() ---------------------------------------------
+# --- plugin:installed and the checks that read the install ------------------
 
 
-def test_plugin_cache_skew_flags_lagging_cache(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A cached plugin behind the repo's own manifest produces one advisory.
+def _populate_install(install_dir: Path, *, name: str = "forge") -> None:
+    """Give an install directory the manifests and content a real one carries.
 
-    MOCK SETUP: this repo's ``.claude-plugin/plugin.json`` declares
-    v2.23.1; the cached plugin install reports the older v2.22.0.
+    Args:
+        install_dir: The directory an install record names.
+        name: The plugin name both manifests declare.
     """
-    plugin_dir = tmp_path / ".claude-plugin"
-    plugin_dir.mkdir()
-    (plugin_dir / "plugin.json").write_text(
-        json.dumps({"name": "forge", "version": "2.23.1"}), encoding="utf-8"
+    meta = install_dir / ".claude-plugin"
+    meta.mkdir(parents=True, exist_ok=True)
+    (meta / "plugin.json").write_text(
+        json.dumps({"name": name, "version": install_dir.name}), encoding="utf-8"
     )
-    monkeypatch.setattr(
-        version_surfaces,
-        "find_plugin_cache",
-        lambda _name: tmp_path / "cache" / "forge",
-    )
-    install_dir = tmp_path / "plugin" / "2.22.0"
-    (install_dir / ".claude-plugin").mkdir(parents=True)
-    (install_dir / ".claude-plugin" / "plugin.json").write_text(
-        json.dumps({"version": "2.22.0"}), encoding="utf-8"
-    )
-    monkeypatch.setattr(version_surfaces, "find_install_dir", lambda _root: install_dir)
+    (meta / "marketplace.json").write_text(json.dumps({"name": name}), encoding="utf-8")
+    for area in doctor.EXPECTED_PLUGIN_DIRS:
+        (install_dir / area).mkdir(exist_ok=True)
+        (install_dir / area / "entry").write_text("x", encoding="utf-8")
 
-    results = doctor._check_plugin_cache_skew(tmp_path)
 
-    # No install record names this repo, so the own-copy advisory follows.
-    assert [r.name for r in results] == ["version_skew:plugin_cache", "plugin:own_copy"]
-    assert not results[0].passed
-    assert all(r.info for r in results)  # advisory only — never sways exit code
-    assert "2.22.0" in results[0].detail
-    assert "2.23.1" in results[0].detail
+def _plugin_results(repo: Path, plugin_name: str = "forge") -> list[doctor.CheckResult]:
+    """Run the install-reading plugin checks the way ``main()`` wires them.
+
+    Args:
+        repo: Checkout root.
+        plugin_name: The ``--plugin-name`` value.
+
+    Returns:
+        The ``plugin:installed``, manifest and content results, in order.
+    """
+    install = version_surfaces.resolve_install(repo, plugin_name)
+    install_dir = install.install_dir if install is not None else None
+    return [
+        doctor._check_plugin_install(install, plugin_name),
+        *doctor._check_plugin_manifests(install_dir, plugin_name),
+        *doctor._check_plugin_contents(install_dir),
+    ]
+
+
+def test_plugin_checks_read_this_checkouts_own_install(
+    tmp_path: Path, claude_home: Path
+) -> None:
+    """Every plugin line describes the install recorded for this checkout.
+
+    SCENARIO: the machine holds only a per-release install for this
+    checkout — no shared slot — which once failed ``plugin:installed``.
+    EXPECTED BEHAVIOR: every line passes and names that install.
+    """
+    repo = manifest_repo(tmp_path, "1.2.3")
+    install_dir = write_install(claude_home, repo, "1.2.3")
+    _populate_install(install_dir)
+
+    results = _plugin_results(repo)
+
+    assert all(r.passed for r in results)
+    installed = results[0]
+    assert installed.name == "plugin:installed"
+    assert "forge@forge-v1-2-3 1.2.3" in installed.detail
+    assert str(install_dir) in installed.detail
+    assert results[1].detail == "name=forge, version=1.2.3"
+
+
+def test_plugin_installed_fails_naming_sync_without_an_install(
+    tmp_path: Path, claude_home: Path
+) -> None:
+    """No install for this checkout is a blocking failure with the fix named.
+
+    SCENARIO: another checkout and the user account each hold a forge;
+    neither is this checkout's.
+    """
+    repo = manifest_repo(tmp_path, "1.2.3")
+    write_install(claude_home, tmp_path / "other", "1.2.3")
+    write_install(claude_home, None, "1.2.3", key="forge@forge", scope="user")
+
+    results = _plugin_results(repo)
+
+    assert not any(r.passed for r in results)
+    assert not any(r.info for r in results)
     assert "forge-plugin-sync" in results[0].detail
+    assert results[1].detail == "plugin not installed"
 
 
-def test_plugin_cache_skew_empty_when_not_behind(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+def test_plugin_installed_for_another_plugin_falls_back_to_user_scope(
+    tmp_path: Path, claude_home: Path
 ) -> None:
-    """A cache at the same version as the manifest is not "behind" (>= boundary).
-
-    MOCK SETUP: both the manifest and the cached install report v2.23.1;
-    no install record names the repo.
-    EXPECTED BEHAVIOR: only the own-copy advisory — no skew finding.
-    """
-    plugin_dir = tmp_path / ".claude-plugin"
-    plugin_dir.mkdir()
-    (plugin_dir / "plugin.json").write_text(
-        json.dumps({"name": "forge", "version": "2.23.1"}), encoding="utf-8"
+    """``--plugin-name`` for a non-forge plugin accepts its user-wide install."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    install_dir = write_install(
+        claude_home, None, "0.4.0", key="other@market", scope="user"
     )
-    monkeypatch.setattr(
-        version_surfaces,
-        "find_plugin_cache",
-        lambda _name: tmp_path / "cache" / "forge",
-    )
-    install_dir = tmp_path / "plugin" / "2.23.1"
-    (install_dir / ".claude-plugin").mkdir(parents=True)
-    (install_dir / ".claude-plugin" / "plugin.json").write_text(
-        json.dumps({"version": "2.23.1"}), encoding="utf-8"
-    )
-    monkeypatch.setattr(version_surfaces, "find_install_dir", lambda _root: install_dir)
+    _populate_install(install_dir, name="other")
 
-    results = doctor._check_plugin_cache_skew(tmp_path)
+    results = _plugin_results(repo, "other")
 
-    assert [r.name for r in results] == ["plugin:own_copy"]
+    assert all(r.passed for r in results)
+    assert "other@market 0.4.0 (user scope)" in results[0].detail
 
 
-def test_plugin_cache_skew_empty_when_uncached(
+def test_plugin_installed_for_another_plugin_without_any_install(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """No cached plugin install is "nothing to compare", not a finding.
+    """A non-forge plugin with no install is a failure that names both scopes."""
+    result = doctor._check_plugin_install(None, "other")
 
-    Representative case for the ``None``-guard branches (missing manifest
-    version, uncached plugin) — both degrade the same way.
-    """
-    plugin_dir = tmp_path / ".claude-plugin"
-    plugin_dir.mkdir()
-    (plugin_dir / "plugin.json").write_text(
-        json.dumps({"name": "forge", "version": "2.23.1"}), encoding="utf-8"
-    )
-    monkeypatch.setattr(version_surfaces, "find_plugin_cache", lambda _name: None)
-
-    assert doctor._check_plugin_cache_skew(tmp_path) == []
-
-
-def test_plugin_cache_skew_names_stale_areas_for_a_consumer(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A consumer's stale slot advises a remedy that can actually converge.
-
-    SCENARIO: the repo ships no manifest of its own, so the verdict comes
-    from the pin-vs-cache content comparison.
-    MOCK SETUP: ``plugin_cache_status`` is stubbed with a
-    ``"stale-content"`` verdict naming two differing areas.
-    EXPECTED BEHAVIOR: one advisory naming both areas and the cache-slot
-    deletion — never ``/plugin update``, which compares the frozen
-    declared versions and reports no change.
-    """
-    monkeypatch.setattr(
-        doctor,
-        "plugin_cache_status",
-        lambda _root: version_surfaces.PluginCacheStatus(
-            "stale-content",
-            "forge",
-            "5.2.0",
-            "v6.11.0",
-            ("agents", "claude-hooks"),
-        ),
-    )
-
-    results = doctor._check_plugin_cache_skew(tmp_path)
-
-    assert len(results) == 1
-    assert results[0].name == "version_skew:plugin_cache"
-    assert not results[0].passed
-    assert results[0].info  # advisory only — never sways the exit code
-    detail = results[0].detail
-    assert "agents, claude-hooks" in detail
-    assert "v6.11.0" in detail
-    assert "forge-plugin-sync" in detail
-    assert "/plugin update forge@forge (then /reload-plugins)" not in detail
-
-
-def test_plugin_cache_skew_reports_unknown_content_with_fallback(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An uncomparable tree is reported as unknown, never left silent.
-
-    MOCK SETUP: ``plugin_cache_status`` stubbed with a
-    ``"content-unknown"`` verdict judged on the newest cached copy.
-    EXPECTED BEHAVIOR: an advisory saying the result is unknown and what
-    to do, followed by the own-copy advisory.
-    """
-    monkeypatch.setattr(
-        doctor,
-        "plugin_cache_status",
-        lambda _root: version_surfaces.PluginCacheStatus(
-            "content-unknown", "forge", "6.11.0", "v6.11.0", fallback=True
-        ),
-    )
-
-    results = doctor._check_plugin_cache_skew(tmp_path)
-
-    assert [r.name for r in results] == ["version_skew:plugin_cache", "plugin:own_copy"]
-    assert all(r.info for r in results)
-    assert "unknown" in results[0].detail
-    assert "forge-plugin-sync" in results[0].detail
+    assert not result.passed
+    assert "this checkout or for your user account" in result.detail
 
 
 def test_plugin_manifests_do_not_echo_crafted_names(tmp_path: Path) -> None:
@@ -566,48 +508,13 @@ def test_plugin_manifests_do_not_echo_crafted_names(tmp_path: Path) -> None:
         json.dumps({"name": "forge; rm -rf ~"}), encoding="utf-8"
     )
 
-    plugin_json, market_json = doctor._check_plugin_manifests(tmp_path, "forge")
+    plugin_json, market_json = doctor._check_plugin_manifests(
+        tmp_path / "9.1.1", "forge"
+    )
 
     assert plugin_json.detail == "name=<unprintable>, version=9.1.1"
     assert market_json.detail == "name=<unprintable>"
     assert not plugin_json.passed
-
-
-def test_plugin_cache_skew_explains_a_source_mismatch(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A mismatched machine-wide source names both refs and the re-pointing.
-
-    MOCK SETUP: ``plugin_cache_status`` stubbed with a
-    ``"source-mismatch"`` verdict (repo pins v9.0.0, registration tracks
-    main).
-    EXPECTED BEHAVIOR: one advisory naming both refs and saying
-    ``/plugin update`` cannot fix it.
-    """
-    monkeypatch.setattr(
-        doctor,
-        "plugin_cache_status",
-        lambda _root: version_surfaces.PluginCacheStatus(
-            "source-mismatch",
-            "forge",
-            None,
-            "v9.0.0",
-            source_ref="v9.0.0",
-            registered_ref="main",
-            source_repo="misnaej/forge",
-        ),
-    )
-
-    results = doctor._check_plugin_cache_skew(tmp_path)
-
-    assert [r.name for r in results] == ["plugin:source"]
-    assert results[0].info
-    detail = results[0].detail
-    assert "tracks main" in detail
-    assert "cannot fix" in detail
-    assert "forge-plugin-sync" in detail
-    assert "no other repo on this machine can re-point" in detail
 
 
 # --- _check_global_install() ---------------------------------------------
@@ -661,50 +568,56 @@ def test_global_install_advisory(
     claude_home: Path,
     case: dict[str, bool],
 ) -> None:
-    """A machine-wide forge beside this repo's own is reported, not judged.
+    """A user-wide forge beside this repo's enabled one is reported, not judged.
 
     Args:
         tmp_path: Pytest temp directory.
         claude_home: Fake ``~/.claude``.
         case: Test case with user_enabled, user_record, local_disabled, expected.
     """
-    user_enabled = case["user_enabled"]
-    user_record = case["user_record"]
-    local_disabled = case["local_disabled"]
-    expected = case["expected"]
-
     repo = tmp_path / "repo"
     _write_settings(repo / ".claude" / "settings.json", enabled=True)
-    if local_disabled:
+    if case["local_disabled"]:
         _write_settings(repo / ".claude" / "settings.local.json", enabled=False)
-    if user_enabled:
+    if case["user_enabled"]:
         _write_settings(claude_home / "settings.json", enabled=True)
-    if user_record:
-        install = tmp_path / "cache" / "3.30.0"
-        install.mkdir(parents=True)
-        (claude_home / "plugins").mkdir(parents=True)
-        (claude_home / "plugins" / "installed_plugins.json").write_text(
-            json.dumps(
-                {
-                    "plugins": {
-                        "forge@forge": [{"scope": "user", "installPath": str(install)}]
-                    }
-                }
-            ),
-            encoding="utf-8",
-        )
+    if case["user_record"]:
+        write_install(claude_home, None, "3.30.0", key="forge@forge", scope="user")
 
     results = doctor._check_global_install(repo)
 
-    if not expected:
+    if not case["expected"]:
         assert results == []
         return
     assert [r.name for r in results] == ["plugin:global_install"]
     detail = results[0].detail
     assert results[0].info
-    assert "claude plugin uninstall forge@forge --scope user" in detail
+    assert "`claude plugin uninstall forge@forge --scope user`" in detail
     assert "enabledPlugins false is no fix" in detail
-    assert "per machine" in detail
+
+
+def test_global_install_advisory_names_a_per_release_user_install(
+    tmp_path: Path, claude_home: Path
+) -> None:
+    """A user-scope ``forge@forge-v…`` record shadows this checkout's own install.
+
+    SCENARIO: the checkout has its own per-release install (no settings
+    file enables anything — the record alone is its copy), and a release
+    marketplace was also installed for the whole user account.
+    EXPECTED BEHAVIOR: the advisory fires and its fix names that key.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    write_install(claude_home, repo, "1.2.3")
+    write_install(claude_home, None, "1.2.0", scope="user")
+
+    results = doctor._check_global_install(repo)
+
+    assert [r.name for r in results] == ["plugin:global_install"]
+    assert "forge@forge-v1-2-0" in results[0].detail
+    assert (
+        "`claude plugin uninstall forge@forge-v1-2-0 --scope user`" in results[0].detail
+    )
 
 
 def test_global_install_advisory_silent_without_files(tmp_path: Path) -> None:
@@ -758,19 +671,18 @@ def test_global_install_advisory_leaves_exit_code_unchanged(
         "_check_step_tools",
         "_check_version_skew",
         "_check_hooks_path",
-        "_check_plugin_cache_skew",
         "_surface_pin_revision",
         "_check_under_used_capabilities",
         "_check_plugin_manifests",
         "_check_plugin_contents",
+        "_check_checkout_plugin",
     ):
         monkeypatch.setattr(doctor, name, lambda *_a: [])
     monkeypatch.setattr(
         doctor,
         "_check_plugin_install",
-        lambda _n: doctor.CheckResult("plugin:installed", passed=True, detail=""),
+        lambda *_a: doctor.CheckResult("plugin:installed", passed=True, detail=""),
     )
-    monkeypatch.setattr(doctor, "find_plugin_cache", lambda _n: None)
     monkeypatch.setattr(doctor.sys, "argv", ["forge-doctor", "--json"])
     emitted: list[str] = []
     monkeypatch.setattr(doctor, "emit", emitted.append)

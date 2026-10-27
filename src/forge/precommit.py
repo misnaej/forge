@@ -857,7 +857,7 @@ def step_plugin_sync(repo_root: Path) -> StepResult:
             f"{'⛔' if blocking else '⚠️ '} This checkout has no install of forge "
             f"{version}, the release its manifest names. Your session runs "
             f"another release's agents and hooks — run "
-            f"`{SKEW_REMEDIATION['plugin cache']}`."
+            f"`{SKEW_REMEDIATION['plugin']}`."
         ),
         non_blocking=not blocking,
     )

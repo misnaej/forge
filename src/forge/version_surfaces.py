@@ -1,77 +1,55 @@
-"""The three surfaces a forge install presents, read once for every checker.
+"""The surfaces a forge install presents, read once for every checker.
 
 One install exposes its version three ways — the pip ``forge-scripts``
 distribution, the gitignored ``.githooks/.forge-hook-version`` sidecar the
-hook installer writes, and the cached Claude Code plugin — and they drift
-independently: a pull adds an entry point the install lacks, a failed
-self-refresh leaves the hooks behind, a merged plugin release sits unloaded
-in the cache. ``forge-doctor`` reports the skew as an advisory and
-``forge-precommit``'s ``env_sync`` / ``plugin_sync`` steps block on it, so
-the readers live here once and both consumers see the same numbers and
-name the same remediation.
+hook installer writes, and the Claude Code plugin this checkout loads —
+and they drift independently: a pull adds an entry point the install
+lacks, a failed self-refresh leaves the hooks behind, a merge moves the
+release a checkout pins while its plugin stays on the old one.
+``forge-doctor`` reports the skew and ``forge-precommit``'s ``env_sync`` /
+``plugin_sync`` steps act on it, so the readers live here once and every
+consumer sees the same numbers and names the same remediation.
 
-A consumer repo ships no manifest, so it has no declared version to
-compare — the module also reads Claude Code's
-``known_marketplaces.json`` registry to resolve the marketplace clone a
-consumer's pin points at, and judges the cache slot by comparing that
-clone's content against what is loaded instead.
-
-Which cached copy to judge is itself a question: one machine holds a
-copy per version some repo fetched, and Claude Code records which copy
-each repo uses in ``installed_plugins.json``. The module reads that
-record so a repo is judged on its own copy rather than on whichever is
-newest.
+The plugin surface is this checkout's own install. ``forge-plugin-sync``
+installs each checkout's release from a marketplace named after it
+(``forge-vX-Y-Z``), and Claude Code records that install in
+``installed_plugins.json`` against the checkout's path. That record is
+what every plugin check reads; a slot shared between repos is never
+consulted, because no checkout loads it any more.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
-import os
 import re
 from importlib import metadata
 from pathlib import Path
 from typing import Final, NamedTuple
 
-from forge.claude_settings_schema import MARKETPLACE_KEY, read_marketplace_ref
-from forge.git_utils import FORGE_DIST_NAME, parse_semver
+from forge.git_utils import FORGE_DIST_NAME
 from forge.install_githooks import SIDECAR_NAME as HOOK_VERSION_SIDECAR
 from forge.upgrade import find_pin
 
 
 DIST_NAME: Final[str] = FORGE_DIST_NAME
 
-# Registry Claude Code keeps of every marketplace it has cloned, mapping a
-# marketplace name to its source repo and the local clone path. Reading it
-# is what lets a consumer — which ships no manifest of its own — say what
-# content it actually pinned.
-KNOWN_MARKETPLACES: Final[Path] = (
-    Path.home() / ".claude" / "plugins" / "known_marketplaces.json"
-)
-
 # Claude Code's record of every plugin install on this machine: per plugin
 # key, one entry per scope — ``user`` (every repo) or a ``projectPath``
 # (one repo) — naming the cache directory that install loads. It is the
-# only place that says which of several cached copies a given repo uses.
+# only place that says which copy a given checkout uses.
 INSTALLED_PLUGINS: Final[Path] = (
     Path.home() / ".claude" / "plugins" / "installed_plugins.json"
 )
 
-# The plugin tree areas whose content decides what a session runs. The
-# manifest is compared too, minus its ``version``: fragments mode parks
-# that field at the latest tag, so trees that differ only there are the
-# same content.
-CONTENT_AREAS: Final[tuple[str, ...]] = ("agents", "skills", "claude-hooks")
+# Claude Code's user-scope settings: ``enabledPlugins`` here turns a plugin
+# on in every repo on the machine, the other half of a global install.
+USER_SETTINGS: Final[Path] = Path.home() / ".claude" / "settings.json"
+
+# The manifest a plugin-shipping repo (forge itself) declares its release in.
 MANIFEST_AREA: Final[str] = ".claude-plugin/plugin.json"
 
-# Caps on what one content area may hash. Both trees live where any
-# process on the machine can write, and a planted huge file or sprawling
-# tree would otherwise stall every doctor run and every commit that asks.
-# A real area is a few hundred small files, far below either cap; past
-# one, the comparison reports "unknown" rather than guess.
-_MAX_AREA_FILES: Final[int] = 5000
-_MAX_AREA_BYTES: Final[int] = 50 * 1024 * 1024
-_READ_CHUNK: Final[int] = 1024 * 1024
+# The plugin every forge-specific reader below is about.
+_FORGE: Final[str] = "forge"
 
 # What a value read from another tool's file may look like before it is
 # echoed in a verdict or interpolated into a remediation command. Plugin
@@ -87,31 +65,8 @@ UNPRINTABLE: Final[str] = "<unprintable>"
 SKEW_REMEDIATION: Final[dict[str, str]] = {
     "pip package": "forge-upgrade --apply",
     "git hooks": "install-forge-githooks",
-    "plugin cache": "forge-plugin-sync (then restart the session)",
+    "plugin": "forge-plugin-sync (then restart the session)",
 }
-
-# The remediation for a shared cache slot holding stale *content*.
-# ``/plugin update`` cannot clear it: it compares declared manifest
-# versions, and a frozen declared version is exactly the condition here.
-# A per-version install pinned to its release commit replaces the shared
-# slot for this checkout without touching it for anyone else.
-STALE_CACHE_REMEDIATION: Final[str] = (
-    "run `forge-plugin-sync` and restart the session: it installs this "
-    "checkout's own copy, pinned to its release commit — `/plugin update` "
-    "compares declared versions and reports no change for the shared "
-    "{plugin} slot"
-)
-
-# The remediation when the shared ``forge`` marketplace registration
-# points at another ref than this repo pins. Every repo that uses that
-# registration updates from it, so no command re-pointing it is safe for
-# all of them; a per-version marketplace no other repo can re-point is.
-SOURCE_MISMATCH_REMEDIATION: Final[str] = (
-    "`/plugin update` cannot fix this — it fetches from the shared "
-    "registration. Run `forge-plugin-sync` and restart the session: it "
-    "installs this checkout's own copy from a marketplace named after its "
-    "release, which no other repo on this machine can re-point"
-)
 
 
 def read_json(path: Path) -> tuple[dict, str | None]:
@@ -144,87 +99,6 @@ def read_json(path: Path) -> tuple[dict, str | None]:
     return data, None
 
 
-def version_key(name: str) -> tuple[int, ...]:
-    """Return a sortable key for a version-shaped directory name.
-
-    Args:
-        name: Directory name (typically a bare semver like ``"1.13.0"``;
-            falls back to a tuple of zeros when the name isn't
-            version-shaped so the comparison degrades gracefully).
-
-    Returns:
-        Tuple of integers — ``(1, 13, 0)`` for ``"1.13.0"``,
-        ``(0,)`` for any non-numeric name. Comparing tuples
-        component-wise gives correct semver ordering (``1.13`` > ``1.9``,
-        which lexicographic string compare gets wrong).
-    """
-    parts = name.split(".")
-    try:
-        return tuple(int(p) for p in parts)
-    except ValueError:
-        return (0,)
-
-
-def find_plugin_cache(plugin_name: str) -> Path | None:
-    r"""Locate a Claude Code plugin cache directory by name.
-
-    Only checks the canonical ``~/.claude/plugins/cache/<plugin>`` path
-    that Claude Code populates on ``/plugin install``. The marketplace
-    source dir (``~/.claude/plugins/marketplaces/...``) is intentionally
-    not searched here: marketplace dir names are ``<org>-<plugin>``,
-    and embedding an org prefix in this lookup would tie the lookup to a
-    single ``<org>/<plugin>`` source.
-
-    Args:
-        plugin_name: Plugin identifier (e.g. ``"forge"``).
-
-    Returns:
-        Absolute path to the plugin cache if found, otherwise ``None`` —
-        also for a path-shaped name (``/``, ``\\``, ``..``), which is
-        never a plugin identifier.
-    """
-    # The name comes from a repo's own manifest; a path-shaped value must
-    # not walk the lookup out of the cache directory.
-    if (
-        not plugin_name
-        or "/" in plugin_name
-        or "\\" in plugin_name
-        or ".." in plugin_name
-    ):
-        return None
-    cache = Path.home() / ".claude" / "plugins" / "cache" / plugin_name
-    return cache if cache.is_dir() else None
-
-
-def find_install_dir(plugin_root: Path) -> Path | None:
-    """Walk the Claude Code cache layout to find the active plugin install.
-
-    Claude Code stores installed plugins under
-    ``~/.claude/plugins/cache/<plugin>/<plugin>/<version>/`` — two levels
-    nested below the cache slot, with one directory per cached version.
-    Older versions and forks may flatten to one level or none. Walk
-    up to two levels looking for the first directory that carries a
-    ``.claude-plugin/plugin.json``; when multiple versions are
-    present, pick the one with the highest semver-shaped name.
-
-    Args:
-        plugin_root: Cache slot for the plugin
-            (``~/.claude/plugins/cache/<plugin>``).
-
-    Returns:
-        Path of the directory carrying ``.claude-plugin/plugin.json`` (the
-        install root for diagnostics), or ``None`` when no valid layout is
-        found at any depth.
-    """
-    candidates: list[Path] = []
-    for depth_glob in (".claude-plugin", "*/.claude-plugin", "*/*/.claude-plugin"):
-        candidates.extend(plugin_root.glob(depth_glob))
-    valid = [c.parent for c in candidates if (c / "plugin.json").is_file()]
-    if not valid:
-        return None
-    return max(valid, key=lambda p: version_key(p.name))
-
-
 def pip_version() -> str | None:
     """Version of the installed ``forge-scripts`` package, or None if absent."""
     try:
@@ -255,26 +129,6 @@ def hook_sidecar_version(repo_root: Path) -> str | None:
         return sidecar.read_text(encoding="utf-8").strip() or None
     except (OSError, UnicodeDecodeError):
         return None
-
-
-def plugin_cache_version(plugin_root: Path | None) -> str | None:
-    """Version of the cached Claude Code plugin install, or None when absent.
-
-    Prefers the ``version`` field of the installed ``plugin.json`` (robust to
-    a flattened cache layout) and falls back to the cache directory name.
-
-    Args:
-        plugin_root: Cache slot for the plugin, or None when uncached.
-
-    Returns:
-        The cached plugin's version string, or None when no install is found.
-    """
-    if plugin_root is None:
-        return None
-    install_dir = find_install_dir(plugin_root)
-    if install_dir is None:
-        return None
-    return install_version(install_dir)
 
 
 def install_version(install_dir: Path) -> str:
@@ -341,122 +195,14 @@ def _direct_url() -> dict[str, object] | None:
     return data if isinstance(data, dict) else None
 
 
-def marketplace_clone(repo_slug: str) -> Path | None:
-    """Local clone Claude Code keeps for the marketplace serving *repo_slug*.
-
-    Claude Code records every marketplace it has fetched in
-    ``~/.claude/plugins/known_marketplaces.json``, keyed by marketplace
-    name, each entry carrying ``source.repo`` (``owner/repo``) and
-    ``installLocation`` (a real git checkout at the ref the consumer
-    registered). Matching on the source repo rather than the marketplace
-    name keeps the lookup tied to what the pin names.
-
-    Args:
-        repo_slug: ``owner/repo`` the consumer's pin points at.
-
-    Returns:
-        The clone directory, or ``None`` when the registry is absent,
-        unreadable, carries no entry for *repo_slug*, or names a path
-        that no longer exists. Every degradation is "unknown", never an
-        exception — this reader runs inside an advisory.
-    """
-    for entry in _marketplace_entries(repo_slug):
-        location = entry.get("installLocation")
-        if isinstance(location, str) and Path(location).is_dir():
-            return Path(location)
-    return None
-
-
-def registered_marketplace_ref(repo_slug: str) -> str | None:
-    """Ref the machine-wide marketplace registration for *repo_slug* tracks.
-
-    The registry is per machine, not per repo: the first repo to register
-    a marketplace sets the ``source.ref`` every other repo then updates
-    from, whatever ref those repos pin.
-
-    Args:
-        repo_slug: ``owner/repo`` the consumer's pin points at.
-
-    Returns:
-        The first matching entry's ``source.ref``, or ``None`` when the
-        registry is absent or unreadable, no entry serves *repo_slug*, or
-        the entry names no ref (it then tracks the default branch, which
-        this reader cannot name — "unknown", not a mismatch).
-    """
-    for entry in _marketplace_entries(repo_slug):
-        source = entry.get("source")
-        ref = source.get("ref") if isinstance(source, dict) else None
-        return ref if isinstance(ref, str) and ref else None
-    return None
-
-
-def _marketplace_entries(repo_slug: str) -> list[dict[str, object]]:
-    """Registry entries whose source is the GitHub repo *repo_slug*.
-
-    Args:
-        repo_slug: ``owner/repo`` to match against ``source.repo``.
-
-    Returns:
-        Matching entries in registry order; empty when the registry is
-        absent, unreadable or not a JSON object.
-    """
-    data, err = read_json(KNOWN_MARKETPLACES)
-    if err is not None:
-        return []
-    return [
-        entry
-        for entry in data.values()
-        if isinstance(entry, dict)
-        and isinstance(entry.get("source"), dict)
-        and entry["source"].get("repo") == repo_slug
-    ]
-
-
-class PluginInstall(NamedTuple):
-    """One install record from ``installed_plugins.json``.
-
-    Attributes:
-        scope: The record's scope — ``"user"`` for a machine-wide install,
-            otherwise the per-repo scope Claude Code wrote (``"project"``
-            or ``"local"``).
-        version: The version the record names, falling back to what the
-            install directory's manifest declares.
-        install_dir: The cache directory the install loads from.
-    """
-
-    scope: str
-    version: str
-    install_dir: Path
-
-
-class PluginInstalls(NamedTuple):
-    """Which installed copies of a plugin bear on one repo.
-
-    Attributes:
-        repo: The record whose ``projectPath`` is this repo, if any.
-        user: The first user-scope record, if any — reported, never used
-            in place of the repo's own: whether it or the repo's record
-            loads is Claude Code's decision, and this reader cannot see it.
-        install_dir: The copy to judge — the repo record's, else the
-            newest cached copy.
-        fallback: ``True`` when ``install_dir`` is the newest cached copy
-            because no record for this repo exists, so the verdict may
-            describe another repo's copy.
-    """
-
-    repo: PluginInstall | None
-    user: PluginInstall | None
-    install_dir: Path | None
-    fallback: bool
-
-
-def plugin_records(
+def _keyed_records(
     plugin: str, plugins_file: Path | None = None
-) -> list[dict[str, object]]:
-    """Raw install records Claude Code keeps for *plugin*.
+) -> list[tuple[str, dict[str, object]]]:
+    """Install records for *plugin*, each with the key it is filed under.
 
     Two shapes are seen on disk for one plugin key — a list of records,
-    one per scope, or a single record — and both are accepted.
+    one per scope, or a single record — and both are accepted. The key
+    says which marketplace a record came from.
 
     Args:
         plugin: A full ``name@marketplace`` key, matched exactly, or a bare
@@ -465,27 +211,9 @@ def plugin_records(
             :data:`INSTALLED_PLUGINS`.
 
     Returns:
-        The records as dicts in file order; empty when the file is absent,
-        unreadable or malformed — never an exception, since every caller
-        runs inside an advisory.
-    """
-    return [record for _, record in _keyed_records(plugin, plugins_file)]
-
-
-def _keyed_records(
-    plugin: str, plugins_file: Path | None = None
-) -> list[tuple[str, dict[str, object]]]:
-    """Install records for *plugin*, each with the key it is filed under.
-
-    The key says which marketplace a record came from, which
-    :func:`plugin_records` drops and :func:`checkout_installs` needs.
-
-    Args:
-        plugin: As for :func:`plugin_records`.
-        plugins_file: As for :func:`plugin_records`.
-
-    Returns:
-        ``(key, record)`` pairs in file order; empty on any read problem.
+        ``(key, record)`` pairs in file order; empty when the file is
+        absent, unreadable or malformed — never an exception, since every
+        caller runs inside a check.
     """
     path = INSTALLED_PLUGINS if plugins_file is None else plugins_file
     data, err = read_json(path)
@@ -557,50 +285,145 @@ def target_plugin_version(repo_root: Path) -> str | None:
 
 
 class CheckoutInstall(NamedTuple):
-    """One forge install Claude Code recorded for a single checkout.
+    """One plugin install Claude Code recorded.
 
     Attributes:
-        key: The ``forge@<marketplace>`` key the record is filed under.
-        scope: ``local`` or ``project``.
-        version: The installed version.
+        key: The ``<plugin>@<marketplace>`` key the record is filed under.
+        scope: ``local`` or ``project`` for one checkout's install, ``user``
+            for one that loads in every checkout.
+        version: The installed version — the record's, falling back to
+            what the install directory's manifest declares.
+        install_dir: The cache directory the install loads from.
     """
 
     key: str
     scope: str
     version: str
+    install_dir: Path
+
+
+def _installs(
+    plugin: str, plugins_file: Path | None
+) -> list[tuple[CheckoutInstall, str | None]]:
+    """Every recorded install of *plugin* whose directory still exists.
+
+    A record can outlive its directory — a cache cleared by hand, or a
+    marketplace whose source folder is gone — and such a record loads
+    nothing, so it is skipped rather than reported.
+
+    Args:
+        plugin: As for :func:`_keyed_records`.
+        plugins_file: Record file to read; defaults to
+            :data:`INSTALLED_PLUGINS`.
+
+    Returns:
+        ``(install, projectPath)`` pairs in file order; the path is
+        ``None`` when the record names none.
+    """
+    found: list[tuple[CheckoutInstall, str | None]] = []
+    for key, record in _keyed_records(plugin, plugins_file):
+        location = record.get("installPath")
+        if not isinstance(location, str) or not location:
+            continue
+        install_dir = Path(location)
+        if not install_dir.is_dir():
+            continue
+        scope = record.get("scope")
+        version = record.get("version")
+        project = record.get("projectPath")
+        install = CheckoutInstall(
+            key=key,
+            scope=scope if isinstance(scope, str) else "",
+            version=str(version) if version else install_version(install_dir),
+            install_dir=install_dir,
+        )
+        found.append((install, project if isinstance(project, str) else None))
+    return found
 
 
 def checkout_installs(
-    repo_root: Path, plugins_file: Path | None = None
+    repo_root: Path, plugins_file: Path | None = None, *, plugin: str = _FORGE
 ) -> list[CheckoutInstall]:
-    """Return every forge install recorded for *repo_root* alone.
+    """Return every install of *plugin* recorded for *repo_root* alone.
 
     User-scope records are left out: they belong to every checkout, and
-    :func:`plugin_installs` already reports them.
+    :func:`user_installs` reports them.
 
     Args:
         repo_root: Checkout root.
         plugins_file: Record file to read; defaults to
             :data:`INSTALLED_PLUGINS`.
+        plugin: Bare plugin name.
 
     Returns:
         The installs in file order; records whose install directory no
         longer exists are ignored.
     """
     target = _resolved(repo_root)
-    found: list[CheckoutInstall] = []
-    for key, record in _keyed_records("forge", plugins_file):
-        install = _install_from_record(record)
-        project = record.get("projectPath")
-        if (
-            install is None
-            or install.scope == "user"
-            or not isinstance(project, str)
-            or _resolved(Path(project)) != target
-        ):
-            continue
-        found.append(CheckoutInstall(key, install.scope, install.version))
-    return found
+    return [
+        install
+        for install, project in _installs(plugin, plugins_file)
+        if install.scope != "user"
+        and project is not None
+        and _resolved(Path(project)) == target
+    ]
+
+
+def user_installs(
+    plugin: str = _FORGE, plugins_file: Path | None = None
+) -> list[CheckoutInstall]:
+    """Return every user-scope install of *plugin* whose directory exists.
+
+    Args:
+        plugin: Bare plugin name.
+        plugins_file: Record file to read; defaults to
+            :data:`INSTALLED_PLUGINS`.
+
+    Returns:
+        The installs in file order.
+    """
+    return [
+        install
+        for install, _ in _installs(plugin, plugins_file)
+        if install.scope == "user"
+    ]
+
+
+def resolve_install(
+    repo_root: Path, plugin: str = _FORGE, plugins_file: Path | None = None
+) -> CheckoutInstall | None:
+    """Return the install of *plugin* that answers for *repo_root*.
+
+    Forge is judged on this checkout's own install only: a copy recorded
+    for another checkout or for the whole user account is not what this
+    checkout was set up to load. When the checkout holds several forge
+    installs, the one :func:`checkout_plugin_current` counts — the target
+    release from that release's own marketplace — wins, then any at the
+    target version, then the first recorded. Another plugin has no
+    per-checkout release to aim at, so its own checkout record wins and a
+    user-scope record stands in when there is none.
+
+    Args:
+        repo_root: Checkout root.
+        plugin: Bare plugin name.
+        plugins_file: Record file to read; defaults to
+            :data:`INSTALLED_PLUGINS`.
+
+    Returns:
+        The install, or ``None`` when nothing qualifies.
+    """
+    own = checkout_installs(repo_root, plugins_file, plugin=plugin)
+    if plugin == _FORGE:
+        target = target_plugin_version(repo_root)
+        pinned = f"{_FORGE}@{pinned_marketplace(target)}" if target else None
+        ranked = sorted(
+            own,
+            key=lambda install: (install.key != pinned, install.version != target),
+        )
+        return ranked[0] if ranked else None
+    if own:
+        return own[0]
+    return next(iter(user_installs(plugin, plugins_file)), None)
 
 
 def checkout_plugin_current(
@@ -621,71 +444,71 @@ def checkout_plugin_current(
     Returns:
         ``True`` when such a record exists.
     """
-    want = f"forge@{pinned_marketplace(version)}"
+    want = f"{_FORGE}@{pinned_marketplace(version)}"
     return any(
         install.key == want and install.version == version
         for install in checkout_installs(repo_root, plugins_file)
     )
 
 
-def plugin_installs(repo_root: Path, plugin_name: str) -> PluginInstalls:
-    """Find the installed copies of *plugin_name* that bear on *repo_root*.
+def enabled_forge_keys(*settings_paths: Path) -> list[str]:
+    """Return every ``forge@…`` key the given settings files leave turned on.
 
-    A machine holds one cached copy per version some repo fetched, and
-    each repo keeps the copy it last fetched; judging a repo by the newest
-    copy reported every repo as current whatever it actually ran.
-
-    Args:
-        repo_root: Repo whose own install record is wanted.
-        plugin_name: Bare plugin name (e.g. ``"forge"``).
-
-    Returns:
-        A :class:`PluginInstalls`. Records whose install directory no
-        longer exists are ignored.
-    """
-    target = _resolved(repo_root)
-    repo: PluginInstall | None = None
-    user: PluginInstall | None = None
-    for record in plugin_records(plugin_name):
-        install = _install_from_record(record)
-        if install is None:
-            continue
-        if install.scope == "user":
-            user = user or install
-            continue
-        project = record.get("projectPath")
-        if repo is None and isinstance(project, str):
-            repo = install if _resolved(Path(project)) == target else None
-    if repo is not None:
-        return PluginInstalls(repo, user, repo.install_dir, fallback=False)
-    cache_root = find_plugin_cache(plugin_name)
-    newest = find_install_dir(cache_root) if cache_root is not None else None
-    return PluginInstalls(None, user, newest, fallback=newest is not None)
-
-
-def _install_from_record(record: dict[str, object]) -> PluginInstall | None:
-    """Build a :class:`PluginInstall` from one raw record.
+    Files are read in order and a later file's value for a key replaces an
+    earlier one's — the way Claude Code layers a checkout's
+    ``settings.local.json`` over its ``settings.json`` — so a key one file
+    enables and a later one sets ``false`` is off.
 
     Args:
-        record: One element of a plugin key's records.
+        *settings_paths: Claude Code ``settings.json``-shaped files, lowest
+            precedence first.
 
     Returns:
-        The install, or ``None`` when the record names no existing
-        install directory.
+        The keys whose final ``enabledPlugins`` value is ``true``, sorted;
+        a file that is absent, unreadable or sets nothing contributes
+        nothing.
     """
-    location = record.get("installPath")
-    if not isinstance(location, str) or not location:
-        return None
-    install_dir = Path(location)
-    if not install_dir.is_dir():
-        return None
-    scope = record.get("scope")
-    version = record.get("version")
-    return PluginInstall(
-        scope=scope if isinstance(scope, str) else "",
-        version=str(version) if version else install_version(install_dir),
-        install_dir=install_dir,
-    )
+    final: dict[str, object] = {}
+    for path in settings_paths:
+        data, err = read_json(path)
+        enabled = data.get("enabledPlugins") if err is None else None
+        if isinstance(enabled, dict):
+            final.update(
+                (key, value)
+                for key, value in enabled.items()
+                if isinstance(key, str) and key.startswith(f"{_FORGE}@")
+            )
+    return sorted(key for key, value in final.items() if value is True)
+
+
+def global_forge_keys(
+    plugins_file: Path | None = None, settings_file: Path | None = None
+) -> list[str]:
+    """Return every forge key installed or enabled for the whole user account.
+
+    A user-scope forge loads in every repo, beside the checkout's own copy,
+    and two enabled plugins named ``forge`` make Claude Code drop hooks —
+    so both ``forge-doctor`` and ``forge-plugin-sync`` ask this one
+    question. A user-scope record counts whether or not its directory
+    still exists: Claude Code may fetch it again, and removing the record
+    is the fix either way.
+
+    Args:
+        plugins_file: Record file to read; defaults to
+            :data:`INSTALLED_PLUGINS`.
+        settings_file: User settings to read; defaults to
+            :data:`USER_SETTINGS`.
+
+    Returns:
+        The keys, sorted and without duplicates; empty when there are none.
+    """
+    recorded = {
+        key
+        for key, record in _keyed_records(_FORGE, plugins_file)
+        if record.get("scope") == "user"
+    }
+    settings = USER_SETTINGS if settings_file is None else settings_file
+    return sorted(recorded | set(enabled_forge_keys(settings)))
 
 
 def _resolved(path: Path) -> Path:
@@ -706,258 +529,6 @@ def _resolved(path: Path) -> Path:
         return path
 
 
-def _repo_slug(url: str) -> str | None:
-    """Return the ``owner/repo`` a git pin URL names.
-
-    Splitting on ``://`` drops any embedded credentials with the host, so
-    a token in the pin never reaches the returned slug. A path with more
-    than two segments is returned whole rather than trimmed to its last
-    two: every caller resolves a GitHub pin, and a longer path simply
-    fails to match, which degrades the check to "unknown" — the safe
-    direction. Guessing which segment to drop would instead match the
-    wrong repository.
-
-    Args:
-        url: The ``git+...`` URL portion of a pin (no ref).
-
-    Returns:
-        ``"owner/repo"``, or ``None`` when the URL carries no such pair.
-    """
-    cleaned = url.strip().removeprefix("git+").removesuffix(".git")
-    if "://" in cleaned:
-        cleaned = cleaned.split("://", 1)[1].partition("/")[2]
-    elif ":" in cleaned:  # scp-style git@host:owner/repo
-        cleaned = cleaned.rsplit(":", 1)[1]
-    owner, _, repo = cleaned.strip("/").rpartition("/")
-    if not owner or not repo:
-        return None
-    return f"{owner}/{repo}"
-
-
-def content_digests(plugin_dir: Path) -> dict[str, str | None]:
-    """Hash each content area of a plugin tree.
-
-    Comparing names alone called a rewritten agent, or a hook fixed under
-    the same name, current; hashing the bytes does not. The two trees
-    compared are a git clone and a cache copy, so only the areas a session
-    loads are hashed — the clone's ``.git/`` and anything else outside
-    them never count.
-
-    Args:
-        plugin_dir: Root of a plugin tree (clone or cache install).
-
-    Returns:
-        A sha256 hex digest per area in :data:`CONTENT_AREAS`, plus one
-        for :data:`MANIFEST_AREA` with its ``version`` field removed. An
-        absent area hashes as empty; an area over the size caps is
-        ``None`` — unknown, never a verdict.
-    """
-    digests = {area: _area_digest(plugin_dir / area) for area in CONTENT_AREAS}
-    digests[MANIFEST_AREA] = _manifest_digest(plugin_dir / MANIFEST_AREA)
-    return digests
-
-
-def _area_files(area: Path) -> list[Path] | None:
-    """List the regular files under *area* that count as content.
-
-    Symlinks are never followed or hashed, whether to files or to
-    directories: the trees live in a user-writable cache, and a link
-    could point the hash at anything on the machine. Bytecode caches are
-    skipped too — a session that runs a Python hook writes them into the
-    cache copy, and they say nothing about the content shipped.
-
-    Args:
-        area: Directory to walk.
-
-    Returns:
-        The files in sorted order, or ``None`` once more than
-        :data:`_MAX_AREA_FILES` are found.
-    """
-    files: list[Path] = []
-    for root, dirnames, filenames in os.walk(area):
-        dirnames[:] = [d for d in dirnames if d != "__pycache__"]
-        for name in filenames:
-            path = Path(root) / name
-            if path.suffix == ".pyc" or path.is_symlink() or not path.is_file():
-                continue
-            files.append(path)
-            if len(files) > _MAX_AREA_FILES:
-                return None
-    return sorted(files)
-
-
-def _area_digest(area: Path) -> str | None:
-    """Hash every file under *area* by relative path and bytes.
-
-    Args:
-        area: Directory to hash.
-
-    Returns:
-        The sha256 hex digest, or ``None`` when the area exceeds
-        :data:`_MAX_AREA_FILES` files or :data:`_MAX_AREA_BYTES` bytes.
-    """
-    digest = hashlib.sha256()
-    if area.is_symlink() or not area.is_dir():
-        return digest.hexdigest()
-    files = _area_files(area)
-    if files is None:
-        return None
-    total = 0
-    for path in files:
-        digest.update(path.relative_to(area).as_posix().encode())
-        digest.update(b"\0")
-        try:
-            with path.open("rb") as fh:
-                while chunk := fh.read(_READ_CHUNK):
-                    total += len(chunk)
-                    if total > _MAX_AREA_BYTES:
-                        return None
-                    digest.update(chunk)
-        except OSError:
-            digest.update(b"<unreadable>")
-        digest.update(b"\0")
-    return digest.hexdigest()
-
-
-def _manifest_digest(manifest: Path) -> str | None:
-    """Hash a plugin manifest with its ``version`` field removed.
-
-    Args:
-        manifest: The ``plugin.json`` to hash.
-
-    Returns:
-        The sha256 hex digest of the canonical JSON, or of the raw bytes
-        when the file is not a JSON object; an absent, symlinked or
-        unreadable file hashes as empty, and one over
-        :data:`_MAX_AREA_BYTES` is ``None``.
-    """
-    try:
-        if manifest.is_symlink() or not manifest.is_file():
-            return hashlib.sha256().hexdigest()
-        if manifest.stat().st_size > _MAX_AREA_BYTES:
-            return None
-        raw = manifest.read_bytes()
-    except OSError:
-        return hashlib.sha256().hexdigest()
-    try:
-        data = json.loads(raw)
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return hashlib.sha256(raw).hexdigest()
-    if not isinstance(data, dict):
-        return hashlib.sha256(raw).hexdigest()
-    data.pop("version", None)
-    canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode()).hexdigest()
-
-
-def _repo_marketplace_ref(repo_root: Path) -> str | None:
-    """Marketplace ref this repo's own ``.claude/settings.json`` pins.
-
-    Args:
-        repo_root: Repo whose project settings are read.
-
-    Returns:
-        The ref, or ``None`` when the file is absent, unreadable or sets
-        none.
-    """
-    data, err = read_json(repo_root / ".claude" / "settings.json")
-    return read_marketplace_ref(data) if err is None else None
-
-
-class PluginCacheStatus(NamedTuple):
-    """What the Claude Code plugin cache says relative to what ships it.
-
-    Attributes:
-        state: ``"no-manifest"``, ``"uncached"``, ``"unparsed"``,
-            ``"current"``, ``"behind"``, ``"stale-content"`` — the
-            consumer verdict, where the slot's declared version is not
-            behind but its content is — or ``"source-mismatch"``, the
-            consumer verdict where the machine-wide marketplace tracks a
-            different ref than the repo pins — or ``"content-unknown"``,
-            when a tree is too large to hash within the caps.
-        plugin_name: Name the manifest declares, falling back to the repo
-            directory's own name. This and every other text field is
-            :data:`UNPRINTABLE` when its value contains characters outside
-            :data:`_SAFE_TEXT`.
-        cached: Version in the cache, when there is one.
-        declared: Version the manifest declares — or, on the consumer
-            branch, the ref the repo pins.
-        stale_areas: Content areas (:data:`CONTENT_AREAS` and
-            :data:`MANIFEST_AREA`) whose cached copy differs from the
-            pinned content; populated only for ``"stale-content"``.
-        source_ref: Ref this repo pins for the marketplace; populated only
-            for ``"source-mismatch"``.
-        registered_ref: Ref the machine-wide marketplace registration
-            tracks; populated only for ``"source-mismatch"``.
-        source_repo: ``owner/repo`` the pin names, for the re-pointing
-            command; populated only for ``"source-mismatch"``.
-        fallback: ``True`` when no install record names this repo, so
-            ``cached`` describes the newest cached copy rather than this
-            repo's own.
-    """
-
-    state: str
-    plugin_name: str
-    cached: str | None
-    declared: str | None
-    stale_areas: tuple[str, ...] = ()
-    source_ref: str | None = None
-    registered_ref: str | None = None
-    fallback: bool = False
-    source_repo: str | None = None
-
-
-def plugin_cache_status(repo_root: Path) -> PluginCacheStatus:
-    """Compare the cached plugin against the manifest that ships it.
-
-    One reader for a question two checks ask: the ``plugin_sync``
-    pre-commit step, which may refuse a commit, and ``forge-doctor``,
-    which reports an advisory. Both need the same verdict and the same
-    remediation; only what they do with it differs.
-
-    The manifest is the plugin's version. Comparing the cache against the
-    pip package's instead — as the doctor once did — asks about two
-    numbers that are parked apart by design, which produced a warning no
-    command could clear.
-
-    A repo that ships no manifest of its own is a *consumer*, and the
-    population that actually suffers a frozen cache. It gets the branch in
-    :func:`_consumer_cache_status`, which compares content rather than
-    version strings.
-
-    Either branch judges this repo's own installed copy when Claude Code
-    has a record of one, and the newest cached copy otherwise — flagged in
-    the result, since that copy may be another repo's.
-
-    Args:
-        repo_root: Repo whose ``.claude-plugin/plugin.json`` ships the plugin.
-
-    Every free-text field of the result is passed through
-    :func:`safe_text`, since each was read from a file another tool
-    wrote and both callers print it.
-
-    Args:
-        repo_root: Repo whose ``.claude-plugin/plugin.json`` ships the plugin.
-
-    Returns:
-        A :class:`PluginCacheStatus`; ``"behind"``, ``"stale-content"`` and
-        ``"source-mismatch"`` are the findings.
-    """
-    manifest = repo_root / ".claude-plugin" / "plugin.json"
-    if manifest.is_file():
-        status = _manifest_cache_status(repo_root, manifest)
-    else:
-        status = _consumer_cache_status(repo_root)
-    return status._replace(
-        plugin_name=safe_text(status.plugin_name) or UNPRINTABLE,
-        cached=safe_text(status.cached),
-        declared=safe_text(status.declared),
-        source_ref=safe_text(status.source_ref),
-        registered_ref=safe_text(status.registered_ref),
-        source_repo=safe_text(status.source_repo),
-    )
-
-
 def safe_text(value: object) -> str | None:
     """Return *value* as text if it matches :data:`_SAFE_TEXT`, else a placeholder.
 
@@ -973,112 +544,3 @@ def safe_text(value: object) -> str | None:
         return None
     text = str(value)
     return text if _SAFE_TEXT.fullmatch(text) else UNPRINTABLE
-
-
-def _manifest_cache_status(repo_root: Path, manifest: Path) -> PluginCacheStatus:
-    """Compare a plugin-shipping repo's cached copy against its manifest.
-
-    Args:
-        repo_root: Repo that ships the plugin.
-        manifest: Its ``.claude-plugin/plugin.json``.
-
-    Returns:
-        The unsanitized :class:`PluginCacheStatus`.
-    """
-    data, _err = read_json(manifest)
-    plugin_name = str(data.get("name") or repo_root.name)
-    declared = str(data["version"]) if data.get("version") else None
-    own = plugin_installs(repo_root, plugin_name).repo
-    if own is not None:
-        cached: str | None = own.version
-    else:
-        cached = plugin_cache_version(find_plugin_cache(plugin_name))
-    fallback = own is None and cached is not None
-    if cached is None:
-        return PluginCacheStatus("uncached", plugin_name, None, declared)
-    cached_t = parse_semver(cached)
-    declared_t = parse_semver(declared or "")
-    if cached_t is None or declared_t is None:
-        return PluginCacheStatus(
-            "unparsed", plugin_name, cached, declared, fallback=fallback
-        )
-    state = "current" if cached_t >= declared_t else "behind"
-    return PluginCacheStatus(state, plugin_name, cached, declared, fallback=fallback)
-
-
-def _consumer_cache_status(repo_root: Path) -> PluginCacheStatus:
-    """Compare a consumer's active cache slot against the ref it pinned.
-
-    A consumer ships no manifest, so there is no declared version to
-    compare — and under tag-per-merge with assemble-later release, the
-    declared version would not identify the content anyway: no tagged
-    tree's manifest equals its own tag, so materially different trees
-    share one cache slot. What the consumer *did* declare is the pin, and
-    the marketplace clone that pin resolves to is a real checkout of the
-    pinned content. Comparing its content against the cache slot's, area
-    by area, asks the question the version string cannot answer, and
-    names what differs.
-
-    The clone only holds the pinned content when the machine-wide
-    marketplace tracks the ref this repo pins. When it tracks another, the
-    comparison would judge the slot against the wrong tree, so the
-    mismatch is the verdict instead.
-
-    Args:
-        repo_root: Consumer repo root — searched for a ``forge-scripts``
-            pin.
-
-    Returns:
-        ``"source-mismatch"`` when the registered marketplace tracks a
-        different ref than the repo pins, ``"stale-content"`` when any
-        content area differs from the pinned content, ``"current"`` when
-        none does, ``"content-unknown"`` when either tree exceeds the
-        hashing caps, ``"uncached"`` when nothing is installed, and
-        ``"no-manifest"`` when the pin or the clone cannot be resolved.
-    """
-    pin = find_pin(repo_root)
-    slug = _repo_slug(pin.url) if pin is not None else None
-    if pin is None or slug is None:
-        return PluginCacheStatus("no-manifest", repo_root.name, None, None)
-    clone = marketplace_clone(slug)
-    source_dir = find_install_dir(clone) if clone is not None else None
-    data, _err = (
-        read_json(source_dir / ".claude-plugin" / "plugin.json")
-        if source_dir is not None
-        else ({}, None)
-    )
-    # A forge-scripts pin always names the forge plugin, so its marketplace
-    # name is the right fallback when the clone cannot say.
-    plugin_name = str(data.get("name") or MARKETPLACE_KEY)
-    source_ref = _repo_marketplace_ref(repo_root) or pin.ref
-    registered_ref = registered_marketplace_ref(slug)
-    if source_ref and registered_ref and source_ref != registered_ref:
-        return PluginCacheStatus(
-            "source-mismatch",
-            plugin_name,
-            None,
-            pin.ref,
-            source_ref=source_ref,
-            registered_ref=registered_ref,
-            source_repo=slug,
-        )
-    if source_dir is None:
-        return PluginCacheStatus("no-manifest", repo_root.name, None, None)
-    installs = plugin_installs(repo_root, plugin_name)
-    if installs.install_dir is None:
-        return PluginCacheStatus("uncached", plugin_name, None, pin.ref)
-    cached = install_version(installs.install_dir)
-    source, loaded = content_digests(source_dir), content_digests(installs.install_dir)
-    if None in source.values() or None in loaded.values():
-        return PluginCacheStatus(
-            "content-unknown", plugin_name, cached, pin.ref, fallback=installs.fallback
-        )
-    stale = tuple(sorted(area for area in source if source[area] != loaded[area]))
-    return PluginCacheStatus(
-        "stale-content" if stale else "current",
-        plugin_name,
-        cached,
-        pin.ref,
-        stale_areas=stale,
-        fallback=installs.fallback,
-    )

@@ -389,10 +389,10 @@ options:
   -h, --help            show this help message and exit
   --json                Emit JSON instead of human-readable output.
   --plugin-name PLUGIN_NAME
-                        Claude Code plugin name to check (default: forge). The
-                        plugin checks self-skip if no install is found, so
-                        consumers who don't use Claude Code can ignore this
-                        flag.
+                        Claude Code plugin name to check (default: forge): its
+                        install recorded for this checkout, or for a plugin
+                        other than forge a user-scope install. Consumers who
+                        don't use Claude Code pass --skip-plugin-checks.
   --skip-plugin-checks  Skip all Claude Code plugin checks entirely. Useful
                         for consumers who only adopt the pip CLIs.
 ```

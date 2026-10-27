@@ -21,7 +21,9 @@ CLIs a test runs as subprocesses), and the session fails at the end, naming
 the files, if anything changed the real checkout's ``code_health/`` — the
 backstop for a module that builds the path without the resolver. Likewise,
 ``claude_home`` points the Claude Code install records forge reads at an
-empty fake ``~/.claude``, so no verdict depends on the machine's plugins.
+empty fake ``~/.claude``, so no verdict depends on the machine's plugins,
+and ``blocked_claude`` puts a failing stub ``claude`` first on ``PATH``, so
+no test — in process or through a CLI subprocess — reaches the real one.
 """
 
 from __future__ import annotations
@@ -36,7 +38,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from forge import doctor, version_surfaces
+from forge import version_surfaces
 from forge.git_utils import CODE_HEALTH_ENV, PushResult
 
 
@@ -231,11 +233,9 @@ def claude_home(
 
     Two kinds of reader need covering. Module constants resolved from the
     real home at import time — ``version_surfaces.INSTALLED_PLUGINS`` and
-    ``KNOWN_MARKETPLACES``, ``doctor.USER_SETTINGS`` — are monkeypatched
-    to the fake ``.claude`` directory. Readers that call ``Path.home()``
-    when they run — ``version_surfaces.find_plugin_cache`` and
-    ``install_claudemd``'s settings path, for instance — follow ``HOME``,
-    which is set to the fake home. Without this a plugin-cache verdict
+    ``USER_SETTINGS`` — are monkeypatched to the fake ``.claude``
+    directory. Readers that call ``Path.home()`` when they run follow
+    ``HOME``, which is set to the fake home. Without this a plugin verdict
     would depend on whatever the machine has installed. Nothing is
     created: an absent file is the default case, and a test that needs a
     record writes it under the returned directory.
@@ -250,11 +250,44 @@ def claude_home(
     monkeypatch.setattr(
         version_surfaces, "INSTALLED_PLUGINS", plugins / "installed_plugins.json"
     )
-    monkeypatch.setattr(
-        version_surfaces, "KNOWN_MARKETPLACES", plugins / "known_marketplaces.json"
-    )
-    monkeypatch.setattr(doctor, "USER_SETTINGS", claude_dir / "settings.json")
+    monkeypatch.setattr(version_surfaces, "USER_SETTINGS", claude_dir / "settings.json")
     return claude_dir
+
+
+# Printed by the stub ``claude`` every test finds first on PATH.
+CLAUDE_BLOCKED_MESSAGE = (
+    "the real Claude Code CLI is blocked in tests: `claude` would change the "
+    "checkout the suite runs in. Patch shutil.which or the caller instead."
+)
+
+
+@pytest.fixture(autouse=True)
+def blocked_claude(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Put a failing stub ``claude`` ahead of the real one on ``PATH``.
+
+    The real CLI acts on the working directory's project — for a test,
+    the forge checkout itself — so one test that reached it wrote a temp
+    path into this checkout's ``.claude/settings.local.json``. Patching
+    each caller is not enough: a forge CLI a test runs as a subprocess
+    finds ``claude`` on its own ``PATH``. The stub exits non-zero and says
+    why, so a test that reaches it fails loudly instead of changing the
+    machine. A test that needs ``claude`` absent still patches
+    ``shutil.which``.
+
+    Returns:
+        The directory holding the stub.
+    """
+    stub_dir = tmp_path_factory.mktemp("blocked-bin")
+    stub = stub_dir / "claude"
+    stub.write_text(
+        f"#!/bin/sh\necho 'blocked-claude: {CLAUDE_BLOCKED_MESSAGE}' >&2\nexit 97\n",
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{stub_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    return stub_dir
 
 
 def manifest_repo(tmp_path: Path, version: str) -> Path:

@@ -48,6 +48,10 @@ their callers, and the relevant docs; treat the issue's suggested
 names/paths as hypotheses to validate against the current layout. No
 edits.
 
+Find what the planned change supersedes — code paths, checks, docs,
+tests, config — and put its removal in the plan's scope, not in a
+follow-up (FOUNDATION §7 "A change removes what it supersedes").
+
 For every new file, CLI or top-level symbol the plan would add, run
 `forge:prior-art` (FOUNDATION §3) and carry its REUSE / EXTEND / NEW
 verdict into the plan. Name each addition to it as data — a name an

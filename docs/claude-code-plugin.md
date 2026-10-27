@@ -65,18 +65,24 @@ drift).
 **Refusals.** Two enabled plugins named `forge` make Claude Code drop
 hooks, so `forge-plugin-sync` refuses to install while either exists:
 
-- a user-scope forge install, which loads in every repo — remove it with
-  `claude plugin uninstall forge@forge --scope user`
+- a forge installed or enabled for your whole user account, from any
+  marketplace, which loads in every repo — the refusal names each key to
+  remove with `claude plugin uninstall <key> --scope user`
   ([`adopting.md`](adopting.md) Track 3 covers keeping forge out of
   non-forge repos);
 - a tracked `.claude/settings.json` enabling any `forge@…` — run
   `install-forge-claude-settings`.
 
-**Where staleness shows.** `forge-doctor` prints a `plugin:checkout`
-line saying whether this checkout has its own install of its release,
-and the `plugin_sync` pre-commit step (advisory by default) judges the
-same thing. Both name `forge-plugin-sync (then restart the session)` as
-the remedy.
+**Where staleness shows.** `forge-doctor` reports on this checkout's own
+install, never a slot shared between repos: `plugin:installed` (with the
+`plugin.json`, `marketplace.json` and `plugin/…` lines under it) is this
+checkout's `forge@forge-vX-Y-Z` record — a hard failure naming
+`forge-plugin-sync` when there is none — `plugin:checkout` says whether
+that is the release the checkout names, and a user-scope forge is
+reported beside them as `plugin:global_install`. The `plugin_sync`
+pre-commit step (advisory by default) judges the same thing as
+`plugin:checkout`. Both name `forge-plugin-sync (then restart the
+session)` as the remedy.
 
 ### The `/reload-plugins` `0 skills` counter
 
