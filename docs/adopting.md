@@ -128,8 +128,10 @@ around your other keys. Details and the refusals:
 > `forge` drop hooks — so `forge-plugin-sync` refuses to run until it
 > is removed.
 
-**Verify:** `forge-doctor` reports `plugin:checkout`, `plugin:installed` + populated
-`agents/` / `skills/` / `claude-hooks/`. Consumer-specific Claude Code
+**Verify:** `forge-doctor` reports `plugin:installed` naming this
+checkout's `forge@forge-vX-Y-Z` install, `plugin:checkout` saying it is
+the release the checkout names, and populated `agents/` / `skills/` /
+`claude-hooks/` in that install. Consumer-specific Claude Code
 hooks live under `.claude/hooks/` with `${CLAUDE_PROJECT_DIR}`-rooted
 paths — see [`claude-code-plugin.md`](claude-code-plugin.md).
 
@@ -230,26 +232,19 @@ git show vX.Y.Z:.claude-plugin/plugin.json | grep '"version"'   # must say X.Y.Z
 git show vX.Y.Z:CHANGELOG.md | grep -m1 '^## v'                 # must say vX.Y.Z
 ```
 
-### Clearing a plugin cache slot that holds stale content
+### Leaving an older shared install behind
 
-If you installed one of those older tags, Claude Code may have filed it
-under an **earlier release's version** — and if that slot already
-existed, kept the earlier release's files. `/plugin update` compares
-version names only, so it reports "already at the latest version" and
-changes nothing, while every version check stays green. `forge-doctor`
-flags the slot when its content (agents, skills, hooks or manifest)
-differs from the pinned release.
+If you installed one of those older tags through the shared `forge`
+marketplace, Claude Code may have filed it under an **earlier release's
+version** and kept that release's files; `/plugin update` compares
+version names only, so it changes nothing. You do not need to repair
+that slot. Move the `forge-scripts` pin to an adoptable tag and run
+`forge-plugin-sync`: it installs that release for this checkout from a
+marketplace named after it (`forge-vX-Y-Z`), pinned to the tag's
+commit, in a slot of its own. Then restart the Claude Code session —
+`/reload-plugins` is not enough, since a running session keeps what it
+loaded at startup.
 
-The fix is first `forge-plugin-sync`: after you move the `forge-scripts`
-pin to an adoptable tag, it installs that release from its own
-per-version marketplace, pinned to the tag's commit, so the install
-lands in a slot of its own rather than the stale one. Then restart the
-Claude Code session. Only if `forge-doctor` still flags the slot,
-discard it so it refills from the pin:
-
-1. Confirm the `forge-scripts` pin names an adoptable tag.
-2. Delete the whole forge cache directory — the stale content sits
-   under a version name that looks current:
-   `rm -rf ~/.claude/plugins/cache/forge/`
-3. Restart the Claude Code session. `/reload-plugins` is not enough: a
-   running session keeps the slot it loaded at startup.
+The old shared slot stays on disk, because another repo on an older
+release may still use it; nothing in forge reads it any more.
+`forge-doctor` judges this checkout only by its own install.

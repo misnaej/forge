@@ -46,11 +46,13 @@ from forge.git_utils import (
 )
 from forge.run_context import is_ci
 from forge.version_surfaces import (
+    UNPRINTABLE,
     checkout_installs,
     checkout_plugin_current,
+    enabled_forge_keys,
+    global_forge_keys,
     pinned_marketplace,
-    plugin_records,
-    read_json,
+    safe_text,
     target_plugin_version,
 )
 
@@ -236,26 +238,23 @@ def _refusal(root: Path) -> str | None:
     Returns:
         What to fix, or ``None`` when nothing conflicts.
     """
-    if any(record.get("scope") == "user" for record in plugin_records("forge")):
+    user_keys = [safe_text(key) or UNPRINTABLE for key in global_forge_keys()]
+    if user_keys:
+        commands = "; ".join(
+            f"`claude plugin uninstall {key} --scope user`" for key in user_keys
+        )
         return (
-            "forge is also installed for your whole user account, which loads "
-            "in every repo beside this checkout's own copy. Remove it: "
-            "`claude plugin uninstall forge@forge --scope user`."
+            f"forge is also installed or enabled for your whole user account "
+            f"({', '.join(user_keys)}), which loads in every repo beside this "
+            f"checkout's own copy. Remove it: {commands}."
         )
-    data, err = read_json(root / ".claude" / "settings.json")
-    enabled = data.get("enabledPlugins") if err is None else None
-    if isinstance(enabled, dict):
-        shared = sorted(
-            key
-            for key, value in enabled.items()
-            if isinstance(key, str) and key.startswith("forge@") and value is True
+    shared = enabled_forge_keys(root / ".claude" / "settings.json")
+    if shared:
+        return (
+            f".claude/settings.json enables {', '.join(shared)} for everyone "
+            "who opens this repo, beside this checkout's own copy. Set it to "
+            "false — `install-forge-claude-settings` writes that for you."
         )
-        if shared:
-            return (
-                f".claude/settings.json enables {', '.join(shared)} for everyone "
-                "who opens this repo, beside this checkout's own copy. Set it to "
-                "false — `install-forge-claude-settings` writes that for you."
-            )
     return None
 
 

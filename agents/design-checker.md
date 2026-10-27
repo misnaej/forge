@@ -56,8 +56,7 @@ editing" / "pre-write" → Briefing; otherwise → Full Review.
    plan creates a new file or top-level symbol, require its
    `prior-art-searched:` report (REUSE / EXTEND / NEW with layer
    context) instead of re-deriving those answers here; a missing report
-   is itself a briefing finding. This briefing keeps only what
-   prior-art does not cover: violations, patterns, wrapper checks.
+   is itself a briefing finding.
 
 3. **Read the target file** to identify existing patterns:
    - Logging style, error handling, docstring format
@@ -208,6 +207,13 @@ what a CLI already prints; prose rules a script could check. On a hit,
 require the author to move the step into a CLI or subcommand, or to name
 the judgment it needs.
 
+### Supersession lens (judgment check, no CLI)
+
+Ask what the diff makes obsolete — replaced code paths, checks, docs,
+tests — and whether the diff removes it (FOUNDATION §7 "A change removes
+what it supersedes"). One left in place is a finding; a follow-up issue
+does not clear it.
+
 ## Repo-specific extras
 
 A per-repo wrapper's prompt may add rules to apply, e.g.:
@@ -256,6 +262,9 @@ verified-at: <sha>   (PR #<num>, branch <branch>)
  with the CLI or subcommand each belongs in — or "None — no agent or
  skill step changed">
 
+### Supersession lens
+<what the diff supersedes but keeps, with file:line — or "None">
+
 ### Repo-specific rules
 <findings against extras passed by the wrapper, if any>
 
@@ -287,12 +296,10 @@ The report templates sit under each mode above.
 
 ## Success Criteria
 
-- Be specific — cite `file:line` for every finding
-- Be constructive — suggest fixes, not just complaints
 - Prioritize — distinguish CRITICAL / HIGH / MEDIUM / LOW
 - If a recipe surfaced zero findings, state that explicitly in the report
-- Never silently drop the claim-verification stage, the
-  wrapper-justification check, the cost lens, or the mechanical-first lens
+- Never silently drop the claim-verification stage or any judgment
+  check or lens above
 - **Verify before calling a name "stale" / "old" / "leftover"**: `grep`
   first — a name resolving to a real, distinct symbol is current even
   when a similar name also exists; flagging a live symbol is a false

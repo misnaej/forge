@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import subprocess
+from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
@@ -27,7 +29,6 @@ from tests.conftest import manifest_repo, write_install
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
 
 VERSION = "1.2.3"
 COMMIT = "a" * 40
@@ -375,13 +376,27 @@ def test_claude_timeout_reports_failure_naming_the_step(
 
 
 def test_refusal_names_the_user_scope_install(repo: Path, claude_home: Path) -> None:
-    """A user-scope forge loads beside the checkout's own, so it must go first."""
-    write_install(claude_home, None, "1.0.0", key="forge@forge", scope="user")
+    """A user-scope forge from any marketplace must go first, named by its key."""
+    write_install(claude_home, None, "1.0.0", scope="user")
 
     message = plugin_sync._refusal(repo)
 
     assert message is not None
-    assert "--scope user" in message
+    assert "`claude plugin uninstall forge@forge-v1-0-0 --scope user`" in message
+
+
+def test_refusal_for_a_user_settings_enablement(repo: Path, claude_home: Path) -> None:
+    """Forge turned on in the user's own settings loads in every repo too."""
+    claude_home.mkdir(parents=True, exist_ok=True)
+    (claude_home / "settings.json").write_text(
+        '{"enabledPlugins": {"forge@forge": true}}', encoding="utf-8"
+    )
+
+    message = plugin_sync._refusal(repo)
+
+    assert message is not None
+    assert "forge@forge" in message
+    assert "your whole user account" in message
 
 
 @pytest.mark.parametrize(
@@ -413,6 +428,24 @@ def test_refusal_for_a_shared_settings_enablement(
     assert (message is not None) is refused
     if message is not None:
         assert "forge@forge" in message
+
+
+def test_tests_cannot_reach_the_real_claude(blocked_claude: Path) -> None:
+    """The suite's own guard: ``claude`` on PATH is a stub that refuses to run.
+
+    A test that once reached the real CLI wrote a temp path into this
+    checkout's Claude Code settings; the autouse stub makes any such test
+    fail instead, in process or through a CLI subprocess.
+    """
+    found = shutil.which("claude")
+
+    assert found is not None
+    assert Path(found).parent == blocked_claude
+    proc = subprocess.run(
+        ["claude", "plugin", "list"], capture_output=True, check=False
+    )
+    assert proc.returncode != 0
+    assert b"blocked in tests" in proc.stderr
 
 
 # ---------------------------------------------------------------------------

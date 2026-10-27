@@ -829,45 +829,6 @@ def test_is_behind_false_when_either_unresolvable() -> None:
     assert install_claudemd._is_behind("garbage", "v1.2.9") is False
 
 
-def test_installed_plugin_version_reads_manifest(tmp_path: Path) -> None:
-    """The most-recently-installed forge@forge entry's version is returned."""
-    manifest = tmp_path / "installed_plugins.json"
-    manifest.write_text(
-        json.dumps(
-            {
-                "plugins": {
-                    "forge@forge": [
-                        {"version": "v1.1.0", "installed_at": "2026-05-01"},
-                        {"version": "v1.2.5", "installed_at": "2026-05-20"},
-                    ]
-                }
-            }
-        )
-    )
-    assert install_claudemd._installed_plugin_version(manifest) == "v1.2.5"
-
-
-def test_installed_plugin_version_returns_none_when_missing(tmp_path: Path) -> None:
-    """Absent manifest → None."""
-    assert install_claudemd._installed_plugin_version(tmp_path / "no-such.json") is None
-
-
-def test_installed_plugin_version_returns_none_when_forge_absent(
-    tmp_path: Path,
-) -> None:
-    """Manifest without forge@forge → None."""
-    manifest = tmp_path / "installed_plugins.json"
-    manifest.write_text(json.dumps({"plugins": {"other@other": [{"version": "1"}]}}))
-    assert install_claudemd._installed_plugin_version(manifest) is None
-
-
-def test_installed_plugin_version_reads_single_dict_shape(tmp_path: Path) -> None:
-    """Manifest with forge@forge as a single dict (not a list) is supported."""
-    manifest = tmp_path / "installed_plugins.json"
-    manifest.write_text(json.dumps({"plugins": {"forge@forge": {"version": "v1.2.5"}}}))
-    assert install_claudemd._installed_plugin_version(manifest) == "v1.2.5"
-
-
 def test_read_upstream_cache_returns_channel_tags_when_fresh(tmp_path: Path) -> None:
     """A fresh new-schema cache entry round-trips to ChannelTags."""
     cache = tmp_path / "upstream_check.json"
@@ -960,7 +921,6 @@ def test_check_upstream_warns_when_behind_both_channels(
     )
     with caplog.at_level("WARNING"):
         install_claudemd.check_upstream(
-            plugins_file=tmp_path / "no-plugin.json",
             cache_ttl_hours=24,
             fetch=lambda: _channel_tags(main_tag="v1.2.0", dev_tag="v1.2.11"),
         )
@@ -986,7 +946,6 @@ def test_check_upstream_skipped_in_ci(
 
     with caplog.at_level("WARNING"):
         install_claudemd.check_upstream(
-            plugins_file=tmp_path / "no-plugin.json",
             cache_ttl_hours=24,
             fetch=_no_fetch,
         )
@@ -1017,7 +976,6 @@ def test_check_upstream_surfaces_freeze_hint_for_branch_install(
     )
     with caplog.at_level("WARNING"):
         install_claudemd.check_upstream(
-            plugins_file=tmp_path / "no-plugin.json",
             cache_ttl_hours=24,
             fetch=lambda: _channel_tags(main_tag="v1.3.0", dev_tag="v1.3.1"),
         )
@@ -1045,7 +1003,6 @@ def test_check_upstream_warns_dev_only_when_current_on_main(
     )
     with caplog.at_level("WARNING"):
         install_claudemd.check_upstream(
-            plugins_file=tmp_path / "no-plugin.json",
             cache_ttl_hours=24,
             fetch=lambda: _channel_tags(main_tag="v1.2.10", dev_tag="v1.2.13"),
         )
@@ -1069,7 +1026,6 @@ def test_check_upstream_collapses_when_main_equals_dev(
     )
     with caplog.at_level("WARNING"):
         install_claudemd.check_upstream(
-            plugins_file=tmp_path / "no-plugin.json",
             cache_ttl_hours=24,
             fetch=lambda: _channel_tags(main_tag="v1.2.13", dev_tag="v1.2.13"),
         )
@@ -1077,34 +1033,6 @@ def test_check_upstream_collapses_when_main_equals_dev(
     assert "latest (main = dev): v1.2.13" in msg
     # The dual-channel rows shouldn't appear when collapsed.
     assert "(slower, minor-only)" not in msg
-
-
-def test_check_upstream_warns_when_plugin_behind(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """An older installed plugin → warning labelled with plugin subject."""
-    _force_interactive(monkeypatch)
-    monkeypatch.setattr(
-        install_claudemd, "_installed_forge_scripts_version", lambda: "1.2.13"
-    )
-    plugins_file = tmp_path / "installed_plugins.json"
-    plugins_file.write_text(
-        json.dumps({"plugins": {"forge@forge": [{"version": "v1.1.3"}]}})
-    )
-    monkeypatch.setattr(
-        install_claudemd, "_upstream_cache_path", lambda: tmp_path / "cache.json"
-    )
-    with caplog.at_level("WARNING"):
-        install_claudemd.check_upstream(
-            plugins_file=plugins_file,
-            cache_ttl_hours=24,
-            fetch=lambda: _channel_tags(main_tag="v1.2.13", dev_tag="v1.2.13"),
-        )
-    msg = "\n".join(r.getMessage() for r in caplog.records)
-    assert "Claude plugin 'forge'" in msg
-    assert "forge-plugin-sync" in msg
 
 
 def test_check_upstream_silent_when_in_sync(
@@ -1117,16 +1045,11 @@ def test_check_upstream_silent_when_in_sync(
     monkeypatch.setattr(
         install_claudemd, "_installed_forge_scripts_version", lambda: "1.2.13"
     )
-    plugins_file = tmp_path / "installed_plugins.json"
-    plugins_file.write_text(
-        json.dumps({"plugins": {"forge@forge": [{"version": "v1.2.13"}]}})
-    )
     monkeypatch.setattr(
         install_claudemd, "_upstream_cache_path", lambda: tmp_path / "cache.json"
     )
     with caplog.at_level("WARNING"):
         install_claudemd.check_upstream(
-            plugins_file=plugins_file,
             cache_ttl_hours=24,
             fetch=lambda: _channel_tags(main_tag="v1.2.13", dev_tag="v1.2.13"),
         )
@@ -1147,7 +1070,6 @@ def test_check_upstream_skipped_on_fetch_failure(
     )
     with caplog.at_level("INFO"):
         install_claudemd.check_upstream(
-            plugins_file=tmp_path / "no-plugin.json",
             cache_ttl_hours=24,
             fetch=_channel_tags,
         )
@@ -1185,198 +1107,7 @@ def test_check_upstream_throttles_via_cache(
         )  # would warn if reached
 
     install_claudemd.check_upstream(
-        plugins_file=tmp_path / "no-plugin.json",
         cache_ttl_hours=24,
         fetch=_fake_fetch,
     )
     assert calls["count"] == 0
-
-
-# ---------------------------------------------------------------------------
-# _read_configured_channel + channel-mismatch hint (#110)
-# ---------------------------------------------------------------------------
-
-
-def _write_settings(path: Path, ref: str | None) -> None:
-    """Write a ``settings.json`` with an optional forge marketplace ref.
-
-    Args:
-        path: File to write.
-        ref: When set, populates ``extraKnownMarketplaces.forge.source.ref``.
-            When ``None``, the ``source`` block is written without a ``ref``
-            key — the consumer registered the marketplace but never pinned
-            a channel.
-    """
-    source: dict[str, str] = {"source": "github", "repo": "owner/forge"}
-    if ref is not None:
-        source["ref"] = ref
-    path.write_text(
-        json.dumps({"extraKnownMarketplaces": {"forge": {"source": source}}})
-    )
-
-
-def _write_plugin_manifest(path: Path, version: str) -> None:
-    """Write a minimal ``installed_plugins.json`` listing forge at *version*.
-
-    Args:
-        path: File to write.
-        version: Version string to record under ``plugins.forge@forge``.
-    """
-    path.write_text(json.dumps({"plugins": {"forge@forge": {"version": version}}}))
-
-
-def test_read_configured_channel_returns_ref_when_set(tmp_path: Path) -> None:
-    """Returns the configured ref string when the settings block is well-formed."""
-    settings = tmp_path / "settings.json"
-    _write_settings(settings, ref="dev")
-    assert install_claudemd._read_configured_channel(settings) == "dev"
-
-
-def test_read_configured_channel_none_when_file_absent(tmp_path: Path) -> None:
-    """Returns ``None`` when the settings file does not exist."""
-    assert install_claudemd._read_configured_channel(tmp_path / "no.json") is None
-
-
-def test_read_configured_channel_none_when_malformed_json(tmp_path: Path) -> None:
-    """Returns ``None`` when the file is not valid JSON, no exception escapes."""
-    settings = tmp_path / "settings.json"
-    settings.write_text("{ not valid json")
-    assert install_claudemd._read_configured_channel(settings) is None
-
-
-def test_read_configured_channel_none_when_no_ref_key(tmp_path: Path) -> None:
-    """Returns ``None`` when the marketplace block lacks a ``ref`` field."""
-    settings = tmp_path / "settings.json"
-    _write_settings(settings, ref=None)
-    assert install_claudemd._read_configured_channel(settings) is None
-
-
-def test_read_configured_channel_none_when_marketplaces_is_null(
-    tmp_path: Path,
-) -> None:
-    """``extraKnownMarketplaces: null`` returns ``None``, not an AttributeError."""
-    settings = tmp_path / "settings.json"
-    settings.write_text(json.dumps({"extraKnownMarketplaces": None}))
-    assert install_claudemd._read_configured_channel(settings) is None
-
-
-def test_read_configured_channel_none_when_forge_entry_is_null(
-    tmp_path: Path,
-) -> None:
-    """``extraKnownMarketplaces.forge: null`` returns ``None`` cleanly."""
-    settings = tmp_path / "settings.json"
-    settings.write_text(json.dumps({"extraKnownMarketplaces": {"forge": None}}))
-    assert install_claudemd._read_configured_channel(settings) is None
-
-
-def test_check_upstream_emits_channel_hint_when_ref_set(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Plugin warning + explicit ref → hint pointing at the docs is appended."""
-    _force_interactive(monkeypatch)
-    monkeypatch.setattr(
-        install_claudemd, "_installed_forge_scripts_version", lambda: None
-    )
-    monkeypatch.setattr(
-        install_claudemd, "_upstream_cache_path", lambda: tmp_path / "cache.json"
-    )
-    plugins = tmp_path / "installed_plugins.json"
-    _write_plugin_manifest(plugins, version="v1.2.0")
-    settings = tmp_path / "settings.json"
-    _write_settings(settings, ref="dev")
-    with caplog.at_level("WARNING"):
-        install_claudemd.check_upstream(
-            plugins_file=plugins,
-            settings_file=settings,
-            cache_ttl_hours=24,
-            fetch=lambda: _channel_tags(main_tag="v1.3.0", dev_tag="v1.3.5"),
-        )
-    msg = "\n".join(r.getMessage() for r in caplog.records)
-    assert "Configured marketplace ref: 'dev'" in msg
-    assert "docs/claude-code-plugin.md" in msg
-
-
-def test_check_upstream_no_hint_when_no_settings_file(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Plugin warning fires but settings.json absent → no hint appended."""
-    _force_interactive(monkeypatch)
-    monkeypatch.setattr(
-        install_claudemd, "_installed_forge_scripts_version", lambda: None
-    )
-    monkeypatch.setattr(
-        install_claudemd, "_upstream_cache_path", lambda: tmp_path / "cache.json"
-    )
-    plugins = tmp_path / "installed_plugins.json"
-    _write_plugin_manifest(plugins, version="v1.2.0")
-    with caplog.at_level("WARNING"):
-        install_claudemd.check_upstream(
-            plugins_file=plugins,
-            settings_file=tmp_path / "no-settings.json",
-            cache_ttl_hours=24,
-            fetch=lambda: _channel_tags(main_tag="v1.3.0", dev_tag="v1.3.5"),
-        )
-    msg = "\n".join(r.getMessage() for r in caplog.records)
-    assert "Claude plugin 'forge' is behind" in msg
-    assert "Configured marketplace ref" not in msg
-
-
-def test_check_upstream_no_hint_when_ref_not_set(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Plugin warning fires but consumer has no ``ref`` configured → no hint."""
-    _force_interactive(monkeypatch)
-    monkeypatch.setattr(
-        install_claudemd, "_installed_forge_scripts_version", lambda: None
-    )
-    monkeypatch.setattr(
-        install_claudemd, "_upstream_cache_path", lambda: tmp_path / "cache.json"
-    )
-    plugins = tmp_path / "installed_plugins.json"
-    _write_plugin_manifest(plugins, version="v1.2.0")
-    settings = tmp_path / "settings.json"
-    _write_settings(settings, ref=None)
-    with caplog.at_level("WARNING"):
-        install_claudemd.check_upstream(
-            plugins_file=plugins,
-            settings_file=settings,
-            cache_ttl_hours=24,
-            fetch=lambda: _channel_tags(main_tag="v1.3.0", dev_tag="v1.3.5"),
-        )
-    msg = "\n".join(r.getMessage() for r in caplog.records)
-    assert "Claude plugin 'forge' is behind" in msg
-    assert "Configured marketplace ref" not in msg
-
-
-def test_check_upstream_no_hint_when_plugin_current(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """No plugin warning → no hint, even when ``ref`` is set."""
-    _force_interactive(monkeypatch)
-    monkeypatch.setattr(
-        install_claudemd, "_installed_forge_scripts_version", lambda: None
-    )
-    monkeypatch.setattr(
-        install_claudemd, "_upstream_cache_path", lambda: tmp_path / "cache.json"
-    )
-    plugins = tmp_path / "installed_plugins.json"
-    _write_plugin_manifest(plugins, version="v1.3.5")
-    settings = tmp_path / "settings.json"
-    _write_settings(settings, ref="dev")
-    with caplog.at_level("WARNING"):
-        install_claudemd.check_upstream(
-            plugins_file=plugins,
-            settings_file=settings,
-            cache_ttl_hours=24,
-            fetch=lambda: _channel_tags(main_tag="v1.3.0", dev_tag="v1.3.5"),
-        )
-    msg = "\n".join(r.getMessage() for r in caplog.records)
-    assert "Configured marketplace ref" not in msg

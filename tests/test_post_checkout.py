@@ -10,17 +10,29 @@
 #     (#177 — extensions must run on a non-tty local checkout, only CI
 #     suppresses them; is_ci and is_non_interactive are mocked independently
 #     since the two now gate different behavior).
+#   - run_plugin_sync: a no-op for every test (autouse), since the real CLI
+#     would install a plugin into the checkout the suite runs in.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import pytest
 
 from forge import _hook_helpers, post_checkout
 from tests.conftest import CapturedCalls, make_fake_run
 
 
-if TYPE_CHECKING:
-    import pytest
+@pytest.fixture(autouse=True)
+def _no_plugin_sync(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep every test away from the real ``forge-plugin-sync``.
+
+    ``main()`` runs it outside CI, and the real CLI acts on the working
+    directory's checkout — the repository under test — so a test that
+    reaches it rewrites that checkout's Claude Code settings. Its own
+    behavior is covered in ``test_hook_helpers.py``; a test that asserts
+    the hook's argv restores the real helper over a faked
+    ``subprocess.run``.
+    """
+    monkeypatch.setattr(post_checkout, "run_plugin_sync", lambda _hook: None)
 
 
 def test_no_op_when_branch_flag_is_zero(
@@ -79,6 +91,9 @@ def test_runs_hook_extensions_on_non_tty_local_checkout(
         _hook_helpers.subprocess, "run", make_fake_run(captured=captured)
     )
     monkeypatch.setattr(_hook_helpers.shutil, "which", lambda _n: "/fake/bin")
+    # The real helper, over the faked subprocess.run above, so the argv
+    # the hook would run is observable without running it.
+    monkeypatch.setattr(post_checkout, "run_plugin_sync", _hook_helpers.run_plugin_sync)
     calls: list[str] = []
     monkeypatch.setattr(post_checkout, "run_hook_extensions", calls.append)
     assert post_checkout.main(["prev", "new", "1"]) == 0

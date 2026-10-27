@@ -395,7 +395,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 > _Shared schema for the consumer ``.claude/settings.json`` forge block._
 
 - `scaffold() -> dict[str, object]` — Return a fresh deep copy of the empty-file settings scaffold.
-- `read_marketplace_ref(settings: dict[str, object]) -> str | None` — Return ``extraKnownMarketplaces.forge.source.ref`` from *settings*.
 
 ## `forge.config`
 
@@ -469,20 +468,15 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_expected_clis() -> list[str]` _(internal)_ — Return the console-script names shipped by ``forge-scripts``.
 - `_check_clis() -> list[CheckResult]` _(internal)_ — One result per expected CLI entry point on PATH.
 - `_check_gh() -> list[CheckResult]` _(internal)_ — Check `gh` is installed and authenticated.
-- `_validate_plugin_name(name: str) -> str` _(internal)_ — Argparse ``type`` for ``--plugin-name`` — reject a cache-escaping value.
-- `_check_plugin_install(plugin_name: str) -> CheckResult` _(internal)_ — Verify Claude Code has installed the named plugin locally.
+- `_validate_plugin_name(name: str) -> str` _(internal)_ — Argparse ``type`` for ``--plugin-name`` — reject a non-identifier value.
+- `_check_plugin_install(install: CheckoutInstall | None, plugin_name: str) -> CheckResult` _(internal)_ — Report the install this checkout loads, as Claude Code recorded it.
 - `_check_checkout_plugin(repo_root: Path) -> list[CheckResult]` _(internal)_ — Report whether this checkout has its own install of its forge release.
-- `_check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]` _(internal)_ — Report a Claude Code plugin cache lagging what should be loaded.
-- `_stale_cache_advisory(status: PluginCacheStatus) -> CheckResult` _(internal)_ — Wrap a ``"stale-content"`` verdict as an advisory naming the harm.
-- `_content_unknown_advisory(status: PluginCacheStatus) -> CheckResult` _(internal)_ — Wrap a ``"content-unknown"`` verdict as an advisory saying what to check.
-- `_source_mismatch_advisory(status: PluginCacheStatus) -> CheckResult` _(internal)_ — Wrap a ``"source-mismatch"`` verdict as an advisory naming both refs.
-- `_enabled_in(settings_path: Path) -> bool | None` _(internal)_ — Return ``enabledPlugins["forge@forge"]`` from a settings file.
-- `_check_global_install(repo_root: Path) -> list[CheckResult]` _(internal)_ — Flag a machine-wide forge install alongside this repo's own.
+- `_check_global_install(repo_root: Path) -> list[CheckResult]` _(internal)_ — Flag a forge installed for the whole user account beside this checkout's own.
 - `_check_hooks_path(repo_root: Path) -> list[CheckResult]` _(internal)_ — Report the hooks folder git will use here and whether it can gate a commit.
 - `_check_version_skew(repo_root: Path) -> list[CheckResult]` _(internal)_ — Compare forge's version across its install surfaces and flag drift (#184).
 - `_surface_pin_revision(root: Path) -> list[CheckResult]` _(internal)_ — Compare the pyproject pin's git ref against the installed build's.
-- `_check_plugin_manifests(plugin_root: Path | None, plugin_name: str) -> list[CheckResult]` _(internal)_ — Validate plugin.json + marketplace.json under the installed plugin root.
-- `_check_plugin_contents(plugin_root: Path | None) -> list[CheckResult]` _(internal)_ — Verify the expected plugin sub-directories contain files.
+- `_check_plugin_manifests(install_dir: Path | None, plugin_name: str) -> list[CheckResult]` _(internal)_ — Validate plugin.json + marketplace.json in the install this checkout loads.
+- `_check_plugin_contents(install_dir: Path | None) -> list[CheckResult]` _(internal)_ — Verify the expected plugin sub-directories contain files.
 - `_declared_lower_bound(repo_root: Path, tool: str) -> str | None` _(internal)_ — Return the lower bound *tool* is pinned to in an extras group.
 - `_step_tool_drift(repo_root: Path, step: str, tool: str) -> CheckResult | None` _(internal)_ — Report an installed step tool older than the version this repo pins.
 - `_check_step_tools(repo_root: Path) -> list[CheckResult]` _(internal)_ — Verify the external tool for each enabled pre-commit step is on PATH.
@@ -864,8 +858,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `scaffold_claude_settings(settings_path: Path) -> bool` — Write a minimal ``.claude/settings.json`` if the file does not exist.
 - `ensure_claude_hooks_dir(hooks_dir: Path) -> bool` — Create ``.claude/hooks/`` with a README documenting the path convention.
 - `_installed_forge_scripts_version() -> str | None` _(internal)_ — Return the installed ``forge-scripts`` distribution version.
-- `_installed_plugin_version(plugins_file: Path | None = None) -> str | None` _(internal)_ — Read the installed Claude Code plugin version from the manifest.
-- `_read_configured_channel(settings_path: Path) -> str | None` _(internal)_ — Return the marketplace ``ref`` consumers set to track a forge release channel.
 - `_upstream_cache_path() -> Path` _(internal)_ — Return the upstream-version-check cache file path.
 - `class ChannelTags` — Latest release tag on each of forge's two upstream branches.
 - `_read_upstream_cache(cache_path: Path, ttl_hours: int) -> ChannelTags | None` _(internal)_ — Return the cached channel tags if the cache is still fresh.
@@ -873,8 +865,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_fetch_upstream_channel_tags() -> ChannelTags` _(internal)_ — Query GitHub for the latest tag on each forge release channel.
 - `_is_behind(installed: str | None, latest: str | None) -> bool` _(internal)_ — Return ``True`` when *installed* is strictly older than *latest*.
 - `_render_channel_warning(*, installed: str, subject: str, tags: ChannelTags, upgrade_hint_main: str, upgrade_hint_dev: str) -> str | None` _(internal)_ — Build the channel-aware warning text, or ``None`` when not behind.
-- `_append_channel_hint(warning: str, settings_file: Path) -> str` _(internal)_ — Append a shared-marketplace hint to *warning* when a marketplace ref is set.
-- `check_upstream(*, plugins_file: Path | None = None, settings_file: Path | None = None, cache_ttl_hours: int = _UPSTREAM_CACHE_TTL_HOURS_DEFAULT, fetch: Callable[[], ChannelTags] = _fetch_upstream_channel_tags) -> None` — Warn (only) when the installed forge is behind either release channel.
+- `check_upstream(*, cache_ttl_hours: int = _UPSTREAM_CACHE_TTL_HOURS_DEFAULT, fetch: Callable[[], ChannelTags] = _fetch_upstream_channel_tags) -> None` — Warn (only) when the installed forge-scripts is behind either release channel.
 - `warn_claudemd_missing_include(claudemd_path: Path) -> None` — Log a warning when ``CLAUDE.md`` lacks the ``@FOUNDATION.md`` include.
 - `migrate_inline_block(claudemd_path: Path) -> bool` — Convert a v1.1.2-style inline-block ``CLAUDE.md`` to the split layout.
 - `main() -> int` — CLI entry point.
@@ -1912,41 +1903,24 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 ## `forge.version_surfaces`
 
-> _The three surfaces a forge install presents, read once for every checker._
+> _The surfaces a forge install presents, read once for every checker._
 
 - `read_json(path: Path) -> tuple[dict, str | None]` — Read a JSON object file. Returns (data, error_message_or_None).
-- `version_key(name: str) -> tuple[int, ...]` — Return a sortable key for a version-shaped directory name.
-- `find_plugin_cache(plugin_name: str) -> Path | None` — Locate a Claude Code plugin cache directory by name.
-- `find_install_dir(plugin_root: Path) -> Path | None` — Walk the Claude Code cache layout to find the active plugin install.
 - `pip_version() -> str | None` — Version of the installed ``forge-scripts`` package, or None if absent.
 - `hook_sidecar_version(repo_root: Path) -> str | None` — Forge version recorded in the git-hook sidecar, or None when absent.
-- `plugin_cache_version(plugin_root: Path | None) -> str | None` — Version of the cached Claude Code plugin install, or None when absent.
 - `install_version(install_dir: Path) -> str` — Version a plugin install directory reports.
 - `editable_install_origin() -> Path | None` — Return the checkout an editable ``forge-scripts`` install points at.
 - `_direct_url() -> dict[str, object] | None` _(internal)_ — Return the distribution's parsed ``direct_url.json``, or ``None``.
-- `marketplace_clone(repo_slug: str) -> Path | None` — Local clone Claude Code keeps for the marketplace serving *repo_slug*.
-- `registered_marketplace_ref(repo_slug: str) -> str | None` — Ref the machine-wide marketplace registration for *repo_slug* tracks.
-- `_marketplace_entries(repo_slug: str) -> list[dict[str, object]]` _(internal)_ — Registry entries whose source is the GitHub repo *repo_slug*.
-- `class PluginInstall` — One install record from ``installed_plugins.json``.
-- `class PluginInstalls` — Which installed copies of a plugin bear on one repo.
-- `plugin_records(plugin: str, plugins_file: Path | None = None) -> list[dict[str, object]]` — Raw install records Claude Code keeps for *plugin*.
 - `_keyed_records(plugin: str, plugins_file: Path | None = None) -> list[tuple[str, dict[str, object]]]` _(internal)_ — Install records for *plugin*, each with the key it is filed under.
 - `pinned_marketplace(version: str) -> str` — Return the per-version marketplace name for forge *version*.
 - `target_plugin_version(repo_root: Path) -> str | None` — Return the forge release this checkout should run as its plugin.
-- `class CheckoutInstall` — One forge install Claude Code recorded for a single checkout.
-- `checkout_installs(repo_root: Path, plugins_file: Path | None = None) -> list[CheckoutInstall]` — Return every forge install recorded for *repo_root* alone.
+- `class CheckoutInstall` — One plugin install Claude Code recorded.
+- `_installs(plugin: str, plugins_file: Path | None) -> list[tuple[CheckoutInstall, str | None]]` _(internal)_ — Every recorded install of *plugin* whose directory still exists.
+- `checkout_installs(repo_root: Path, plugins_file: Path | None = None, *, plugin: str = _FORGE) -> list[CheckoutInstall]` — Return every install of *plugin* recorded for *repo_root* alone.
+- `user_installs(plugin: str = _FORGE, plugins_file: Path | None = None) -> list[CheckoutInstall]` — Return every user-scope install of *plugin* whose directory exists.
+- `resolve_install(repo_root: Path, plugin: str = _FORGE, plugins_file: Path | None = None) -> CheckoutInstall | None` — Return the install of *plugin* that answers for *repo_root*.
 - `checkout_plugin_current(repo_root: Path, version: str, plugins_file: Path | None = None) -> bool` — Say whether *repo_root* has its own install of forge *version*.
-- `plugin_installs(repo_root: Path, plugin_name: str) -> PluginInstalls` — Find the installed copies of *plugin_name* that bear on *repo_root*.
-- `_install_from_record(record: dict[str, object]) -> PluginInstall | None` _(internal)_ — Build a :class:`PluginInstall` from one raw record.
+- `enabled_forge_keys(*settings_paths: Path) -> list[str]` — Return every ``forge@…`` key the given settings files leave turned on.
+- `global_forge_keys(plugins_file: Path | None = None, settings_file: Path | None = None) -> list[str]` — Return every forge key installed or enabled for the whole user account.
 - `_resolved(path: Path) -> Path` _(internal)_ — Return *path* resolved, or unchanged when resolution fails.
-- `_repo_slug(url: str) -> str | None` _(internal)_ — Return the ``owner/repo`` a git pin URL names.
-- `content_digests(plugin_dir: Path) -> dict[str, str | None]` — Hash each content area of a plugin tree.
-- `_area_files(area: Path) -> list[Path] | None` _(internal)_ — List the regular files under *area* that count as content.
-- `_area_digest(area: Path) -> str | None` _(internal)_ — Hash every file under *area* by relative path and bytes.
-- `_manifest_digest(manifest: Path) -> str | None` _(internal)_ — Hash a plugin manifest with its ``version`` field removed.
-- `_repo_marketplace_ref(repo_root: Path) -> str | None` _(internal)_ — Marketplace ref this repo's own ``.claude/settings.json`` pins.
-- `class PluginCacheStatus` — What the Claude Code plugin cache says relative to what ships it.
-- `plugin_cache_status(repo_root: Path) -> PluginCacheStatus` — Compare the cached plugin against the manifest that ships it.
 - `safe_text(value: object) -> str | None` — Return *value* as text if it matches :data:`_SAFE_TEXT`, else a placeholder.
-- `_manifest_cache_status(repo_root: Path, manifest: Path) -> PluginCacheStatus` _(internal)_ — Compare a plugin-shipping repo's cached copy against its manifest.
-- `_consumer_cache_status(repo_root: Path) -> PluginCacheStatus` _(internal)_ — Compare a consumer's active cache slot against the ref it pinned.
