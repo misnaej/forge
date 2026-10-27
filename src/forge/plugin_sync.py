@@ -248,7 +248,10 @@ def _refusal(root: Path) -> str | None:
             f"({', '.join(user_keys)}), which loads in every repo beside this "
             f"checkout's own copy. Remove it: {commands}."
         )
-    shared = enabled_forge_keys(root / ".claude" / "settings.json")
+    shared = [
+        safe_text(key) or UNPRINTABLE
+        for key in enabled_forge_keys(root / ".claude" / "settings.json")
+    ]
     if shared:
         return (
             f".claude/settings.json enables {', '.join(shared)} for everyone "

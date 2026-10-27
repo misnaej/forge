@@ -172,7 +172,8 @@ reserved for findings: what, where, and (in wrap-ups) the disposition —
 fixed in `<sha>` / `deferred to #N` / `filed as #N` / accepted with
 reason. `deferred to #N` is never the disposition for cleanup the PR
 itself created — that is fixed in the PR (FOUNDATION §7 "A change
-removes what it supersedes"). The two issue forms are machine-read (case-insensitively, so
+removes what it supersedes"). The two issue forms are machine-read
+(case-insensitively, so
 `Deferred to #N` counts too), so write them as shown — one space, `#`
 then the number: the posted wrap-up's Issue Management section lists
 every issue so named on its `Follow-ups:` line, and per-PR placement

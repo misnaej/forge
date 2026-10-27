@@ -430,6 +430,20 @@ def test_refusal_for_a_shared_settings_enablement(
         assert "forge@forge" in message
 
 
+def test_refusal_does_not_echo_a_planted_settings_key(repo: Path) -> None:
+    """A cloned repo's tracked settings cannot inject terminal escapes into output."""
+    (repo / ".claude").mkdir()
+    (repo / ".claude" / "settings.json").write_text(
+        '{"enabledPlugins": {"forge@x\\u001b[2J": true}}', encoding="utf-8"
+    )
+
+    message = plugin_sync._refusal(repo)
+
+    assert message is not None
+    assert "\x1b" not in message
+    assert plugin_sync.UNPRINTABLE in message
+
+
 def test_tests_cannot_reach_the_real_claude(blocked_claude: Path) -> None:
     """The suite's own guard: ``claude`` on PATH is a stub that refuses to run.
 
