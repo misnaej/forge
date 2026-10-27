@@ -20,6 +20,30 @@ fragment type (**Features / Changes / Fixes / Removed / Docs**).
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v10.5.0 — 2026-10-27
+
+### ⚠️ Upgrade notes
+- **The forge plugin is now installed per checkout.** Run `forge-upgrade` (or your install refresh): it runs the new `forge-plugin-sync`, which installs the release your checkout pins as `forge@forge-vX-Y-Z`, then restart the Claude Code session — a running session keeps the plugin and guards it loaded. A checkout whose `forge-scripts` is not pinned to a release tag (e.g. `@main`) gets no install; pin `forge-scripts @ git+...@vX.Y.Z`.
+- **`/plugin update forge@forge` no longer applies.** Every plugin remedy forge prints now names `forge-plugin-sync`; update any docs or scripts of your own that say otherwise. The old shared `forge` cache slot is no longer loaded and can be ignored.
+- **`install-forge-claude-settings` no longer takes `--ref`** — drop it from any script that passes it. It now also removes `extraKnownMarketplaces.forge` from `.claude/settings.json` and writes `enabledPlugins["forge@forge"] = false`, so expect that diff on upgrade.
+- **A forge installed or enabled for your whole user account blocks the sync.** `forge-plugin-sync` refuses until it is gone; run the `claude plugin uninstall … --scope user` command the refusal (or `forge-doctor`) prints.
+
+### Features
+- New `forge-plugin-sync`: installs each checkout's own copy of the forge release it pins (a consumer's `forge-scripts` tag pin, or forge's own manifest version) from a marketplace named after that release (`forge-vX-Y-Z`, pinned to the tag's commit), so repos on one machine can no longer overwrite each other's plugin release through the single shared `forge` marketplace. It runs from `install-forge-bootstrap` (new `plugin` step) and from the post-merge / post-checkout hooks; only the session restart stays manual.
+- `install-forge-claude-settings` now keeps the shared plugin off: it removes `extraKnownMarketplaces.forge` and writes `enabledPlugins["forge@forge"] = false`. Its `--ref` flag is removed. `forge-upgrade` applies the change through bootstrap.
+- `forge-doctor` reports `plugin:checkout`, the `plugin_sync` pre-commit step judges the checkout's own install, and every plugin remedy now names `forge-plugin-sync` instead of `/plugin update`.
+
+### Changes
+- New FOUNDATION §7 rule "A change removes what it supersedes": code, checks, docs, tests and config a change replaces or makes dead are removed in the same PR — follow-up issues are only for work the change did not create, and a PR too large with its cleanup is split before opening, never cleaned up after merge. Enforced at planning (`/plan-issue` puts the removal in scope), review (`forge:design-checker` gains a supersession lens) and finalization (`/pr` and the reporter disposition contract rule out `deferred to #N` for cleanup the PR itself created).
+- `forge-doctor` reads this checkout's own plugin install: `plugin:installed`, `plugin.json`, `marketplace.json` and the `plugin/…` lines describe the `forge@forge-vX-Y-Z` install recorded for the checkout, so a machine holding only per-release installs no longer fails `plugin:installed`. A checkout with no install of its own is a failure naming `forge-plugin-sync`; `--plugin-name` for another plugin falls back to its user-wide install.
+- The checks of the old shared `forge` marketplace and its cache slot are removed — the content comparison and the `version_skew:plugin_cache`, `plugin:own_copy` and `plugin:source` advisories — along with `install-forge-claude-md`'s plugin half of the "behind upstream" warning and its marketplace-ref hint; the forge-scripts warning stays. Nothing loads that slot any more, so nothing judges it.
+- `plugin:global_install` and `forge-plugin-sync`'s refusal share one judgment: a forge installed or enabled for the whole user account from any marketplace, each key named in its `claude plugin uninstall … --scope user` fix.
+- Internal: the test suite can no longer reach the real `claude`: a failing stub leads `PATH` for every test, and the post-merge / post-checkout tests stub the plugin sync, which had written a temp path into the checkout's `.claude/settings.local.json`.
+
+### Fixes
+- `block_git_destructive` no longer refuses `git restore --staged <path>` (the unstage its own refusal recommends) when the command opens with `cd <dir>;` / `cd <dir> &&` or runs under `env -C`: an index-only restore overwrites no working copy wherever it runs.
+- A restore or checkout still refused behind a `cd` (e.g. `--ours` / `--theirs`) now says to drop the `cd` and use `git -C <dir>`.
+
 ## v10.4.0 — 2026-10-26
 
 ### ⚠️ Upgrade notes
