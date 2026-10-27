@@ -3790,6 +3790,63 @@ def test_destructive_blocks_non_creating_or_pathful_checkout_after_cd(
     assert _run_hook(_DESTRUCTIVE, command, options=HookOptions(cwd=tmp_path)) == 2
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd r; git restore --staged a",
+        "cd r && git restore --staged a",
+        "cd r && git restore -S a",
+        "env -C r git restore --staged a",
+    ],
+)
+def test_destructive_allows_index_only_restore_after_cd(
+    command: str, tmp_path: Path
+) -> None:
+    """Unstaging touches only the index, so an unknown directory cannot lose work.
+
+    Args:
+        command: An index-only `git restore --staged` behind a `cd` / `env -C`.
+    """
+    assert _run_hook(_DESTRUCTIVE, command, options=HookOptions(cwd=tmp_path)) == 0
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "cd r && git restore a",
+        "cd r && git restore --staged --worktree a",
+        "cd r && git restore -SW a",
+        "cd r && git restore --staged --w a",
+        "cd r && git restore --staged --pathspec-from-file --staged",
+        "cd r && git restore -Sp a",
+        "cd r && git checkout --ours a",
+    ],
+)
+def test_destructive_blocks_worktree_restore_after_cd(
+    command: str, tmp_path: Path
+) -> None:
+    """Anything that can overwrite the work tree stays refused behind a `cd`.
+
+    Args:
+        command: A restore touching the work tree, behind a `cd`.
+    """
+    assert _run_hook(_DESTRUCTIVE, command, options=HookOptions(cwd=tmp_path)) == 2
+
+
+def test_destructive_cd_refusal_hints_at_git_dash_c(tmp_path: Path) -> None:
+    """A refusal caused by `cd` points at `git -C`; a cd-less refusal does not."""
+    hint = "drop it and use `git -C <dir>`"
+    options = HookOptions(cwd=tmp_path)
+    behind_cd = _run_hook_proc(
+        _DESTRUCTIVE, "cd r && git checkout --ours a", options=options
+    )
+    assert behind_cd.returncode == 2
+    assert hint in behind_cd.stderr
+    plain = _run_hook_proc(_DESTRUCTIVE, "git checkout -- *.py", options=options)
+    assert plain.returncode == 2
+    assert hint not in plain.stderr
+
+
 # --- branch resets: `checkout -B` / `switch -C` must not drop commits ------
 # restore_repo: `main` = initial+base, `other` = main + one commit (g).
 # So `main` is an ancestor of `other` (moving main there fast-forwards),
