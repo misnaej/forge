@@ -481,7 +481,10 @@ function unknown() { print "UNKNOWN"; bad = 1; exit }
     if (VERB == "checkout" && branchop && !dd) next
     # `git restore --staged` without `--worktree` writes only the index,
     # never a working copy, so its directory never matters either: the
-    # unstage this hook recommends must pass behind a `cd` too.
+    # unstage this hook recommends must pass behind a `cd` too. This
+    # relies on the loop above consuming every value-taking option
+    # (`--source`, `-s`, `--pa…`): a new git option with a value must be
+    # handled there, or its value could be misread as `--staged`.
     if (VERB == "restore" && staged && !worktree) next
     if (dir == "") unknown()
     if (VERB == "restore") {

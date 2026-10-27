@@ -3816,6 +3816,9 @@ def test_destructive_allows_index_only_restore_after_cd(
         "cd r && git restore a",
         "cd r && git restore --staged --worktree a",
         "cd r && git restore -SW a",
+        "cd r && git restore --staged --w a",
+        "cd r && git restore --staged --pathspec-from-file --staged",
+        "cd r && git restore -Sp a",
         "cd r && git checkout --ours a",
     ],
 )
