@@ -205,6 +205,8 @@ fi
 # working. Conflict resolution (`--ours`/`--theirs`/`--merge`/`-m`/
 # `--conflict`) stays allowed for paths that are actually in conflict —
 # on any other path those flags overwrite it like a plain restore.
+# An index-only `git restore --staged` (no `--worktree`) overwrites no
+# working copy and is allowed wherever it runs, a leading `cd` included.
 # When the hook cannot tell what a path names or where the command runs — a glob, `$`, `~`, pathspec magic, a
 # quoted or escaped blank or separator in a path (GUARD_NEUTRAL, below),
 # an earlier `cd`, `env -C`/`sudo -D`,
@@ -477,9 +479,12 @@ function unknown() { print "UNKNOWN"; bad = 1; exit }
     # that first lets `cd x && git checkout -q -b feat` through; every
     # other form whose directory is unknowable still fails closed.
     if (VERB == "checkout" && branchop && !dd) next
+    # `git restore --staged` without `--worktree` writes only the index,
+    # never a working copy, so its directory never matters either: the
+    # unstage this hook recommends must pass behind a `cd` too.
+    if (VERB == "restore" && staged && !worktree) next
     if (dir == "") unknown()
     if (VERB == "restore") {
-        if (staged && !worktree) next
         out = ""; for (i = 1; i <= na; i++) out = out "\t" A[i]
         emit_dir(dir); print "J\t" dir "\t" conflict out
         next
@@ -646,11 +651,18 @@ _restore_blocked() {
     [ "$verdict" = BLOCK ]
 }
 
+# Behind a `cd` the hook cannot see where the command runs, so even a
+# conflicted path's `--ours`/`--theirs` is refused; say how to make it
+# checkable instead of leaving the reader to retry the same form.
+RESTORE_CD_HINT=""
+if [ "$CMDPOS_CHDIR" = 1 ]; then
+    RESTORE_CD_HINT=" A leading \`cd\` hides where it runs: drop it and use \`git -C <dir>\`."
+fi
 if _guarded 'checkout\b' && _restore_blocked checkout; then
-    _block "git checkout <paths>" "A path it would overwrite holds uncommitted work (a modified or staged file, or an untracked file in the way) — possibly another session's — or the hook cannot tell which paths it names. Report the state instead; experiments belong in a \`forge-scratch-repo\` copy."
+    _block "git checkout <paths>" "A path it would overwrite holds uncommitted work (a modified or staged file, or an untracked file in the way) — possibly another session's — or the hook cannot tell which paths it names.${RESTORE_CD_HINT} Report the state instead; experiments belong in a \`forge-scratch-repo\` copy."
 fi
 if _guarded 'restore\b' && _restore_blocked restore; then
-    _block "git restore <paths>" "A path it would overwrite holds uncommitted work (a modified or staged file, or an untracked file in the way) — possibly another session's — or the hook cannot tell which paths it names. To unstage only, use \`git restore --staged <path>\`; otherwise report the state."
+    _block "git restore <paths>" "A path it would overwrite holds uncommitted work (a modified or staged file, or an untracked file in the way) — possibly another session's — or the hook cannot tell which paths it names.${RESTORE_CD_HINT} To unstage only, use \`git restore --staged <path>\`; otherwise report the state."
 fi
 
 # Branch resets: `git checkout -B <name> [<start>]` and `git switch -C |
