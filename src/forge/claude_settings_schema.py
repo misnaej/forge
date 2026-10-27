@@ -7,20 +7,19 @@ depend on from opposite directions:
   the file and **reads** the marketplace ``ref`` from the global
   ``~/.claude/settings.json`` for the plugin-staleness check.
 - ``install-forge-claude-settings``
-  (:mod:`forge.install_claude_settings`) **writes** the per-repo
-  marketplace + ``enabledPlugins`` block.
+  (:mod:`forge.install_claude_settings`) **removes** the shared ``forge``
+  marketplace and turns ``forge@forge`` off, so only the checkout's own
+  ``forge-plugin-sync`` install loads.
 
 The marketplace key path (``extraKnownMarketplaces.forge.source.ref``) and
-the ``forge@forge`` plugin id live here so the write side and the read side
-cannot silently diverge — a rename on one side that skipped the other would
-break the staleness hint with no compile-time signal.
+the ``forge@forge`` plugin id live here so the side that removes the block
+and the side that reads it cannot silently diverge — a rename on one side
+that skipped the other would go unnoticed with no compile-time signal.
 """
 
 from __future__ import annotations
 
 import copy
-
-from forge.git_utils import _FORGE_GITHUB_REPO
 
 
 MARKETPLACE_KEY = "forge"
@@ -42,18 +41,6 @@ def scaffold() -> dict[str, object]:
         constant.
     """
     return copy.deepcopy(_SCAFFOLD)
-
-
-def marketplace_entry(ref: str) -> dict[str, object]:
-    """Return forge's ``extraKnownMarketplaces[forge]`` value for *ref*.
-
-    Args:
-        ref: Marketplace ref (branch / tag).
-
-    Returns:
-        The ``{"source": {...}}`` value keyed under the forge marketplace.
-    """
-    return {"source": {"source": "github", "repo": _FORGE_GITHUB_REPO, "ref": ref}}
 
 
 def read_marketplace_ref(settings: dict[str, object]) -> str | None:

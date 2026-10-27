@@ -18,7 +18,7 @@ from unittest.mock import patch
 import pytest
 
 from forge import doctor, git_utils, precommit, version_surfaces
-from tests.conftest import make_fake_run, write_install
+from tests.conftest import make_fake_run, manifest_repo, write_install
 
 
 if TYPE_CHECKING:
@@ -969,29 +969,11 @@ def test_surface_pin_revision_empty_when_no_mismatch(
     assert doctor._surface_pin_revision(tmp_path) == []
 
 
-def _manifest_repo(tmp_path: Path, version: str) -> Path:
-    """Make a checkout whose plugin manifest names *version*.
-
-    Args:
-        tmp_path: Pytest temp directory.
-        version: Manifest ``version``.
-
-    Returns:
-        The checkout root.
-    """
-    repo = tmp_path / "repo"
-    (repo / ".claude-plugin").mkdir(parents=True)
-    (repo / ".claude-plugin" / "plugin.json").write_text(
-        json.dumps({"name": "forge", "version": version}), encoding="utf-8"
-    )
-    return repo
-
-
 def test_check_checkout_plugin_passes_when_installed(
     tmp_path: Path, claude_home: Path
 ) -> None:
     """A recorded install of the pinned release for this checkout is a pass."""
-    repo = _manifest_repo(tmp_path, "1.2.3")
+    repo = manifest_repo(tmp_path, "1.2.3")
     write_install(claude_home, repo, "1.2.3")
 
     results = doctor._check_checkout_plugin(repo)
@@ -1003,7 +985,7 @@ def test_check_checkout_plugin_advises_forge_plugin_sync_when_missing(
     tmp_path: Path,
 ) -> None:
     """No install for the checkout is an advisory (not a failure) naming the fix."""
-    repo = _manifest_repo(tmp_path, "1.2.3")
+    repo = manifest_repo(tmp_path, "1.2.3")
 
     results = doctor._check_checkout_plugin(repo)
 

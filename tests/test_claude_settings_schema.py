@@ -12,23 +12,11 @@ def test_scaffold_is_a_fresh_copy() -> None:
     assert schema.scaffold() == {"hooks": {"PreToolUse": [], "PostToolUse": []}}
 
 
-def test_marketplace_entry_shape() -> None:
-    """The entry nests source/repo/ref under a single ``source`` key."""
-    entry = schema.marketplace_entry("dev")
-    assert entry["source"]["ref"] == "dev"  # type: ignore[index]
-    assert entry["source"]["source"] == "github"  # type: ignore[index]
-
-
-def test_write_read_round_trip() -> None:
-    """read_marketplace_ref recovers the ref marketplace_entry wrote.
-
-    This couples the write side (install-forge-claude-settings) to the read
-    side (install-forge-claude-md's channel detection): a divergence in the
-    key path breaks this round-trip.
-    """
+def test_read_marketplace_ref_reads_the_source_ref() -> None:
+    """read_marketplace_ref finds the ref under the forge marketplace key."""
     settings = {
         "extraKnownMarketplaces": {
-            schema.MARKETPLACE_KEY: schema.marketplace_entry("main")
+            schema.MARKETPLACE_KEY: {"source": {"source": "github", "ref": "main"}}
         }
     }
     assert schema.read_marketplace_ref(settings) == "main"

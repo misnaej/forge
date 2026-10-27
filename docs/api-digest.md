@@ -395,7 +395,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 > _Shared schema for the consumer ``.claude/settings.json`` forge block._
 
 - `scaffold() -> dict[str, object]` — Return a fresh deep copy of the empty-file settings scaffold.
-- `marketplace_entry(ref: str) -> dict[str, object]` — Return forge's ``extraKnownMarketplaces[forge]`` value for *ref*.
 - `read_marketplace_ref(settings: dict[str, object]) -> str | None` — Return ``extraKnownMarketplaces.forge.source.ref`` from *settings*.
 
 ## `forge.config`
@@ -743,6 +742,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `forge_cli_argv(name: str, *, caller: str | None = None) -> list[str]` — Return argv that runs forge CLI *name* from the running installation.
 - `require_cli(name: str, *, caller: str | None = None, extra: str | None = None, hint: str | None = None) -> None` — Abort with a clear install hint if *name* isn't on PATH.
 - `code_health_dir(repo_root: Path) -> Path` — Return the directory forge writes and reads its step logs in.
+- `forge_cache_dir() -> Path` — Return the per-user directory forge keeps machine-wide caches in.
 - `write_step_log(repo_root: Path, name: str, output: str) -> Path` — Write *output* to ``code_health/<name>.log`` under *repo_root*.
 - `capturing_to_step_log(repo_root: Path, name: str) -> Iterator[None]` — Tee root-logger output into ``code_health/<name>.log`` for the block.
 - `gh_api(*args: str, timeout: int = GH_TIMEOUT_S) -> str | None` — Run ``gh api`` with *args* and return stripped stdout, or ``None``.

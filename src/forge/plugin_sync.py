@@ -39,6 +39,7 @@ from typing import Final
 from forge.git_utils import (
     _FORGE_GITHUB_REPO,
     configure_cli_logging,
+    forge_cache_dir,
     network_git_env,
     repo_root,
     run_git,
@@ -79,8 +80,7 @@ def marketplace_dir(name: str) -> Path:
         ``$XDG_CACHE_HOME/forge/marketplaces/<name>`` (``~/.cache`` when
         the variable is unset).
     """
-    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
-    return Path(base) / "forge" / "marketplaces" / name
+    return forge_cache_dir() / "marketplaces" / name
 
 
 def marketplace_manifest(version: str, commit: str) -> dict[str, object]:
@@ -131,9 +131,13 @@ def write_marketplace(version: str, commit: str) -> Path:
     meta.mkdir(parents=True, exist_ok=True)
     text = json.dumps(marketplace_manifest(version, commit), indent=2) + "\n"
     fd, tmp = tempfile.mkstemp(dir=meta, prefix=".marketplace-", suffix=".json")
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(text)
-    Path(tmp).replace(meta / "marketplace.json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        Path(tmp).replace(meta / "marketplace.json")
+    except OSError:
+        Path(tmp).unlink(missing_ok=True)
+        raise
     return root
 
 
@@ -379,14 +383,14 @@ def sync(root: Path, *, check: bool = False, quiet: bool = False) -> int:
             version,
         )
         return EXIT_FAILED
-    refusal = _refusal(root)
-    if refusal is not None:
-        logger.error("forge-plugin-sync: %s", refusal)
-        return EXIT_FAILED
     if shutil.which("claude") is None:
         if not quiet:
             logger.info("forge-plugin-sync: `claude` is not installed — skipped.")
         return EXIT_OK
+    refusal = _refusal(root)
+    if refusal is not None:
+        logger.error("forge-plugin-sync: %s", refusal)
+        return EXIT_FAILED
     return _install(root, version, name)
 
 

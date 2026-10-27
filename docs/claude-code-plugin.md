@@ -31,8 +31,8 @@ installed, and in CI.
 **Which release.** A consumer gets the release its `forge-scripts @
 git+...@vX.Y.Z` pin names; a pin on a branch names no fixed content, so
 the command refuses (exit 2) — pin a release tag. In forge's own repo it
-is the version `.claude-plugin/plugin.json` names, which is always the
-latest tag.
+is the version `.claude-plugin/plugin.json` names: the latest tag, except
+on a release-assembly commit, which names the release about to be tagged.
 
 **Why per checkout.** Claude Code keeps one marketplace registration per
 *name* for the whole machine. While every repo registered forge under the

@@ -41,7 +41,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import re
 import sys
 from datetime import UTC, datetime, timedelta
@@ -57,6 +56,7 @@ from forge.claude_settings_schema import (
 from forge.git_utils import (
     _FORGE_GITHUB_REPO,
     configure_cli_logging,
+    forge_cache_dir,
     gh_api,
     parse_semver,
     repo_root,
@@ -624,8 +624,7 @@ def _upstream_cache_path() -> Path:
     Returns:
         Absolute path to ``<cache>/forge/upstream_check.json``.
     """
-    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
-    return Path(base) / "forge" / _UPSTREAM_CACHE_FILENAME
+    return forge_cache_dir() / _UPSTREAM_CACHE_FILENAME
 
 
 class ChannelTags(NamedTuple):

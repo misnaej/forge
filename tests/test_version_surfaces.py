@@ -1232,8 +1232,13 @@ def test_target_plugin_version_is_the_manifest_version(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "manifest",
-    ['{"name": "forge", "version": "banana"}', '{"name": "forge"}', "{not json"],
-    ids=["unparsable-version", "no-version", "malformed"],
+    [
+        '{"name": "forge", "version": "banana"}',
+        '{"name": "forge", "version": "1.2.3/../../x"}',
+        '{"name": "forge"}',
+        "{not json",
+    ],
+    ids=["unparsable-version", "suffixed-version", "no-version", "malformed"],
 )
 def test_target_plugin_version_does_not_fall_back_to_the_pin(
     tmp_path: Path, manifest: str

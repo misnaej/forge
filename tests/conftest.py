@@ -257,6 +257,24 @@ def claude_home(
     return claude_dir
 
 
+def manifest_repo(tmp_path: Path, version: str) -> Path:
+    """Make a checkout whose plugin manifest names *version*.
+
+    Args:
+        tmp_path: Pytest temp directory.
+        version: Manifest ``version``.
+
+    Returns:
+        The checkout root, ``<tmp_path>/repo``.
+    """
+    repo = tmp_path / "repo"
+    (repo / ".claude-plugin").mkdir(parents=True)
+    (repo / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "forge", "version": version}), encoding="utf-8"
+    )
+    return repo
+
+
 def write_install(
     claude_home: Path,
     repo: Path | None,

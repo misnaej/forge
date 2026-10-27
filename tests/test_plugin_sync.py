@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, NamedTuple
 import pytest
 
 from forge import plugin_sync
-from tests.conftest import write_install
+from tests.conftest import manifest_repo, write_install
 
 
 if TYPE_CHECKING:
@@ -37,12 +37,7 @@ OTHER_COMMIT = "b" * 40
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
     """A checkout whose plugin manifest names release 1.2.3."""
-    root = tmp_path / "repo"
-    (root / ".claude-plugin").mkdir(parents=True)
-    (root / ".claude-plugin" / "plugin.json").write_text(
-        json.dumps({"name": "forge", "version": VERSION}), encoding="utf-8"
-    )
-    return root
+    return manifest_repo(tmp_path, VERSION)
 
 
 @pytest.fixture

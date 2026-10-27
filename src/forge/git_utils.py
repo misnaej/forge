@@ -537,6 +537,19 @@ def code_health_dir(repo_root: Path) -> Path:
     return repo_root / "code_health"
 
 
+def forge_cache_dir() -> Path:
+    """Return the per-user directory forge keeps machine-wide caches in.
+
+    One builder so every cache honours ``XDG_CACHE_HOME`` the same way.
+
+    Returns:
+        ``$XDG_CACHE_HOME/forge``, or ``~/.cache/forge`` when the variable
+        is unset or empty.
+    """
+    base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    return Path(base) / "forge"
+
+
 def write_step_log(repo_root: Path, name: str, output: str) -> Path:
     """Write *output* to ``code_health/<name>.log`` under *repo_root*.
 

@@ -511,6 +511,9 @@ def _keyed_records(
 PINNED_MARKETPLACE_PREFIX: Final[str] = "forge-v"
 
 _RELEASE_REF = re.compile(r"v(\d+\.\d+\.\d+)")
+# Exact, unlike parse_semver: the version becomes a directory name and a
+# `claude` argument, and a git hook acts on whatever a branch's manifest says.
+_RELEASE_VERSION = re.compile(r"\d+\.\d+\.\d+")
 
 
 def pinned_marketplace(version: str) -> str:
@@ -529,22 +532,23 @@ def target_plugin_version(repo_root: Path) -> str | None:
     """Return the forge release this checkout should run as its plugin.
 
     A plugin repo (forge itself) runs the version its own manifest names:
-    under fragments mode that is always the latest release tag. A consumer
-    runs the release its ``forge-scripts`` pin names.
+    under fragments mode that is the latest release tag, except on a
+    release-assembly commit, whose manifest names the release about to be
+    tagged. A consumer runs the release its ``forge-scripts`` pin names.
 
     Args:
         repo_root: Checkout root.
 
     Returns:
         ``X.Y.Z``, or ``None`` when no release is named — no manifest
-        version and no pin, or a pin on a branch, which names no fixed
-        content to install.
+        version (or one that is not exactly ``X.Y.Z``) and no pin, or a
+        pin on a branch, which names no fixed content to install.
     """
     manifest = repo_root / MANIFEST_AREA
     if manifest.is_file():
         data, err = read_json(manifest)
         version = data.get("version") if err is None else None
-        if isinstance(version, str) and parse_semver(version) is not None:
+        if isinstance(version, str) and _RELEASE_VERSION.fullmatch(version):
             return version
         return None
     pin = find_pin(repo_root)

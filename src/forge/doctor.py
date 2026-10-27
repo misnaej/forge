@@ -287,7 +287,7 @@ def _check_plugin_cache_skew(repo_root: Path) -> list[CheckResult]:
 
     Two findings, two remediations, because the causes differ. A repo that
     ships the plugin can be ``"behind"`` — its cache declares an older
-    version, which ``/plugin update`` moves. A consumer gets
+    version, which ``forge-plugin-sync`` replaces. A consumer gets
     ``"stale-content"``: the declared version has not moved and cannot, so
     the only advice that can succeed is discarding the slot. A consumer
     whose machine-wide marketplace tracks another ref gets
