@@ -43,10 +43,20 @@ probes agreeing.
 
 Never dismiss errors as "not related to our changes" or "pre-existing." Every CI
 failure, test error, or unexpected behaviour must be investigated — read the
-error, trace the cause, verify whether your changes contributed. Then present
-options: (1) fix now (small + in scope), (2) fix in this PR (related/blocking),
-(3) file an issue with root-cause analysis (truly separate). "Not our problem" is
-never acceptable.
+error, trace the cause, verify whether your changes contributed. "Not our
+problem" is never acceptable.
+
+**Where a problem came from decides what happens to it** — a failure or a
+review finding alike:
+
+1. **Your own work caused it** → fix it now, in this PR; never deferred (§7).
+2. **In scope, not caused by you, and not already held** by an open PR or a
+   `[sentinel]` pickup → propose the fix and make it on the user's yes.
+3. **Otherwise, file an issue only if it happened**, or an agent could
+   plausibly hit it in normal work. A hypothetical — a gap only a crafted
+   input reaches, a hardening idea with no incident — is recorded with its
+   reason where it was found and not filed; if it recurs, it is filed then.
+   An issue is work owed, and a backlog of maybes costs every later triage.
 
 ### Pattern Investigation Protocol
 
@@ -1085,7 +1095,10 @@ reads live `gh` data, applies labels, and curates one auto-generated
 (`bootstrap` / `triage` / `recommend-next` / `post-pr` / `stale-scan` /
 `deep-review` / `plan-readiness`) and the Index template — this section owns
 the policy. `deep-review` may create umbrella issues only with explicit user
-approval.
+approval, and closes issues only on the user's yes to the list it proposes —
+each with its reason and "reopen if it recurs". Its verdict per issue asks
+§1's filing question again: did it happen, does the premise still hold, has
+it recurred.
 
 ### Issue structure — lead with `Requires:`
 

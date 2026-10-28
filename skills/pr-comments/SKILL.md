@@ -44,12 +44,17 @@ The contract is one of these three forms:
 <one sentence on why this is out of scope for this PR.>
 ```
 
-### C. Won't fix / decision documented
+Filed only when the problem happened or could plausibly be hit in normal
+work (FOUNDATION §1); otherwise reply with C.
+
+### C. Won't fix / not filed / decision documented
 ```
 ℹ️ **Decision documented in `<file>`** (commit `<short_hash>`)
 
 <one sentence: the design call, with link to where it lives.>
 ```
+
+Not filed, with no file holding the decision: `ℹ️ **Not filed** — <why>`.
 
 ### How to post
 
