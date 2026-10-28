@@ -86,8 +86,9 @@ chance to catch a shrinking key set.
 
 ## Mode: report
 
-Run **analyze**, then file the findings as one GitHub issue — a loop
-suspect or a cap breach is always a finding worth filing:
+Run **analyze**, then file what it measured as one GitHub issue — a
+loop suspect or cap breach the data shows passes FOUNDATION §1's
+filing bar; a hunch does not:
 
 ```bash
 # Write the body to a file first — NEVER inline untrusted or composed
@@ -99,9 +100,8 @@ gh issue create --label performance,needs-triage \
   --body-file <path to drafted body: "Requires: nothing" + analyze summary>
 ```
 
-A finding is filed only when it is measured, never a hunch (FOUNDATION
-§1's filing bar); a skill files directly because `forge:issue-triage`
-has no filing mode.
+The skill files directly because `forge:issue-triage` has no filing
+mode.
 `needs-triage` rides along so the issue enters the normal tier pipeline;
 label/tier mutations afterwards stay `forge:issue-triage`'s job.
 Nothing beyond issue creation: no branches, no fixes, no PRs.
