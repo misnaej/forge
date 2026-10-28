@@ -189,8 +189,8 @@ PR), **aligned** (consistent with current direction), **unblocked**
 only once its work merged; exit 2 is not unblocked).
 
 **Eligibility precedes the four points** (rule: FOUNDATION §14;
-probes: `/plan-issue` Step 1 "Deciding eligibility" — a collaborator author, or a collaborator's
-`[endorsed]` comment). Ineligible is not invisible: apply
+probes: `/plan-issue` Step 1 "Deciding eligibility" — a collaborator
+author, or a collaborator's `[endorsed]` comment). Ineligible is not invisible: apply
 `needs-endorsement` with the usual comment trail.
 
 All four true and no validated plan → a **needs-plan candidate**

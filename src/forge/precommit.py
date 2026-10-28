@@ -2773,9 +2773,7 @@ def step_changelog_version(repo_root: Path) -> StepResult:
             f"'{cfg.base_branch}' but not on this branch — no commit can "
             "pass until the base is merged in. Cure: "
             f"`git merge origin/{cfg.base_branch}` (never rebase). Dirty "
-            "tree: FOUNDATION §2's sync ladder — probe with "
-            "`git merge-tree --write-tree`, merge directly when clean, "
-            "else a `wip-sync:` checkpoint commit first. "
+            "tree: the sync ladder in forge-docs/git-safety.md. "
             "Hand-adding the missing headings or a [no-version] marker "
             "will not work — both are rejected by this gate."
         )

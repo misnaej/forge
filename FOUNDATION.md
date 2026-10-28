@@ -173,7 +173,7 @@ Git procedures (gate kinds, destructive forms, sync ladder):
   wait for explicit yes. Approval covers only work granted for; never an
   agent's shipped default. Absent it, ceiling is `opus` — step wanting more
   is first a prompt to sharpen. Per-role tiering:
-  [`agents/_TEMPLATE.md`](../agents/_TEMPLATE.md) "Model per role".
+  `agents/_TEMPLATE.md` "Model per role" (forge plugin).
 - **NEVER use `--no-verify`** to bypass pre-commit hooks. Fix violations
   instead. `block_no_verify` enforces.
 - **Bypassing a guard: only on the user's word, confirmed once, recorded.**
@@ -206,7 +206,8 @@ Git procedures (gate kinds, destructive forms, sync ladder):
   in a shared checkout, may not be yours. Unstage with
   `git restore --staged <path>`. Dirty-tree base sync = **sync ladder**
   (probe `git merge-tree --write-tree`, merge, else `wip-sync:` checkpoint
-  commit via inline `FORGE_WIP_SYNC=1`); stash is in no sanctioned
+  commit via inline `FORGE_WIP_SYNC=1`; `git merge --abort` only after
+  that checkpoint); stash is in no sanctioned
   procedure. `block_git_destructive` enforces, **no bypass**; human:
   `! git ...`. Full form list, allowed exceptions, ladder:
   [`forge-docs/git-safety.md`](forge-docs/git-safety.md).
@@ -669,7 +670,7 @@ Every forge-shipped agent follows `agents/_TEMPLATE.md`. Invariants:
 - **Description = routing trigger**, not a role label ("Use proactively when X").
 - **Reporters do not have `Write` or `Edit`.** Exception: reporter-with-artifact
   agents may hold the single mutating tool their artifact needs — see
-  [`agents/_TEMPLATE.md`](../agents/_TEMPLATE.md#tool-sets-per-role).
+  `agents/_TEMPLATE.md` "Tool sets per role" (forge plugin).
 
 `forge-audit-agents` measures every agent against the template
 (`code_health/audit_agents.log`).
