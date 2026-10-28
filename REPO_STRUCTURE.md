@@ -268,6 +268,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_changelog_fragments.py: tests for changelog_fragments (fragment validation, discovery, assembly, and the `forge-changelog` CLI)
    - test_dev_setup_hook.py: tests for the `dev/setup.sh` auto-refresh git-hook extensions, run as real bash subprocesses
    - test_forge_config.py: tests for forge_config
+   - test_foundation_budget.py: shrink-only word-count ratchet on FOUNDATION.md (`FOUNDATION_WORD_BASELINE`)
    - test_gh_comments.py: tests for gh_comments (shared PR-comment plumbing: paging, filtering, attribution)
    - test_ledger.py: tests for ledger (the append-only `key=value` ledger shape)
    - test_text_clip.py: tests for text_clip (`truncate` under, at and over the limit; custom and empty suffix)
@@ -322,6 +323,8 @@ repos by `install-forge-claude-md` (guarded there by a README notice + the
 - smart-test.md: usage guide for `forge-smart-test` — depth model, consumer guarantees, opt-in correctness extensions
 - backlog-tracks.md: backlog tracks — `track:<name>` naming, the `track:` plan line, membership via `forge-plan-check track-members`, placement limits, hub-file evidence, first run vs re-align
 - precommit-fixer.md: rationale behind `forge:precommit-fixer`'s rules — the loop and its evidence, narrow re-verify vs closing run, why tests re-run after a code or test edit, test-code caution, report-only steps
+- git-safety.md: procedure behind FOUNDATION §2's git rules — gate kinds, guard bypass, destructive git forms, the dirty-tree sync ladder
+- plugin-staleness.md: how a running session ends up on an old forge plugin, how to spot it, and how to recover
 
 ## Documentation (`docs/`)
 

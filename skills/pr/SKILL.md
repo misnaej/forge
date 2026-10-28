@@ -449,7 +449,14 @@ Verification is done, fixes are committed, and the wrap-up is authored
 - **No Claude/AI attribution.**
 - **Posted last, and kept last** (FOUNDATION §6) — the
   `keep_squash_comment_last` hook re-posts it after anything that
-  comments on the PR later.
+  comments on the PR later. A bare `forge-pr-squash-comment --pr <N>`
+  (no bullets) re-posts the existing one at the bottom; no-op when it
+  is already newest.
+- **Own comment** — `forge-pr-wrapup validate` refuses a wrap-up that
+  embeds it. `--dry-run` previews the word count without posting.
+- **Once per repo:** `squash_merge_commit_title = PR_TITLE` (needs
+  admin) — under the `COMMIT_OR_PR_TITLE` default a single-commit PR
+  prefills from its commit subject, which no title sync controls.
 
 The squash-merge message becomes the permanent commit message on `main`.
 

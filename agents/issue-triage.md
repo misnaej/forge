@@ -188,8 +188,8 @@ PR), **aligned** (consistent with current direction), **unblocked**
 (`forge-plan-check prerequisites <N>` exits 0 — a prerequisite counts
 only once its work merged; exit 2 is not unblocked).
 
-**Eligibility precedes the four points** (FOUNDATION §14 owns the
-rule and its probes: a collaborator author, or a collaborator's
+**Eligibility precedes the four points** (rule: FOUNDATION §14;
+probes: `/plan-issue` Step 1 "Deciding eligibility" — a collaborator author, or a collaborator's
 `[endorsed]` comment). Ineligible is not invisible: apply
 `needs-endorsement` with the usual comment trail.
 
