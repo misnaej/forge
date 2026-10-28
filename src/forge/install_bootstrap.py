@@ -143,6 +143,7 @@ STEPS: tuple[Step, ...] = (
     # an agent session (no tty) is exactly where it must still run.
     Step(slug="plugin", cli="forge-plugin-sync", supports_check=True),
     Step(slug="labels", cli="install-forge-labels", gate=_gate_labels),
+    Step(slug="intake", cli="forge-intake", argv=("init",)),
     Step(
         slug="readme-badges",
         cli="install-forge-readme-badges",

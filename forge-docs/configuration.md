@@ -107,7 +107,8 @@ by `forge-gen-config-doc`; the sections below explain each key.
 | `[tool.forge.smart_test].safe_fallback` | `'escalate'` |
 | `[tool.forge.continuation].judgment_max_lines` | `60` |
 | `[tool.forge.memory_audit].threshold` | `5` |
-| `[tool.forge.memory_audit].lessons_file` | `'docs/lessons.md'` |
+| `[tool.forge.intake].dir` | `'docs/intake'` |
+| `[tool.forge.intake].redact` | `[]` |
 | `[tool.forge.telemetry].sample_interval` | `1.0` |
 | `[tool.forge.telemetry].plot` | `True` |
 | `[tool.forge.env_sync].blocking` | `True` |
@@ -433,15 +434,33 @@ round, and each also works standalone:
 
 ```toml
 [tool.forge.memory_audit]
-threshold = 5                    # new memories since the last audit before /next offers it
-lessons_file = "docs/lessons.md" # where SHOULD-SHIP lessons go (relative .md path inside the repo)
+threshold = 5   # new memories since the last audit before /next offers it
 ```
 
 `forge-memory-audit status --memory-dir <dir>` reports the new-memory
-count against `threshold`, the lessons file, and the lessons that have
-come up often enough to promote (FOUNDATION §12). The lessons file is
-never auto-loaded; a path outside the repo or not ending in `.md` falls
-back to the default with a warning.
+count against `threshold`, the intake's lessons directory, and the
+lesson groups seen twice or more — promotion candidates (FOUNDATION
+§12). Lessons live in the intake (below).
+
+## `[tool.forge.intake]` — where sightings are recorded
+
+```toml
+[tool.forge.intake]
+dir = "docs/intake"        # root of lessons/ and findings/ (relative path inside the repo)
+redact = ["<private-name>"] # names findings must never contain (case-insensitive)
+```
+
+One committed file per sighting of a problem not yet filed (FOUNDATION
+§1): `lessons/` for this repo's own process, `findings/` for a forge
+process misbehaving, anonymised for filing upstream. `forge-intake init`
+(run by `install-forge-bootstrap`) creates the layout and moves a legacy
+`docs/lessons.md` into it; `new` writes a stamped entry; `group` shows
+recurrences with the occurrence header a filed issue carries; `retire`
+deletes filed entries into `_LEDGER.md`. The `intake_check` pre-commit
+step refuses secret-shaped strings in every entry, and in findings also
+missing filing fields, evidence without a `file:line`, machine paths and
+`redact` names. A `dir` outside the repo falls back to the default with a
+warning; skipped when the directory does not exist.
 
 ---
 

@@ -35,7 +35,8 @@ Checked on every commit by `verify-forge-repo-structure`: every listed file and 
    - ledger.py: the one writer + parser for the append-only `key=value` ledgers under `code_health/` (telemetry_history.log, smart_test_history.log, agent_profile_history.log), plus the JSON-lines appender for structured ones (agent_transcript_digest.jsonl)
    - text_clip.py: `truncate` — the shared "keep N characters, then append a marker" cut for bounded text (evidence, log fragments, labels, echoes); callers keep their own marker, budget arithmetic and stripping
    - config.py: loader for the `[tool.forge]` table in a repo's `pyproject.toml` (base branch and the other forge settings, defaulting to single-branch `main` behaviour)
-   - memory_audit.py: `forge-memory-audit` — `status` counts agent memory notes added since the last audit stamp and says whether to offer `/memory-audit`; `stamp` rewrites the stamp after an audit
+   - memory_audit.py: `forge-memory-audit` — `status` counts agent memory notes added since the last audit stamp, says whether to offer `/memory-audit`, and lists intake lesson groups due for promotion; `stamp` rewrites the stamp after an audit
+   - intake.py: `forge-intake` — the per-sighting intake (lesson and finding folders under `[tool.forge.intake].dir`): `init` (layout + legacy lessons-file migration), `new` (stamped entry), `list`, `group` (recurrences + occurrence header), `check` (fields, evidence, secret/redaction scan; backs `intake_check`), `retire` (delete filed entries into the ledger file)
    - forge_config.py: `forge-config` — lists every `[tool.forge.*]` key forge reads (value/default + description), names native sections like `[tool.interrogate]`, and advises on recommended-but-unset config; read-only, surfaced by `install-forge-bootstrap`
    - fix_ruff.py: `fix-forge-ruff` — runs `ruff format` + `ruff check --fix --unsafe-fixes`, re-stages modified tracked files, writes `code_health/ruff.log`
    - verify_docstrings.py: `verify-forge-docstrings` — docstring accuracy
@@ -275,7 +276,8 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_gh_comments.py: tests for gh_comments (shared PR-comment plumbing: paging, filtering, attribution)
    - test_ledger.py: tests for ledger (the append-only `key=value` ledger shape)
    - test_text_clip.py: tests for text_clip (`truncate` under, at and over the limit; custom and empty suffix)
-   - test_memory_audit.py: tests for memory_audit (new-memory counting and the audit stamp)
+   - test_memory_audit.py: tests for memory_audit (new-memory counting, the audit stamp, promotion candidates from intake lessons)
+   - test_intake.py: tests for intake (check, stamped entries, init + migration, grouping and the occurrence header, retire guards, config)
    - test_pr_create.py: tests for pr_create (publishing a PR from the branch it verifies, and the CVE-scan freshness refusal, against real ephemeral git repos and real sidecars)
    - test_pr_plan.py: tests for pr_plan (the `/pr` finalization-path classifier, `--freshness` and `--evidence`)
    - test_backlog_index.py: tests for backlog_index (tier rendering, trimming to the body limit, title neutralising, write guards)
@@ -347,6 +349,7 @@ repos by `install-forge-claude-md` (guarded there by a README notice + the
 - standalone-installers.md: per-installer reference for manual usage (sibling of `install-forge-bootstrap`)
 - telemetry.md: usage guide for `forge-telemetry` / `forge-smart-test --telemetry` — example chart + how to read a profile (what warrants investigation)
 - images/: committed doc image assets (currently the telemetry example chart)
+- intake/: forge's own intake (`forge-intake`) — `lessons/` for forge-internal process traps, `findings/` for shipped-surface defects; one file per sighting
 
 ### Proposals (`docs/proposals/`)
 

@@ -53,9 +53,9 @@ finding alike:
    `[sentinel]` pickup → propose fix, make it on user's yes.
 3. **Otherwise, file an issue only if it happened**, or an agent could
    plausibly hit it in normal work. Hypothetical (gap only crafted input
-   reaches, hardening idea with no incident) → record with reason where
-   found, don't file; file if it recurs. Issue = work owed; backlog of
-   maybes taxes every later triage.
+   reaches, hardening idea with no incident) → record it in the intake
+   (`forge-intake new`), don't file; file once it recurs. Issue = work
+   owed; backlog of maybes taxes every later triage.
 
 ### Pattern Investigation Protocol
 
@@ -728,8 +728,8 @@ Reviewed by `forge:design-checker`.
   what cannot ship: individual preferences, private context.
 - **Lessons enter through an intake, and earn their way into the rules.**
   True, shareable lesson in memory (`/memory-audit` SHOULD-SHIP verdict) →
-  first to the repo's lessons file (never auto-loaded) or, for forge itself, a
-  forge report; never straight into an always-loaded doc. Promote into
+  first to the intake (never auto-loaded): lesson for this repo, finding
+  for forge; never straight into an always-loaded doc. Promote into
   `CLAUDE.md`, a skill or an agent only when it comes up a second time. Delete
   the memory only after its new home is written.
 

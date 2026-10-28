@@ -504,6 +504,26 @@ options:
   --check     Verify the table is in sync without writing. Exit 1 on drift.
 ```
 
+## forge-intake
+
+```text
+usage: forge-intake [-h] {init,new,list,group,check,retire} ...
+
+Record, check, group and retire sightings of problems.
+
+positional arguments:
+  {init,new,list,group,check,retire}
+    init                create the intake layout; migrate docs/lessons.md
+    new                 write a stamped entry
+    list                list every entry
+    group               show likely recurrences
+    check               validate entries (pre-commit step intake_check)
+    retire              delete filed entries; record them in the ledger
+
+options:
+  -h, --help            show this help message and exit
+```
+
 ## forge-memory-audit
 
 ```text
@@ -971,8 +991,8 @@ options:
   --check      Dry-run. Each step that supports --check runs in check mode;
                others just print their intent.
   --skip SLUG  Skip a step by slug. Repeatable. Known slugs: githooks, claude-
-               md, claude-settings, plugin, labels, readme-badges, api-digest,
-               cli-reference, c4, audit-deps, doctor, config.
+               md, claude-settings, plugin, labels, intake, readme-badges,
+               api-digest, cli-reference, c4, audit-deps, doctor, config.
   --strict     Abort on the first failed step. Default is continue-on-fail.
 ```
 

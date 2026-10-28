@@ -168,26 +168,26 @@ def test_threshold_defaults_to_five_without_config(repo_root: Path) -> None:
     assert memory_audit.configured_threshold(repo_root) == 5
 
 
-def test_status_names_default_lessons_file(
+def test_status_names_default_lessons_directory(
     memory_dir: Path, repo_root: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Status reports default lessons file path."""
+    """Status reports the default intake lessons directory."""
     memory_audit.status(memory_dir, repo_root)
 
-    assert f"lessons file: {repo_root / 'docs/lessons.md'}" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert f"lessons: {repo_root / 'docs/intake/lessons'}" in out
 
 
-def test_status_names_overridden_lessons_file(
+def test_status_names_overridden_lessons_directory(
     memory_dir: Path, repo_root: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Status reports overridden lessons file path."""
-    _write_pyproject(
-        repo_root, '[tool.forge.memory_audit]\nlessons_file = "notes/own.md"\n'
-    )
+    """Status reports the lessons directory under a configured intake dir."""
+    _write_pyproject(repo_root, '[tool.forge.intake]\ndir = "notes/in"\n')
 
     memory_audit.status(memory_dir, repo_root)
 
-    assert f"lessons file: {repo_root / 'notes/own.md'}" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert f"lessons: {repo_root / 'notes/in/lessons'}" in out
 
 
 @pytest.mark.parametrize("command", ["status", "stamp"])
@@ -221,39 +221,6 @@ def test_main_stamp_writes_stamp_and_reports(
     assert (memory_dir / memory_audit.STAMP_NAME).is_file()
 
 
-@pytest.mark.parametrize("value", ["/etc/lessons.md", "../outside.md", "notes.txt"])
-def test_unsafe_lessons_file_falls_back_to_default(
-    repo_root: Path, caplog: pytest.LogCaptureFixture, value: str
-) -> None:
-    """An absolute, escaping or non-markdown lessons path is replaced and warned.
-
-    Args:
-        repo_root: Repo directory the config is written into.
-        caplog: Pytest log capture fixture (injected).
-        value: The rejected ``lessons_file`` setting.
-    """
-    _write_pyproject(
-        repo_root, f'[tool.forge.memory_audit]\nlessons_file = "{value}"\n'
-    )
-
-    with caplog.at_level("WARNING"):
-        result = memory_audit.configured_lessons_file(repo_root)
-
-    assert result == repo_root / "docs/lessons.md"
-    assert "lessons_file" in caplog.text
-
-
-def test_relative_lessons_file_is_honoured(repo_root: Path) -> None:
-    """A relative in-repo markdown path is used as configured."""
-    _write_pyproject(
-        repo_root, '[tool.forge.memory_audit]\nlessons_file = "notes/lessons.md"\n'
-    )
-
-    assert memory_audit.configured_lessons_file(repo_root) == (
-        repo_root / "notes/lessons.md"
-    )
-
-
 def test_write_audit_stamp_replaces_planted_symlink(
     memory_dir: Path, tmp_path: Path
 ) -> None:
@@ -271,49 +238,97 @@ def test_write_audit_stamp_replaces_planted_symlink(
     assert not (memory_dir / f".{memory_audit.STAMP_NAME}.tmp").exists()
 
 
-@pytest.fixture
-def lessons_file(tmp_path: Path) -> Path:
-    """Lessons file with entries at 1, 2 and 3 occurrences plus a bare heading.
+def _write_lesson(
+    root: Path, slug: str, title: str, branch: str, extra: str = ""
+) -> None:
+    """Write one lesson file under the default intake directory.
 
-    Returns:
-        Path to the lessons file.
+    Args:
+        root: Repo root holding ``docs/intake``.
+        slug: File name stem.
+        title: Entry title.
+        branch: Branch stamped on the entry.
+        extra: Additional ``- key: value`` lines.
     """
-    path = tmp_path / "lessons.md"
-    path.write_text(
-        "# Lessons\n\n"
-        "## Once\n- occurrences: 1\n\n"
-        "## Twice\n- occurrences: 2\n\n"
-        "## No count here\nsome prose\n\n"
-        "## Thrice\n- occurrences: 3\n",
+    folder = root / "docs/intake/lessons"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{slug}.md").write_text(
+        f"# {title}\n\n- seen: 2026-01-01\n- branch: {branch}\n{extra}\n",
         encoding="utf-8",
     )
-    return path
 
 
-def test_promotion_candidates_lists_repeats_in_file_order(lessons_file: Path) -> None:
-    """Items with 2+ occurrences listed; singles and bare headings are not."""
-    assert memory_audit.promotion_candidates(lessons_file) == ["Twice", "Thrice"]
+def test_promotion_candidates_counts_distinct_branches(repo_root: Path) -> None:
+    """Same-title lessons from two branches are one candidate with count 2."""
+    _write_lesson(repo_root, "stale-cache-a", "Stale cache bites", "feat/a")
+    _write_lesson(repo_root, "stale-cache-b", "Stale cache bites", "feat/b")
+
+    assert memory_audit.promotion_candidates(repo_root) == ["Stale cache bites (2)"]
 
 
-def test_promotion_candidates_missing_file_is_empty(tmp_path: Path) -> None:
-    """An absent lessons file yields no candidates."""
-    assert memory_audit.promotion_candidates(tmp_path / "absent.md") == []
+def test_promotion_candidates_ignores_single_and_same_branch(
+    repo_root: Path,
+) -> None:
+    """One lesson, or two from a single branch, is below the threshold."""
+    _write_lesson(repo_root, "lone-trap", "Lone trap", "feat/a")
+    _write_lesson(repo_root, "same-one", "Same branch slip", "feat/b")
+    _write_lesson(repo_root, "same-two", "Same branch slip", "feat/b")
+
+    assert memory_audit.promotion_candidates(repo_root) == []
+
+
+def test_promotion_candidates_counts_migrated_occurrences(repo_root: Path) -> None:
+    """A migrated lesson stands for the sightings it carried over."""
+    _write_lesson(
+        repo_root, "old-trap", "Old trap", "migrated", extra="- occurrences: 3\n"
+    )
+
+    assert memory_audit.promotion_candidates(repo_root) == ["Old trap (3)"]
+
+
+def test_promotion_candidates_most_seen_first(repo_root: Path) -> None:
+    """The lesson with the higher count is listed first."""
+    for slug, branch in (("pair-1", "feat/a"), ("pair-2", "feat/b")):
+        _write_lesson(repo_root, slug, "Paired trap", branch)
+    for slug, branch in (
+        ("trio-1", "feat/a"),
+        ("trio-2", "feat/b"),
+        ("trio-3", "feat/c"),
+    ):
+        _write_lesson(repo_root, slug, "Tripled snag", branch)
+
+    assert memory_audit.promotion_candidates(repo_root) == [
+        "Tripled snag (3)",
+        "Paired trap (2)",
+    ]
+
+
+def test_promotion_candidates_without_intake_is_empty(repo_root: Path) -> None:
+    """A repo with no intake directory yields no candidates."""
+    assert memory_audit.promotion_candidates(repo_root) == []
+
+
+def test_promotion_candidates_skips_repeated_findings(repo_root: Path) -> None:
+    """Findings are filed upstream, never promoted, however often they recur."""
+    folder = repo_root / "docs/intake/findings"
+    folder.mkdir(parents=True)
+    for slug, branch in (("bug-a", "feat/a"), ("bug-b", "feat/b")):
+        (folder / f"{slug}.md").write_text(
+            f"# Shipped step misfires\n\n- branch: {branch}\n", encoding="utf-8"
+        )
+
+    assert memory_audit.promotion_candidates(repo_root) == []
 
 
 def test_status_reports_promotion_candidates(
-    memory_dir: Path,
-    repo_root: Path,
-    lessons_file: Path,
-    capsys: pytest.CaptureFixture[str],
+    memory_dir: Path, repo_root: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Status prints the candidate count and titles."""
-    target = repo_root / "docs/lessons.md"
-    target.parent.mkdir()
-    target.write_text(lessons_file.read_text(encoding="utf-8"), encoding="utf-8")
+    _write_lesson(repo_root, "stale-cache-a", "Stale cache bites", "feat/a")
+    _write_lesson(repo_root, "stale-cache-b", "Stale cache bites", "feat/b")
 
     memory_audit.status(memory_dir, repo_root)
 
     out = capsys.readouterr().out
-    assert "promotion candidates: 2" in out
-    assert "Twice" in out
-    assert "Thrice" in out
+    assert "promotion candidates: 1" in out
+    assert "  - Stale cache bites (2)" in out

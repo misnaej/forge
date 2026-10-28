@@ -90,7 +90,8 @@ Stop immediately and report if any step fails.
    Nothing to read — no ledger, or the CLI is absent — is a silent skip.
    A **loop suspect** or a `precommit-fixer` **cap breach** is a process
    defect the run just produced and nobody would otherwise see: name it,
-   and offer `/report-to-forge` before moving on. Wall time far above
+   record it (`forge-intake new finding`), and offer `/report-to-forge`
+   before moving on. Wall time far above
    active time is normal here (monitors, waits) and is not a finding on
    its own. It never blocks the phase, and it is not a pure read: it
    also refreshes forge's transcript digest
@@ -102,6 +103,11 @@ Stop immediately and report if any step fails.
    and stale plugin copies are `forge-doctor`'s to report. Its only
    deletions stay the existing branch pruning (`git branch -d`, `-D`
    for a confirmed squash merge, and `--prune-remote`, Phase 1).
+
+   **Consolidate the intake**: `forge-intake group` (no intake → silent
+   skip). Name each group of two or more sightings: a lesson → propose a
+   rule or an issue in this repo's tracker; a finding → offer
+   `/report-to-forge`. Filing stays the user's call.
 
 ## Phase 2.5: Resume a `Requires:`-linked sequence
 
