@@ -697,6 +697,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _Generate the key/default table in ``forge-docs/configuration.md``._
 
+- `_render_default(default: object) -> str` _(internal)_ — Return *default* as a table cell.
 - `render_table() -> str` — Render every config key and its default as a markdown table.
 - `main() -> int` — Entry point for ``forge-gen-config-doc``.
 

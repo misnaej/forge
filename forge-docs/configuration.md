@@ -49,37 +49,37 @@ by `forge-gen-config-doc`; the sections below explain each key.
 | Key | Default |
 |---|---|
 | `[tool.forge].base_branch` | `'main'` |
-| `[tool.forge].source_dirs` | `'smart-detect (src/ or top-level packages)'` |
-| `[tool.forge].test_dirs` | `'smart-detect (tests/ or test/)'` |
+| `[tool.forge].source_dirs` | smart-detect (src/ or top-level packages) |
+| `[tool.forge].test_dirs` | smart-detect (tests/ or test/) |
 | `[tool.forge].exclude` | `[]` |
 | `[tool.forge.cli_wiring].enabled` | `False` |
-| `[tool.forge.agent_doc].path` | `'unset (agent_doc step self-skips)'` |
-| `[tool.forge.agent_doc].guarded_by` | `'unset (guard-map edge check self-skips)'` |
-| `[tool.forge.agent_doc].extra_clis` | `'unset (no extra known CLIs)'` |
-| `[tool.forge.agent_doc].extra_hooks` | `'unset (no extra known hooks)'` |
-| `[tool.forge.agent_doc].extra_skills` | `'unset (no extra known skills)'` |
+| `[tool.forge.agent_doc].path` | unset (agent_doc step self-skips) |
+| `[tool.forge.agent_doc].guarded_by` | unset (guard-map edge check self-skips) |
+| `[tool.forge.agent_doc].extra_clis` | unset (no extra known CLIs) |
+| `[tool.forge.agent_doc].extra_hooks` | unset (no extra known hooks) |
+| `[tool.forge.agent_doc].extra_skills` | unset (no extra known skills) |
 | `[tool.forge.docstring_coverage].badge` | `False` |
-| `[tool.forge.docstring_coverage].paths` | `'source_dirs + test_dirs'` |
-| `[tool.forge.docstring_verification].paths` | `'source_dirs + test_dirs'` |
-| `[tool.forge.test_naming_check].paths` | `'test_dirs (smart-detect)'` |
-| `[tool.forge.slow_tests_report].paths` | `'source_dirs (smart-detect)'` |
-| `[tool.forge.ruff].paths` | `'source_dirs + test_dirs'` |
+| `[tool.forge.docstring_coverage].paths` | source_dirs + test_dirs |
+| `[tool.forge.docstring_verification].paths` | source_dirs + test_dirs |
+| `[tool.forge.test_naming_check].paths` | test_dirs (smart-detect) |
+| `[tool.forge.slow_tests_report].paths` | source_dirs (smart-detect) |
+| `[tool.forge.ruff].paths` | source_dirs + test_dirs |
 | `[tool.forge.api_digest].paths` | `'source_dirs'` |
 | `[tool.forge.precommit].disable` | `[]` |
 | `[tool.forge.precommit].enable` | `[]` |
 | `[tool.forge.precommit].scope` | `'all'` |
 | `[tool.forge.precommit].scope_overrides` | `{}` |
 | `[tool.forge.precommit].echo_ci_output` | `True` |
-| `[tool.forge.doctest].paths` | `'source_dirs (smart-detect)'` |
+| `[tool.forge.doctest].paths` | source_dirs (smart-detect) |
 | `[tool.forge.doctest].blocking` | `False` |
-| `[tool.forge.typecheck].paths` | `'source_dirs (smart-detect)'` |
+| `[tool.forge.typecheck].paths` | source_dirs (smart-detect) |
 | `[tool.forge.typecheck].blocking` | `False` |
 | `[tool.forge.plugin_sync].blocking` | `False` |
 | `[tool.forge.pip_audit].blocking` | `False` |
 | `[tool.forge.pip_audit].cadence` | `'branch'` |
 | `[tool.forge.pip_audit].max_age_hours` | `24.0` |
-| `[tool.forge.cve_usage].paths` | `'source_dirs + test_dirs'` |
-| `[tool.forge.release].auto` | `''` |
+| `[tool.forge.cve_usage].paths` | source_dirs + test_dirs |
+| `[tool.forge.release].auto` | unset |
 | `[tool.forge.changelog].blocking` | `True` |
 | `[tool.forge.changelog].exempt_paths` | `[]` |
 | `[tool.forge.changelog].require_paths` | `[]` |
@@ -89,21 +89,21 @@ by `forge-gen-config-doc`; the sections below explain each key.
 | `[tool.forge.audit_agents].reporter_with_artifact_agents` | `[]` |
 | `[tool.forge.audit_agents].exclude` | `[]` |
 | `[tool.forge.pr].docs_only_globs` | `[]` |
-| `[tool.forge.layering].paths` | `'unset (source_dirs → auto-detect)'` |
-| `[tool.forge.layering].layer` | `'unset (audit + step skipped)'` |
+| `[tool.forge.layering].paths` | unset (source_dirs → auto-detect) |
+| `[tool.forge.layering].layer` | unset (audit + step skipped) |
 | `[tool.forge.layering].require_all_classified` | `False` |
 | `[tool.forge.layering].unclassified_allow` | `[]` |
-| `[tool.forge.smart_test].precommit_depth` | `'unset (step skipped)'` |
+| `[tool.forge.smart_test].precommit_depth` | unset (step skipped) |
 | `[tool.forge.smart_test].blocking` | `False` |
-| `[tool.forge.smart_test].paths` | `'source_dirs + test_dirs'` |
+| `[tool.forge.smart_test].paths` | source_dirs + test_dirs |
 | `[tool.forge.smart_test].follow_mock_patches` | `False` |
 | `[tool.forge.smart_test].coverage_validate` | `False` |
 | `[tool.forge.smart_test].coverage_json` | `'unset'` |
-| `[tool.forge.smart_test].commit_directive_re` | `'built-in [depth-N] / [full] regex'` |
+| `[tool.forge.smart_test].commit_directive_re` | built-in [depth-N] / [full] regex |
 | `[tool.forge.smart_test].lifecycle_skip_days` | `30` |
 | `[tool.forge.smart_test].full_run_max_age_hours` | `48` |
 | `[tool.forge.smart_test].cadence_mode` | `'commit'` |
-| `[tool.forge.smart_test].nonpython_ignore` | `'built-in list (*.md, plugin.json, stamp, .plan/*, .gitignore)'` |
+| `[tool.forge.smart_test].nonpython_ignore` | built-in list (*.md, plugin.json, stamp, .plan/*, .gitignore) |
 | `[tool.forge.smart_test].safe_fallback` | `'escalate'` |
 | `[tool.forge.continuation].judgment_max_lines` | `60` |
 | `[tool.forge.memory_audit].threshold` | `5` |
@@ -111,19 +111,19 @@ by `forge-gen-config-doc`; the sections below explain each key.
 | `[tool.forge.telemetry].sample_interval` | `1.0` |
 | `[tool.forge.telemetry].plot` | `True` |
 | `[tool.forge.env_sync].blocking` | `True` |
-| `[tool.forge.env_sync].rebuild_command` | `'unset (auto_rebuild step self-skips)'` |
+| `[tool.forge.env_sync].rebuild_command` | unset (auto_rebuild step self-skips) |
 | `[tool.forge.badges].enabled` | `False` |
 | `[tool.forge.badges].readme` | `'README.md'` |
-| `[tool.forge.badges].workflow` | `'ci.yml / ci.yaml, else first pull_request workflow'` |
-| `[tool.forge.c4].config` | `'c4.toml (if present)'` |
+| `[tool.forge.badges].workflow` | ci.yml / ci.yaml, else first pull_request workflow |
+| `[tool.forge.c4].config` | c4.toml (if present) |
 | `[tool.forge.c4].output` | `'docs/architecture.dsl'` |
-| `[tool.forge.c4].readme` | `'unset (no README block)'` |
+| `[tool.forge.c4].readme` | unset (no README block) |
 | `[tool.forge.c4].strict_coverage` | `False` |
-| `[tool.forge.c4].paths` | `'source_dirs (smart-detect)'` |
+| `[tool.forge.c4].paths` | source_dirs (smart-detect) |
 | `[tool.forge.c4].direction` | `'LR'` |
 | `[tool.forge.c4].edges` | `'imports'` |
-| `[tool.forge.c4].container_edges` | `'inherit edges'` |
-| `[tool.forge.c4].component_edges` | `'inherit edges'` |
+| `[tool.forge.c4].container_edges` | inherit edges |
+| `[tool.forge.c4].component_edges` | inherit edges |
 <!-- forge:config:end -->
 
 ---

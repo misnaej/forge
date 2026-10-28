@@ -81,3 +81,27 @@ def test_write_then_check_roundtrips(
     for key in CONFIG_KEYS:
         assert f".{key.path[-1]}`" in text
     assert _run(monkeypatch, "--check") == 0
+
+
+@pytest.mark.parametrize(
+    ("default", "expected"),
+    [
+        ("", "unset"),
+        ("unset (step skipped)", "unset (step skipped)"),
+        ("main", "`'main'`"),
+        (False, "`False`"),
+        ("a|b c", r"a\|b c"),
+    ],
+    ids=["empty", "prose", "literal-string", "non-string", "pipe-escaped"],
+)
+def test_render_default_reads_prose_as_description_not_value(
+    default: object,
+    expected: str,
+) -> None:
+    """Prose defaults render plain; literals render as code; pipes are escaped.
+
+    Args:
+        default: The config key default handed to the renderer.
+        expected: The table cell the renderer must produce.
+    """
+    assert gen_config_doc._render_default(default) == expected

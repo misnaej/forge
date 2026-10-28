@@ -52,10 +52,32 @@ logger = logging.getLogger(__name__)
 REGEN_CMD = "forge-gen-config-doc"
 
 
+def _render_default(default: object) -> str:
+    """Return *default* as a table cell.
+
+    A string with whitespace describes the default rather than being one
+    (``"unset (step skipped)"``), so it renders as plain text; quoting it
+    would read as a value to type. An empty string is the unset default.
+
+    Args:
+        default: A :class:`~forge.forge_config.ConfigKey` default.
+
+    Returns:
+        The cell text, ``|``-escaped.
+    """
+    if default == "":
+        cell = "unset"
+    elif isinstance(default, str) and any(c.isspace() for c in default):
+        cell = default
+    else:
+        cell = f"`{default!r}`"
+    return cell.replace("|", r"\|")
+
+
 def render_table() -> str:
     """Render every config key and its default as a markdown table.
 
-    Defaults use ``repr`` so the table reads the way ``forge-config``
+    Literal defaults use ``repr`` so they read the way ``forge-config``
     prints them.
 
     Returns:
@@ -64,8 +86,8 @@ def render_table() -> str:
     lines = ["", "| Key | Default |", "|---|---|"]
     for section, keys in keys_by_section():
         for key in keys:
-            default = repr(key.default).replace("|", r"\|")
-            lines.append(f"| `[{section}].{key.path[-1]}` | `{default}` |")
+            default = _render_default(key.default)
+            lines.append(f"| `[{section}].{key.path[-1]}` | {default} |")
     return "\n".join(lines) + "\n"
 
 
