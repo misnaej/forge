@@ -99,8 +99,9 @@ gh issue create --label performance,needs-triage \
   --body-file <path to drafted body: "Requires: nothing" + analyze summary>
 ```
 
-Direct `gh issue create` from a skill follows the `/pr` skill's
-follow-up-issue precedent — `forge:issue-triage` has no filing mode.
+A finding is filed only when it is measured, never a hunch (FOUNDATION
+§1's filing bar); a skill files directly because `forge:issue-triage`
+has no filing mode.
 `needs-triage` rides along so the issue enters the normal tier pipeline;
 label/tier mutations afterwards stay `forge:issue-triage`'s job.
 Nothing beyond issue creation: no branches, no fixes, no PRs.

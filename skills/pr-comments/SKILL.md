@@ -44,6 +44,10 @@ The contract is one of these three forms:
 <one sentence on why this is out of scope for this PR.>
 ```
 
+Filed only when the problem happened or could plausibly be hit in normal
+work (FOUNDATION §1); otherwise reply with C, its sentence saying why it
+is not filed — the reply is the record when no file holds the decision.
+
 ### C. Won't fix / decision documented
 ```
 ℹ️ **Decision documented in `<file>`** (commit `<short_hash>`)
