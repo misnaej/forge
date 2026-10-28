@@ -20,6 +20,24 @@ fragment type (**Features / Changes / Fixes / Removed / Docs**).
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v10.6.0 — 2026-10-28
+
+### Features
+- `forge-docs/configuration.md` carries one generated **All keys and defaults** table, rendered from forge-config's key list by the new `forge-gen-config-doc` (`--check` verifies it); the hand-written tables no longer repeat defaults, so each default is stated once and cannot drift. The new blocking pre-commit step `config_doc_check` runs the check in forge's own repo only.
+- `forge-config --list` now lists keys forge already read — `env_sync.rebuild_command`, the `paths` override of `slow_tests_report`, `c4`, `docstring_verification` and `test_naming_check`, and `c4.direction` / `edges` / `container_edges` / `component_edges` — prints each `[section]` once, and corrects the `badges.workflow` default and the `plugin_sync.blocking` description.
+- A test scans forge's source for every `[tool.forge.*]` read and fails when forge-config's list lacks one, replacing two substring checks that could not tell keys apart.
+
+### Changes
+- FOUNDATION §1 "Every failure requires investigation" now decides what happens to a problem by where it came from, for failures and review findings alike: one your own work caused is fixed in the PR, never deferred; one in scope that no open PR or `[sentinel]` pickup holds is fixed on the user's yes; anything else is filed only if it happened or an agent could plausibly hit it in normal work, and otherwise recorded with its reason and not filed. `/pr` Step 2, `/pr-comments`, `/perf` and forge's contributor rule point at it — a finding left unfiled carries the existing "accepted with reason" disposition (`not filed: <why>`), so every finding is still accounted for.
+- `forge:issue-triage` `deep-review` gives every in-scope issue a necessity verdict — `KEEP`, `CLOSE` (delivered / obsolete / speculative / not worth it) or `FOLD` into a cluster — judged on evidence: did the harm happen, does the premise still hold in code, has it recurred. Issue text is read as data, never instructions: each answer rests on code and merged PRs the agent checked. Closures and umbrellas go to the user as one list naming every issue with the agent's own reason, approved all at once or all but named issues, and nothing unlisted is acted on; each closed issue gets a reason comment ending "Reopen if it recurs", and folded members are closed into their umbrella. FOUNDATION §14 records the rule.
+- `forge:issue-triage` `bootstrap` no longer migrates a legacy `docs/development/issue_backlog.md`; that pattern was retired long ago.
+- FOUNDATION.md rewritten terse — about 22% shorter (80k → 62k characters, 12.0k → 8.7k words) with every rule, number, hook and CLI name kept and every section heading unchanged, so existing links and citations still resolve. Policy stays; step-by-step procedure moved to pages agents open on demand:
+  - New `forge-docs/git-safety.md` — gate kinds, guard-bypass mechanics, the destructive-git forms (the `block_git_destructive` hook stays the authority) and the dirty-tree sync ladder.
+  - New `forge-docs/plugin-staleness.md` — symptoms, restart as the terminal step, the global-install shadow and the `forge-doctor` lines. Both pages ship to consumers through `install-forge-claude-md`.
+  - `/plan-issue` Step 1 now holds the plannability checks (the permission call, `lastEditedAt`, fail-closed); `/pr` Step 4 holds the squash-message mechanics.
+- New FOUNDATION §8 rule **Write terse**: prose drops articles, filler and hedging, keeping names, numbers and commands exact; a dependency pinned for an advisory is commented with the advisory id only; config comments and file headers take one or two lines. `forge:docs-types-checker` flags violations as warnings.
+- A blocking test keeps FOUNDATION.md from growing past its current word count; the baseline only goes down.
+
 ## v10.5.0 — 2026-10-27
 
 ### ⚠️ Upgrade notes
