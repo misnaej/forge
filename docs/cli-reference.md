@@ -491,6 +491,19 @@ options:
               without writing. Exit 1 on drift.
 ```
 
+## forge-gen-config-doc
+
+```text
+usage: forge-gen-config-doc [-h] [--check]
+
+Regenerate the key/default table in forge-docs/configuration.md from
+forge.forge_config.CONFIG_KEYS.
+
+options:
+  -h, --help  show this help message and exit
+  --check     Verify the table is in sync without writing. Exit 1 on drift.
+```
+
 ## forge-memory-audit
 
 ```text

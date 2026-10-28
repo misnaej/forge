@@ -40,6 +40,92 @@ hooks that count a fixer's runs read their ledger from the same directory,
 so moving it mid-session starts that count afresh. Keep a relocated
 directory private to you: forge writes logs there and trusts what it reads.
 
+## All keys and defaults
+
+Every `[tool.forge.*]` key `forge-config` reads, with its default. Generated
+by `forge-gen-config-doc`; the sections below explain each key.
+
+<!-- forge:config:start -->
+| Key | Default |
+|---|---|
+| `[tool.forge].base_branch` | `'main'` |
+| `[tool.forge].source_dirs` | `'smart-detect (src/ or top-level packages)'` |
+| `[tool.forge].test_dirs` | `'smart-detect (tests/ or test/)'` |
+| `[tool.forge].exclude` | `[]` |
+| `[tool.forge.cli_wiring].enabled` | `False` |
+| `[tool.forge.agent_doc].path` | `'unset (agent_doc step self-skips)'` |
+| `[tool.forge.agent_doc].guarded_by` | `'unset (guard-map edge check self-skips)'` |
+| `[tool.forge.agent_doc].extra_clis` | `'unset (no extra known CLIs)'` |
+| `[tool.forge.agent_doc].extra_hooks` | `'unset (no extra known hooks)'` |
+| `[tool.forge.agent_doc].extra_skills` | `'unset (no extra known skills)'` |
+| `[tool.forge.docstring_coverage].badge` | `False` |
+| `[tool.forge.docstring_coverage].paths` | `'source_dirs + test_dirs'` |
+| `[tool.forge.docstring_verification].paths` | `'source_dirs + test_dirs'` |
+| `[tool.forge.test_naming_check].paths` | `'test_dirs (smart-detect)'` |
+| `[tool.forge.slow_tests_report].paths` | `'source_dirs (smart-detect)'` |
+| `[tool.forge.ruff].paths` | `'source_dirs + test_dirs'` |
+| `[tool.forge.api_digest].paths` | `'source_dirs'` |
+| `[tool.forge.precommit].disable` | `[]` |
+| `[tool.forge.precommit].enable` | `[]` |
+| `[tool.forge.precommit].scope` | `'all'` |
+| `[tool.forge.precommit].scope_overrides` | `{}` |
+| `[tool.forge.precommit].echo_ci_output` | `True` |
+| `[tool.forge.doctest].paths` | `'source_dirs (smart-detect)'` |
+| `[tool.forge.doctest].blocking` | `False` |
+| `[tool.forge.typecheck].paths` | `'source_dirs (smart-detect)'` |
+| `[tool.forge.typecheck].blocking` | `False` |
+| `[tool.forge.plugin_sync].blocking` | `False` |
+| `[tool.forge.pip_audit].blocking` | `False` |
+| `[tool.forge.pip_audit].cadence` | `'branch'` |
+| `[tool.forge.pip_audit].max_age_hours` | `24.0` |
+| `[tool.forge.cve_usage].paths` | `'source_dirs + test_dirs'` |
+| `[tool.forge.release].auto` | `''` |
+| `[tool.forge.changelog].blocking` | `True` |
+| `[tool.forge.changelog].exempt_paths` | `[]` |
+| `[tool.forge.changelog].require_paths` | `[]` |
+| `[tool.forge.changelog].precommit_enforce` | `True` |
+| `[tool.forge.changelog].mode` | `'headings'` |
+| `[tool.forge.audit_agents].reporter_agents` | `[]` |
+| `[tool.forge.audit_agents].reporter_with_artifact_agents` | `[]` |
+| `[tool.forge.audit_agents].exclude` | `[]` |
+| `[tool.forge.pr].docs_only_globs` | `[]` |
+| `[tool.forge.layering].paths` | `'unset (source_dirs → auto-detect)'` |
+| `[tool.forge.layering].layer` | `'unset (audit + step skipped)'` |
+| `[tool.forge.layering].require_all_classified` | `False` |
+| `[tool.forge.layering].unclassified_allow` | `[]` |
+| `[tool.forge.smart_test].precommit_depth` | `'unset (step skipped)'` |
+| `[tool.forge.smart_test].blocking` | `False` |
+| `[tool.forge.smart_test].paths` | `'source_dirs + test_dirs'` |
+| `[tool.forge.smart_test].follow_mock_patches` | `False` |
+| `[tool.forge.smart_test].coverage_validate` | `False` |
+| `[tool.forge.smart_test].coverage_json` | `'unset'` |
+| `[tool.forge.smart_test].commit_directive_re` | `'built-in [depth-N] / [full] regex'` |
+| `[tool.forge.smart_test].lifecycle_skip_days` | `30` |
+| `[tool.forge.smart_test].full_run_max_age_hours` | `48` |
+| `[tool.forge.smart_test].cadence_mode` | `'commit'` |
+| `[tool.forge.smart_test].nonpython_ignore` | `'built-in list (*.md, plugin.json, stamp, .plan/*, .gitignore)'` |
+| `[tool.forge.smart_test].safe_fallback` | `'escalate'` |
+| `[tool.forge.continuation].judgment_max_lines` | `60` |
+| `[tool.forge.memory_audit].threshold` | `5` |
+| `[tool.forge.memory_audit].lessons_file` | `'docs/lessons.md'` |
+| `[tool.forge.telemetry].sample_interval` | `1.0` |
+| `[tool.forge.telemetry].plot` | `True` |
+| `[tool.forge.env_sync].blocking` | `True` |
+| `[tool.forge.env_sync].rebuild_command` | `'unset (auto_rebuild step self-skips)'` |
+| `[tool.forge.badges].enabled` | `False` |
+| `[tool.forge.badges].readme` | `'README.md'` |
+| `[tool.forge.badges].workflow` | `'ci.yml / ci.yaml, else first pull_request workflow'` |
+| `[tool.forge.c4].config` | `'c4.toml (if present)'` |
+| `[tool.forge.c4].output` | `'docs/architecture.dsl'` |
+| `[tool.forge.c4].readme` | `'unset (no README block)'` |
+| `[tool.forge.c4].strict_coverage` | `False` |
+| `[tool.forge.c4].paths` | `'source_dirs (smart-detect)'` |
+| `[tool.forge.c4].direction` | `'LR'` |
+| `[tool.forge.c4].edges` | `'imports'` |
+| `[tool.forge.c4].container_edges` | `'inherit edges'` |
+| `[tool.forge.c4].component_edges` | `'inherit edges'` |
+<!-- forge:config:end -->
+
 ---
 
 ## Quick start
@@ -58,12 +144,12 @@ to see what, if anything, is worth adding for your repo.
 
 ## `[tool.forge]`
 
-| Key | Default | What it does | Set it when |
-|---|---|---|---|
-| `base_branch` | `"main"` | Protected base branch every PR targets and every release tags; protected from direct agent push. | Your release branch isn't `main`. |
-| `source_dirs` | smart-detect | Repo **source** roots — the single definition every layout-aware tool scans (see below). Unset → smart auto-detect: `src/` if present, else top-level packages. | Your source lives outside `src/` — e.g. `source_dirs = ["src", "projects/lib"]`. |
-| `test_dirs` | smart-detect | Repo **test** roots (added for tools that scan tests too). Unset → smart auto-detect of `tests/` then `test/`. | Your tests aren't under `tests/`. |
-| `exclude` | `[]` | Repo-wide glob patterns (fnmatch on repo-relative paths; a bare dir name excludes its whole subtree) skipped by the **whole-tree** steps `docstring_verification` and `test_naming_check`. See below. | You carry vendored / generated Python you don't author, already excluded from ruff + interrogate. |
+| Key | What it does | Set it when |
+|---|---|---|
+| `base_branch` | Protected base branch every PR targets and every release tags; protected from direct agent push. | Your release branch isn't `main`. |
+| `source_dirs` | Repo **source** roots — the single definition every layout-aware tool scans (see below). Unset → smart auto-detect: `src/` if present, else top-level packages. | Your source lives outside `src/` — e.g. `source_dirs = ["src", "projects/lib"]`. |
+| `test_dirs` | Repo **test** roots (added for tools that scan tests too). Unset → smart auto-detect of `tests/` then `test/`. | Your tests aren't under `tests/`. |
+| `exclude` | Repo-wide glob patterns (fnmatch on repo-relative paths; a bare dir name excludes its whole subtree) skipped by the **whole-tree** steps `docstring_verification` and `test_naming_check`. See below. | You carry vendored / generated Python you don't author, already excluded from ruff + interrogate. |
 
 ### `exclude` — whole-tree steps skip what isn't yours
 
@@ -119,9 +205,9 @@ different scope. `forge-config --list` shows the resolved keys.
 
 ## `[tool.forge.pr]` — PR finalization
 
-| Key | Default | What it does | Set it when |
-|---|---|---|---|
-| `docs_only_globs` | `[]` | Extra globs a PR diff may consist entirely of and still take the `/pr` docs-only light path (skip design/security reporters + strict whole-tree pre-commit; run path-relevant gates only). Additive to the built-in `*.md` / `*.rst` / `*.txt` set; high-blast-radius paths (`agents/`, `skills/`, `claude-hooks/`, `.claude-plugin/`, `.claude/`, `.github/workflows/`, configs) always force the full round. | Your repo keeps prose in another doc format (e.g. `*.adoc`). |
+| Key | What it does | Set it when |
+|---|---|---|
+| `docs_only_globs` | Extra globs a PR diff may consist entirely of and still take the `/pr` docs-only light path (skip design/security reporters + strict whole-tree pre-commit; run path-relevant gates only). Additive to the built-in `*.md` / `*.rst` / `*.txt` set; high-blast-radius paths (`agents/`, `skills/`, `claude-hooks/`, `.claude-plugin/`, `.claude/`, `.github/workflows/`, configs) always force the full round. | Your repo keeps prose in another doc format (e.g. `*.adoc`). |
 
 Glob semantics: matching is `fnmatch`, where `*` crosses `/` — so
 `*.md` already covers nested paths, but a directory glob like
@@ -133,27 +219,27 @@ prose-level injection content are not detected by path classification.
 
 ## `[tool.forge.cli_wiring]`
 
-| Key | Default | What it does | Set it when |
-|---|---|---|---|
-| `enabled` | `false` | Opt into the `cli_wiring` pre-commit step: every `[project.scripts]` entry must be reachable from a wiring source (install bootstrap, pre-commit, audit, hooks, agents, skills…). | Your repo ships `[project.scripts]` and follows forge's layout and you want unreachable CLIs caught. |
+| Key | What it does | Set it when |
+|---|---|---|
+| `enabled` | Opt into the `cli_wiring` pre-commit step: every `[project.scripts]` entry must be reachable from a wiring source (install bootstrap, pre-commit, audit, hooks, agents, skills…). | Your repo ships `[project.scripts]` and follows forge's layout and you want unreachable CLIs caught. |
 
 ## `[tool.forge.agent_doc]`
 
-| Key | Default | What it does | Set it when |
-|---|---|---|---|
-| `path` | unset (step self-skips) | Repo-relative path of a hand-maintained agent-architecture doc; setting it opts into the `agent_doc` pre-commit step (`verify-forge-agent-doc`: full agent/skill coverage, no dangling hook/CLI/skill references, structural edge checks on the doc's mermaid graphs). | You keep an agent-architecture doc and want drift caught at commit time. |
-| `guarded_by` | unset (guard-map edge check self-skips) | Table mapping an agent's doc node id to the guard hooks protecting it (e.g. `precommit_fixer = ["block_fixer_recon"]`); `verify-forge-agent-doc` requires each entry to appear as an agent→hook edge in the doc. | Your agent doc draws guard-hook edges and you want a removed/renamed guard flagged at commit time. |
-| `extra_clis` / `extra_hooks` / `extra_skills` | unset (no extras) | Extra names the doc may reference without being flagged dangling — additive to the automatic resolution set (repo-local dirs + the shipped plugin roster + installed `forge-scripts` console scripts). Resolution only: extras are never required for coverage. | The doc names surface the checker cannot see — e.g. a plugin version newer than the pinned `forge-scripts`, or a third-party CLI. |
+| Key | What it does | Set it when |
+|---|---|---|
+| `path` | Repo-relative path of a hand-maintained agent-architecture doc; setting it opts into the `agent_doc` pre-commit step (`verify-forge-agent-doc`: full agent/skill coverage, no dangling hook/CLI/skill references, structural edge checks on the doc's mermaid graphs). | You keep an agent-architecture doc and want drift caught at commit time. |
+| `guarded_by` | Table mapping an agent's doc node id to the guard hooks protecting it (e.g. `precommit_fixer = ["block_fixer_recon"]`); `verify-forge-agent-doc` requires each entry to appear as an agent→hook edge in the doc. | Your agent doc draws guard-hook edges and you want a removed/renamed guard flagged at commit time. |
+| `extra_clis` / `extra_hooks` / `extra_skills` | Extra names the doc may reference without being flagged dangling — additive to the automatic resolution set (repo-local dirs + the shipped plugin roster + installed `forge-scripts` console scripts). Resolution only: extras are never required for coverage. | The doc names surface the checker cannot see — e.g. a plugin version newer than the pinned `forge-scripts`, or a third-party CLI. |
 
 The dangling-reference checks resolve against the union of repo-local names (`agents/`, `.claude/agents/`, `skills/`, `.claude/skills/`, `claude-hooks/`, `.claude/hooks/`, `[project.scripts]`), forge's shipped plugin roster (skills + hooks, packaged with `forge-scripts`), and the installed `forge-scripts` console scripts — so a consumer doc can say "`precommit-fixer` runs `forge-precommit`" without listing forge's surface anywhere. Coverage requirements (every agent + skill mentioned) stay strictly repo-local.
 
 ## `[tool.forge.audit_agents]`
 
-| Key | Default | What it does | Set it when |
-|---|---|---|---|
-| `reporter_agents` | `[]` | Consumer agent names classified as reporters by `forge-audit-agents`, additive to the shipped list — never replaces it — so the no-`Write`/`Edit` and `verified-at:` checks also apply to your own reporter agents. | You ship a consumer agent under `.claude/agents/` that follows the reporter pattern and want it held to the same template checks as forge's own reporters. |
-| `reporter_with_artifact_agents` | `[]` | Consumer reporter agents exempt from the no-`Write`/`Edit` check because their report IS a written artifact, additive to the shipped list. | Your consumer reporter (like forge's own `docs-types-checker`) legitimately writes/edits the doc it reports on. |
-| `exclude` | `[]` | Repo-relative paths `forge-audit-agents` skips — each an fnmatch glob (`.claude/agents/drafts/*.md`) or a directory prefix (`.claude/agents/vendor`) — applied with `--roots` too. Each excluded path is listed in `code_health/audit_agents.log`. Underscore-prefixed files and a frontmatter-less folder `README.md` are always skipped; a malformed value excludes nothing. | Your agents folder holds Markdown that is not an agent (notes, generated indexes) and its "missing frontmatter" rows can never be fixed. |
+| Key | What it does | Set it when |
+|---|---|---|
+| `reporter_agents` | Consumer agent names classified as reporters by `forge-audit-agents`, additive to the shipped list — never replaces it — so the no-`Write`/`Edit` and `verified-at:` checks also apply to your own reporter agents. | You ship a consumer agent under `.claude/agents/` that follows the reporter pattern and want it held to the same template checks as forge's own reporters. |
+| `reporter_with_artifact_agents` | Consumer reporter agents exempt from the no-`Write`/`Edit` check because their report IS a written artifact, additive to the shipped list. | Your consumer reporter (like forge's own `docs-types-checker`) legitimately writes/edits the doc it reports on. |
+| `exclude` | Repo-relative paths `forge-audit-agents` skips — each an fnmatch glob (`.claude/agents/drafts/*.md`) or a directory prefix (`.claude/agents/vendor`) — applied with `--roots` too. Each excluded path is listed in `code_health/audit_agents.log`. Underscore-prefixed files and a frontmatter-less folder `README.md` are always skipped; a malformed value excludes nothing. | Your agents folder holds Markdown that is not an agent (notes, generated indexes) and its "missing frontmatter" rows can never be fixed. |
 
 ## `[tool.forge.hooks]` — Claude Code safety hooks
 
@@ -171,13 +257,13 @@ step's own self-skip (it never *weakens* a self-skip), and `disable` beats
 `enable` when a name appears in both. The same effect for a single run is
 available as `forge-precommit --only <names>` / `--skip <names>`.
 
-| Key | Default | What it does | Set it when |
-|---|---|---|---|
-| `disable` | `[]` | Force-skip these default steps by name (e.g. `["pip_audit"]`). | You want a default step off repo-wide. |
-| `enable` | `[]` | Opt into normally-off steps by name: `doctest`, `typecheck`, `doc_consistency`, `api_digest_check`, `cli_reference_check`, `foundation_md_check`. | You want one of the opt-in steps below to run. |
-| `scope` | `"all"` | Default file scope for the scope-aware steps — `"all"` (whole tracked source tree) or `"diff"` (only files modified vs main). | You want a faster, diff-only gate repo-wide (trades completeness for speed). |
-| `scope_overrides` | `{}` | Per-step scope, overriding `scope`. Keys are step names; values are `"all"` / `"diff"`. | You want most steps full-repo but one (or vice-versa) on the diff. |
-| `echo_ci_output` | `true` | In CI, print each blocking step's own output under its log pointer, since the log is gone once the runner is. `false` keeps only the pointer; any non-boolean value keeps the default. | A step's output is too large or too sensitive for a public CI log. |
+| Key | What it does | Set it when |
+|---|---|---|
+| `disable` | Force-skip these default steps by name (e.g. `["pip_audit"]`). | You want a default step off repo-wide. |
+| `enable` | Opt into normally-off steps by name: `doctest`, `typecheck`, `doc_consistency`, `api_digest_check`, `cli_reference_check`, `foundation_md_check`. | You want one of the opt-in steps below to run. |
+| `scope` | Default file scope for the scope-aware steps — `"all"` (whole tracked source tree) or `"diff"` (only files modified vs main). | You want a faster, diff-only gate repo-wide (trades completeness for speed). |
+| `scope_overrides` | Per-step scope, overriding `scope`. Keys are step names; values are `"all"` / `"diff"`. | You want most steps full-repo but one (or vice-versa) on the diff. |
+| `echo_ci_output` | In CI, print each blocking step's own output under its log pointer, since the log is gone once the runner is. `false` keeps only the pointer; any non-boolean value keeps the default. | A step's output is too large or too sensitive for a public CI log. |
 
 ### Changing a step's scope
 
@@ -259,11 +345,11 @@ or a cadence value forge does not recognise. Naming the step
 (`forge-precommit --only pip_audit`) or setting
 `FORGE_PIP_AUDIT_FORCE=1` also forces it.
 
-| Key | Default | What it does | Set it when |
-|---|---|---|---|
-| `cadence` | `"branch"` | When the scan actually runs: `branch` (once since this branch forked), `hours` (with `max_age_hours`), or `always` (every commit). | You want a fixed rhythm, or the old every-commit behaviour. |
-| `max_age_hours` | `24` | Age at which a previous scan stops counting, under `cadence = "hours"`. | Your tolerance for an older answer differs. |
-| `blocking` | `false` | Fail the commit on a CVE finding (else non-blocking WARN). | A vulnerable dependency should refuse a commit. |
+| Key | What it does | Set it when |
+|---|---|---|
+| `cadence` | When the scan actually runs: `branch` (once since this branch forked), `hours` (with `max_age_hours`), or `always` (every commit). | You want a fixed rhythm, or the old every-commit behaviour. |
+| `max_age_hours` | Age at which a previous scan stops counting, under `cadence = "hours"`. | Your tolerance for an older answer differs. |
+| `blocking` | Fail the commit on a CVE finding (else non-blocking WARN). | A vulnerable dependency should refuse a commit. |
 
 The reuse stamp is the scan time recorded inside `code_health/pip_audit.json` (its `scanned_at` field), so copying or restoring the file does not make an old scan look fresh. A sidecar written before that field existed falls back to the file's modification time, which a copy or cache restore resets to the moment of the copy; a field that is present but unusable, or a sidecar that cannot be read, means scan. Either way, do not cache that directory in CI: a restored scan describes the environment it was taken in, not the one the job built.
 
@@ -272,10 +358,10 @@ The reuse stamp is the scan time recorded inside `code_health/pip_audit.json` (i
 Runs `pytest --doctest-modules` so docstring `>>>` examples are executed,
 not just present. Enable via `[tool.forge.precommit] enable = ["doctest"]`.
 
-| Key | Default | What it does | Set it when |
-|---|---|---|---|
-| `paths` | `["src"]` | Scan roots for `--doctest-modules`. | Your doctested code lives elsewhere. |
-| `blocking` | `false` | Fail the commit on a broken example (else non-blocking WARN). | You want doctest drift to refuse a commit. |
+| Key | What it does | Set it when |
+|---|---|---|
+| `paths` | Scan roots for `--doctest-modules`. | Your doctested code lives elsewhere. |
+| `blocking` | Fail the commit on a broken example (else non-blocking WARN). | You want doctest drift to refuse a commit. |
 
 ## `[tool.forge.typecheck]` — opt-in type-check step
 
@@ -286,10 +372,10 @@ pyproject-native, reads/migrates `[tool.mypy]`). Enable via
 Non-blocking by default — a type-checker false positive that refuses a
 commit trains `--no-verify`.
 
-| Key | Default | What it does | Set it when |
-|---|---|---|---|
-| `paths` | `["src"]` | Scan roots passed to pyrefly. | Your source lives elsewhere. |
-| `blocking` | `false` | Fail the commit on a type error (else non-blocking WARN). | Your type baseline is clean and you want it enforced. |
+| Key | What it does | Set it when |
+|---|---|---|
+| `paths` | Scan roots passed to pyrefly. | Your source lives elsewhere. |
+| `blocking` | Fail the commit on a type error (else non-blocking WARN). | Your type baseline is clean and you want it enforced. |
 
 **Which interpreter pyrefly checks against.** The step passes pyrefly no
 interpreter, so pyrefly finds one by its own discovery — and may find the
@@ -369,20 +455,20 @@ The CLI itself (and the `/forge:smart-test` skill) work without any config;
 this table only governs the pre-commit integration. Depth model and the
 speed/coverage trade-off: [`forge-docs/smart-test.md`](smart-test.md).
 
-| Key | Default | What it does | Set it when |
-|---|---|---|---|
-| `precommit_depth` | _(unset → step skipped)_ | Depth the `smart_test` step runs on commit: `0` / `1` / `2` / `full`. Setting it opts the step in. | You want a change-scoped test gate on every commit (e.g. `0` for the fastest loop). |
-| `blocking` | `false` | Fail the commit on a test failure (else non-blocking WARN). | You want the gate to actually block, not just warn. |
-| `paths` | repo `source_dirs` + `test_dirs` | Scan roots for the import graph (per-tool override of the repo layout). | Your code/tests live outside the configured `source_dirs`/`test_dirs`. |
-| `follow_mock_patches` | `false` | Also treat `unittest.mock.patch("pkg.mod.attr")` string targets as dependency edges — `patch`/`patch.dict`/`mock.`/`mocker.` forms (`patch.object` is covered by its import). **Usually a no-op:** a test that patches `pkg.mod.attr` almost always also `import`s `pkg.mod`, so the patch edge duplicates an import edge that already selects the test. Changes selection only for the genuine patch-*only* case (chiefly `patch.dict("sys.modules", {…})` against a deferred import). Orthogonal to module naming — does not fix a source-dir/import-root mismatch. | Your tests couple to code purely through patching, with no import of the target (e.g. `sys.modules` injection). |
-| `coverage_validate` | `false` | After the static pass, union the tests whose recorded coverage **contexts** touch a changed line (needs `coverage_json`). Catches runtime-only links (fixtures, dynamic dispatch). | You have a fresh per-test coverage export and want belt-and-suspenders selection. |
-| `coverage_json` | _(unset)_ | Path to a `coverage json --show-contexts` export (recorded with `pytest --cov-context=test`) for `coverage_validate`. Also settable per-run via `--coverage-json`. A stale export under-selects — regenerate on `full` runs. | You enabled `coverage_validate`. |
-| `lifecycle_skip_days` | `30` | Quiet window (days) after which an untouched development-marked test file leaves ordinary full runs (lifecycle-skipped, always reported; `--all-tests` re-includes). | You want a faster/slower demotion clock for stale development tests. |
-| `full_run_max_age_hours` | `48` | Max age of the tracked `.forge-full-run` stamp before the cadence acts (per `cadence_mode`). | Your truly-all cadence should run more or less often. |
-| `cadence_mode` | `commit` | Who carries the truly-all cadence: `commit` (stale stamp escalates the commit), `advisory` (warn only; run keeps its own `blocking` semantics), `external` (a scheduled CI job owns it; warn at 2x the window). | CI is your testing fleet — see the smart-test doc's "Who carries the cadence". |
-| `nonpython_ignore` | built-in list | fnmatch globs for changed non-Python paths that cannot affect tests; anything else escalates the run to full (safe fallback). | You have non-Python paths the default list doesn't cover. |
-| `safe_fallback` | `escalate` | What a changed non-Python path outside `nonpython_ignore` does: `escalate` (run the full suite), `warn` (log every such path and keep the selected depth), `off` (ignore them; one warning says so). A changed conftest outside the test roots always escalates. An unknown value escalates with a warning. | Full-suite escalations cost more than the under-selection risk you accept — see the smart-test doc's "Safe fallback". |
-| `commit_directive_re` | `\[(?:depth-(?P<n>[0-2])\|(?P<full>full))\]` | Regex for `--from-commit-message` to read a depth directive from `HEAD`'s message (named groups `n` / `full`). | Your CI tags commits with a different directive syntax. |
+| Key | What it does | Set it when |
+|---|---|---|
+| `precommit_depth` | Depth the `smart_test` step runs on commit: `0` / `1` / `2` / `full`. Setting it opts the step in. | You want a change-scoped test gate on every commit (e.g. `0` for the fastest loop). |
+| `blocking` | Fail the commit on a test failure (else non-blocking WARN). | You want the gate to actually block, not just warn. |
+| `paths` | Scan roots for the import graph (per-tool override of the repo layout). | Your code/tests live outside the configured `source_dirs`/`test_dirs`. |
+| `follow_mock_patches` | Also treat `unittest.mock.patch("pkg.mod.attr")` string targets as dependency edges — `patch`/`patch.dict`/`mock.`/`mocker.` forms (`patch.object` is covered by its import). **Usually a no-op:** a test that patches `pkg.mod.attr` almost always also `import`s `pkg.mod`, so the patch edge duplicates an import edge that already selects the test. Changes selection only for the genuine patch-*only* case (chiefly `patch.dict("sys.modules", {…})` against a deferred import). Orthogonal to module naming — does not fix a source-dir/import-root mismatch. | Your tests couple to code purely through patching, with no import of the target (e.g. `sys.modules` injection). |
+| `coverage_validate` | After the static pass, union the tests whose recorded coverage **contexts** touch a changed line (needs `coverage_json`). Catches runtime-only links (fixtures, dynamic dispatch). | You have a fresh per-test coverage export and want belt-and-suspenders selection. |
+| `coverage_json` | Path to a `coverage json --show-contexts` export (recorded with `pytest --cov-context=test`) for `coverage_validate`. Also settable per-run via `--coverage-json`. A stale export under-selects — regenerate on `full` runs. | You enabled `coverage_validate`. |
+| `lifecycle_skip_days` | Quiet window (days) after which an untouched development-marked test file leaves ordinary full runs (lifecycle-skipped, always reported; `--all-tests` re-includes). | You want a faster/slower demotion clock for stale development tests. |
+| `full_run_max_age_hours` | Max age of the tracked `.forge-full-run` stamp before the cadence acts (per `cadence_mode`). | Your truly-all cadence should run more or less often. |
+| `cadence_mode` | Who carries the truly-all cadence: `commit` (stale stamp escalates the commit), `advisory` (warn only; run keeps its own `blocking` semantics), `external` (a scheduled CI job owns it; warn at 2x the window). | CI is your testing fleet — see the smart-test doc's "Who carries the cadence". |
+| `nonpython_ignore` | fnmatch globs for changed non-Python paths that cannot affect tests; anything else escalates the run to full (safe fallback). | You have non-Python paths the default list doesn't cover. |
+| `safe_fallback` | What a changed non-Python path outside `nonpython_ignore` does: `escalate` (run the full suite), `warn` (log every such path and keep the selected depth), `off` (ignore them; one warning says so). A changed conftest outside the test roots always escalates. An unknown value escalates with a warning. | Full-suite escalations cost more than the under-selection risk you accept — see the smart-test doc's "Safe fallback". |
+| `commit_directive_re` | Regex for `--from-commit-message` to read a depth directive from `HEAD`'s message (named groups `n` / `full`). | Your CI tags commits with a different directive syntax. |
 
 ## `[tool.forge.telemetry]` — resource profiling
 
@@ -394,10 +480,10 @@ sampled while the wrapped command runs, written to `code_health/telemetry.log`
 ambient enable switch. Usage guide, an example chart, and how to read a
 profile: [`docs/telemetry.md`](../docs/telemetry.md).
 
-| Key | Default | What it does | Set it when |
-|---|---|---|---|
-| `sample_interval` | `1.0` | Seconds between samples (floored at 0.1). | Long runs drown the log (raise it) or short runs need finer resolution (lower it). |
-| `plot` | `true` | Render `code_health/telemetry.png` alongside the text log when matplotlib is importable; otherwise text-only, logging a skip notice. | You never want the chart artifact. |
+| Key | What it does | Set it when |
+|---|---|---|
+| `sample_interval` | Seconds between samples (floored at 0.1). | Long runs drown the log (raise it) or short runs need finer resolution (lower it). |
+| `plot` | Render `code_health/telemetry.png` alongside the text log when matplotlib is importable; otherwise text-only, logging a skip notice. | You never want the chart artifact. |
 
 ## `[tool.forge.layering]` — opt-in layer-composition gate
 
@@ -455,10 +541,10 @@ following produces a single HIGH config-error finding (anchored at
 
 ### `require_all_classified` — coverage gate for package-dissolve refactors
 
-| Key (table-level) | Default | What it does |
-|---|---|---|
-| `require_all_classified` | `false` | Every **top-level** source package must be classified — reached by some layer's prefix, or listed in `unclassified_allow`. An unclassified package is a **blocking HIGH** finding anchored at the package's first module. |
-| `unclassified_allow` | `[]` | Deliberate opt-outs, surfaced as REVIEW findings (visible, reviewed — never silent). A stale entry (matches no discovered package) or a redundant one (names an already-classified package) is flagged for removal. |
+| Key (table-level) | What it does |
+|---|---|
+| `require_all_classified` | Every **top-level** source package must be classified — reached by some layer's prefix, or listed in `unclassified_allow`. An unclassified package is a **blocking HIGH** finding anchored at the package's first module. |
+| `unclassified_allow` | Deliberate opt-outs, surfaced as REVIEW findings (visible, reviewed — never silent). A stale entry (matches no discovered package) or a redundant one (names an already-classified package) is flagged for removal. |
 
 Why: `packages = [...]` makes a multi-package domain *expressible*; this
 gate makes it *safe under refactoring*. When a dissolving umbrella
@@ -496,10 +582,10 @@ there is no `[project.scripts]` table, the package isn't installed at all, or
 the run is CI (a fresh runner checkout legitimately predates install —
 FOUNDATION §15).
 
-| Key | Default | What it does | Set it when |
-|---|---|---|---|
-| `blocking` | `true` | Refuse the commit when a declared CLI is missing from the install (else non-blocking WARN). | You want stale-install drift surfaced without blocking — e.g. a repo where contributors don't editable-install their own package. |
-| `rebuild_command` | _(none)_ | The command the `auto_rebuild` step runs to heal a stale install (see below). With no command set, nothing auto-runs — `env_sync` stays detect-only. | You want a stale install fixed automatically instead of blocking the commit. Forge sets `"./dev/setup.sh"`. **Never set a bare `pip install`** — FOUNDATION §2. |
+| Key | What it does | Set it when |
+|---|---|---|
+| `blocking` | Refuse the commit when a declared CLI is missing from the install (else non-blocking WARN). | You want stale-install drift surfaced without blocking — e.g. a repo where contributors don't editable-install their own package. |
+| `rebuild_command` | The command the `auto_rebuild` step runs to heal a stale install (see below). With no command set, nothing auto-runs — `env_sync` stays detect-only. | You want a stale install fixed automatically instead of blocking the commit. Forge sets `"./dev/setup.sh"`. **Never set a bare `pip install`** — FOUNDATION §2. |
 
 ### `auto_rebuild` — heal before `env_sync` blocks (default-on, opt-out)
 
@@ -545,9 +631,9 @@ the repo ships no plugin, when Claude Code is not installed, and in CI
 (FOUNDATION §15) — deliberately not any non-interactive run, since an
 agent-driven session is exactly the context that loads this install.
 
-| Key | Default | Meaning | Set it when |
-|---|---|---|---|
-| `blocking` | `false` | A checkout without its own install of the release fails the commit (`true`) or renders as a WARN (`false`). | Your sessions must run the plugin the tree declares and your manifest never names an unpublished release. Forge keeps `false`: under rolling-next its release commits name a version no sync can fetch yet. |
+| Key | Meaning | Set it when |
+|---|---|---|
+| `blocking` | A checkout without its own install of the release fails the commit (`true`) or renders as a WARN (`false`). | Your sessions must run the plugin the tree declares and your manifest never names an unpublished release. Forge keeps `false`: under rolling-next its release commits name a version no sync can fetch yet. |
 
 `env_sync` (above) carries two sibling checks for the other install surfaces:
 the editable install on `PATH` must be **this** clone (parallel dev clones each
@@ -593,10 +679,10 @@ FOUNDATION §4).
 > follows the same name — `.badges/docstring-coverage.svg` (see the ⚠️ upgrade
 > note in `CHANGELOG.md`).
 
-| Key | Default | What it does | Set it when |
-|---|---|---|---|
-| `paths` | `[tool.forge].source_dirs + test_dirs` | Per-tool **override** of the scan roots for the coverage report and badge. Defaults to the repo-wide layout above; set this only when docstring-coverage should scan something different. Paths resolving outside the repo are rejected. | You want coverage scoped differently from the rest of forge — otherwise prefer setting `[tool.forge].source_dirs` once. |
-| `badge` | `false` | Generate **interrogate's own** coverage badge (via `interrogate.badge_gen`) to `.badges/docstring-coverage.svg` for README embedding. forge invokes interrogate as a library, so this opt-in triggers the badge programmatically. | You want a coverage badge in your README. |
+| Key | What it does | Set it when |
+|---|---|---|
+| `paths` | Per-tool **override** of the scan roots for the coverage report and badge. Defaults to the repo-wide layout above; set this only when docstring-coverage should scan something different. Paths resolving outside the repo are rejected. | You want coverage scoped differently from the rest of forge — otherwise prefer setting `[tool.forge].source_dirs` once. |
+| `badge` | Generate **interrogate's own** coverage badge (via `interrogate.badge_gen`) to `.badges/docstring-coverage.svg` for README embedding. forge invokes interrogate as a library, so this opt-in triggers the badge programmatically. | You want a coverage badge in your README. |
 
 ## `[tool.forge.c4]` — C4 architecture model
 
@@ -606,15 +692,15 @@ forge's import graph + a human-authored model. Opt into the `c4` pre-commit
 step (`forge-gen-c4 --check` — keeps the committed diagram in sync with the
 import graph) **by presence** of this table; it self-skips otherwise.
 
-| Key | Default | What it does | Set it when |
-|---|---|---|---|
-| `config` | _unset_ | Path to a standalone model file; a root `c4.toml` is auto-detected when present. | You keep the verbose model in its own file (like `ruff.toml`) rather than inline. |
-| `output` | `"docs/architecture.dsl"` | Where the generated Structurizr DSL is written. | You want the DSL artifact elsewhere. |
-| `readme` | _unset_ | README path for the managed Mermaid block; unset → no README block is written. | You want the diagram embedded in a README. |
-| `direction` | `"LR"` | Graph direction for every generated diagram (`"LR"` or `"TB"`); threads into the Mermaid `graph` header and the DSL `autolayout`. | Layered container models read better top-to-bottom. |
-| `edges` | `"imports"` | Whether import-**derived** ("depends-on") edges are drawn: `"imports"` / `"both"` draw them, `"declared"` draws only hand-authored `[[relationship]]` edges. Declared edges always render. | You want a curated conceptual flow instead of the noisy import graph. |
-| `container_edges` / `component_edges` | inherit `edges` | Per-view override of `edges` for the Container view / the per-container Component views. | You want the Container view to show a clean curated flow while Component views keep real import coupling. |
-| `strict_coverage` | `false` | Makes `forge-gen-c4 --check` **fail** on any module mapped to no `[[component]]`, or any declared component prefix matching zero real modules (typo / dead prefix). | You use the component table as a drift-checked "every module accounted for" map and want stale entries to fail CI, not just warn. |
+| Key | What it does | Set it when |
+|---|---|---|
+| `config` | Path to a standalone model file; a root `c4.toml` is auto-detected when present. | You keep the verbose model in its own file (like `ruff.toml`) rather than inline. |
+| `output` | Where the generated Structurizr DSL is written. | You want the DSL artifact elsewhere. |
+| `readme` | README path for the managed Mermaid block; unset → no README block is written. | You want the diagram embedded in a README. |
+| `direction` | Graph direction for every generated diagram (`"LR"` or `"TB"`); threads into the Mermaid `graph` header and the DSL `autolayout`. | Layered container models read better top-to-bottom. |
+| `edges` | Whether import-**derived** ("depends-on") edges are drawn: `"imports"` / `"both"` draw them, `"declared"` draws only hand-authored `[[relationship]]` edges. Declared edges always render. | You want a curated conceptual flow instead of the noisy import graph. |
+| `container_edges` / `component_edges` | Per-view override of `edges` for the Container view / the per-container Component views. | You want the Container view to show a clean curated flow while Component views keep real import coupling. |
+| `strict_coverage` | Makes `forge-gen-c4 --check` **fail** on any module mapped to no `[[component]]`, or any declared component prefix matching zero real modules (typo / dead prefix). | You use the component table as a drift-checked "every module accounted for" map and want stale entries to fail CI, not just warn. |
 
 The model itself — the `system` / `person` / `external` / `container` /
 `component` / `relationship` tables — lives in the external `c4.toml` (pointed
@@ -827,9 +913,9 @@ risk = "only exploitable parsing untrusted XML"
 mitigation = "ensure XML sources are trusted"
 ```
 
-| Key | Default | What it does | Set it when |
-|---|---|---|---|
-| `paths` | `source_dirs` + `test_dirs` | Per-tool override of the scan roots; otherwise the shared layout. | The vulnerable surface lives outside your normal source roots. |
+| Key | What it does | Set it when |
+|---|---|---|
+| `paths` | Per-tool override of the scan roots; otherwise the shared layout. | The vulnerable surface lives outside your normal source roots. |
 
 ## `[tool.forge.changelog]` — opt-in CHANGELOG gates
 
@@ -855,13 +941,13 @@ following the [consumer changelog convention](../docs/consumer-release.md)
   tag — see the ["No-version opt-out"](../docs/consumer-release.md#enforcement)
   in `docs/consumer-release.md` for all three signals.
 
-| Key | Default | What it does | Set it when |
-|---|---|---|---|
-| `blocking` | `true` | Findings fail the commit; `false` downgrades both steps to a WARN. | Staged adoption on a repo with a messy changelog history. |
-| `exempt_paths` | `[]` | Path prefixes `changelog_updated` ignores. | Scratch/experimental dirs whose changes need no entry. |
-| `require_paths` | `[]` | Prefixes that always require an entry, overriding `exempt_paths` (checked first). | A shipped subtree inside an otherwise exempt dir. |
-| `mode` | `headings` | Changelog model: `headings` (shared top-heading bullets) or `fragments` (per-PR `changelog.d/` files, level-only bump, assembled once at release — zero merge conflicts; CHANGELOG becomes an output, and the release version is computed by the assembler: `forge-changelog release` / `next-version`). | Parallel PRs keep colliding on the changelog. |
-| `precommit_enforce` | `true` | `false` = deferred mode: local commits (human or agent) self-skip `changelog_updated`; genuine CI keeps failing — with an expected-until-wrap-up message — until the entry lands at PR wrap-up. See the ["Deferred entry timing"](../docs/consumer-release.md#enforcement) chain. | High-parallelism repos hitting mid-PR changelog merge conflicts. |
+| Key | What it does | Set it when |
+|---|---|---|
+| `blocking` | Findings fail the commit; `false` downgrades both steps to a WARN. | Staged adoption on a repo with a messy changelog history. |
+| `exempt_paths` | Path prefixes `changelog_updated` ignores. | Scratch/experimental dirs whose changes need no entry. |
+| `require_paths` | Prefixes that always require an entry, overriding `exempt_paths` (checked first). | A shipped subtree inside an otherwise exempt dir. |
+| `mode` | Changelog model: `headings` (shared top-heading bullets) or `fragments` (per-PR `changelog.d/` files, level-only bump, assembled once at release — zero merge conflicts; CHANGELOG becomes an output, and the release version is computed by the assembler: `forge-changelog release` / `next-version`). | Parallel PRs keep colliding on the changelog. |
+| `precommit_enforce` | `false` = deferred mode: local commits (human or agent) self-skip `changelog_updated`; genuine CI keeps failing — with an expected-until-wrap-up message — until the entry lands at PR wrap-up. See the ["Deferred entry timing"](../docs/consumer-release.md#enforcement) chain. | High-parallelism repos hitting mid-PR changelog merge conflicts. |
 
 `precommit_enforce` and `blocking` are independent axes — timing vs
 severity. With both `false`, CI's deferred check degrades to a WARN, so
@@ -902,11 +988,11 @@ hosted source exists (CI, Python version, Ruff, license, forge channel,
 Claude Code) and the local `.badges/docstring-coverage.svg` when present.
 Wired into `install-forge-bootstrap`.
 
-| Key | Default | What it does | Set it when |
-|---|---|---|---|
-| `enabled` | `false` | Opt into writing the badge block. | You want forge to maintain a badge row in your README. |
-| `readme` | `"README.md"` | README file the block is written into. | Your readme has a different name/path. |
-| `workflow` | unset | Workflow file under `.github/workflows` the CI badge points at. Unset, forge picks `ci.yml`/`ci.yaml`, else the first workflow whose `on:` includes `pull_request`; with neither it keeps the README's existing CI badge and warns. | The CI workflow has another name and is not `pull_request`-triggered. |
+| Key | What it does | Set it when |
+|---|---|---|
+| `enabled` | Opt into writing the badge block. | You want forge to maintain a badge row in your README. |
+| `readme` | README file the block is written into. | Your readme has a different name/path. |
+| `workflow` | Workflow file under `.github/workflows` the CI badge points at. Unset, forge picks `ci.yml`/`ci.yaml`, else the first workflow whose `on:` includes `pull_request`; with neither it keeps the README's existing CI badge and warns. | The CI workflow has another name and is not `pull_request`-triggered. |
 
 ## `[tool.interrogate]` — native section, read by forge
 

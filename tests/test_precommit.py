@@ -355,6 +355,35 @@ def test_step_commit_types_parity_skipped_when_hook_absent(
     assert result.passed
 
 
+@pytest.mark.parametrize(
+    ("project_name", "doc_text"),
+    [
+        pytest.param(
+            "someone-else", f"{gen_common.CONFIG_DOC_START}\n", id="not-forge-repo"
+        ),
+        pytest.param(git_utils.FORGE_DIST_NAME, "no table here\n", id="no-marker"),
+    ],
+)
+def test_step_config_doc_check_skips_when_not_forge_repo_or_no_marker(
+    tmp_path: Path,
+    project_name: str,
+    doc_text: str,
+) -> None:
+    """step_config_doc_check skips outside forge's repo or without the marker.
+
+    Args:
+        project_name: Value written as `[project].name` in pyproject.toml.
+        doc_text: Content written to the config doc file.
+    """
+    (tmp_path / "pyproject.toml").write_text(f'[project]\nname = "{project_name}"\n')
+    doc = tmp_path / gen_common.CONFIG_DOC
+    doc.parent.mkdir(parents=True)
+    doc.write_text(doc_text)
+    result = precommit.step_config_doc_check(tmp_path)
+    assert result.skipped
+    assert result.passed
+
+
 def test_step_commit_types_parity_hard_fails_when_cli_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

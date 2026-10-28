@@ -100,7 +100,7 @@ from forge.changelog_fragments import check_staged as check_staged_fragments
 from forge.config import installed_console_scripts, resolve_model_section
 from forge.continuation_state import write_state
 from forge.emergency_state import active_state
-from forge.gen_common import HELP_UNAVAILABLE_MARKER
+from forge.gen_common import CONFIG_DOC, CONFIG_DOC_START, HELP_UNAVAILABLE_MARKER
 from forge.git_utils import (
     EVIDENCE_OUTPUT_CAP,
     SCOPE_ALL,
@@ -1069,6 +1069,42 @@ def step_commit_types_parity(repo_root: Path) -> StepResult:
     require_cli("forge-gen-commit-types", caller="forge-precommit")
     passed, output = _run(["forge-gen-commit-types", "--check"], cwd=repo_root)
     return StepResult(name="commit_types_parity", passed=passed, output=output)
+
+
+def step_config_doc_check(repo_root: Path) -> StepResult:
+    """Run ``forge-gen-config-doc --check`` — config-doc key-table drift guard.
+
+    Keeps the key/default table in ``forge-docs/configuration.md`` equal
+    to what ``forge-config`` declares. Forge-only: a consumer's
+    ``CONFIG_KEYS`` come from the installed forge, not its own tree.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``StepResult`` mirroring the CLI exit code, or a skipped result
+        outside forge's own repo or when the doc lacks the table marker.
+
+    Raises:
+        SystemExit: If the running forge-scripts does not declare
+            ``forge-gen-config-doc``.
+    """
+    doc = repo_root / CONFIG_DOC
+    if not (
+        is_forge_repo(repo_root)
+        and doc.is_file()
+        and CONFIG_DOC_START in doc.read_text()
+    ):
+        return StepResult(
+            name="config_doc_check",
+            passed=True,
+            output=f"(not forge's repo, or no config table marker in {CONFIG_DOC} "
+            "— skipped)",
+            skipped=True,
+        )
+    argv = forge_cli_argv("forge-gen-config-doc", caller="forge-precommit")
+    passed, output = _run([*argv, "--check"], cwd=repo_root)
+    return StepResult(name="config_doc_check", passed=passed, output=output)
 
 
 def _run_gen_check(repo_root: Path, doc: str) -> tuple[bool, str]:
@@ -3229,6 +3265,7 @@ _STEP_REGISTRY: tuple[StepDef, ...] = (
     StepDef("cli_wiring", step_cli_wiring),
     StepDef("agent_doc", step_agent_doc),
     StepDef("commit_types_parity", step_commit_types_parity),
+    StepDef("config_doc_check", step_config_doc_check),
     StepDef("plugin_version", step_plugin_version),
     StepDef("vendored_integrity", step_vendored_integrity),
     StepDef("pip_audit", step_pip_audit),

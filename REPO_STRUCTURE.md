@@ -57,7 +57,8 @@ Checked on every commit by `verify-forge-repo-structure`: every listed file and 
      digest generator
    - gen_c4.py: `forge-gen-c4` — emits a C4 architecture model from the import graph + a `[tool.forge.c4]` / `c4.toml` model skeleton; `--format dsl` (Structurizr + managed README block), `--format html` (self-contained offline **per-view tabbed** Mermaid view laid out by the **ELK** engine, vendored `data/mermaid.min.js` + ELK loader, dagre fallback; `direction`/`edges` config; any-element `[[relationship]]` endpoints), `--format pdf` (vector PDF via an already-installed headless browser) / `--format svg` (one vector SVG per view, same browser path), `--format mermaid` (raw); `--check` drift mode backs the opt-in `c4` pre-commit step; opt-in, self-skips when unconfigured
    - gen_commit_types.py: `forge-gen-commit-types` — generates the conventional-commit type list managed block (parity with pr_squash_comment)
-   - gen_common.py: shared drift-check helper for the `forge-gen-*`
+   - gen_config_doc.py: `forge-gen-config-doc` — renders `CONFIG_KEYS` as the key/default table between the `forge:config` markers in `forge-docs/configuration.md`; `--check` backs the forge-only `config_doc_check` pre-commit step
+   - gen_common.py: shared drift-check and marker-region splice helpers for the `forge-gen-*`
      doc generators
    - doctor.py: `forge-doctor` — environment diagnostics
    - version_surfaces.py: the version surfaces of one forge install (pip package, git-hook sidecar, this checkout's own Claude Code plugin install) plus the editable-install origin, the install-record and global-install readers, and the per-surface remediation strings — read once here for `forge-doctor`, `forge-plugin-sync` and `forge-precommit`'s `env_sync` / `plugin_sync` gates
@@ -210,6 +211,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - conftest.py: shared pytest fixtures
    - _plan_fakes.py: `forge-plan-check` fakes and builders (a fake GitHub, history and merge-probe stand-ins), imported explicitly by the plan_staleness, plan_tracks and plan_check_cli suites
    - test_config.py: tests for config (model/tool-root resolution)
+   - test_config_parity.py: config parity — every `[tool.forge.*]` key read in source is declared in `CONFIG_KEYS`, and the reverse
    - test_continuation.py: tests for continuation (the `forge-continuation` CLI, PR-field carry-forward, `check`)
    - test_continuation_state.py: tests for continuation_state (status-panel format, byte-preserving rewrite, migration, guards)
    - test_doctor.py: tests for doctor
@@ -219,6 +221,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_gen_cli_reference.py: tests for gen_cli_reference
    - test_gen_commit_types.py: tests for gen_commit_types
    - test_gen_common.py: tests for gen_common shared helpers
+   - test_gen_config_doc.py: tests for gen_config_doc (key/default table render and `--check`)
    - test_git_utils.py: tests for git_utils (shared CLI helpers)
    - test_import_graph.py: tests for import_graph (shared AST import primitives)
    - test_install_bootstrap.py: tests for install_bootstrap
