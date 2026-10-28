@@ -840,8 +840,12 @@ One pinned issue per repo, titled `📋 Backlog Index`, body **owned exclusively
 by the agent** (humans never edit); each `triage` run rebuilds it from scratch
 (template in agent doc). Users override by changing labels: agent **respects
 the last applied label**, never silently re-tiers (may comment "…consider
-re-tiering"). Foundation ships no issue templates; consumers may add their own
-(auto-applying `needs-triage` + a type label pairs well with triage).
+re-tiering"). No shipped issue templates.
+
+**Newer issues get more attention.** Within a tier, a recently filed issue is
+read, triaged and recommended before an older one: its premise matches
+current code, its author still holds the context. Filing date
+(`createdAt`), never `updatedAt` — every label or comment bumps that.
 
 ### Plan-readiness pipeline
 
@@ -901,14 +905,11 @@ reversible, no silent state. Issue body never edited. Comment kinds:
   trusted only from a write-access author — a stranger's comment never vetoes
   a pickup.
 
-**Those three are what is checkable, and the recorder writes no fourth.**
-Never put a human attribution / sign-off claim ("validated by <name>") in a
-`plan-validated:` payload: nothing can corroborate it, yet executor and
-reviewer read it as authorization/provenance. The three — prefix, label,
-write-access authorship — each verify against the repo; they attest only that the
-payload came from a write-access credential, never that a particular human
-read it; an unverifiable fourth claim disguises that gap. The recorder strips
-it.
+**Those three are checkable; the recorder writes no fourth.** No sign-off
+claim ("validated by <name>") in a `plan-validated:` payload: nothing
+corroborates it, yet readers take it as authorization. Prefix, label and
+write-access authorship attest a write-access credential, never that a
+human read it; a fourth claim hides that gap. The recorder strips it.
 
 ---
 ## 15. Runtime Context Awareness
