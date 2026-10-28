@@ -41,7 +41,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from forge.config import read_tool_forge_section
+from forge.config import load_config, read_tool_forge_section
 from forge.git_utils import configure_cli_logging, emit, run_git
 from forge.intake import (
     KIND_DIRS,
@@ -211,7 +211,9 @@ def promotion_candidates(repo_root: Path) -> list[str]:
         :data:`forge.intake.PROMOTION_AT` occurrences, most-seen first;
         empty without an intake.
     """
-    lessons = [e for e in discover(configured_dir(repo_root)) if e.kind == "lesson"]
+    base = load_config(repo_root).base_branch
+    entries = discover(configured_dir(repo_root), base_branch=base)
+    lessons = [e for e in entries if e.kind == "lesson"]
     return [
         f"{group[0].title} ({occurrence_count(group)})"
         for group in group_entries(lessons)

@@ -942,8 +942,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_inside(root: Path, raw: str) -> Path | None` _(internal)_ — Return *raw* resolved under *root*, or ``None`` if it escapes.
 - `configured_dir(root: Path) -> Path` — Return the intake directory: ``[tool.forge.intake].dir`` or the default.
 - `configured_redact(root: Path) -> tuple[str, ...]` — Return ``[tool.forge.intake].redact``: tokens findings must not contain.
-- `parse_entry(path: Path, kind: str) -> Entry` — Read one intake file.
-- `discover(intake_dir: Path) -> list[Entry]` — Return every entry under *intake_dir*, lessons first, by name.
+- `parse_entry(path: Path, kind: str, *, base_branch: str = DEFAULT_BASE_BRANCH) -> Entry` — Read one intake file.
+- `discover(intake_dir: Path, *, base_branch: str = DEFAULT_BASE_BRANCH) -> list[Entry]` — Return every entry under *intake_dir*, lessons first, by name.
 - `_is_entry_name(path: Path) -> bool` _(internal)_ — Return whether *path* is named like an entry, not README or ``_``-file.
 - `_stem(word: str) -> str` _(internal)_ — Return *word* without a plural ending, so "bullets" matches "bullet".
 - `_words(entry: Entry) -> set[str]` _(internal)_ — Return the comparison words of *entry*'s slug and title.
@@ -965,11 +965,12 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_slugify(title: str) -> str` _(internal)_ — Return a deterministic slug for a migrated lesson title.
 - `_legacy_sections(text: str) -> tuple[list[tuple[str, list[str]]], list[int]]` _(internal)_ — Split a legacy lessons file into ``(title, body lines)`` per ``## ``.
 - `_migrated_text(title: str, body: list[str]) -> str` _(internal)_ — Render one legacy lesson section as an intake entry.
+- `_scale_occurrences(text: str, repeats: int) -> str` _(internal)_ — Return migrated *text* with its count multiplied by *repeats*.
 - `migrate_legacy_lessons(root: Path, intake_dir: Path) -> str | None` — Move ``docs/lessons.md`` into one lesson file per entry.
 - `init(root: Path, intake_dir: Path) -> list[str]` — Create the intake layout and migrate the legacy lessons file.
-- `retire(intake_dir: Path, paths: list[Path], issue_url: str) -> str` — Delete filed entries and record them in ``_LEDGER.md``.
+- `retire(intake_dir: Path, paths: list[Path], issue_url: str, *, base_branch: str = DEFAULT_BASE_BRANCH) -> str` — Delete filed entries and record them in ``_LEDGER.md``.
 - `_cmd_list(intake_dir: Path) -> int` _(internal)_ — Print every entry.
-- `_cmd_group(intake_dir: Path, minimum: int) -> int` _(internal)_ — Print groups whose occurrence count reaches *minimum*.
+- `_cmd_group(intake_dir: Path, minimum: int, base_branch: str) -> int` _(internal)_ — Print groups whose occurrence count reaches *minimum*.
 - `_cmd_check(root: Path, intake_dir: Path) -> int` _(internal)_ — Print check problems; exit 1 when there are any.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Build the ``forge-intake`` argument parser.
 - `_dispatch_write(args: argparse.Namespace, root: Path, intake_dir: Path) -> None` _(internal)_ — Run the subcommands that write files; may raise ``ValueError``.

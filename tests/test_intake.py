@@ -903,12 +903,12 @@ def test_configured_redact_non_list_is_empty_with_warning(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("branch", ["main", "master", "unknown", ""])
+@pytest.mark.parametrize("branch", ["main", "unknown", ""])
 def test_shared_branch_files_each_count_as_a_sighting(branch: str) -> None:
-    """Unrelated sightings on a shared (or unset) branch are not merged into one.
+    """Unrelated sightings on the base (or an unset) branch are not merged into one.
 
     Args:
-        branch: A shared branch name, or empty for no branch recorded.
+        branch: The default base branch, or no branch recorded.
     """
     group = [
         make_entry("x-1", "X", branch=branch),
@@ -916,6 +916,33 @@ def test_shared_branch_files_each_count_as_a_sighting(branch: str) -> None:
     ]
 
     assert intake.occurrence_count(group) == 2
+
+
+def test_configured_base_branch_is_the_shared_one() -> None:
+    """With ``base_branch = "develop"``, develop sightings count; main's do not."""
+
+    def pair(branch: str) -> list[intake.Entry]:
+        entries = [make_entry(f"x-{n}", "X", branch=branch) for n in (1, 2)]
+        for entry in entries:
+            entry.base_branch = "develop"
+        return entries
+
+    assert intake.occurrence_count(pair("develop")) == 2
+    assert intake.occurrence_count(pair("main")) == 1
+
+
+def test_identical_legacy_sections_merge_and_add_counts(tmp_path: Path) -> None:
+    """Two identical legacy sections become one file whose count is their sum."""
+    legacy = tmp_path / "docs" / "lessons.md"
+    legacy.parent.mkdir()
+    section = "## Same trap\n- occurrences: 2\n\nBody.\n\n"
+    legacy.write_text(section + section, encoding="utf-8")
+
+    intake.migrate_legacy_lessons(tmp_path, tmp_path / "docs" / "intake")
+
+    files = sorted((tmp_path / "docs" / "intake" / "lessons").glob("[!_]*.md"))
+    assert [f.name for f in files] == ["same-trap.md"]
+    assert "- occurrences: 4" in files[0].read_text(encoding="utf-8")
 
 
 def test_feature_branch_files_count_as_one_sighting() -> None:

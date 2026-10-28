@@ -55,7 +55,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from forge.changelog_fragments import SLUG_PATTERN
-from forge.config import read_tool_forge_section
+from forge.config import DEFAULT_BASE_BRANCH, load_config, read_tool_forge_section
 from forge.git_utils import (
     configure_cli_logging,
     emit,
@@ -85,9 +85,9 @@ _FIELD_RE = re.compile(r"^- (?P<key>[a-z][a-z -]*?):(?P<value>.*)$")
 _FILE_LINE_RE = re.compile(r"[\w./-]+\.\w+:\d+")
 _ISSUE_URL_RE = re.compile(r"https://[^\s|]+")
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
-# Branches many unrelated sightings share: there, each file is its own
-# sighting; on a feature branch, all its files are one piece of work.
-_SHARED_BRANCHES = frozenset({"main", "master", "unknown"})
+# A count longer than this is not a real count (and int() of a huge digit
+# string raises under CPython's conversion limit).
+_MAX_COUNT_DIGITS = 6
 _WORD_RE = re.compile(r"[a-z0-9]+")
 # Words shorter than this carry no meaning for grouping; a plural "s" is
 # stripped only from words longer than the stem minimum.
@@ -118,7 +118,8 @@ _README = """\
 One file per sighting of a problem not yet filed (FOUNDATION §1, §12).
 Write entries with `forge-intake new`; never edit one to bump a count —
 a second sighting is a second file. Counting: all files from one
-feature branch are one sighting; on `main` (or with no branch) each
+feature branch are one sighting; on the base branch
+(`[tool.forge].base_branch`, default `main`) or with no branch, each
 file is its own.
 
 - `lessons/` — a trap in this repo's own process.
@@ -180,6 +181,8 @@ class Entry:
         title: The ``# `` heading, without the marker.
         fields: The ``- key: value`` lines after the title.
         lines: Every line of the file, for line-numbered checks.
+        base_branch: The repo's base branch (``[tool.forge].base_branch``),
+            where many unrelated sightings land.
     """
 
     path: Path
@@ -187,6 +190,7 @@ class Entry:
     title: str
     fields: dict[str, str] = field(default_factory=dict)
     lines: list[str] = field(default_factory=list)
+    base_branch: str = DEFAULT_BASE_BRANCH
 
     @property
     def slug(self) -> str:
@@ -203,16 +207,18 @@ class Entry:
         """Sightings this file stands for: its migrated count, else one."""
         raw = self.fields.get("occurrences", "")
         # isascii: "²".isdigit() is true, and int("²") raises.
-        return int(raw) if raw.isascii() and raw.isdigit() and int(raw) > 0 else 1
+        valid = raw.isascii() and raw.isdigit() and len(raw) <= _MAX_COUNT_DIGITS
+        return int(raw) if valid and int(raw) > 0 else 1
 
     @property
     def work(self) -> str:
         """The piece of work this sighting belongs to, for counting.
 
         A feature branch is one piece of work however many files it
-        records; on a shared branch each file is its own sighting.
+        records; on the base branch, or with no branch, each file is its
+        own sighting.
         """
-        if self.branch in _SHARED_BRANCHES:
+        if self.branch in {self.base_branch, "unknown"}:
             return f"{self.branch}:{self.path.name}"
         return self.branch
 
@@ -279,12 +285,15 @@ def configured_redact(root: Path) -> tuple[str, ...]:
     return tuple(t for t in raw if isinstance(t, str) and t.strip())
 
 
-def parse_entry(path: Path, kind: str) -> Entry:
+def parse_entry(
+    path: Path, kind: str, *, base_branch: str = DEFAULT_BASE_BRANCH
+) -> Entry:
     """Read one intake file.
 
     Args:
         path: The file.
         kind: ``"lesson"`` or ``"finding"``, from its directory.
+        base_branch: The repo's base branch, for counting.
 
     Returns:
         The entry; an empty title when the first line is not ``# ``.
@@ -299,18 +308,28 @@ def parse_entry(path: Path, kind: str) -> Entry:
         if match is None:
             break
         fields[match["key"]] = match["value"].strip()
-    return Entry(path=path, kind=kind, title=title, fields=fields, lines=lines)
+    return Entry(
+        path=path,
+        kind=kind,
+        title=title,
+        fields=fields,
+        lines=lines,
+        base_branch=base_branch,
+    )
 
 
-def discover(intake_dir: Path) -> list[Entry]:
+def discover(
+    intake_dir: Path, *, base_branch: str = DEFAULT_BASE_BRANCH
+) -> list[Entry]:
     """Return every entry under *intake_dir*, lessons first, by name.
 
     Args:
         intake_dir: The intake directory.
+        base_branch: The repo's base branch, for counting.
 
     Returns:
-        Parsed entries; README, ``_``-prefixed files and non-``.md`` files
-        are skipped, and a missing directory yields none.
+        Parsed entries; README, ``_``-prefixed, symlinked and non-``.md``
+        files are skipped, and a missing directory yields none.
     """
     entries: list[Entry] = []
     for kind, sub in KIND_DIRS.items():
@@ -318,9 +337,9 @@ def discover(intake_dir: Path) -> list[Entry]:
         if not folder.is_dir():
             continue
         entries.extend(
-            parse_entry(path, kind)
+            parse_entry(path, kind, base_branch=base_branch)
             for path in sorted(folder.glob("*.md"))
-            if _is_entry_name(path)
+            if _is_entry_name(path) and not path.is_symlink()
         )
     return entries
 
@@ -778,6 +797,26 @@ def _migrated_text(title: str, body: list[str]) -> str:
     return "\n".join([*head, "", *prose]).rstrip() + "\n"
 
 
+_OCCURRENCES_LINE_RE = re.compile(r"^- occurrences: (?P<n>\d+)$", re.MULTILINE)
+
+
+def _scale_occurrences(text: str, repeats: int) -> str:
+    """Return migrated *text* with its count multiplied by *repeats*.
+
+    Args:
+        text: A migrated entry, carrying one ``- occurrences: N`` line.
+        repeats: How many identical legacy sections it stands for.
+
+    Returns:
+        *text* unchanged for one section, else with N multiplied by *repeats*.
+    """
+    if repeats == 1:
+        return text
+    return _OCCURRENCES_LINE_RE.sub(
+        lambda m: f"- occurrences: {int(m['n']) * repeats}", text, count=1
+    )
+
+
 def migrate_legacy_lessons(root: Path, intake_dir: Path) -> str | None:
     """Move ``docs/lessons.md`` into one lesson file per entry.
 
@@ -807,10 +846,15 @@ def migrate_legacy_lessons(root: Path, intake_dir: Path) -> str | None:
             "left in place; move it into an entry or remove it, then re-run init"
         )
     folder = _kind_folder(intake_dir, "lesson")
+    # Identical sections are one lesson seen again: merge them and add up
+    # their counts, rather than letting the rerun-safe write drop a repeat.
+    merged: dict[str, tuple[str, int]] = {}
     for index, (title, body) in enumerate(sections, start=1):
-        _write_once(
-            folder, _slugify(title) or f"lesson-{index}", _migrated_text(title, body)
-        )
+        text = _migrated_text(title, body)
+        slug, repeats = merged.get(text, (_slugify(title) or f"lesson-{index}", 0))
+        merged[text] = (slug, repeats + 1)
+    for text, (slug, repeats) in merged.items():
+        _write_once(folder, slug, _scale_occurrences(text, repeats))
     legacy.unlink()
     return f"moved {len(sections)} lesson(s) from {LEGACY_LESSONS_FILE} into {folder}"
 
@@ -845,13 +889,20 @@ def init(root: Path, intake_dir: Path) -> list[str]:
     return done
 
 
-def retire(intake_dir: Path, paths: list[Path], issue_url: str) -> str:
+def retire(
+    intake_dir: Path,
+    paths: list[Path],
+    issue_url: str,
+    *,
+    base_branch: str = DEFAULT_BASE_BRANCH,
+) -> str:
     """Delete filed entries and record them in ``_LEDGER.md``.
 
     Args:
         intake_dir: The intake directory.
         paths: The entries the issue was filed from.
         issue_url: The filed issue.
+        base_branch: The repo's base branch, for the occurrence count.
 
     Returns:
         The ledger row written.
@@ -878,7 +929,7 @@ def retire(intake_dir: Path, paths: list[Path], issue_url: str) -> str:
         ):
             msg = f"{path} is not an entry under {intake_dir}"
             raise ValueError(msg)
-        entries.append(parse_entry(path, kind))
+        entries.append(parse_entry(path, kind, base_branch=base_branch))
     if not entries:
         msg = "retire needs at least one entry"
         raise ValueError(msg)
@@ -921,17 +972,18 @@ def _cmd_list(intake_dir: Path) -> int:
     return 0
 
 
-def _cmd_group(intake_dir: Path, minimum: int) -> int:
+def _cmd_group(intake_dir: Path, minimum: int, base_branch: str) -> int:
     """Print groups whose occurrence count reaches *minimum*.
 
     Args:
         intake_dir: Intake directory to group.
         minimum: Smallest occurrence count to print.
+        base_branch: The repo's base branch, for counting.
 
     Returns:
         Exit code, always 0.
     """
-    for group in group_entries(discover(intake_dir)):
+    for group in group_entries(discover(intake_dir, base_branch=base_branch)):
         if occurrence_count(group) < minimum:
             continue
         emit(f"{occurrence_header(group)} — {group[0].kind} — {group[0].title}")
@@ -999,7 +1051,8 @@ def _dispatch_write(args: argparse.Namespace, root: Path, intake_dir: Path) -> N
     elif args.command == "new":
         emit(str(new_entry(intake_dir, args.kind, args.slug, args.title, args.surface)))
     else:
-        emit(retire(intake_dir, args.paths, args.issue))
+        base = load_config(root).base_branch
+        emit(retire(intake_dir, args.paths, args.issue, base_branch=base))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1015,7 +1068,7 @@ def main(argv: list[str] | None = None) -> int:
     root = repo_root()
     intake_dir = configured_dir(root)
     if args.command == "group":
-        return _cmd_group(intake_dir, args.minimum)
+        return _cmd_group(intake_dir, args.minimum, load_config(root).base_branch)
     if args.command == "check":
         return _cmd_check(root, intake_dir)
     if args.command == "list":
