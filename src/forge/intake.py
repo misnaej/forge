@@ -81,9 +81,13 @@ PROMOTION_AT = 2
 GROUP_THRESHOLD = 0.5
 
 _SLUG_RE = re.compile(rf"^{SLUG_PATTERN}$")
-_FIELD_RE = re.compile(r"^- (?P<key>[a-z][a-z -]*?):\s*(?P<value>.*?)\s*$")
+_FIELD_RE = re.compile(r"^- (?P<key>[a-z][a-z -]*?):(?P<value>.*)$")
 _FILE_LINE_RE = re.compile(r"[\w./-]+\.\w+:\d+")
-_ISSUE_URL_RE = re.compile(r"^https://\S+$")
+_ISSUE_URL_RE = re.compile(r"https://[^\s|]+")
+_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+# Branches many unrelated sightings share: there, each file is its own
+# sighting; on a feature branch, all its files are one piece of work.
+_SHARED_BRANCHES = frozenset({"main", "master", "unknown"})
 _WORD_RE = re.compile(r"[a-z0-9]+")
 # Words shorter than this carry no meaning for grouping; a plural "s" is
 # stripped only from words longer than the stem minimum.
@@ -99,28 +103,36 @@ _SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "GitHub token",
         re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_\w{20,})"),
     ),
-    ("AWS access key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
-    ("API key", re.compile(r"\bsk-[A-Za-z0-9_-]{20,}")),
+    ("AWS access key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
+    ("API key", re.compile(r"\bsk(?:-|_live_|_test_)[A-Za-z0-9_-]{20,}")),
     ("Slack token", re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}")),
     ("private key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
+    ("URL credential", re.compile(r"://[^/\s:@]+:[^/\s@]+@")),
 )
 # Machine-specific paths: refused in findings, which leave the repo.
-_PRIVATE_PATH_RE = re.compile(r"(?:/home|/Users)/[^/\s]+/")
+_PRIVATE_PATH_RE = re.compile(r"(?:/home|/Users)/[^/\s]+|[A-Za-z]:\\Users\\")
 
 _README = """\
 # Intake
 
 One file per sighting of a problem not yet filed (FOUNDATION §1, §12).
 Write entries with `forge-intake new`; never edit one to bump a count —
-a second sighting is a second file.
+a second sighting is a second file. Counting: all files from one
+feature branch are one sighting; on `main` (or with no branch) each
+file is its own.
 
 - `lessons/` — a trap in this repo's own process.
 - `findings/` — a forge-shipped process misbehaving. Anonymised: no
   private names, hosts or paths; `forge-intake check` refuses them.
 
-Entry: `# <title>`, then `- key: value` fields (`surface`, `release`,
-`seen`, `branch`; `sibling: <slug>` links another entry by hand), then
-sections. A finding needs `## Evidence` citing a `file:line`.
+Entry: `# <title>`, then `- key: value` fields, then sections.
+
+- Lesson: `seen` required; `branch` set by `new`.
+- Finding: `surface`, `release`, `seen` required, plus `## Evidence`
+  citing a `file:line`; `branch` set by `new`.
+- Optional: `sibling: <slug>[, <slug>]` links entries word overlap
+  misses; `occurrences: N` with `branch: migrated` marks a lesson moved
+  from the old `docs/lessons.md`, standing for N earlier sightings.
 
 `forge-intake group` shows recurrences; `/report-to-forge` files a
 finding group and `forge-intake retire` records it in `_LEDGER.md`.
@@ -190,7 +202,19 @@ class Entry:
     def occurrences(self) -> int:
         """Sightings this file stands for: its migrated count, else one."""
         raw = self.fields.get("occurrences", "")
-        return int(raw) if raw.isdigit() and int(raw) > 0 else 1
+        # isascii: "²".isdigit() is true, and int("²") raises.
+        return int(raw) if raw.isascii() and raw.isdigit() and int(raw) > 0 else 1
+
+    @property
+    def work(self) -> str:
+        """The piece of work this sighting belongs to, for counting.
+
+        A feature branch is one piece of work however many files it
+        records; on a shared branch each file is its own sighting.
+        """
+        if self.branch in _SHARED_BRANCHES:
+            return f"{self.branch}:{self.path.name}"
+        return self.branch
 
 
 def _inside(root: Path, raw: str) -> Path | None:
@@ -274,7 +298,7 @@ def parse_entry(path: Path, kind: str) -> Entry:
         match = _FIELD_RE.match(line)
         if match is None:
             break
-        fields[match["key"]] = match["value"]
+        fields[match["key"]] = match["value"].strip()
     return Entry(path=path, kind=kind, title=title, fields=fields, lines=lines)
 
 
@@ -293,11 +317,29 @@ def discover(intake_dir: Path) -> list[Entry]:
         folder = intake_dir / sub
         if not folder.is_dir():
             continue
-        for path in sorted(folder.glob("*.md")):
-            if path.name == README_NAME or path.name.startswith("_"):
-                continue
-            entries.append(parse_entry(path, kind))
+        entries.extend(
+            parse_entry(path, kind)
+            for path in sorted(folder.glob("*.md"))
+            if _is_entry_name(path)
+        )
     return entries
+
+
+def _is_entry_name(path: Path) -> bool:
+    """Return whether *path* is named like an entry, not README or ``_``-file.
+
+    Args:
+        path: Candidate file.
+
+    Returns:
+        ``True`` for an ``.md`` file that is neither ``README.md`` nor
+        ``_``-prefixed (templates, the ledger).
+    """
+    return (
+        path.suffix == ".md"
+        and path.name != README_NAME
+        and not path.name.startswith("_")
+    )
 
 
 def _stem(word: str) -> str:
@@ -401,19 +443,17 @@ def group_entries(entries: list[Entry]) -> list[list[Entry]]:
 def occurrence_count(group: list[Entry]) -> int:
     """Return the sightings *group* stands for.
 
-    Two files from one branch are one sighting; a migrated lesson adds
-    the count it carried over.
+    Files from one feature branch are one sighting (see
+    :attr:`Entry.work`); a migrated lesson adds the count it carried over.
 
     Args:
         group: Entries judged to be one problem.
 
     Returns:
-        Distinct recording branches plus migrated counts.
+        Distinct pieces of work plus migrated counts.
     """
-    branches = {e.branch for e in group if e.branch != MIGRATED_BRANCH}
-    return len(branches) + sum(
-        e.occurrences for e in group if e.branch == MIGRATED_BRANCH
-    )
+    works = {e.work for e in group if e.branch != MIGRATED_BRANCH}
+    return len(works) + sum(e.occurrences for e in group if e.branch == MIGRATED_BRANCH)
 
 
 def occurrence_header(group: list[Entry]) -> str:
@@ -425,14 +465,14 @@ def occurrence_header(group: list[Entry]) -> str:
         group: Entries judged to be one problem.
 
     Returns:
-        ``Occurrences: N, from M different branches``, with the share
-        recorded before the intake named when there is one.
+        ``Occurrences: N, on M branch(es)``, with the share recorded
+        before the intake named when there is one.
     """
     branches = len({e.branch for e in group if e.branch != MIGRATED_BRANCH})
     carried = sum(e.occurrences for e in group if e.branch == MIGRATED_BRANCH)
     parts = []
     if branches:
-        parts.append(f"from {branches} different branch{'es' if branches > 1 else ''}")
+        parts.append(f"on {branches} branch{'es' if branches > 1 else ''}")
     if carried:
         parts.append(f"{carried} recorded before the intake")
     return f"Occurrences: {occurrence_count(group)}, " + ", ".join(parts)
@@ -530,6 +570,54 @@ def check(intake_dir: Path, redact: tuple[str, ...]) -> list[str]:
     return problems
 
 
+def _taken(path: Path) -> bool:
+    """Return whether *path* names anything, a dangling symlink included.
+
+    Args:
+        path: Candidate file path.
+
+    Returns:
+        ``True`` when a file, directory or symlink already has that name.
+    """
+    return path.exists() or path.is_symlink()
+
+
+def _create(path: Path, text: str) -> None:
+    """Write *text* to a new file at *path*.
+
+    Exclusive create: an existing name — a symlink a cloned repo planted
+    included — fails instead of being followed or overwritten.
+
+    Args:
+        path: File to create.
+        text: Its content.
+    """
+    with path.open("x", encoding="utf-8") as handle:
+        handle.write(text)
+
+
+def _kind_folder(intake_dir: Path, kind: str) -> Path:
+    """Return *kind*'s directory under *intake_dir*, created if missing.
+
+    Args:
+        intake_dir: The intake directory.
+        kind: ``"lesson"`` or ``"finding"``.
+
+    Returns:
+        The directory.
+
+    Raises:
+        ValueError: If the intake directory or the kind directory is a
+            symlink — a committed one could aim writes outside the repo.
+    """
+    folder = intake_dir / KIND_DIRS[kind]
+    if intake_dir.is_symlink() or folder.is_symlink():
+        msg = f"{folder} is a symlink; the intake writes only into real directories"
+        raise ValueError(msg)
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
 def _unique_path(folder: Path, slug: str) -> Path:
     """Return ``<slug>.md`` in *folder*, suffixed ``-2``, ``-3`` … if taken.
 
@@ -542,7 +630,7 @@ def _unique_path(folder: Path, slug: str) -> Path:
     """
     path = folder / f"{slug}.md"
     n = 2
-    while path.exists():
+    while _taken(path):
         path = folder / f"{slug}-{n}.md"
         n += 1
     return path
@@ -562,18 +650,22 @@ def new_entry(intake_dir: Path, kind: str, slug: str, title: str, surface: str) 
         The written file's path.
 
     Raises:
-        ValueError: If *slug* is not a plain slug, or a finding has no
-            surface.
+        ValueError: If *slug* is not a plain slug, the title or surface
+            holds a control character (a line break would forge a field),
+            a finding has no surface, or the folder is a symlink.
     """
     if not _SLUG_RE.match(slug):
         msg = f"slug {slug!r} must match {SLUG_PATTERN}"
         raise ValueError(msg)
+    if _CONTROL_RE.search(title) or _CONTROL_RE.search(surface):
+        msg = "--title and --surface must be one line, without control characters"
+        raise ValueError(msg)
     if kind == "finding" and not surface:
         msg = "a finding needs --surface"
         raise ValueError(msg)
-    folder = intake_dir / KIND_DIRS[kind]
-    folder.mkdir(parents=True, exist_ok=True)
-    branch = resolve_current_branch(repo_root())
+    folder = _kind_folder(intake_dir, kind)
+    # Any path inside the repo resolves its branch; no process-wide root.
+    branch = resolve_current_branch(folder)
     fields = [
         f"- surface: {surface}" if surface else None,
         f"- release: forge {pip_version() or 'unknown'}",
@@ -587,7 +679,7 @@ def new_entry(intake_dir: Path, kind: str, slug: str, title: str, surface: str) 
     )
     body = [f"# {title}", "", *[f for f in fields if f], "", *sections]
     path = _unique_path(folder, slug)
-    path.write_text("\n".join(body) + "\n", encoding="utf-8")
+    _create(path, "\n".join(body) + "\n")
     return path
 
 
@@ -604,11 +696,11 @@ def _write_once(folder: Path, slug: str, text: str) -> None:
         text: Full file content.
     """
     path, n = folder / f"{slug}.md", 2
-    while path.exists():
-        if path.read_text(encoding="utf-8") == text:
+    while _taken(path):
+        if not path.is_symlink() and path.read_text(encoding="utf-8") == text:
             return
         path, n = folder / f"{slug}-{n}.md", n + 1
-    path.write_text(text, encoding="utf-8")
+    _create(path, text)
 
 
 def _slugify(title: str) -> str:
@@ -623,22 +715,37 @@ def _slugify(title: str) -> str:
     return "-".join(_WORD_RE.findall(title.lower()))[:60].strip("-")
 
 
-def _legacy_sections(text: str) -> list[tuple[str, list[str]]]:
+def _legacy_sections(text: str) -> tuple[list[tuple[str, list[str]]], list[int]]:
     """Split a legacy lessons file into ``(title, body lines)`` per ``## ``.
+
+    A ``## `` inside a code fence is body text, not a heading.
 
     Args:
         text: Content of the legacy lessons file.
 
     Returns:
-        One ``(title, body lines)`` pair per non-empty ``## `` heading.
+        The sections, and the line numbers of text no section would carry
+        (prose before the first heading, an empty ``## `` heading) — the
+        migration must not delete the file while any exist. A leading
+        ``# `` title is not counted.
     """
     sections: list[tuple[str, list[str]]] = []
-    for line in text.splitlines():
-        if line.startswith("## "):
-            sections.append((line[3:].strip(), []))
+    stray: list[int] = []
+    in_fence = False
+    for number, line in enumerate(text.splitlines(), start=1):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+        if not in_fence and line.startswith("## "):
+            title = line[3:].strip()
+            if title:
+                sections.append((title, []))
+            else:
+                stray.append(number)
         elif sections:
             sections[-1][1].append(line)
-    return [(t, body) for t, body in sections if t]
+        elif line.strip() and not line.startswith("# "):
+            stray.append(number)
+    return sections, stray
 
 
 def _migrated_text(title: str, body: list[str]) -> str:
@@ -656,7 +763,7 @@ def _migrated_text(title: str, body: list[str]) -> str:
     for line in body:
         match = _FIELD_RE.match(line)
         if match is not None and not prose:
-            fields[match["key"]] = match["value"]
+            fields[match["key"]] = match["value"].strip()
         elif line.strip() or prose:
             prose.append(line)
     head = [
@@ -675,8 +782,9 @@ def migrate_legacy_lessons(root: Path, intake_dir: Path) -> str | None:
     """Move ``docs/lessons.md`` into one lesson file per entry.
 
     Idempotent and crash-safe: each slug is derived from its title, an
-    existing file is kept, and the legacy file is deleted only after
-    every entry exists. A file with no parseable entry is left alone.
+    earlier run's identical file is kept, and the legacy file is deleted
+    only after every entry exists. Nothing is lost: a file with no entry,
+    or with text no entry would carry, is left in place untouched.
 
     Args:
         root: Repository root.
@@ -687,13 +795,18 @@ def migrate_legacy_lessons(root: Path, intake_dir: Path) -> str | None:
         legacy file.
     """
     legacy = root / LEGACY_LESSONS_FILE
-    if legacy.is_symlink() or not legacy.is_file():
+    if legacy.parent.is_symlink() or legacy.is_symlink() or not legacy.is_file():
         return None
-    sections = _legacy_sections(legacy.read_text(encoding="utf-8"))
+    sections, stray = _legacy_sections(legacy.read_text(encoding="utf-8"))
     if not sections:
         return f"{LEGACY_LESSONS_FILE} has no '## ' entries — left in place"
-    folder = intake_dir / KIND_DIRS["lesson"]
-    folder.mkdir(parents=True, exist_ok=True)
+    if stray:
+        lines = ", ".join(str(n) for n in stray[:5])
+        return (
+            f"{LEGACY_LESSONS_FILE} has text outside '## ' entries (line {lines}) — "
+            "left in place; move it into an entry or remove it, then re-run init"
+        )
+    folder = _kind_folder(intake_dir, "lesson")
     for index, (title, body) in enumerate(sections, start=1):
         _write_once(
             folder, _slugify(title) or f"lesson-{index}", _migrated_text(title, body)
@@ -713,10 +826,10 @@ def init(root: Path, intake_dir: Path) -> list[str]:
         One line per change made; empty when everything already existed.
     """
     done: list[str] = []
-    for sub in KIND_DIRS.values():
-        folder = intake_dir / sub
-        if not folder.is_dir():
-            folder.mkdir(parents=True)
+    for kind, dirname in KIND_DIRS.items():
+        existed = (intake_dir / dirname).is_dir()
+        folder = _kind_folder(intake_dir, kind)
+        if not existed:
             done.append(f"created {folder}")
     # A template in each directory also keeps it committable while empty.
     for path, text in (
@@ -724,8 +837,8 @@ def init(root: Path, intake_dir: Path) -> list[str]:
         (intake_dir / KIND_DIRS["lesson"] / TEMPLATE_NAME, _LESSON_TEMPLATE),
         (intake_dir / KIND_DIRS["finding"] / TEMPLATE_NAME, _FINDING_TEMPLATE),
     ):
-        if not path.exists():
-            path.write_text(text, encoding="utf-8")
+        if not _taken(path):
+            _create(path, text)
             done.append(f"wrote {path}")
     if (moved := migrate_legacy_lessons(root, intake_dir)) is not None:
         done.append(moved)
@@ -747,8 +860,8 @@ def retire(intake_dir: Path, paths: list[Path], issue_url: str) -> str:
         ValueError: If the URL is not a single-line https URL, or a path
             is not an entry file inside *intake_dir*.
     """
-    if not _ISSUE_URL_RE.match(issue_url):
-        msg = f"--issue must be an https URL, got {issue_url!r}"
+    if not _ISSUE_URL_RE.fullmatch(issue_url):
+        msg = f"--issue must be one https URL without spaces or '|', got {issue_url!r}"
         raise ValueError(msg)
     base = intake_dir.resolve()
     entries: list[Entry] = []
@@ -757,26 +870,35 @@ def retire(intake_dir: Path, paths: list[Path], issue_url: str) -> str:
         kind = next(
             (k for k, d in KIND_DIRS.items() if resolved.parent == base / d), None
         )
-        if path.is_symlink() or not path.is_file() or kind is None:
+        if (
+            path.is_symlink()
+            or not path.is_file()
+            or kind is None
+            or not _is_entry_name(path)
+        ):
             msg = f"{path} is not an entry under {intake_dir}"
             raise ValueError(msg)
         entries.append(parse_entry(path, kind))
     if not entries:
         msg = "retire needs at least one entry"
         raise ValueError(msg)
-    title = entries[0].title.replace("|", r"\|")
+    ledger = intake_dir / LEDGER_NAME
+    if ledger.is_symlink():
+        msg = f"{ledger} is a symlink; refusing to write through it"
+        raise ValueError(msg)
+    # Code span: entry titles may derive from untrusted issue text, and the
+    # ledger is committed markdown.
+    title = _CONTROL_RE.sub(" ", entries[0].title).replace("`", "'").replace("|", r"\|")
     today = _dt.datetime.now(tz=_dt.UTC).date().isoformat()
     files = len(entries)
-    row = (
-        f"| {today} | {title} | {issue_url} | {occurrence_header(entries)} | {files} |"
-    )
-    ledger = intake_dir / LEDGER_NAME
+    occurrences = occurrence_header(entries)
+    row = f"| {today} | `{title}` | {issue_url} | {occurrences} | {files} |"
     if not ledger.exists():
-        ledger.write_text(
+        _create(
+            ledger,
             "# Intake ledger\n\nEntries filed as issues, then retired.\n\n"
             "| Retired | Title | Issue | Occurrences | Files |\n"
             "|---|---|---|---|---|\n",
-            encoding="utf-8",
         )
     with ledger.open("a", encoding="utf-8") as handle:
         handle.write(row + "\n")

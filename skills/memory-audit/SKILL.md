@@ -82,7 +82,8 @@ some proposals and keep others:
    and run `forge-intake check`. Confirm the file landed before deleting
    the memory. A failed write keeps the memory.
 2. **A lesson seen again** is a second file (`forge-intake new`), never
-   an edit to the first. For each promotion candidate
+   an edit to the first; files from one feature branch count as one
+   sighting (the intake README's counting rule). For each promotion candidate
    `forge-memory-audit status` lists (§12's bar), propose promoting it
    into `CLAUDE.md`, a skill or an agent doc — the place it would have
    prevented the mistake — or, when it needs work rather than a rule,

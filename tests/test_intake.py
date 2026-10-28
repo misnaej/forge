@@ -185,8 +185,20 @@ def test_check_reports_bad_file_name_and_missing_title(intake_dir: Path) -> None
         "sk-" + "a" * 24,
         "xoxb-" + "1" * 12,
         "-----BEGIN RSA " + "PRIVATE KEY-----",
+        "ASIA" + "A" * 16,
+        "sk_live_" + "a" * 24,
+        "https://user:pass@host",
     ],
-    ids=["github", "aws", "api-key", "slack", "private-key"],
+    ids=[
+        "github",
+        "aws",
+        "api-key",
+        "slack",
+        "private-key",
+        "aws-session",
+        "stripe-live",
+        "url-credential",
+    ],
 )
 def test_check_flags_secret_in_a_lesson(intake_dir: Path, secret: str) -> None:
     """Secret-shaped strings are refused even in lessons, as ``path:line: ...``.
@@ -606,15 +618,15 @@ def test_group_orders_largest_first() -> None:
 @pytest.mark.parametrize(
     ("members", "expected"),
     [
-        ([("feat/a", "")], "Occurrences: 1, from 1 different branch"),
+        ([("feat/a", "")], "Occurrences: 1, on 1 branch"),
         (
             [("feat/a", ""), ("feat/b", "")],
-            "Occurrences: 2, from 2 different branches",
+            "Occurrences: 2, on 2 branches",
         ),
         ([("migrated", "3")], "Occurrences: 3, 3 recorded before the intake"),
         (
             [("feat/a", ""), ("migrated", "3")],
-            "Occurrences: 4, from 1 different branch, 3 recorded before the intake",
+            "Occurrences: 4, on 1 branch, 3 recorded before the intake",
         ),
     ],
     ids=["one", "two", "migrated", "mixed"],
@@ -660,7 +672,7 @@ def test_main_group_prints_only_groups_reaching_minimum(
 
     out = capsys.readouterr().out
     assert code == 0
-    assert "Occurrences: 2, from 2 different branches" in out
+    assert "Occurrences: 2, on 2 branches" in out
     assert str(one) in out
     assert str(two) in out
     assert str(lone) not in out
@@ -724,8 +736,8 @@ def test_retire_writes_ledger_row_and_deletes_files(intake_dir: Path) -> None:
     today = dt.datetime.now(tz=dt.UTC).date().isoformat()
     ledger = (intake_dir / "_LEDGER.md").read_text(encoding="utf-8")
     expected = (
-        f"| {today} | Step \\| misfires | {ISSUE_URL} | "
-        "Occurrences: 2, from 2 different branches | 2 |"
+        f"| {today} | `Step \\| misfires` | {ISSUE_URL} | "
+        "Occurrences: 2, on 2 branches | 2 |"
     )
     assert row == expected
     assert ledger.startswith("# Intake ledger")
@@ -750,7 +762,10 @@ def test_retire_twice_appends_without_rewriting_header(intake_dir: Path) -> None
     assert ledger.count(ISSUE_URL) == 2
 
 
-@pytest.mark.parametrize("url", ["http://x", "javascript:x", "https://a\n| x", ""])
+@pytest.mark.parametrize(
+    "url",
+    ["http://x", "javascript:x", "https://a\n| x", "", "https://a/b\n", "https://a|b"],
+)
 def test_retire_refuses_bad_url(intake_dir: Path, url: str) -> None:
     """Only a single-line https URL is accepted; nothing is deleted.
 
@@ -881,3 +896,259 @@ def test_configured_redact_non_list_is_empty_with_warning(
 
     assert result == ()
     assert "redact must be a list" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# hardening: counting, parsing, symlinks, migration, retire, check
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("branch", ["main", "master", "unknown", ""])
+def test_shared_branch_files_each_count_as_a_sighting(branch: str) -> None:
+    """Unrelated sightings on a shared (or unset) branch are not merged into one.
+
+    Args:
+        branch: A shared branch name, or empty for no branch recorded.
+    """
+    group = [
+        make_entry("x-1", "X", branch=branch),
+        make_entry("x-2", "X", branch=branch),
+    ]
+
+    assert intake.occurrence_count(group) == 2
+
+
+def test_feature_branch_files_count_as_one_sighting() -> None:
+    """Two files on one feature branch are one piece of work."""
+    group = [make_entry("x-1", "X"), make_entry("x-2", "X")]
+
+    assert intake.occurrence_count(group) == 1
+
+
+def test_non_ascii_digit_occurrences_counts_once() -> None:
+    """``occurrences: ²`` passes ``str.isdigit`` but not ``int``; it counts 1."""
+    entry = make_entry("old", "Old", branch="migrated", occurrences="²")
+
+    assert entry.occurrences == 1
+
+
+def test_field_value_trailing_spaces_are_stripped(tmp_path: Path) -> None:
+    """A field value padded with spaces parses to the bare value."""
+    path = tmp_path / "trap.md"
+    path.write_text("# T\n\n- seen: 2026-01-01   \n", encoding="utf-8")
+
+    assert intake.parse_entry(path, "lesson").fields["seen"] == "2026-01-01"
+
+
+@pytest.mark.parametrize(
+    ("title", "surface"), [("a\nb", ""), ("ok", "x\ny")], ids=["title", "surface"]
+)
+def test_new_rejects_line_break_in_title_or_surface(
+    tmp_path: Path, title: str, surface: str
+) -> None:
+    """A line break would forge a field, so it is refused before any write.
+
+    Args:
+        title: The ``--title`` value.
+        surface: The ``--surface`` value.
+    """
+    with pytest.raises(ValueError, match="one line"):
+        intake.new_entry(tmp_path / "i", "lesson", "trap", title, surface)
+
+    assert not (tmp_path / "i").exists()
+
+
+@pytest.mark.parametrize("kind", ["lesson", "finding"])
+def test_new_refuses_symlinked_kind_dir(tmp_path: Path, kind: str) -> None:
+    """A committed symlink cannot aim ``new`` at a directory outside the intake.
+
+    Args:
+        kind: The entry kind whose directory is the symlink.
+    """
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    base = tmp_path / "i"
+    base.mkdir()
+    (base / intake.KIND_DIRS[kind]).symlink_to(outside)
+
+    with pytest.raises(ValueError, match="symlink"):
+        intake.new_entry(base, kind, "trap", "T", "forge-x")
+
+    assert list(outside.iterdir()) == []
+
+
+@pytest.mark.parametrize("relative", ["README.md", "lessons/_TEMPLATE.md"])
+def test_init_does_not_follow_dangling_symlink(tmp_path: Path, relative: str) -> None:
+    """A dangling symlink at a file ``init`` writes is left alone, target uncreated.
+
+    Args:
+        relative: Path of the planted symlink under the intake directory.
+    """
+    base = tmp_path / "docs/intake"
+    (base / "lessons").mkdir(parents=True)
+    target = tmp_path / "nowhere.md"
+    (base / relative).symlink_to(target)
+
+    intake.init(tmp_path, base)
+
+    assert not target.exists()
+
+
+def test_init_raises_on_symlinked_kind_dir(tmp_path: Path) -> None:
+    """``init`` refuses a symlinked kind directory and writes nothing through it."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    base = tmp_path / "docs/intake"
+    base.mkdir(parents=True)
+    (base / "lessons").symlink_to(outside)
+
+    with pytest.raises(ValueError, match="symlink"):
+        intake.init(tmp_path, base)
+
+    assert list(outside.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "legacy_text",
+    [
+        "Intro prose.\n\n## A\nbody\n",
+        "## \nbody\n\n## Real\nx\n",
+    ],
+    ids=["prose-before-first-heading", "empty-heading"],
+)
+def test_migration_leaves_file_untouched_when_text_would_be_lost(
+    tmp_path: Path, legacy_text: str
+) -> None:
+    """Text no entry would carry blocks migration: file kept, nothing written.
+
+    Args:
+        legacy_text: Legacy file content with unmigratable text.
+    """
+    legacy = tmp_path / "docs/lessons.md"
+    legacy.parent.mkdir()
+    legacy.write_text(legacy_text, encoding="utf-8")
+    base = tmp_path / "docs/intake"
+
+    report = intake.migrate_legacy_lessons(tmp_path, base)
+
+    assert report is not None
+    assert "left in place" in report
+    assert legacy.read_text(encoding="utf-8") == legacy_text
+    assert not base.exists()
+
+
+def test_migration_keeps_heading_inside_code_fence_as_body(tmp_path: Path) -> None:
+    """A ``## `` line inside a fenced block is body text, not a new lesson."""
+    legacy = tmp_path / "docs/lessons.md"
+    legacy.parent.mkdir()
+    legacy.write_text("## A\n```\n## not a heading\n```\nafter\n", encoding="utf-8")
+    base = tmp_path / "docs/intake"
+
+    intake.migrate_legacy_lessons(tmp_path, base)
+
+    files = sorted((base / "lessons").glob("*.md"))
+    assert [f.name for f in files] == ["a.md"]
+    assert "## not a heading" in files[0].read_text(encoding="utf-8")
+
+
+def test_migration_ignores_legacy_file_under_symlinked_docs(tmp_path: Path) -> None:
+    """A symlinked ``docs/`` is not followed; the real file stays untouched."""
+    real = tmp_path / "real_docs"
+    real.mkdir()
+    (real / "lessons.md").write_text(LEGACY, encoding="utf-8")
+    (tmp_path / "docs").symlink_to(real)
+    base = tmp_path / "intake"
+
+    report = intake.migrate_legacy_lessons(tmp_path, base)
+
+    assert report is None
+    assert (real / "lessons.md").read_text(encoding="utf-8") == LEGACY
+    assert not base.exists()
+
+
+@pytest.mark.parametrize(
+    ("folder", "name"),
+    [
+        ("lessons", "_TEMPLATE.md"),
+        ("findings", "_TEMPLATE.md"),
+        ("findings", "README.md"),
+        ("findings", "notes.txt"),
+    ],
+)
+def test_retire_refuses_template_readme_and_non_markdown(
+    intake_dir: Path, folder: str, name: str
+) -> None:
+    """Only real entry files can be retired; the rest of the folder is protected.
+
+    Args:
+        folder: Kind directory holding the refused file.
+        name: The refused file name.
+    """
+    good = _two_findings(intake_dir)[0]
+    bad = intake_dir / folder / name
+    bad.write_text("# X\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="not an entry"):
+        intake.retire(intake_dir, [good, bad], ISSUE_URL)
+
+    assert good.exists()
+    assert bad.exists()
+    assert not (intake_dir / "_LEDGER.md").exists()
+
+
+def test_retire_refuses_symlinked_ledger(intake_dir: Path, tmp_path: Path) -> None:
+    """A symlinked ledger is not written through and no entry is deleted."""
+    paths = _two_findings(intake_dir)
+    target = tmp_path / "elsewhere.md"
+    target.write_text("keep\n", encoding="utf-8")
+    (intake_dir / "_LEDGER.md").symlink_to(target)
+
+    with pytest.raises(ValueError, match="symlink"):
+        intake.retire(intake_dir, paths, ISSUE_URL)
+
+    assert target.read_text(encoding="utf-8") == "keep\n"
+    assert all(p.exists() for p in paths)
+
+
+def test_retire_renders_title_as_sanitised_code_span(intake_dir: Path) -> None:
+    """Backticks and control characters in a title cannot break out of the span."""
+    paths = [
+        write_entry(
+            intake_dir,
+            "lesson",
+            "trap",
+            "a `b`\x01c",
+            seen="2026-01-01",
+            branch="feat/a",
+        )
+    ]
+
+    row = intake.retire(intake_dir, paths, ISSUE_URL)
+
+    assert "| `a 'b' c` |" in row
+
+
+@pytest.mark.parametrize(
+    "line", ["see /home/bob", "see C:\\Users\\bob"], ids=["posix-at-eol", "windows"]
+)
+def test_check_flags_machine_path_variants_in_finding(
+    intake_dir: Path, line: str
+) -> None:
+    """A path with no trailing slash, or a Windows one, still fails a finding.
+
+    Args:
+        line: Evidence line carrying the machine path.
+    """
+    write_entry(
+        intake_dir,
+        "finding",
+        "bug",
+        "Bug",
+        body=EVIDENCE + f"\n{line}\n",
+        **FINDING_FIELDS,
+    )
+
+    problems = intake.check(intake_dir, ())
+
+    assert len(problems) == 1
+    assert "machine-specific path" in problems[0]

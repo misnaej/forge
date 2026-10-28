@@ -938,11 +938,13 @@ A compact index of this codebase's symbols — every top-level function and clas
   - `slug(self) -> str` — The file name without ``.md``.
   - `branch(self) -> str` — The branch the sighting was recorded on, ``unknown`` if unset.
   - `occurrences(self) -> int` — Sightings this file stands for: its migrated count, else one.
+  - `work(self) -> str` — The piece of work this sighting belongs to, for counting.
 - `_inside(root: Path, raw: str) -> Path | None` _(internal)_ — Return *raw* resolved under *root*, or ``None`` if it escapes.
 - `configured_dir(root: Path) -> Path` — Return the intake directory: ``[tool.forge.intake].dir`` or the default.
 - `configured_redact(root: Path) -> tuple[str, ...]` — Return ``[tool.forge.intake].redact``: tokens findings must not contain.
 - `parse_entry(path: Path, kind: str) -> Entry` — Read one intake file.
 - `discover(intake_dir: Path) -> list[Entry]` — Return every entry under *intake_dir*, lessons first, by name.
+- `_is_entry_name(path: Path) -> bool` _(internal)_ — Return whether *path* is named like an entry, not README or ``_``-file.
 - `_stem(word: str) -> str` _(internal)_ — Return *word* without a plural ending, so "bullets" matches "bullet".
 - `_words(entry: Entry) -> set[str]` _(internal)_ — Return the comparison words of *entry*'s slug and title.
 - `_similar(a: Entry, b: Entry) -> bool` _(internal)_ — Return whether *a* and *b* look like one problem (word overlap).
@@ -954,11 +956,14 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_shape_problems(entry: Entry) -> list[str]` _(internal)_ — Return missing-field and missing-evidence problems in *entry*.
 - `_has_evidence(entry: Entry) -> bool` _(internal)_ — Return whether *entry*'s ``## Evidence`` section cites a file:line.
 - `check(intake_dir: Path, redact: tuple[str, ...]) -> list[str]` — Validate every entry under *intake_dir*.
+- `_taken(path: Path) -> bool` _(internal)_ — Return whether *path* names anything, a dangling symlink included.
+- `_create(path: Path, text: str) -> None` _(internal)_ — Write *text* to a new file at *path*.
+- `_kind_folder(intake_dir: Path, kind: str) -> Path` _(internal)_ — Return *kind*'s directory under *intake_dir*, created if missing.
 - `_unique_path(folder: Path, slug: str) -> Path` _(internal)_ — Return ``<slug>.md`` in *folder*, suffixed ``-2``, ``-3`` … if taken.
 - `new_entry(intake_dir: Path, kind: str, slug: str, title: str, surface: str) -> Path` — Write a new stamped entry and return its path.
 - `_write_once(folder: Path, slug: str, text: str) -> None` _(internal)_ — Write *text* as ``<slug>.md`` unless an earlier run already did.
 - `_slugify(title: str) -> str` _(internal)_ — Return a deterministic slug for a migrated lesson title.
-- `_legacy_sections(text: str) -> list[tuple[str, list[str]]]` _(internal)_ — Split a legacy lessons file into ``(title, body lines)`` per ``## ``.
+- `_legacy_sections(text: str) -> tuple[list[tuple[str, list[str]]], list[int]]` _(internal)_ — Split a legacy lessons file into ``(title, body lines)`` per ``## ``.
 - `_migrated_text(title: str, body: list[str]) -> str` _(internal)_ — Render one legacy lesson section as an intake entry.
 - `migrate_legacy_lessons(root: Path, intake_dir: Path) -> str | None` — Move ``docs/lessons.md`` into one lesson file per entry.
 - `init(root: Path, intake_dir: Path) -> list[str]` — Create the intake layout and migrate the legacy lessons file.
