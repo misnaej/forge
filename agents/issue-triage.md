@@ -57,7 +57,7 @@ gh issue list --state open --limit 1000 --json number,title,labels,createdAt,upd
 gh pr list --state open --limit 1000 --json number,title,body,headRefName
 ```
 
-For each issue missing a `tier-N-*` label, classify by title + body +
+For each issue missing a `tier-N-*` label, newest `createdAt` first, classify by title + body +
 labels and apply:
 
 ```bash
@@ -70,7 +70,7 @@ gh issue comment <N> --body "[issue-triage] tier-X-<NAME> applied: <reason>."
 | Tier | Triggers |
 |---|---|
 | `tier-1-critical` | `security`, `breaking-change`, blocks other open issues, CI broken |
-| `tier-2-high` | `quick-win`, recent activity, clear ROI |
+| `tier-2-high` | `quick-win`, recently filed, clear ROI |
 | `tier-3-standard` | normal `feature` / `refactor` / `tech-debt` |
 | `tier-4-low` | `research`, `docs`-only, no clear use case |
 

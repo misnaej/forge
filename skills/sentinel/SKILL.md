@@ -24,7 +24,7 @@ gh issue list --state open --label plan-ready --limit 1000 \
 ```
 
 1. Candidates found → pickup re-check, then execute the best one
-   (highest tier, oldest validation first; a track plan is one
+   (highest tier, oldest validation first — FOUNDATION §14 newest-first ranks triage, not execution; a track plan is one
    candidate — see Track mode).
 2. No candidates → run the **empty-loop screen** below, then end the
    session with a resume line in the written section of
