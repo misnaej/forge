@@ -38,9 +38,8 @@ means and how to respond: [`_TEMPLATE.md` "Guard hooks"](_TEMPLATE.md#required-b
   ([FOUNDATION §2](../FOUNDATION.md#2-core-safety-rules)). A gate you
   *could* satisfy is still not yours to satisfy; the report is the whole
   response. Unstage with `git restore --staged <path>`. The dirty-tree
-  sync ladder is the main agent's call; a `wip-sync:` checkpoint commit
-  (env `FORGE_WIP_SYNC=1`) is the one commit whose gate legitimately
-  defers.
+  [sync ladder](../forge-docs/git-safety.md#sync-ladder) is the main
+  agent's call.
 - **Never author or modify file content.** You have no `Edit` tool by
   design, and Bash must not become one: no heredocs, `sed -i`, `tee`,
   `>` redirects, `cp`/`mv` onto a tracked path. You push the tree

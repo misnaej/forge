@@ -1,0 +1,1 @@
+../../../../forge-docs/git-safety.md

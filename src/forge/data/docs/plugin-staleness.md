@@ -1,0 +1,1 @@
+../../../../forge-docs/plugin-staleness.md

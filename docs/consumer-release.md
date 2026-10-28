@@ -141,11 +141,8 @@ PR check".
 branch-cumulative — a tag cut while the branch is open strands *all*
 its earlier entries at once, and editing headings cannot fix it. First
 merge the base in (`git merge origin/<base>`); with uncommitted work
-in the tree, follow the sync ladder
-[`FOUNDATION.md` §2](../FOUNDATION.md#2-core-safety-rules) sanctions
-(probe with `git merge-tree --write-tree`, merge directly when nothing
-overlaps, otherwise secure the work as a `wip-sync:` checkpoint commit
-first) — never `git reset --hard`, never untracked-including stash.
+in the tree, follow the
+[sync ladder](../forge-docs/git-safety.md#sync-ladder).
 Then run **`forge-changelog restrand`** (`--bump minor|major` when the
 change deserves more than a patch slot): it moves exactly the entries
 this branch added under released headings to the next open
