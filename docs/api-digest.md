@@ -532,6 +532,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `class ConfigKey` — One ``[tool.forge.*]`` key forge reads in a consumer repo.
 - `_lookup(data: dict, path: tuple[str, ...]) -> object` _(internal)_ — Return the value at *path* in nested *data*, or ``_UNSET`` if absent.
 - `_section_of(key: ConfigKey) -> str` _(internal)_ — Return the section header (path without the leaf key) for *key*.
+- `keys_by_section() -> list[tuple[str, list[ConfigKey]]]` — Group :data:`CONFIG_KEYS` by section, in first-appearance order.
 - `build_report(data: dict) -> list[str]` — Build the ``forge-config`` report lines from parsed pyproject data.
 - `main() -> int` — Entry point for ``forge-config``.
 
@@ -638,8 +639,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_warn_unmatched(unmatched: list[str]) -> None` _(internal)_ — Log a coverage warning naming modules in no component.
 - `_dead_prefixes(components: tuple[Component, ...], modules: list[str]) -> list[tuple[str, str]]` _(internal)_ — Find declared component prefixes that match zero discovered modules.
 - `_check_strict_coverage(config: C4Config, modules: list[str], unmatched: list[str]) -> int` _(internal)_ — Fail ``--check`` on incomplete or dead component coverage.
+- `_readme_block_body(mermaid_text: str) -> str` _(internal)_ — Render what sits between the README C4 markers.
 - `render_readme_block(mermaid_text: str) -> str` — Render the managed README block embedding the Mermaid diagram.
-- `_splice_readme(readme_text: str, block: str) -> str | None` _(internal)_ — Replace the managed C4 block in *readme_text* with *block*.
 - `_readme_path(root: Path, config: C4Config) -> Path` _(internal)_ — Return the configured README path under *root*.
 - `sync_readme(root: Path, config: C4Config, mermaid_text: str, *, check: bool) -> int` — Write or verify the managed C4 block inside the configured README.
 - `_emit_mermaid(root: Path, config: C4Config, edges: set[tuple[str, str]], output: str | None) -> int` _(internal)_ — Print or write the canonical Mermaid source.
@@ -689,7 +690,16 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _Shared helpers for forge's generated-doc CLIs._
 
+- `replace_region(text: str, start: str, end: str, body: str) -> str | None` — Replace what lies between the *start* and *end* markers in *text*.
 - `check_doc_drift(root: Path, doc_relpath: str, generated: str, regen_cmd: str) -> int` — Compare freshly generated content against a committed doc.
+
+## `forge.gen_config_doc`
+
+> _Generate the key/default table in ``forge-docs/configuration.md``._
+
+- `_render_default(default: object) -> str` _(internal)_ — Return *default* as a table cell.
+- `render_table() -> str` — Render every config key and its default as a markdown table.
+- `main() -> int` — Entry point for ``forge-gen-config-doc``.
 
 ## `forge.gh_comments`
 
@@ -1357,6 +1367,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `step_repo_structure(repo_root: Path) -> StepResult` — Run ``verify-forge-repo-structure``; hard-fail if missing (FOUNDATION §2).
 - `step_manifest_json(repo_root: Path) -> StepResult` — Run ``verify-forge-manifest`` — owns the manifest-JSON validation phase.
 - `step_commit_types_parity(repo_root: Path) -> StepResult` — Run ``forge-gen-commit-types --check`` — managed-block parity guard.
+- `step_config_doc_check(repo_root: Path) -> StepResult` — Run ``forge-gen-config-doc --check`` — config-doc key-table drift guard.
 - `_run_gen_check(repo_root: Path, doc: str) -> tuple[bool, str]` _(internal)_ — Run *doc*'s generator with ``--check`` from the running forge install.
 - `step_c4(repo_root: Path) -> StepResult` — Run ``forge-gen-c4 --check`` — C4 model + README-block drift guard.
 - `_layering_configured(repo_root: Path) -> bool` _(internal)_ — Return whether ``[tool.forge.layering]`` gives the layering step work.

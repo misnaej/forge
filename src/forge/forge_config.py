@@ -139,6 +139,25 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "the repo-wide [tool.forge].source_dirs + test_dirs.",
     ),
     ConfigKey(
+        ("tool", "forge", "docstring_verification", "paths"),
+        "source_dirs + test_dirs",
+        "Per-tool override of verify-forge-docstrings' --scope all roots; "
+        "otherwise inherits the repo-wide [tool.forge].source_dirs + test_dirs.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "test_naming_check", "paths"),
+        "test_dirs (smart-detect)",
+        "Per-tool override of the test-naming scan roots; otherwise inherits "
+        "the repo-wide [tool.forge].test_dirs (tests only, no source).",
+    ),
+    ConfigKey(
+        ("tool", "forge", "slow_tests_report", "paths"),
+        "source_dirs (smart-detect)",
+        "Per-tool override of the roots forge-slow-tests-report counts "
+        "statements under; otherwise inherits the repo-wide "
+        "[tool.forge].source_dirs (source only, no tests).",
+    ),
+    ConfigKey(
         ("tool", "forge", "ruff", "paths"),
         "source_dirs + test_dirs",
         "Per-tool override of ruff's scan roots; otherwise inherits the "
@@ -210,8 +229,8 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         default=False,
         description="Make the plugin_sync step fail the commit when the cached "
         "Claude Code plugin is older than .claude-plugin/plugin.json "
-        "(default: non-blocking WARN; forge sets true — it ships the "
-        "plugin it runs).",
+        "(default: non-blocking WARN; forge keeps false — under rolling-next "
+        "its release commits name a version no sync can fetch yet).",
     ),
     ConfigKey(
         ("tool", "forge", "pip_audit", "blocking"),
@@ -475,6 +494,12 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "install). Set false to downgrade to a non-blocking WARN.",
     ),
     ConfigKey(
+        ("tool", "forge", "env_sync", "rebuild_command"),
+        "unset (auto_rebuild step self-skips)",
+        "Command the auto_rebuild step runs to heal a stale install before "
+        "env_sync blocks; never a bare pip install (FOUNDATION §2).",
+    ),
+    ConfigKey(
         ("tool", "forge", "badges", "enabled"),
         default=False,
         description="Opt into the README status-badge block written by "
@@ -487,9 +512,10 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
     ),
     ConfigKey(
         ("tool", "forge", "badges", "workflow"),
-        "first workflow alphabetically",
+        "ci.yml / ci.yaml, else first pull_request workflow",
         "GitHub Actions workflow filename for the CI badge (under "
-        ".github/workflows); otherwise the first one is used.",
+        ".github/workflows); otherwise ci.yml / ci.yaml, else the first "
+        "workflow triggered on pull_request.",
     ),
     ConfigKey(
         ("tool", "forge", "c4", "config"),
@@ -517,6 +543,34 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         description="Make forge-gen-c4 --check fail on any module mapped to no "
         "[[component]] or any declared component prefix matching zero real "
         "modules (default: warn-only — a non-exhaustive map stays valid).",
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "paths"),
+        "source_dirs (smart-detect)",
+        "Per-tool override of the roots forge-gen-c4 builds the import graph "
+        "from; otherwise inherits the repo-wide [tool.forge].source_dirs "
+        "(source only, no tests).",
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "direction"),
+        "LR",
+        "Graph direction for every generated diagram: 'LR' or 'TB'.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "edges"),
+        "imports",
+        "Which edges are drawn: 'imports' / 'both' add import-derived edges, "
+        "'declared' draws only [[relationship]] edges.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "container_edges"),
+        "inherit edges",
+        "Container-view override of edges.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "component_edges"),
+        "inherit edges",
+        "Component-view override of edges.",
     ),
 )
 
@@ -570,6 +624,21 @@ def _section_of(key: ConfigKey) -> str:
     return ".".join(key.path[:-1])
 
 
+def keys_by_section() -> list[tuple[str, list[ConfigKey]]]:
+    """Group :data:`CONFIG_KEYS` by section, in first-appearance order.
+
+    A section's keys need not be contiguous in :data:`CONFIG_KEYS`;
+    grouping here keeps every renderer printing each header once.
+
+    Returns:
+        ``(dotted section, keys)`` pairs, keys in declaration order.
+    """
+    groups: dict[str, list[ConfigKey]] = {}
+    for key in CONFIG_KEYS:
+        groups.setdefault(_section_of(key), []).append(key)
+    return list(groups.items())
+
+
 def build_report(data: dict) -> list[str]:
     """Build the ``forge-config`` report lines from parsed pyproject data.
 
@@ -583,20 +652,17 @@ def build_report(data: dict) -> list[str]:
     """
     lines = ["forge config in this repo (pyproject.toml)", "=" * 42]
     missing: list[ConfigKey] = []
-    current_section = ""
-    for key in CONFIG_KEYS:
-        section = _section_of(key)
-        if section != current_section:
-            lines.append(f"[{section}]")
-            current_section = section
-        value = _lookup(data, key.path)
-        leaf = key.path[-1]
-        if value is _UNSET:
-            lines.append(f"  {leaf:<14} = <default: {key.default!r}>   (not set)")
-            if key.recommended:
-                missing.append(key)
-        else:
-            lines.append(f"  {leaf:<14} = {value!r}")
+    for section, keys in keys_by_section():
+        lines.append(f"[{section}]")
+        for key in keys:
+            value = _lookup(data, key.path)
+            leaf = key.path[-1]
+            if value is _UNSET:
+                lines.append(f"  {leaf:<14} = <default: {key.default!r}>   (not set)")
+                if key.recommended:
+                    missing.append(key)
+            else:
+                lines.append(f"  {leaf:<14} = {value!r}")
 
     lines.append("")
     for path, desc in NATIVE_SECTIONS:

@@ -5,13 +5,13 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from forge.gen_common import check_doc_drift
+import pytest
+
+from forge.gen_common import check_doc_drift, replace_region
 
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 DOC_RELPATH = "docs/sample.md"
@@ -65,3 +65,27 @@ def test_check_doc_drift_returns_one_when_doc_missing(
     messages = [record.getMessage() for record in caplog.records]
     assert any("does not exist" in message for message in messages)
     assert any(REGEN_CMD in message for message in messages)
+
+
+def test_replace_region_swaps_body() -> None:
+    """Markers and the text outside them survive; only the body changes."""
+    text = "head\n<!-- a -->\nold\n<!-- b -->\ntail\n"
+    result = replace_region(text, "<!-- a -->", "<!-- b -->", "\nnew\n")
+    assert result == "head\n<!-- a -->\nnew\n<!-- b -->\ntail\n"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param("x\n<!-- b -->\n", id="missing-start"),
+        pytest.param("x\n<!-- a -->\n", id="missing-end"),
+        pytest.param("<!-- b -->\n<!-- a -->\n", id="end-before-start"),
+    ],
+)
+def test_replace_region_none_on_missing_or_misordered(text: str) -> None:
+    """An absent or misordered marker pair yields None, never a splice.
+
+    Args:
+        text: Document text with a missing, partial or reversed marker pair.
+    """
+    assert replace_region(text, "<!-- a -->", "<!-- b -->", "\nnew\n") is None
