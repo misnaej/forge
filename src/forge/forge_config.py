@@ -468,11 +468,16 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "audit.",
     ),
     ConfigKey(
-        ("tool", "forge", "memory_audit", "lessons_file"),
-        "docs/lessons.md",
-        "Holding file for SHOULD-SHIP lessons /memory-audit moves out of "
-        "agent memory; never auto-loaded (FOUNDATION §12). A relative .md "
-        "path inside the repo.",
+        ("tool", "forge", "intake", "dir"),
+        "docs/intake",
+        "Root of the intake: one file per sighting under lessons/ and "
+        "findings/ (FOUNDATION §1, §12). A relative path inside the repo.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "intake", "redact"),
+        [],
+        "Private names forge-intake check refuses in findings "
+        "(case-insensitive); built-in secret patterns apply regardless.",
     ),
     ConfigKey(
         ("tool", "forge", "telemetry", "sample_interval"),

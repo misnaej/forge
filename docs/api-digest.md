@@ -930,6 +930,46 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_get_readme_path(root: Path) -> tuple[Path | None, int]` _(internal)_ — Load and validate the README path from config.
 - `main() -> int` — CLI entry point.
 
+## `forge.intake`
+
+> _forge-intake — one committed file per sighting of a problem not yet filed._
+
+- `class Entry` — One intake file.
+  - `slug(self) -> str` — The file name without ``.md``.
+  - `branch(self) -> str` — The branch the sighting was recorded on, ``unknown`` if unset.
+  - `occurrences(self) -> int` — Sightings this file stands for: its migrated count, else one.
+- `_inside(root: Path, raw: str) -> Path | None` _(internal)_ — Return *raw* resolved under *root*, or ``None`` if it escapes.
+- `configured_dir(root: Path) -> Path` — Return the intake directory: ``[tool.forge.intake].dir`` or the default.
+- `configured_redact(root: Path) -> tuple[str, ...]` — Return ``[tool.forge.intake].redact``: tokens findings must not contain.
+- `parse_entry(path: Path, kind: str) -> Entry` — Read one intake file.
+- `discover(intake_dir: Path) -> list[Entry]` — Return every entry under *intake_dir*, lessons first, by name.
+- `_stem(word: str) -> str` _(internal)_ — Return *word* without a plural ending, so "bullets" matches "bullet".
+- `_words(entry: Entry) -> set[str]` _(internal)_ — Return the comparison words of *entry*'s slug and title.
+- `_similar(a: Entry, b: Entry) -> bool` _(internal)_ — Return whether *a* and *b* look like one problem (word overlap).
+- `_linked(a: Entry, b: Entry) -> bool` _(internal)_ — Return whether either entry names the other in a ``sibling`` field.
+- `group_entries(entries: list[Entry]) -> list[list[Entry]]` — Cluster entries of one kind that look like the same problem.
+- `occurrence_count(group: list[Entry]) -> int` — Return the sightings *group* stands for.
+- `occurrence_header(group: list[Entry]) -> str` — Return the header a filed issue carries for *group*.
+- `_scan(entry: Entry, redact: tuple[str, ...]) -> list[str]` _(internal)_ — Return redaction problems in *entry*, as ``<line>: <what>``.
+- `_shape_problems(entry: Entry) -> list[str]` _(internal)_ — Return missing-field and missing-evidence problems in *entry*.
+- `_has_evidence(entry: Entry) -> bool` _(internal)_ — Return whether *entry*'s ``## Evidence`` section cites a file:line.
+- `check(intake_dir: Path, redact: tuple[str, ...]) -> list[str]` — Validate every entry under *intake_dir*.
+- `_unique_path(folder: Path, slug: str) -> Path` _(internal)_ — Return ``<slug>.md`` in *folder*, suffixed ``-2``, ``-3`` … if taken.
+- `new_entry(intake_dir: Path, kind: str, slug: str, title: str, surface: str) -> Path` — Write a new stamped entry and return its path.
+- `_write_once(folder: Path, slug: str, text: str) -> None` _(internal)_ — Write *text* as ``<slug>.md`` unless an earlier run already did.
+- `_slugify(title: str) -> str` _(internal)_ — Return a deterministic slug for a migrated lesson title.
+- `_legacy_sections(text: str) -> list[tuple[str, list[str]]]` _(internal)_ — Split a legacy lessons file into ``(title, body lines)`` per ``## ``.
+- `_migrated_text(title: str, body: list[str]) -> str` _(internal)_ — Render one legacy lesson section as an intake entry.
+- `migrate_legacy_lessons(root: Path, intake_dir: Path) -> str | None` — Move ``docs/lessons.md`` into one lesson file per entry.
+- `init(root: Path, intake_dir: Path) -> list[str]` — Create the intake layout and migrate the legacy lessons file.
+- `retire(intake_dir: Path, paths: list[Path], issue_url: str) -> str` — Delete filed entries and record them in ``_LEDGER.md``.
+- `_cmd_list(intake_dir: Path) -> int` _(internal)_ — Print every entry.
+- `_cmd_group(intake_dir: Path, minimum: int) -> int` _(internal)_ — Print groups whose occurrence count reaches *minimum*.
+- `_cmd_check(root: Path, intake_dir: Path) -> int` _(internal)_ — Print check problems; exit 1 when there are any.
+- `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Build the ``forge-intake`` argument parser.
+- `_dispatch_write(args: argparse.Namespace, root: Path, intake_dir: Path) -> None` _(internal)_ — Run the subcommands that write files; may raise ``ValueError``.
+- `main(argv: list[str] | None = None) -> int` — Run ``forge-intake``.
+
 ## `forge.ledger`
 
 > _Append-only ``key=value`` ledgers under ``code_health/``._
@@ -950,9 +990,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `new_notes(memory_dir: Path) -> set[str]` — Return the notes the last audit did not see.
 - `_repo_root() -> Path` _(internal)_ — Return the git toplevel of the cwd, or the cwd outside a repo.
 - `configured_threshold(repo_root: Path) -> int` — Return ``[tool.forge.memory_audit].threshold``.
-- `configured_lessons_file(repo_root: Path) -> Path` — Return the lessons file, resolved against *repo_root*.
 - `_check_dir(memory_dir: Path) -> bool` _(internal)_ — Return whether *memory_dir* exists, explaining on stderr if not.
-- `promotion_candidates(lessons_file: Path) -> list[str]` — Return the lessons that have come up often enough to promote.
+- `promotion_candidates(repo_root: Path) -> list[str]` — Return the lessons that have come up often enough to promote.
 - `status(memory_dir: Path, repo_root: Path) -> int` — Print the new-memory count and whether to offer the audit.
 - `stamp(memory_dir: Path) -> int` — Record the current notes as audited.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Build the ``forge-memory-audit`` argument parser.
@@ -1365,6 +1404,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `step_docstring_coverage(repo_root: Path) -> StepResult` — Run ``verify-forge-docstring-coverage`` — full-codebase % reporter.
 - `step_test_naming(repo_root: Path) -> StepResult` — Run ``verify-forge-test-naming`` over the resolved scope.
 - `step_repo_structure(repo_root: Path) -> StepResult` — Run ``verify-forge-repo-structure``; hard-fail if missing (FOUNDATION §2).
+- `step_intake_check(repo_root: Path) -> StepResult` — Validate the intake entries — ``forge-intake check``, in process.
 - `step_manifest_json(repo_root: Path) -> StepResult` — Run ``verify-forge-manifest`` — owns the manifest-JSON validation phase.
 - `step_commit_types_parity(repo_root: Path) -> StepResult` — Run ``forge-gen-commit-types --check`` — managed-block parity guard.
 - `step_config_doc_check(repo_root: Path) -> StepResult` — Run ``forge-gen-config-doc --check`` — config-doc key-table drift guard.

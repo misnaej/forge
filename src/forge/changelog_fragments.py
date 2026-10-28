@@ -124,11 +124,12 @@ FRAGMENT_TYPES: dict[str, str] = {
 # numbers. Ordered weakest-first; comparisons use the index.
 FRAGMENT_LEVELS = ("patch", "minor", "major")
 
-# `<slug>.<type>.md` — slug is a plain filename fragment (no dots, so the
-# type token parses unambiguously).
-_FILENAME_RE = re.compile(
-    r"^(?P<slug>[A-Za-z0-9][A-Za-z0-9_-]*)\.(?P<type>[a-z]+)\.md$"
-)
+# A plain filename slug: no dots, so a following type token parses
+# unambiguously. Shared with the intake's entry names.
+SLUG_PATTERN = r"[A-Za-z0-9][A-Za-z0-9_-]*"
+
+# `<slug>.<type>.md`.
+_FILENAME_RE = re.compile(rf"^(?P<slug>{SLUG_PATTERN})\.(?P<type>[a-z]+)\.md$")
 
 # First body line: `bump: <level>`.
 _BUMP_RE = re.compile(r"^bump:\s*(?P<level>[a-z]+)\s*$")

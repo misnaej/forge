@@ -14,7 +14,8 @@ and the audit's last step runs ``stamp`` so the count restarts.
       threshold: <t>
       offer audit: yes | no
       last audit: <YYYY-MM-DD> | never
-      lessons file: <absolute path>
+      lessons: <intake lessons directory>
+      promotion candidates: <n>, then one line per candidate
 
 - ``stamp --memory-dir <path>`` rewrites the stamp file: today's date on
   the first line, then one line per note name currently present.
@@ -22,9 +23,9 @@ and the audit's last step runs ``stamp`` so the count restarts.
 A note counts as new only when its name is absent from the stamp — an
 edited note was already seen by the last audit. With no stamp file every
 note is new. The threshold (``[tool.forge.memory_audit].threshold``,
-default 5) and the lessons-file path (``lessons_file``, default
-``docs/lessons.md``, resolved against the repo root) come from the repo
-the command runs in; outside a git repo the current directory stands in.
+default 5) and the intake (``[tool.forge.intake].dir``) come from the
+repo the command runs in; outside a git repo the current directory
+stands in.
 
 Exit codes:
     0  status printed (the offer is informational) or stamp written
@@ -36,13 +37,20 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import logging
-import re
 import subprocess
 import sys
 from pathlib import Path
 
 from forge.config import read_tool_forge_section
 from forge.git_utils import configure_cli_logging, emit, run_git
+from forge.intake import (
+    KIND_DIRS,
+    PROMOTION_AT,
+    configured_dir,
+    discover,
+    group_entries,
+    occurrence_count,
+)
 
 
 configure_cli_logging()
@@ -51,7 +59,6 @@ logger = logging.getLogger(__name__)
 STAMP_NAME = ".memory-audit-stamp"
 INDEX_NAME = "MEMORY.md"
 DEFAULT_THRESHOLD = 5
-DEFAULT_LESSONS_FILE = "docs/lessons.md"
 
 
 def note_names(memory_dir: Path) -> set[str]:
@@ -169,39 +176,6 @@ def configured_threshold(repo_root: Path) -> int:
     return raw
 
 
-def configured_lessons_file(repo_root: Path) -> Path:
-    """Return the lessons file, resolved against *repo_root*.
-
-    Args:
-        repo_root: Repository whose ``pyproject.toml`` is read.
-
-    Returns:
-        ``[tool.forge.memory_audit].lessons_file`` when it is a relative
-        ``.md`` path that stays inside *repo_root*, else
-        :data:`DEFAULT_LESSONS_FILE`. The skill writes to this path, and
-        the setting comes from the repo being worked on — a cloned repo
-        must not be able to aim that write at a file outside itself.
-    """
-    raw = read_tool_forge_section(repo_root, "memory_audit").get("lessons_file")
-    if not isinstance(raw, str) or not raw.strip():
-        return repo_root / DEFAULT_LESSONS_FILE
-    candidate = Path(raw)
-    resolved = (repo_root / candidate).resolve()
-    if (
-        candidate.is_absolute()
-        or candidate.suffix != ".md"
-        or not resolved.is_relative_to(repo_root.resolve())
-    ):
-        logger.warning(
-            "forge-memory-audit: lessons_file %r must be a relative .md path "
-            "inside the repo; using %s",
-            raw,
-            DEFAULT_LESSONS_FILE,
-        )
-        return repo_root / DEFAULT_LESSONS_FILE
-    return repo_root / candidate
-
-
 def _check_dir(memory_dir: Path) -> bool:
     """Return whether *memory_dir* exists, explaining on stderr if not.
 
@@ -222,39 +196,27 @@ def _check_dir(memory_dir: Path) -> bool:
     return False
 
 
-# One lessons-file entry: a ``## <lesson>`` heading followed (anywhere in
-# its section) by ``- occurrences: N``.
-_LESSON_HEADING_RE = re.compile(r"^## (?P<title>.+?)\s*$")
-_OCCURRENCES_RE = re.compile(r"^- occurrences:\s*(?P<n>\d+)\s*$")
-PROMOTION_AT = 2
-
-
-def promotion_candidates(lessons_file: Path) -> list[str]:
+def promotion_candidates(repo_root: Path) -> list[str]:
     """Return the lessons that have come up often enough to promote.
 
-    The threshold is FOUNDATION §12's second occurrence; reading it here
-    keeps the count mechanical instead of a re-read of the file by the
+    The threshold is FOUNDATION §12's second occurrence, counted from the
+    intake's lesson files (one per sighting) rather than re-read by the
     agent each audit.
 
     Args:
-        lessons_file: The repo's lessons file.
+        repo_root: Repository whose intake is read.
 
     Returns:
-        Titles of entries whose ``occurrences`` is at least
-        :data:`PROMOTION_AT`, in file order; empty when the file is absent.
+        ``<title> (<count>)`` per lesson group reaching
+        :data:`forge.intake.PROMOTION_AT` occurrences, most-seen first;
+        empty without an intake.
     """
-    if not lessons_file.is_file():
-        return []
-    candidates: list[str] = []
-    title: str | None = None
-    for line in lessons_file.read_text(encoding="utf-8").splitlines():
-        if heading := _LESSON_HEADING_RE.match(line):
-            title = heading["title"]
-        elif title and (count := _OCCURRENCES_RE.match(line)):
-            if int(count["n"]) >= PROMOTION_AT:
-                candidates.append(title)
-            title = None
-    return candidates
+    lessons = [e for e in discover(configured_dir(repo_root)) if e.kind == "lesson"]
+    return [
+        f"{group[0].title} ({occurrence_count(group)})"
+        for group in group_entries(lessons)
+        if occurrence_count(group) >= PROMOTION_AT
+    ]
 
 
 def status(memory_dir: Path, repo_root: Path) -> int:
@@ -262,7 +224,7 @@ def status(memory_dir: Path, repo_root: Path) -> int:
 
     Args:
         memory_dir: The agent's memory directory.
-        repo_root: Repository whose config sets threshold and lessons file.
+        repo_root: Repository whose config sets the threshold and intake.
 
     Returns:
         ``0`` when printed, ``1`` when the memory directory is missing.
@@ -276,9 +238,8 @@ def status(memory_dir: Path, repo_root: Path) -> int:
     emit(f"threshold: {threshold}")
     emit(f"offer audit: {'yes' if count >= threshold else 'no'}")
     emit(f"last audit: {last[0] if last else 'never'}")
-    lessons = configured_lessons_file(repo_root)
-    emit(f"lessons file: {lessons}")
-    promote = promotion_candidates(lessons)
+    emit(f"lessons: {configured_dir(repo_root) / KIND_DIRS['lesson']}")
+    promote = promotion_candidates(repo_root)
     emit(f"promotion candidates: {len(promote)}")
     for title in promote:
         emit(f"  - {title}")

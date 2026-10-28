@@ -346,6 +346,53 @@ def test_step_repo_structure_hard_fails_when_cli_missing(
     assert exc_info.value.code == 2
 
 
+def _write_intake_entry(root: Path, text: str) -> None:
+    """Write one lesson file under the default intake directory.
+
+    Args:
+        root: Repo root holding ``docs/intake``.
+        text: Entry body.
+    """
+    lessons = root / "docs/intake/lessons"
+    lessons.mkdir(parents=True)
+    (lessons / "trap.md").write_text(text, encoding="utf-8")
+
+
+def test_step_intake_check_skipped_without_intake_dir(tmp_path: Path) -> None:
+    """step_intake_check is skipped and passing when there is no intake directory."""
+    result = precommit.step_intake_check(tmp_path)
+    assert result.skipped
+    assert result.passed
+    assert "skipped" in result.output
+
+
+def test_step_intake_check_fails_on_bad_entry(tmp_path: Path) -> None:
+    """A secret-shaped string in an entry fails the step with a problem count."""
+    _write_intake_entry(
+        tmp_path, "# Trap\n\n- seen: 2026-01-01\n\nAKIAABCDEFGHIJKLMNOP\n"
+    )
+    result = precommit.step_intake_check(tmp_path)
+    assert not result.passed
+    assert not result.skipped
+    assert "AWS access key-shaped string" in result.output
+    assert "1 intake problem(s)" in result.output
+
+
+def test_step_intake_check_passes_on_valid_entries(tmp_path: Path) -> None:
+    """Valid entries pass, are not skipped, and are counted."""
+    _write_intake_entry(tmp_path, "# Trap\n\n- seen: 2026-01-01\n")
+    result = precommit.step_intake_check(tmp_path)
+    assert result.passed
+    assert not result.skipped
+    assert "1 entries OK" in result.output
+
+
+def test_intake_check_is_a_default_on_registered_step() -> None:
+    """intake_check is registered and runs without opt-in."""
+    registered = {s.name: s for s in precommit._STEP_REGISTRY}
+    assert registered["intake_check"].default_on
+
+
 def test_step_commit_types_parity_skipped_when_hook_absent(
     tmp_path: Path,
 ) -> None:
@@ -595,6 +642,7 @@ def test_run_all_writes_code_health_logs(
         "docstring_coverage.log",
         "test_naming_check.log",
         "repo_structure_check.log",
+        "intake_check.log",
         "manifest_json.log",
         "plugin_version.log",
         "vendored_integrity.log",

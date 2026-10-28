@@ -1,6 +1,6 @@
 ---
 name: memory-audit
-description: Audit the agent's persistent memory against the repo's rule surface - flag contradictions, duplicates of shipped rules, and stale references, route true-and-shareable lessons to the repo's lessons file or upstream, then propose reconciliation. Use when the user wants memory checked, cleaned, or reconciled against FOUNDATION / CLAUDE.md / skills, or when /next or /pr offers it.
+description: Audit the agent's persistent memory against the repo's rule surface - flag contradictions, duplicates of shipped rules, and stale references, route true-and-shareable lessons to the intake or upstream, then propose reconciliation. Use when the user wants memory checked, cleaned, or reconciled against FOUNDATION / CLAUDE.md / skills, or when /next or /pr offers it.
 user-invocable: true
 ---
 
@@ -33,17 +33,16 @@ foundation, per the FOUNDATION conflict rule):
 2. `FOUNDATION.md` (when present)
 3. Shipped + local skills (`skills/*/SKILL.md`, `.claude/skills/*/SKILL.md`)
 4. Agent docs (`agents/*.md`, `.claude/agents/*.md`)
-5. The repo's lessons file (`forge-memory-audit status` prints its path;
-   `[tool.forge.memory_audit].lessons_file`, default `docs/lessons.md`)
+5. The intake's lessons (`forge-memory-audit status` prints the
+   directory; `forge-intake list` shows them)
 
 ## Step 3: Classify every memory
 
 One verdict per memory file, with the evidence quoted:
 
 - **DUPLICATES** — the memory restates something the rule surface or
-  the lessons file already owns. Propose deleting the memory. If it
-  matches a lessons-file entry, propose raising that entry's count (see
-  Step 5).
+  an intake lesson already owns. Propose deleting the memory. If it is
+  a new sighting of an intake lesson, propose recording it (Step 5).
 - **STALE** — the memory names a file, flag, command, or convention
   that no longer exists. Verify by grep before claiming (a live symbol
   is not stale). Propose fix or deletion.
@@ -54,10 +53,10 @@ One verdict per memory file, with the evidence quoted:
 - **SHOULD-SHIP** — true, and useful to others beyond this agent. It
   goes to the intake (FOUNDATION §12), never straight into an
   always-loaded doc:
-  - a lesson about this repo → a new entry in the lessons file,
-    `occurrences: 1`;
+  - a lesson about this repo → `forge-intake new lesson`;
   - a lesson about forge itself (a shipped agent, skill, hook, CLI or
-    FOUNDATION rule) → `/report-to-forge`.
+    FOUNDATION rule) → `forge-intake new finding`, filed later through
+    `/report-to-forge`.
 - **UNOWNED** — true, but nothing in the repo can own it (harness or
   model behaviour, a third-party tool's quirk). Keep it, labelled
   UNOWNED, so the next audit does not re-litigate it.
@@ -77,32 +76,24 @@ some proposals and keep others:
 
 1. **SHOULD-SHIP first, delete last** (the order is FOUNDATION §12's).
    Before writing, **redact**: generalise the lesson and strip private
-   names, secrets and tokens (FOUNDATION §2) — the lessons file is
-   committed, and a forge report is public; show the user the exact text
-   to confirm. Forge-bound lessons go through `/report-to-forge`, which
-   has its own redaction step. Confirm the write landed — the file write
-   succeeded, or the issue URL came back — before deleting the memory. A
-   failed write keeps the memory.
-2. **A lesson seen again** raises its entry's `occurrences` count. For
-   each promotion candidate `forge-memory-audit status` lists (§12's
-   bar), propose promoting it into `CLAUDE.md`, a skill or an agent doc
-   — the place it would have prevented the mistake — and remove the
-   entry once the user confirms and the promotion lands.
+   names, secrets and tokens (FOUNDATION §2) — intake entries are
+   committed, and findings are filed publicly; show the user the exact
+   text to confirm. Write it with `forge-intake new`, fill the sections,
+   and run `forge-intake check`. Confirm the file landed before deleting
+   the memory. A failed write keeps the memory.
+2. **A lesson seen again** is a second file (`forge-intake new`), never
+   an edit to the first. For each promotion candidate
+   `forge-memory-audit status` lists (§12's bar), propose promoting it
+   into `CLAUDE.md`, a skill or an agent doc — the place it would have
+   prevented the mistake — or, when it needs work rather than a rule,
+   filing it in this repo's tracker; delete its files once the user
+   confirms and the promotion lands.
 3. Edit or delete the other agreed memory files and update the
    `MEMORY.md` index to match.
 4. Run `forge-memory-audit stamp --memory-dir <memory dir>` so the next
    `status` counts only memories added after this audit.
 
-Lessons-file entry shape (one `##` section per lesson):
-
-```markdown
-## <one-line lesson>
-- occurrences: 1
-- first seen: <YYYY-MM-DD>
-- where it applies: <file, skill or workflow>
-
-<two or three sentences: what happened, what to do instead>
-```
+Entry format: the intake's `README.md` (written by `forge-intake init`).
 
 ## Cadence
 

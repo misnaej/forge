@@ -86,7 +86,7 @@ from importlib import resources
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from forge import config, pip_audit_json
+from forge import config, intake, pip_audit_json
 from forge.audit.common import select_like_audit
 from forge.changelog import (
     changelog_version_findings,
@@ -1014,6 +1014,38 @@ def step_repo_structure(repo_root: Path) -> StepResult:
     require_cli("verify-forge-repo-structure", caller="forge-precommit")
     passed, output = _run(["verify-forge-repo-structure"], cwd=repo_root)
     return StepResult(name="repo_structure_check", passed=passed, output=output)
+
+
+def step_intake_check(repo_root: Path) -> StepResult:
+    """Validate the intake entries — ``forge-intake check``, in process.
+
+    Every entry is refused a secret-shaped string, since all are
+    committed. Findings, which are filed upstream, also need their filing
+    fields and a ``file:line`` in ``## Evidence``, and may carry no
+    machine path or ``[tool.forge.intake].redact`` token; lessons are
+    not checked for those.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``StepResult`` failing on any problem; skipped when the repo has
+        no intake directory.
+    """
+    intake_dir = intake.configured_dir(repo_root)
+    if not intake_dir.is_dir():
+        return StepResult(
+            name="intake_check",
+            passed=True,
+            output=f"(no {intake_dir.relative_to(repo_root)} — skipped)",
+            skipped=True,
+        )
+    problems = intake.check(intake_dir, intake.configured_redact(repo_root))
+    if problems:
+        output = "\n".join([*problems, f"{len(problems)} intake problem(s)"])
+        return StepResult(name="intake_check", passed=False, output=output)
+    count = len(intake.discover(intake_dir))
+    return StepResult(name="intake_check", passed=True, output=f"{count} entries OK")
 
 
 def step_manifest_json(repo_root: Path) -> StepResult:
@@ -3261,6 +3293,7 @@ _STEP_REGISTRY: tuple[StepDef, ...] = (
     StepDef("docstring_coverage", step_docstring_coverage),
     StepDef("test_naming_check", step_test_naming),
     StepDef("repo_structure_check", step_repo_structure),
+    StepDef("intake_check", step_intake_check),
     StepDef("manifest_json", step_manifest_json),
     StepDef("cli_wiring", step_cli_wiring),
     StepDef("agent_doc", step_agent_doc),

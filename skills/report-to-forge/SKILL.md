@@ -1,6 +1,6 @@
 ---
 name: report-to-forge
-description: Turn an observed defect in a forge-shipped process (agent, skill, hook, pre-commit step, CLI) into a filed upstream issue against forge — versions captured mechanically, evidence preserved verbatim, consumer specifics redacted with user confirmation.
+description: Turn intake findings about a forge-shipped process (agent, skill, hook, pre-commit step, CLI) into a filed upstream issue against forge — sightings counted from the intake, duplicates searched first, versions captured mechanically, evidence preserved verbatim, consumer specifics redacted with user confirmation.
 user-invocable: true
 ---
 
@@ -11,6 +11,21 @@ process is an upstream issue against forge. This skill carries that
 policy out: it captures what reports written from memory get wrong
 (versions, evidence) and strips what they must not contain (consumer
 specifics, FOUNDATION §2).
+
+## Step 0: Start from the intake
+
+A report files **findings already in the intake**, never a memory of
+one. A defect seen now → record it first (`forge-intake new finding
+<slug> --title … --surface …`, then fill it in from Steps 2–3) and
+commit it with the work in flight. Then:
+
+```bash
+forge-intake group      # likely recurrences, with their occurrence header
+```
+
+A group reaching two sightings is ready to file; a single sighting goes
+to the user, who files now or waits for it to recur (FOUNDATION §1).
+In forge's own repo the upstream tracker is this repo's.
 
 ## Step 1: Identify the process
 
@@ -88,13 +103,27 @@ credential-shaped strings** (FOUNDATION §2) — replace with a
 placeholder, never file verbatim; a secret in a public issue cannot be
 unfiled. Restate the scenario in terms any consumer recognizes ("a
 branch fast-forwarded onto its base, with uncommitted work"), keeping
-the forge-side names (agent/hook/CLI/step) exact.
+the forge-side names (agent/hook/CLI/step) exact. Then run
+`forge-intake check` — it refuses secret-shaped strings, machine paths
+and the repo's `[tool.forge.intake].redact` names; it backs the
+reading, never replaces it.
 
-## Step 5: Structure the report
+## Step 5: Search for duplicates, then structure the report
 
-The report opens with a `Requires:` line (normally
+Before drafting, search the upstream tracker by surface name and
+symptom words, open and recently closed:
+
+```bash
+UPSTREAM=$(python -c "from forge.git_utils import _FORGE_GITHUB_REPO; print(_FORGE_GITHUB_REPO)")
+gh issue list --repo "$UPSTREAM" --state all --limit 100 --search "<surface> <symptom words>"
+```
+
+A match → add the new evidence as a comment there instead of a new
+issue. The report opens with a `Requires:` line (normally
 `Requires: nothing`) per FOUNDATION §14 — this skill files directly
-with `gh`, so no triage pass adds it later. Then three parts, in
+with `gh`, so no triage pass adds it later — then the group's
+occurrence header from `forge-intake group`, verbatim (it counts
+branches and never names them). Then three parts, in
 order: what happened (observed behaviour + evidence) → why the current
 guards do not cover it → concrete request. When one session produced
 several findings, tier them by severity — a data-loss bug is never
@@ -110,16 +139,19 @@ file on your own judgment of what counts as private, and never file a
 body the user has not seen in its final form.
 
 ```bash
-UPSTREAM=$(python -c "from forge.git_utils import _FORGE_GITHUB_REPO; print(_FORGE_GITHUB_REPO)")
 gh issue create --repo "$UPSTREAM" --title "<process>: <symptom>" --body-file <draft>
 ```
 
 The upstream repo is resolved from the canonical constant — never a
-guessed URL. Return the issue URL to
-the user.
+guessed URL. Return the issue URL to the user, then retire the filed
+entries in the same PR (confirm-first — it deletes them):
+
+```bash
+forge-intake retire <entry files…> --issue <issue URL>   # one ledger row
+```
 
 ## Scope
 
 User-invoked only. This skill does not detect reportable moments on its
-own, does not edit shipped files, and does not file anything without
-the Step 6 confirmation of the final body.
+own, does not edit shipped files, and does not file or retire anything
+without the Step 6 confirmation of the final body.
