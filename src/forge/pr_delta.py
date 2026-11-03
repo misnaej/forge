@@ -578,7 +578,7 @@ def reviewable_adds(
     - an intake record (:func:`forge.intake.is_record_path`) — an entry
       or the ledger, written by `forge-intake` into a fixed layout.
 
-    **Matched case-sensitively, and by the fragment contract — not by
+    **Both exemptions match case-sensitively and by contract shape — not by
     directory alone.** The casefolding in
     :func:`touches_high_blast_radius` widens a *disqualifier*, which can
     only refuse more; widening an *exemption* excuses more, so the same

@@ -381,7 +381,7 @@ def is_record_path(path: str, intake_dir: str = DEFAULT_DIR) -> bool:
     return (
         head in kind_dirs
         and name.endswith(".md")
-        and bool(_SLUG_RE.match(name[: -len(".md")]))
+        and bool(_SLUG_RE.fullmatch(name[: -len(".md")]))
     )
 
 
