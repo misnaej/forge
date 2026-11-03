@@ -7448,6 +7448,10 @@ def test_step_changelog_updated_deferred_warns_when_blocking_also_false(
     monkeypatch.setattr(
         precommit, "resolve_current_branch", _fake_resolve_current_branch("feat/x")
     )
+    # The no-version check resolves the branch itself and, outside a git
+    # repo, falls back to GITHUB_HEAD_REF — in CI that is the PR's own
+    # branch, which must not decide this test.
+    monkeypatch.delenv("GITHUB_HEAD_REF", raising=False)
     monkeypatch.setattr(
         precommit.config, "select_diff_files", lambda *_a, **_kw: ["src/pkg/mod.py"]
     )
