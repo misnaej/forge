@@ -74,7 +74,7 @@ failure falls back to the full round. ``light-release`` (the diff is a
 content, not the path names alone) runs ``docs-types-checker`` only and
 writes ``wrapup-mode: light-release``, which ``forge-pr-create`` re-earns
 by re-running this classifier fail-closed. ``light-code`` (small, no added
-files bar changelog fragments, no ``src/`` or high-blast-radius path)
+files bar changelog fragments and intake records, no ``src/`` or high-blast-radius path)
 skips the reporters and authorizes the short-form ``wrapup-mode: light``
 wrap-up — enforced fail-closed by ``forge-pr-create``, which re-runs
 this classifier before it publishes; the strict pre-commit
@@ -111,6 +111,7 @@ from forge.git_utils import (
     repo_root,
     run_git,
 )
+from forge.intake import intake_relative_dir
 from forge.pr_delta import (
     FRAGMENT_PATH_PREFIX,
     PROVENANCE_GATE_STEPS,
@@ -767,6 +768,7 @@ def classify(root: Path, base: str, pr_number: int | None) -> PrPlan:
         line_count=_line_count(root, f"{base}...HEAD"),
         changed_paths=paths,
         added_paths=added,
+        intake_dir=intake_relative_dir(root),
     )
     if use_light:
         reasons.append(

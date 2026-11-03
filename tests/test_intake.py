@@ -876,6 +876,59 @@ def test_configured_dir_ignores_empty_or_non_string(tmp_path: Path, value: str) 
     assert intake.configured_dir(tmp_path) == tmp_path / "docs/intake"
 
 
+def test_intake_relative_dir_defaults_and_honours_config(tmp_path: Path) -> None:
+    """The relative spelling is what diff listings use: default, then configured."""
+    assert intake.intake_relative_dir(tmp_path) == "docs/intake"
+
+    write_pyproject(tmp_path, '[tool.forge.intake]\ndir = "notes/in"\n')
+
+    assert intake.intake_relative_dir(tmp_path) == "notes/in"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "docs/intake/lessons/a-b.md",
+        "docs/intake/findings/x.md",
+        "docs/intake/_LEDGER.md",
+    ],
+)
+def test_is_record_path_accepts_entries_and_ledger(path: str) -> None:
+    """Entries and the ledger are what the intake writes, so they are exempt.
+
+    Args:
+        path: A path in the intake record layout.
+    """
+    assert intake.is_record_path(path) is True
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "docs/intake/README.md",
+        "docs/intake/findings/_TEMPLATE.md",
+        "docs/intake/findings/sub/x.md",
+        "docs/intake/findings/x.py",
+        "Docs/Intake/findings/x.md",
+        "docs/intake/notes.md",
+        "docs/intakex/findings/x.md",
+    ],
+)
+def test_is_record_path_rejects_lookalikes(path: str) -> None:
+    """Loose matching would let a new file skip review, so shape is exact.
+
+    Args:
+        path: A path near, but not in, the record layout.
+    """
+    assert intake.is_record_path(path) is False
+
+
+def test_is_record_path_honours_custom_intake_dir() -> None:
+    """A configured directory moves the layout; the default one stops matching."""
+    assert intake.is_record_path("notes/in/findings/x.md", "notes/in") is True
+    assert intake.is_record_path("docs/intake/findings/x.md", "notes/in") is False
+
+
 def test_configured_redact_keeps_only_non_blank_strings(tmp_path: Path) -> None:
     """Non-string and blank tokens are dropped; real ones are kept as written."""
     write_pyproject(

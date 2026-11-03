@@ -941,9 +941,11 @@ A compact index of this codebase's symbols — every top-level function and clas
   - `work(self) -> str` — The piece of work this sighting belongs to, for counting.
 - `_inside(root: Path, raw: str) -> Path | None` _(internal)_ — Return *raw* resolved under *root*, or ``None`` if it escapes.
 - `configured_dir(root: Path) -> Path` — Return the intake directory: ``[tool.forge.intake].dir`` or the default.
+- `intake_relative_dir(root: Path) -> str` — Return the configured intake directory as a repo-relative POSIX path.
 - `configured_redact(root: Path) -> tuple[str, ...]` — Return ``[tool.forge.intake].redact``: tokens findings must not contain.
 - `parse_entry(path: Path, kind: str, *, base_branch: str = DEFAULT_BASE_BRANCH) -> Entry` — Read one intake file.
 - `discover(intake_dir: Path, *, base_branch: str = DEFAULT_BASE_BRANCH) -> list[Entry]` — Return every entry under *intake_dir*, lessons first, by name.
+- `is_record_path(path: str, intake_dir: str = DEFAULT_DIR) -> bool` — Return whether repo-relative *path* is a record the intake writes.
 - `_is_entry_name(path: Path) -> bool` _(internal)_ — Return whether *path* is named like an entry, not README or ``_``-file.
 - `_stem(word: str) -> str` _(internal)_ — Return *word* without a plural ending, so "bullets" matches "bullet".
 - `_words(entry: Entry) -> set[str]` _(internal)_ — Return the comparison words of *entry*'s slug and title.
@@ -1239,9 +1241,9 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `release_assembly_diff(changed_paths: list[str]) -> bool` — Return whether every changed path is a release-assembly output.
 - `touches_source_paths(changed_paths: list[str]) -> list[str]` — Return the subset of *changed_paths* under :data:`SOURCE_PATHS`.
 - `touches_rule_surface(changed_paths: list[str]) -> bool` — Return whether any of *changed_paths* is under :data:`RULE_SURFACE_PATHS`.
-- `non_fragment_adds(added_paths: list[str]) -> list[str]` — Return the subset of *added_paths* that is not a changelog fragment.
+- `reviewable_adds(added_paths: list[str], *, intake_dir: str = INTAKE_DEFAULT_DIR) -> list[str]` — Return the subset of *added_paths* the prior-art gate must see.
 - `_is_fragment_path(path: str) -> bool` _(internal)_ — Whether *path* is a changelog fragment by directory AND by name.
-- `light_wrapup_decision(*, line_count: int, changed_paths: list[str], added_paths: list[str]) -> tuple[bool, str]` — Decide whether a diff qualifies for the light wrap-up path.
+- `light_wrapup_decision(*, line_count: int, changed_paths: list[str], added_paths: list[str], intake_dir: str = INTAKE_DEFAULT_DIR) -> tuple[bool, str]` — Decide whether a diff qualifies for the light wrap-up path.
 - `delta_decision(*, line_count: int, changed_paths: list[str]) -> tuple[bool, str]` — Decide whether a follow-up diff qualifies for delta-mode re-check.
 - `regen_commands(repo_root: Path) -> dict[str, tuple[str, ...]]` — Return :data:`REGEN_COMMANDS` filtered to the artifacts this repo generates.
 
