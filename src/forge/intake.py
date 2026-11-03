@@ -268,6 +268,18 @@ def configured_dir(root: Path) -> Path:
     return path
 
 
+def intake_relative_dir(root: Path) -> str:
+    """Return the configured intake directory as a repo-relative POSIX path.
+
+    Args:
+        root: Repository root.
+
+    Returns:
+        :func:`configured_dir` relative to *root*, as diff listings spell it.
+    """
+    return configured_dir(root).relative_to(root).as_posix()
+
+
 def configured_redact(root: Path) -> tuple[str, ...]:
     """Return ``[tool.forge.intake].redact``: tokens findings must not contain.
 
@@ -342,6 +354,35 @@ def discover(
             if _is_entry_name(path) and not path.is_symlink()
         )
     return entries
+
+
+def is_record_path(path: str, intake_dir: str = DEFAULT_DIR) -> bool:
+    """Return whether repo-relative *path* is a record the intake writes.
+
+    A record is an entry (a slug-named ``.md`` directly in ``lessons/``
+    or ``findings/``) or the ledger at the intake root. Records answer no
+    placement question, so PR classification treats them like changelog
+    fragments. Matched case-sensitively and by shape, never by directory
+    alone: an exemption that matched loosely would let a new source file
+    dropped there skip review.
+
+    Args:
+        path: A repo-relative POSIX path from a diff listing.
+        intake_dir: The intake directory, relative to the repo root.
+
+    Returns:
+        ``True`` only for an entry or the ledger in that exact layout.
+    """
+    base = intake_dir.strip("/")
+    if path == f"{base}/{LEDGER_NAME}":
+        return True
+    head, _, name = path.rpartition("/")
+    kind_dirs = {f"{base}/{sub}" for sub in KIND_DIRS.values()}
+    return (
+        head in kind_dirs
+        and name.endswith(".md")
+        and bool(_SLUG_RE.fullmatch(name[: -len(".md")]))
+    )
 
 
 def _is_entry_name(path: Path) -> bool:

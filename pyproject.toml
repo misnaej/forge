@@ -190,6 +190,8 @@ exempt = ["coverage", "git_helpers", "runner", "lifecycle", "run_log"]
 
 [tool.forge.changelog]
 mode = "fragments"
+# Recording and retiring intake sightings is bookkeeping, never a release note.
+exempt_paths = ["docs/intake/"]
 
 [tool.forge.smart_test]
 # Dogfood the depth model: commits run depth-2 selection; the

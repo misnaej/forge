@@ -86,8 +86,9 @@ class ComposeInputs:
         reporters: Reporter names the plan requires.
         reports: Reporter name → full report text.
         prior_art_report: The ``forge:prior-art`` report, when one exists.
-        added_non_fragment_paths: Added files other than changelog
-            fragments (a non-empty tuple requires a prior-art report).
+        added_reviewable_paths: Added files other than changelog
+            fragments and intake records (a non-empty tuple requires a
+            prior-art report).
         issue_management: Rendered Issue Management text.
         code_quality: Rendered one-line Code Quality status.
         ci_status: Rendered one-line CI Status.
@@ -102,7 +103,7 @@ class ComposeInputs:
     reporters: tuple[str, ...]
     reports: Mapping[str, str]
     prior_art_report: str | None
-    added_non_fragment_paths: tuple[str, ...]
+    added_reviewable_paths: tuple[str, ...]
     issue_management: str
     code_quality: str
     ci_status: str = PENDING_CI
@@ -212,10 +213,10 @@ def _check_evidence(inputs: ComposeInputs) -> None:
         if missing:
             msg = f"missing report for required reporter(s): {', '.join(missing)}"
             raise ComposeError(msg)
-    if inputs.added_non_fragment_paths and inputs.prior_art_report is None:
+    if inputs.added_reviewable_paths and inputs.prior_art_report is None:
         msg = (
             "the diff adds files ("
-            + ", ".join(inputs.added_non_fragment_paths)
+            + ", ".join(inputs.added_reviewable_paths)
             + ") but no prior-art report was given (--prior-art)"
         )
         raise ComposeError(msg)

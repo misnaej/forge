@@ -65,7 +65,7 @@ _DEFAULT_INPUTS = ComposeInputs(
     reporters=_ALL_REPORTERS,
     reports={reporter: _pass_report() for reporter in _ALL_REPORTERS},
     prior_art_report=None,
-    added_non_fragment_paths=(),
+    added_reviewable_paths=(),
     issue_management="Closes #1",
     code_quality="✅ pre-commit: 5 pass ✅ pytest 100 passed in 1.0s",
 )
@@ -294,7 +294,7 @@ def test_render_wrapup_emergency_skips_evidence_checks_entirely() -> None:
     """
     inputs = _inputs(
         reports={},
-        added_non_fragment_paths=("src/x.py",),
+        added_reviewable_paths=("src/x.py",),
         prior_art_report=None,
         emergency_ledger=482,
     )
@@ -325,7 +325,7 @@ def test_render_wrapup_raises_for_a_missing_required_reporter_report() -> None:
 def test_render_wrapup_raises_when_added_files_have_no_prior_art_report() -> None:
     """Added files with no ``--prior-art`` report refuse, naming the path."""
     inputs = _inputs(
-        added_non_fragment_paths=("src/new_thing.py",), prior_art_report=None
+        added_reviewable_paths=("src/new_thing.py",), prior_art_report=None
     )
     with pytest.raises(ComposeError, match=r"src/new_thing\.py"):
         render_wrapup(inputs)
@@ -338,7 +338,7 @@ def test_render_wrapup_accepts_added_files_when_a_prior_art_report_is_given() ->
         "## Prior-Art Report: new_thing\n\n### Verdict: NEW\n"
     )
     inputs = _inputs(
-        added_non_fragment_paths=("src/new_thing.py",), prior_art_report=prior_art_text
+        added_reviewable_paths=("src/new_thing.py",), prior_art_report=prior_art_text
     )
     text = render_wrapup(inputs)
     assert "prior-art-searched: digest=abc123def456 queries=3" in text

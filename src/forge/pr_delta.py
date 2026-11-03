@@ -7,7 +7,7 @@ the **docs-only light path** (whole diff doc-shaped), **regen-only
 eligibility** (managed artifacts, earned via provenance gates), the
 **release-assembly light path** (only what `forge-changelog release-pr`
 writes — re-earned at publish time like light-code), and the
-**light-code path** (small, no added files bar changelog fragments,
+**light-code path** (small, no added files bar changelog fragments and intake records,
 no source or blast-radius path — earned at publish time by the hook's
 classifier re-run). The thresholds, path globs, and the SHA-extraction
 helper live here so the agent prompt, future audit guards, and any
@@ -27,6 +27,8 @@ from typing import TYPE_CHECKING, Final
 
 from forge import config
 from forge.changelog_fragments import FRAGMENTS_DIR, _parse_and_validate_filename
+from forge.intake import DEFAULT_DIR as INTAKE_DEFAULT_DIR
+from forge.intake import is_record_path
 from forge.rebump import CHANGELOG_PATH, PLUGIN_PATH
 
 
@@ -119,7 +121,7 @@ PROVENANCE_GATE_STEPS: Final[tuple[str, ...]] = (
 
 
 # Maximum line-count diff (insertions + deletions) below which a PR with
-# no added files bar changelog fragments (:func:`non_fragment_adds`), no
+# no added files bar fragments and intake records (:func:`reviewable_adds`), no
 # source-under-src change, and no high-blast-radius path qualifies for
 # the LIGHT wrap-up (`wrapup-mode: light`): reporters
 # skipped, short-form wrap-up, strict pre-commit still in full. The
@@ -559,19 +561,24 @@ def touches_rule_surface(changed_paths: list[str]) -> bool:
     return False
 
 
-def non_fragment_adds(added_paths: list[str]) -> list[str]:
-    """Return the subset of *added_paths* that is not a changelog fragment.
+def reviewable_adds(
+    added_paths: list[str], *, intake_dir: str = INTAKE_DEFAULT_DIR
+) -> list[str]:
+    """Return the subset of *added_paths* the prior-art gate must see.
 
     The light wrap-up's added-file disqualifier exists so the prior-art
     gate sees every new source file and top-level symbol before it is
-    reviewed. A `changelog.d/` fragment answers no placement question —
-    its name, directory and lifetime are fixed by the fragment contract,
-    and the `changelog_updated` gate *mandates* exactly one on every PR
-    that changes anything else. Counting it would make the light path
-    unreachable by construction rather than merely rare, so it is the
-    one exemption; any other added path still disqualifies.
+    reviewed. Two kinds of added file answer no placement question, so
+    they are exempt; any other added path still disqualifies:
 
-    **Matched case-sensitively, and by the fragment contract — not by
+    - a `changelog.d/` fragment — its name, directory and lifetime are
+      fixed by the fragment contract, and the `changelog_updated` gate
+      *mandates* exactly one on every PR that changes anything else;
+      counting it would make the light path unreachable by construction;
+    - an intake record (:func:`forge.intake.is_record_path`) — an entry
+      or the ledger, written by `forge-intake` into a fixed layout.
+
+    **Both exemptions match case-sensitively and by contract shape — not by
     directory alone.** The casefolding in
     :func:`touches_high_blast_radius` widens a *disqualifier*, which can
     only refuse more; widening an *exemption* excuses more, so the same
@@ -585,11 +592,17 @@ def non_fragment_adds(added_paths: list[str]) -> list[str]:
 
     Args:
         added_paths: Paths from ``git diff --name-only --diff-filter=ACR``.
+        intake_dir: The repo's intake directory, relative to its root.
 
     Returns:
-        Added paths that are not valid changelog fragments, in input order.
+        Added paths that are neither valid changelog fragments nor intake
+        records, in input order.
     """
-    return [path for path in added_paths if not _is_fragment_path(path)]
+    return [
+        path
+        for path in added_paths
+        if not _is_fragment_path(path) and not is_record_path(path, intake_dir)
+    ]
 
 
 def _is_fragment_path(path: str) -> bool:
@@ -616,13 +629,14 @@ def light_wrapup_decision(
     line_count: int,
     changed_paths: list[str],
     added_paths: list[str],
+    intake_dir: str = INTAKE_DEFAULT_DIR,
 ) -> tuple[bool, str]:
     """Decide whether a diff qualifies for the light wrap-up path.
 
     Objective signals only — never agent judgment, checked in this
-    order: non-empty diff, no added files bar changelog fragments (the
+    order: non-empty diff, no added files bar fragments and intake records (the
     prior-art gate stays independent and fires before any size check;
-    see :func:`non_fragment_adds` for why fragments are exempt), line
+    see :func:`reviewable_adds` for why they are exempt), line
     count under the threshold, no high-blast-radius path, no
     source-package change.
     Mirrors
@@ -633,6 +647,7 @@ def light_wrapup_decision(
         line_count: Insertions + deletions across the whole PR diff.
         changed_paths: Repo-relative paths from ``git diff --name-only``.
         added_paths: Paths from ``git diff --name-only --diff-filter=A``.
+        intake_dir: The repo's intake directory, relative to its root.
 
     Returns:
         ``(use_light, reason)`` — ``True`` only when every signal
@@ -640,7 +655,7 @@ def light_wrapup_decision(
     """
     if not changed_paths:
         return (False, "empty diff; nothing to classify")
-    gating_adds = non_fragment_adds(added_paths)
+    gating_adds = reviewable_adds(added_paths, intake_dir=intake_dir)
     if gating_adds:
         return (
             False,

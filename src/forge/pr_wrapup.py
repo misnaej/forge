@@ -71,6 +71,7 @@ from forge.git_utils import (
     run_gate_evidence,
     run_git,
 )
+from forge.intake import intake_relative_dir
 from forge.pr_delta import (
     FOLLOW_UP_RE,
     PROVENANCE_GATE_STEPS,
@@ -78,7 +79,7 @@ from forge.pr_delta import (
     extract_verified_shas,
     fenced_line_indexes,
     find_closing_refs,
-    non_fragment_adds,
+    reviewable_adds,
     strip_fences,
     unlisted_closing_refs,
 )
@@ -883,8 +884,11 @@ def _gather_inputs(root: Path, args: argparse.Namespace) -> ComposeInputs:
         reporters=reporters,
         reports=reports,
         prior_art_report=_read_optional(args.prior_art),
-        added_non_fragment_paths=tuple(
-            non_fragment_adds(added_paths(root, f"{args.base}...HEAD"))
+        added_reviewable_paths=tuple(
+            reviewable_adds(
+                added_paths(root, f"{args.base}...HEAD"),
+                intake_dir=intake_relative_dir(root),
+            )
         ),
         issue_management=render_issue_management(
             refs,
