@@ -20,6 +20,20 @@ fragment type (**Features / Changes / Fixes / Removed / Docs**).
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v10.7.0 — 2026-11-04
+
+### Features
+- **A committed intake for problems not yet worth an issue.** New `forge-intake` CLI: each sighting is one file under `docs/intake/` (`[tool.forge.intake].dir`) — `lessons/` for a trap in this repo's own process, `findings/` for a forge-shipped process misbehaving, written anonymised so it can be filed upstream unchanged. `new` writes a stamped entry (forge release, date, branch); `group` finds likely repeats and prints the header a filed issue carries ("Occurrences: N, on M branches", never naming them — files from one feature branch count once, each sighting on the base branch counts); `retire` deletes filed entries into `_LEDGER.md`; `init` creates the layout and runs from `install-forge-bootstrap`. Recurrence is now counted from files instead of remembered.
+- New blocking pre-commit step `intake_check` (skipped when there is no intake): refuses secret-shaped strings in every entry, and in findings also missing filing fields, evidence without a `file:line`, machine paths and the repo's `[tool.forge.intake].redact` names.
+- `/report-to-forge` files from intake findings: it searches forge's open and closed issues for a duplicate first, carries the occurrence header, and retires the filed entries. `/next` surfaces groups seen twice or more. FOUNDATION §1 and §12 point at the intake.
+- **Lessons move into the intake.** `/memory-audit` writes lesson files, and `forge-memory-audit status` counts promotion candidates from them. `[tool.forge.memory_audit].lessons_file` is removed; `forge-intake init` moves an existing `docs/lessons.md` into one file per lesson, keeping each count; a file with text outside its `## ` entries is left in place for you to tidy, and a custom `lessons_file` path is not migrated — move it to `docs/lessons.md` first.
+
+### Changes
+- FOUNDATION §14 adds "Newer issues get more attention": within a tier, a recently filed issue is triaged and recommended before an older one, judged by filing date (`createdAt`), never `updatedAt`, which every label or comment bumps. `issue-triage`'s `recommend-next` now weights by filing date instead of last update.
+
+### Fixes
+- A PR that only records or retires intake sightings no longer demands a prior-art report: `forge-pr-plan` and `forge-pr-wrapup compose` treat intake records (an entry under `lessons/` or `findings/`, or the `_LEDGER.md`) like changelog fragments — exempt by exact shape, so any other new file still needs review.
+
 ## v10.6.0 — 2026-10-28
 
 ### Features
