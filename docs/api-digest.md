@@ -25,6 +25,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_agent_id_from_transcript(path: Path) -> str | None` _(internal)_ — Return the agent id a subagent transcript path names, if it is one.
 - `_resolve_subagent_transcript(path: str | None, *, session_id: str | None, agent_id: str) -> Path | None` _(internal)_ — The transcript belonging to *agent_id*, or ``None`` when none is readable.
 - `_is_path_component(value: str | None) -> TypeGuard[str]` _(internal)_ — Whether *value* is safe to splice into a path as one segment.
+- `default_transcripts_dir(root: Path) -> Path | None` — Claude Code's transcript directory for the checkout at *root*.
+- `_read_meta(transcript: Path) -> dict[str, Any]` _(internal)_ — The ``agent-<id>.meta.json`` sidecar Claude Code writes beside a transcript.
 - `class TranscriptStats` — What a subagent transcript adds to a run's ledger record.
 - `class AgentRun` — One agent invocation, assembled from the ledger and its transcript.
   - `wall_s(self) -> float` — Seconds from first to last known record, or ``0`` when unbounded.
@@ -54,13 +56,19 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_describe_call(block: dict[str, Any]) -> str` _(internal)_ — Human label for a tool call, trimmed for a report line.
 - `_call_label(text: str) -> str` _(internal)_ — Flatten *text* to printable characters and cap it at the label width.
 - `parse_transcript(path: Path) -> TranscriptStats | None` — Extract timing and loop signals from one subagent transcript.
-- `_output_tokens(record: dict[str, Any]) -> int` _(internal)_ — Output tokens reported on an assistant record, ``0`` when absent.
+- `class _TranscriptScan` _(internal)_ — Running state of one :func:`parse_transcript` pass.
+  - `new_segment(self, stats: TranscriptStats) -> None` — Close a prompt segment: keep its precommit count, reset repeats.
+  - `assistant(self, stats: TranscriptStats, record: dict[str, Any]) -> None` — Fold one assistant record: its request (once) and its tool calls.
+  - `results(self, stats: TranscriptStats, record: dict[str, Any]) -> None` — Measure the tool results a user record returns to the agent.
+  - `finish(self, stats: TranscriptStats) -> None` — Copy the scan's totals into *stats*.
 - `_is_full_precommit_run(block: dict[str, Any]) -> int` _(internal)_ — ``1`` when a ``Bash`` tool call runs ``forge-precommit`` without ``--only``.
 - `_agent_types_from_sessions(root: Path) -> dict[str, tuple[str, str | None]]` _(internal)_ — Map subagent ids to ``(agent_type, description)`` from main-session transcripts.
 - `runs_from_transcripts(root: Path) -> dict[str, AgentRun]` — Build runs from every subagent transcript under *root*.
 - `_digest_record(run: AgentRun, stats: TranscriptStats) -> dict[str, object]` _(internal)_ — One digest line for *run*: its ids, its transcript stats, and when.
 - `_is_count(value: object) -> bool` _(internal)_ — Whether *value* is a JSON integer (``bool`` excluded).
+- `_is_size(value: object) -> bool` _(internal)_ — Whether *value* is a non-negative JSON integer — a token or char count.
 - `_stats_from_digest(record: dict[str, Any]) -> TranscriptStats | None` _(internal)_ — Rebuild the stats one digest line carries, ``None`` when it is damaged.
+- `_token_fields_from_digest(record: dict[str, Any]) -> dict[str, Any] | None` _(internal)_ — The token fields a digest line carries; lines from before them load bare.
 - `_load_digest(path: Path) -> dict[str, TranscriptStats]` _(internal)_ — Read the transcript digest: the last good line per agent id wins.
 - `_digest_is_behind(stats: TranscriptStats, known: TranscriptStats | None) -> bool` _(internal)_ — Whether *stats* says more than the digest already holds for its run.
 - `_record_digest(path: Path, runs: Iterable[AgentRun], digest: dict[str, TranscriptStats]) -> None` _(internal)_ — Append a digest line for every run whose stats are new or have grown.
@@ -78,11 +86,45 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_iso(value: object) -> str | None` _(internal)_ — ISO-8601 text for a datetime, ``None`` for anything else.
 - `_run_json(run: AgentRun) -> dict[str, Any]` _(internal)_ — JSON-safe view of a run (datetimes as ISO strings, properties included).
 - `render_json(runs: list[AgentRun], tools: list[ToolRow]) -> str` — Machine-readable report: runs, per-type rows, per-tool rows.
+- `waste_flags(run: AgentRun) -> list[WasteFlag]` — The mechanical waste findings for *run* (none without token data).
+- `load_sessions(transcripts: Path | None, runs: Iterable[AgentRun]) -> dict[str, SessionTokens]` — Parse the main-session transcripts of the sessions *runs* belong to.
+- `join_sessions(runs: Iterable[AgentRun], sessions: dict[str, SessionTokens]) -> None` — Link each subagent run to the skill and brief that launched it.
+- `_grouped(pairs: Iterable[tuple[str, TokenUsage]]) -> list[TokenRow]` _(internal)_ — Sum usage per label, ranked.
+- `render_tokens(runs: list[AgentRun], sessions: dict[str, SessionTokens]) -> str` — Render the ``--tokens`` report for *runs* and their sessions.
 - `append_history(root: Path, runs: list[AgentRun], label: str) -> None` — Append one summary line for this report to the profile ledger.
 - `_render_history(root: Path) -> int` _(internal)_ — Print the append-only profile ledger as a trend table.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — The CLI surface.
 - `_render_edits(root: Path, *, session_id: str | None = None) -> int` _(internal)_ — Print the subagent-edit receipt for the uncommitted change set.
 - `main() -> int` — Entry point for ``forge-agent-profile``.
+
+## `forge.agent_profile_tokens`
+
+> _Token accounting for ``forge-agent-profile --tokens``._
+
+- `class TokenUsage` — Summed request usage for one run, skill, or agent type.
+  - `prompt_tokens(self) -> int` — Tokens sent to the model across all requests.
+  - `total_tokens(self) -> int` — Prompt plus output tokens.
+  - `fixed_cost(self) -> int` — Prompt tokens spent re-sending the fixed context, every request.
+  - `fixed_share(self) -> float` — :attr:`fixed_cost` as a share of prompt tokens (``0`` when none).
+  - `add(self, other: TokenUsage) -> None` — Add *other*'s counts into this usage.
+- `_printable(text: str) -> str` _(internal)_ — *text* with every non-printable character turned into a space.
+- `_count(value: object) -> int` _(internal)_ — A usage field as a non-negative int (``0`` for anything else).
+- `class UsageTally` — Adds each request's usage once, however many records repeat it.
+  - `add_record(self, record: dict[str, Any]) -> bool` — Count *record*'s usage unless its message was already counted.
+- `tool_result_chars(block: dict[str, Any]) -> int` — Characters a ``tool_result`` block puts back into the conversation.
+- `_record_text(record: dict[str, Any]) -> str` _(internal)_ — The plain text a user record carries, for hand-back detection.
+- `class SessionTokens` — What one main-session transcript says about tokens and delegations.
+  - `usage(self) -> TokenUsage` — All skills' usage summed.
+- `parse_session(records: Iterable[dict[str, Any]]) -> SessionTokens` — Split a main-session transcript's tokens by the skill that was active.
+- `_note_delegations(session: SessionTokens, record: dict[str, Any], skill: str) -> None` _(internal)_ — Record each delegation an assistant record makes.
+- `_note_handback(session: SessionTokens, record: dict[str, Any]) -> None` _(internal)_ — Record a subagent hand-back delivered into the conversation.
+- `class TokenRow` — One ranked line: an agent type or a skill, and what it cost.
+- `class WasteFlag` — One mechanical waste finding, with the tokens it concerns.
+- `rank(rows: Iterable[TokenRow]) -> list[TokenRow]` — Order rows by total tokens, costliest first.
+- `fmt_tokens(count: int) -> str` — Compact token count: ``950``, ``42k``, ``3.1M``.
+- `_table(title: str, rows: list[TokenRow]) -> list[str]` _(internal)_ — A ranked token table.
+- `class TokenReport` — Everything the ``--tokens`` view shows, already ranked.
+- `render_token_report(report: TokenReport) -> str` — Render the ``--tokens`` report.
 
 ## `forge.audit`
 
