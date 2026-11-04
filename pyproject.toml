@@ -113,7 +113,10 @@ telemetry = ["psutil>=5.9", "matplotlib>=3.8"]
 # consumer-valid commands from `forge.git_utils.forge_install_command`.)
 # Consumer repos typically carry their own `[dev]` extra; this one is
 # for forge itself.
-dev = ["forge-scripts[test,audit,typecheck,telemetry]"]
+dev = [
+    "forge-scripts[test,audit,typecheck,telemetry]",
+    "setuptools>=84.1.0",  # GHSA-xmj3-9gf7-h52w
+]
 
 [project.urls]
 Homepage = "https://github.com/misnaej/forge"
