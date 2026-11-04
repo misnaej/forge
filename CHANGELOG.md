@@ -20,6 +20,25 @@ fragment type (**Features / Changes / Fixes / Removed / Docs**).
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v10.8.0 — 2026-11-04
+
+### Features
+- `forge-agent-profile --tokens` shows where the tokens go: per agent type, per skill that launched the agents, and per main-session skill, each split into fixed context (the prompt an agent loads before any work and re-sends on every request) and work, plus the size of delegation briefs and hand-back reports and mechanical waste flags (`single-call`, `fixed-context`, `large-result`, `repeated-read`), each with its token figure. It finds this checkout's Claude Code transcripts on its own; the default report still reads the ledger only. `/perf` runs it and turns the top flags into intake entries, and FOUNDATION §18 adds token economy as a third cost goal (to hold FOUNDATION's word budget, §18's introduction and §6's monitor paragraph are condensed; their rules are unchanged).
+- Turn and output-token counts are now correct: Claude Code repeats a request's usage on every content-block record, and each repeat was counted, roughly doubling both. Expect lower numbers in the report, `--json` and the digest from now on; digest lines written earlier keep their old counts. `--json` gains token fields (additive), and runs found through `--transcripts` now carry their session id.
+- New `caveman_mode` Claude Code hook, on by default: at session start and whenever a helper agent starts it asks for caveman-full grammar in agent traffic (replies, briefs, reports), since every word an agent writes is re-read on every later request. Text people read — PR descriptions, issue and comment bodies, commit messages, human-facing docs, security warnings — stays plain concise English. It delivers the instruction only; `forge-agent-profile --tokens` shows whether reports shrink. Turn it off with `[tool.forge.hooks].caveman = false`. The grammar comes from the [caveman](https://github.com/JuliusBrussee/caveman) plugin, which forge does not require. FOUNDATION §8 states the split: agent-facing prose (agent, skill and reference files, agent traffic) stays terse, while docs written for people are now plain concise English rather than terse.
+- `/report-to-forge` ends every issue it files with a filing marker (`<!-- forge:report-to-forge vX.Y.Z -->`, the installed forge version). Forge's own triage uses it to tell reports filed through forge from issues opened by hand: an outside issue without it is labelled `needs-forge-report` and answered by a maintainer.
+
+### Changes
+- FOUNDATION §1 adds "One question at a time": with several questions to ask, an agent names them in one line, then asks each and waits for its answer before the next; one question per `AskUserQuestion` call. Questions are batched only where nobody answers live (a PR or issue comment). `/plan-issue`, `/plan-batch` (which put every grouping decision in one round) and `/c4` now follow it. To stay within FOUNDATION's word budget, §1's "Read before proposing" and "Your own actions invalidate your reads" are condensed; their rules are unchanged.
+- Forge's own development install (`./dev/setup.sh`, the `[dev]` extra) now requires the setuptools release that fixes GHSA-xmj3-9gf7-h52w (a Windows-only wheel-install path issue). Consumers are unaffected: forge's build requirements and runtime dependencies are unchanged.
+
+### Fixes
+- In a plugin repo (forge's own), `forge-plugin-sync` no longer reports a failure when the release its manifest names is not tagged on GitHub yet — the window between a release-assembly merge and CI pushing its tag. The `post-merge` and `post-checkout` hooks stay silent and a plain `forge-plugin-sync` says the tag is not published yet; both exit 0 (`--check` still exits 1 while the checkout is not on its release). Consumer repos are unchanged: a `forge-scripts` pin naming a tag GitHub does not hold is still an error (exit 2), now worded as a bad pin. An unreachable GitHub, or an answer it cannot read, still exits 2.
+
+### Docs
+- CONTRIBUTING.md is rewritten as forge's contribution policy: contributing means using forge and reporting through `/report-to-forge`; outside pull requests are by invitation; nothing changes existing behaviour without a plan the owner validated; security reports go through GitHub's private vulnerability reporting. A short code of conduct (Contributor Covenant 2.1) is added.
+- The README is rewritten for someone deciding whether to try forge (4355 → about 520 words): the problem, what you get, a three-line install, how it works, and a "where to read next" table. Detail moved to the pages that own it: pinning, branch-pin refresh and upgrade mechanics into `docs/adopting.md`, forge's generated C4 diagram into the new `docs/architecture.md` (`c4.toml` now writes it there). Links into removed README sections are repointed.
+
 ## v10.7.0 — 2026-11-04
 
 ### Features
