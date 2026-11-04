@@ -74,7 +74,7 @@ Read every perf surface that exists, then summarize:
    prompt before the first tool call, re-sent on every request) and
    work; totals delegation briefs and hand-back reports; and lists
    mechanical **waste flags** (`single-call`, `fixed-context`,
-   `large-result`, `repeated-read`), each with its token figure. It
+   `large-result`, `long-report`, `repeated-read`), each with its token figure. It
    reads this checkout's Claude Code transcripts on its own. For the
    main-session rows, "fixed ctx" is the conversation's size when the
    skill started, not a startup cost. Turn the top flags into intake

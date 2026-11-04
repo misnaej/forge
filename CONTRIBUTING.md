@@ -72,3 +72,4 @@ step: [docs/step-invocation.md](docs/step-invocation.md).
 ## Contributors
 
 - Jean Simonnet — owner
+- Ingmar Schuster ([ingmarschuster](https://github.com/ingmarschuster)) — contributor
