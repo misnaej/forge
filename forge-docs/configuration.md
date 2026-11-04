@@ -242,14 +242,15 @@ The dangling-reference checks resolve against the union of repo-local names (`ag
 | `reporter_with_artifact_agents` | Consumer reporter agents exempt from the no-`Write`/`Edit` check because their report IS a written artifact, additive to the shipped list. | Your consumer reporter (like forge's own `docs-types-checker`) legitimately writes/edits the doc it reports on. |
 | `exclude` | Repo-relative paths `forge-audit-agents` skips — each an fnmatch glob (`.claude/agents/drafts/*.md`) or a directory prefix (`.claude/agents/vendor`) — applied with `--roots` too. Each excluded path is listed in `code_health/audit_agents.log`. Underscore-prefixed files and a frontmatter-less folder `README.md` are always skipped; a malformed value excludes nothing. | Your agents folder holds Markdown that is not an agent (notes, generated indexes) and its "missing frontmatter" rows can never be fixed. |
 
-## `[tool.forge.hooks]` — Claude Code safety hooks
+## `[tool.forge.hooks]` — Claude Code hooks
 
-Read by the **shell** safety hooks (not the Python config surface), so
-`forge-config --list` does not enumerate this key.
+Read by the **shell** hooks (not the Python config surface), so
+`forge-config --list` does not enumerate these keys.
 
 | Key | Default | What it does | Set it when |
 |---|---|---|---|
 | `block_install_deps` | `true` | Controls the `block_install_deps` agent guard (FOUNDATION §2). `true` blocks every manager — the install, removal, sync, lock and update verbs of pip / conda / pipenv / poetry / uv, `uv tool run` / `uvx`, `<mgr> run pip install`, and every pixi verb outside its allowlist (below) — also behind a wrapper (`sudo -u user`, `env -C dir`, `timeout 5`, `xargs`, `find … -exec`, and the like) or `VAR=val` prefix, a path such as `/usr/bin/pip`, or dash flags before the verb (a manager option that takes a separate value, such as `pip --cache-dir d install`, still slips through); a **list** like `["pip", "conda"]` blocks only those managers (`conda` also covers mamba and micromamba, `uv` covers `uvx`); `false` disables it entirely. **pixi is governed by an allowlist**, unlike the other five: `run` / `shell` / `install` (which materialise `.pixi/` from the committed lock) plus the read-only `list` / `info` / `tree` and the exact form `pixi lock --check` are permitted, and every other verb blocks (a plain `pixi lock`, or `lock --check` with anything else beside it, re-resolves or is unclassified, so it blocks) — including ones pixi has yet to ship. A bare `pixi run` (no `--locked`) is allowed with a note, since it re-solves the lock when the manifest moved. To exempt pixi entirely, drop it from the manager list. | A sandboxed/throwaway env legitimately wants agents to run setup, or you want to allow one manager (e.g. `pipenv`) while still blocking the rest. |
+| `caveman` | `true` | The `caveman_mode` hook adds a caveman-full instruction at session start and whenever a helper agent starts, so agent traffic (replies, briefs, reports) stays terse; text people read — PR descriptions, issue and comment bodies, commit messages, human-facing docs, security warnings — stays plain English (FOUNDATION §8). Grammar from the [caveman](https://github.com/JuliusBrussee/caveman) plugin, which is not required. It delivers the instruction only; `forge-agent-profile --tokens` shows whether reports shrink. `false` turns it off. | Your team prefers ordinary prose from agents, or you already run another terse-mode plugin. |
 
 ## `[tool.forge.precommit]` — turn steps on and off
 

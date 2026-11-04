@@ -480,11 +480,13 @@ Reviewed by `forge:design-checker` (foundation) + per-repo wrappers.
 ---
 ## 8. Documentation Standards
 
-- **Write terse.** Prose in docs, comments, agent and skill files: drop
-  articles, filler, hedging; fragments OK; names, numbers, commands exact.
-  Config comments: dependency pinned for an advisory → comment is the
-  advisory id only; advisory with no pin → one line saying why. Config
-  comments and file headers → one or two lines, detail behind a reference.
+- **Write terse.** Agent-facing prose (agent, skill, reference files,
+  comments, agent traffic): drop articles, filler, hedging; fragments OK;
+  names, numbers, commands exact; `caveman_mode` hook asks caveman full
+  (`[tool.forge.hooks].caveman`). People-facing text (PRs, issues, commits,
+  human docs): plain concise English. Config comments, file headers: 1–2
+  lines, details referenced; advisory pin's comment = its id; unpinned
+  advisory → one line why.
 - **Google-style docstrings** for all public classes / functions / methods, incl. `__init__`.
 - **Args** match function signature exactly. Read implementation to confirm names.
 - **Returns** required for non-`None` returning functions. Omit for `None`-returning, `@property`, `@abstractmethod`.
