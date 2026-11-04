@@ -18,7 +18,7 @@ instead; this page is for changing forge itself.
    searches for a duplicate first.
 2. **Issues filed any other way are triaged, not lost.** An issue from
    someone who is not a maintainer that did not come through
-   `/report-to-forge` is labelled, and a maintainer replies: we will fix
+   `/report-to-forge` is labelled `needs-forge-report`, and a maintainer replies: we will fix
    it, we invite you to fix it, or we do not plan to and say why — you
    are welcome to argue the case.
 3. **Outside pull requests are by invitation.** If you are not a
