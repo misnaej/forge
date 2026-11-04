@@ -145,6 +145,18 @@ body, when Step 5 split the findings into separate issues).** Never
 file on your own judgment of what counts as private, and never file a
 body the user has not seen in its final form.
 
+**The body's last line is the filing marker**, with the installed
+`forge-scripts` version from Step 2:
+
+```text
+<!-- forge:report-to-forge vX.Y.Z -->
+```
+
+Forge's triage reads it as "filed through forge": an issue from someone
+without write access that lacks it is labelled `needs-forge-report`
+(forge's CONTRIBUTING.md). Show it in the confirmed body like any other
+line; on a duplicate's comment it is not needed.
+
 ```bash
 UPSTREAM=$(python -c "from forge.git_utils import _FORGE_GITHUB_REPO; print(_FORGE_GITHUB_REPO)")
 gh issue create --repo "$UPSTREAM" --title "<process>: <symptom>" --body-file <draft>
