@@ -659,7 +659,7 @@ Topic-specific docs (read what you need, skip what you don't):
 | [`docs/security.md`](docs/security.md) | Security-sensitive coding standards forge enforces. |
 | [`FOUNDATION.md`](FOUNDATION.md) | The engineering principles forge ships to every consumer (linked from your `CLAUDE.md`). |
 | [`REPO_STRUCTURE.md`](REPO_STRUCTURE.md) | Map of every directory in this repo. |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | You're modifying forge itself (release process, versioning, dev rig). |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | You want to report a problem or change forge itself. |
 
 ---
 
