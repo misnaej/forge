@@ -13,6 +13,10 @@
 #   caveman = false        # deliver nothing
 #   (unset / true)         # on (default)
 set -e
+if ! command -v jq >/dev/null 2>&1; then
+    echo "[forge] caveman_mode: jq not on PATH — no instruction delivered. Install jq." >&2
+    exit 0
+fi
 INPUT=$(cat)
 EVENT=$(echo "$INPUT" | jq -r '.hook_event_name // empty')
 case "$EVENT" in
