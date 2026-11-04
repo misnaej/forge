@@ -102,8 +102,10 @@ The issue body is not a substitute. It is usually written by an agent for
 an agent, in the same register as the options, which is why "read the
 issue" does not close the gap.
 
-Then systematically confirm the judgment calls via targeted questions
-(`AskUserQuestion`-style, one decision each) **before** finalizing.
+Then confirm the judgment calls **before** finalizing, one question at a
+time (FOUNDATION §1 "One question at a time"): name the decisions coming
+in one line, then ask each and wait for its answer — an answer often
+reshapes or settles the next.
 What each question must carry to be answerable is FOUNDATION §1
 "Plan before executing", last paragraph — options in words with their
 consequences, the recommendation and its reason, the disputable

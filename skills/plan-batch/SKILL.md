@@ -117,10 +117,11 @@ it, do not plan around it. A first run bootstraps the whole backlog;
 later runs re-align existing tracks
 ([`forge-docs/backlog-tracks.md` "First run, then re-align"](../../forge-docs/backlog-tracks.md#first-run-then-re-align)).
 
-## Step 1.7: One decision round
+## Step 1.7: Grouping decisions, one at a time
 
-Put every grouping decision to the user **in one round**, each shaped
-by FOUNDATION §1's rule on what a decision must carry. Planning starts
+Name every grouping decision in one line, then put them to the user one
+at a time (FOUNDATION §1 "One question at a time"), each shaped by
+FOUNDATION §1's rule on what a decision must carry. Planning starts
 only on the tracks the user confirms; their answers set the queue
 Step 2 drafts from.
 
@@ -157,7 +158,9 @@ Do not batch the relays; a draft that has landed is a draft the user
 can act on. Pass each one through **unedited** — the decisions arrive
 already shaped by FOUNDATION §1's rule on what a decision must carry,
 and compressing them here is precisely the failure that rule exists to
-stop.
+stop. Relay the draft whole, then ask its decisions one at a time
+(FOUNDATION §1 "One question at a time"); the next draft waits until
+the user has answered this one's.
 
 Add only what the coordinator knows and the drafter does not: where
 this issue sits in the queue, and any collision with a draft already

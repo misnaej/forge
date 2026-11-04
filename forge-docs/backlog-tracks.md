@@ -12,7 +12,7 @@ holds the working details every skill and agent points to.
 ## The life of a track
 
 1. **Group** — `/plan-batch` proposes tracks from the overlap evidence
-   below and puts every grouping decision to the user in one round.
+   below and puts the grouping decisions to the user one at a time.
 2. **Plan** — one plan is drafted per confirmed track and validated by
    the user like any other plan.
 3. **Record** — `issue-triage` records the same plan on every member
@@ -106,7 +106,7 @@ rather than merged.
 ## First run, then re-align
 
 The **first run in a repo is the bootstrap**: the whole screened
-backlog is grouped at once, so expect a long decision round. **Later
+backlog is grouped at once, so expect many grouping questions. **Later
 runs re-align** the tracks that already exist: split one grown too large
 for one PR, merge two that turned out to be the same work, and flag
 members the still-current check (`forge-plan-check current`) found the

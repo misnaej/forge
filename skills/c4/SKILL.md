@@ -43,8 +43,9 @@ ask — a wrong guess produces a confidently misleading diagram.
    *draft* component grouping from package/directory boundaries — a proposal to
    react to, not the answer.
 
-3. **Interview (human side).** Ask in focused rounds — use `AskUserQuestion`
-   for structured choices, open questions where the answer is free-form. Cover:
+3. **Interview (human side).** Ask one question at a time (FOUNDATION §1
+   "One question at a time") — use `AskUserQuestion` for structured
+   choices, open questions where the answer is free-form. Cover:
    - **System** — one sentence: what is this system, in plain terms?
    - **People / actors** — who uses it (end users, developers, operators, other
      teams)? For each: a one-line role + what they do with it.
