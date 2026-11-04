@@ -437,7 +437,7 @@ Mechanics (modes, commands, templates): the `/pr` skill. Rules:
 
   **Resolving a conflict** — whoever picks up work, never monitor: plain `git merge origin/<base>` (§2: never rebase; dirty tree → §2 sync ladder, never `reset --hard`). No permission needed — merge commit destroys nothing. Care goes into resolution: read each side's intent, keep both, ask only when a side's purpose is undeterminable (question about code, not permission). Forge-generated artifacts (api-digest, cli-reference, FOUNDATION, C4 model) are pure functions of merged tree → `regenerate()`, never textual merge: `forge-resync --resolve-conflicts` (refuses if anything else conflicts); `warn_generated_conflicts` hook names it after merge.
 
-  Main session stays free. Skip only on explicit user request or `forge.run_context.is_ci()` — `is_ci()`, never `is_non_interactive()` (§15): question is whether anyone receives alerts; agent session has a human, just not on stdin.
+  Main session stays free. Skip only on explicit user request or `forge.run_context.is_ci()` — never `is_non_interactive()` (§15).
 
 ### Squash-merge messages (mandatory at PR finalization)
 
@@ -1017,12 +1017,11 @@ model, consumer guarantees and opt-in correctness extensions: **[`forge-docs/sma
 
 ---
 
-## 18. Cost Goals — Test Economy & Library Performance
+## 18. Cost Goals — Test Economy, Library Performance, Tokens
 
-Cost already has machinery: §8 retires development tests, §17 selects by
-depth, `forge-slow-tests-report` warns on duration regressions without
-gating. Missing was a *goal* they serve, so cost surfaced only when someone
-noticed a slow run. Two goals:
+§8 retires development tests, §17 selects by depth,
+`forge-slow-tests-report` warns on duration regressions. They serve three
+goals:
 
 **Test economy.** Test's runtime justified by what only it detects. Slow
 test → ask what unique behaviour goes unchecked if shrunk or moved —
@@ -1032,24 +1031,29 @@ test → ask what unique behaviour goes unchecked if shrunk or moved —
 optimising, show same-machine before/after. Continuous small work, not
 occasional campaigns.
 
-**Measured as ratios, not seconds.** Wall-clock not comparable across
-machines or load: locates where time goes; whether a change helped needs a
-controlled same-machine comparison.
+**Token economy.** Every agent request re-sends its whole context; a
+delegation pays its fixed context each turn. Measure with
+`forge-agent-profile --tokens`; cut fixed context and needless delegations
+first.
+
+**Measured as ratios, not seconds.** Wall-clock varies by machine and
+load: it locates time; proving a change helped needs a same-machine
+comparison.
 - Test economy = **unique covered statements per second** per test
   function: statements no other test covers, over its wall time, from a
-  `coverage json --show-contexts` export. Collapse parametrized variants to
-  base function first, else siblings cover each other's lines and all score
-  zero.
+  `coverage json --show-contexts` export. Collapse parametrized variants
+  first, else siblings cover each other's lines and all score zero.
 - Library performance = same-machine before/after ratio
   `forge:perf-optimizer` already reports.
-- Neither metric carries a threshold to tune.
+- Token economy = tokens per task and fixed-context share per agent type.
+- No metric carries a threshold to tune.
 
 **Enforcement is a review lens, never a gate** — no build fails on a
 duration. `forge:design-checker` asks the cost question of diffs that add or
 edit tests or touch a known hot path; `forge:test-advisor`'s necessity gate
 (§8) carries the cost half of its question.
 
-**Anti-goal.** Neither goal served by deleting assertions, weakening a
+**Anti-goal.** No goal served by deleting assertions, weakening a
 check, or parallelising to hide cost.
 
 ---

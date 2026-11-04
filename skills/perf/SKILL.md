@@ -65,9 +65,28 @@ Read every perf surface that exists, then summarize:
    agent, `--transcripts <dir>` backfills runs the ledger never named
    (only while Claude Code still keeps them). An empty ledger prints
    one line, not a finding.
-6. Summarize: regressed / new-slow tests, wall + peak-RSS trends per
+6. **Token use** (FOUNDATION §18 "Token economy"):
+   ```bash
+   forge-agent-profile --tokens
+   ```
+   Ranks tokens per agent type, per skill that launched the agents, and
+   per main-session skill; splits each into **fixed context** (the
+   prompt before the first tool call, re-sent on every request) and
+   work; totals delegation briefs and hand-back reports; and lists
+   mechanical **waste flags** (`single-call`, `fixed-context`,
+   `large-result`, `repeated-read`), each with its token figure. It
+   reads this checkout's Claude Code transcripts on its own. For the
+   main-session rows, "fixed ctx" is the conversation's size when the
+   skill started, not a startup cost. Turn the top flags into intake
+   entries (`forge-intake new finding …` when the flag names a
+   forge-shipped agent or skill, `lesson` for this repo's own), each
+   with the suggested reduction and the measured tokens it targets —
+   for example folding a two-call delegation into a direct command, or
+   reading a log section instead of the whole file.
+7. Summarize: regressed / new-slow tests, wall + peak-RSS trends per
    label, the slowest pre-commit steps, the agent types and runs that
-   dominate wall time, and every loop suspect or cap breach by name.
+   dominate wall time, every loop suspect or cap breach by name, the
+   costliest token consumers, and the intake entries step 6 recorded.
    For any hotspot worth deeper work, delegate the investigation to
    `forge:perf-optimizer` — it benchmarks, tries strategies, and reports
    a speedup matrix; the main agent applies edits only after reviewing

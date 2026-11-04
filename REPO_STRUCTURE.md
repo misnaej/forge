@@ -32,6 +32,7 @@ Checked on every commit by `verify-forge-repo-structure`: every listed file and 
    - slow_tests_report.py: `forge-slow-tests-report` — parses pytest `--durations` sections from a log (or stdin), merges across batches, prints the slowest tests; `--baseline`/`--update-baseline` compare against the committed `.forge-test-durations.json` (WARN-shaped, never gates; absent or malformed baseline = one skip line, not a wall of new-slow); `--coverage-json` ranks test functions by unique covered statements per second from a `coverage json --show-contexts` export; wired via the `/perf` skill
    - telemetry.py: `forge-telemetry` — process-tree RSS + host CPU sampler around a wrapped command; per-run log/plot artifacts, append-only `code_health/telemetry_history.log`, `--history` trend reader
    - agent_profile.py: `forge-agent-profile` — where agent and subagent time goes: pairs the `log_agent_timing` hook ledger (`code_health/agent_timing.jsonl`) with the subagent transcripts it names into per-agent-type wall/active time, slowest runs, per-tool cost, loop suspects, and `forge:precommit-fixer` cap breaches; append-only `code_health/agent_profile_history.log` and `code_health/agent_transcript_digest.jsonl` (per-run transcript signals that outlive Claude Code's transcript sweep); wired via `/perf` and `/report-to-forge`
+   - agent_profile_tokens.py: token accounting behind `forge-agent-profile --tokens` — per-request usage deduped by message id, fixed context vs work, main-session tokens per active skill, delegation brief and hand-back sizes, ranked rows and the token report renderer
    - ledger.py: the one writer + parser for the append-only `key=value` ledgers under `code_health/` (telemetry_history.log, smart_test_history.log, agent_profile_history.log), plus the JSON-lines appender for structured ones (agent_transcript_digest.jsonl)
    - text_clip.py: `truncate` — the shared "keep N characters, then append a marker" cut for bounded text (evidence, log fragments, labels, echoes); callers keep their own marker, budget arithmetic and stripping
    - config.py: loader for the `[tool.forge]` table in a repo's `pyproject.toml` (base branch and the other forge settings, defaulting to single-branch `main` behaviour)
@@ -269,6 +270,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_verify_repo_structure.py: tests for verify_repo_structure
    - test_verify_test_naming.py: tests for verify_test_naming
    - test_agent_profile.py: tests for agent_profile (where agent and subagent time goes)
+   - test_agent_profile_tokens.py: tests for agent_profile_tokens and the `--tokens` view (deduped usage, fixed context, session split, waste flags, digest compatibility)
    - test_changelog_fragments.py: tests for changelog_fragments (fragment validation, discovery, assembly, and the `forge-changelog` CLI)
    - test_dev_setup_hook.py: tests for the `dev/setup.sh` auto-refresh git-hook extensions, run as real bash subprocesses
    - test_forge_config.py: tests for forge_config
