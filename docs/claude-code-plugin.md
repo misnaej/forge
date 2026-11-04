@@ -102,6 +102,19 @@ distinguishes the two from inside the session — see FOUNDATION §11
 "Plugin staleness", which is why a restart, not a reload, is the
 terminal step of a plugin-moving upgrade.
 
+## Terse agent traffic (caveman mode)
+
+The `caveman_mode` hook asks the main conversation and every helper agent
+to write in caveman-full grammar to each other, because every word an
+agent writes is re-read on every later request; text people read stays
+plain English (FOUNDATION §8 "Write terse"). The grammar and its levels come from the
+[caveman](https://github.com/JuliusBrussee/caveman) plugin by Julius
+Brussee; forge ships only the instruction, so the plugin is not required.
+Install caveman too if you want its extras (`/caveman` levels, terse
+commit and review skills, `caveman-compress` for memory files). Turn
+forge's hook off with `[tool.forge.hooks].caveman = false`; measure the
+effect with `forge-agent-profile --tokens`.
+
 ## Consumer `CLAUDE.md`
 
 `install-forge-claude-md` writes two files: the foundation lives in

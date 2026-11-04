@@ -9816,3 +9816,76 @@ def test_load_continuation_is_silent_when_the_note_is_a_symlink(
         env={**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)},
     )
     assert (proc.returncode, proc.stdout) == (0, "")
+
+
+def _run_caveman_hook(
+    event: str, project_dir: Path
+) -> subprocess.CompletedProcess[str]:
+    """Run ``caveman_mode.sh`` for *event* with *project_dir* as the project.
+
+    Args:
+        event: ``hook_event_name`` piped on stdin.
+        project_dir: Value of ``CLAUDE_PROJECT_DIR`` (holds ``pyproject.toml``).
+
+    Returns:
+        The completed process.
+    """
+    return subprocess.run(
+        ["bash", str(_HOOKS_DIR / "caveman_mode.sh")],
+        input=json.dumps({"hook_event_name": event}),
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "CLAUDE_PROJECT_DIR": str(project_dir)},
+    )
+
+
+@pytest.mark.parametrize("event", ["SessionStart", "SubagentStart"])
+def test_caveman_mode_delivers_instruction_on_start_events(
+    event: str, tmp_path: Path
+) -> None:
+    """Both start events get the caveman instruction, echoing the event name.
+
+    Args:
+        event: Hook event name under test.
+    """
+    proc = _run_caveman_hook(event, tmp_path)
+    assert proc.returncode == 0
+    out = json.loads(proc.stdout)["hookSpecificOutput"]
+    assert out["hookEventName"] == event
+    assert "Caveman full" in out["additionalContext"]
+    assert "Plain concise English" in out["additionalContext"]
+
+
+def test_caveman_mode_is_silent_on_other_events(tmp_path: Path) -> None:
+    """Events other than the two start events deliver nothing."""
+    proc = _run_caveman_hook("PreToolUse", tmp_path)
+    assert (proc.returncode, proc.stdout) == (0, "")
+
+
+def test_caveman_mode_is_silent_when_opted_out(tmp_path: Path) -> None:
+    """``[tool.forge.hooks] caveman = false`` delivers nothing."""
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.hooks]\ncaveman = false\n", encoding="utf-8"
+    )
+    proc = _run_caveman_hook("SessionStart", tmp_path)
+    assert (proc.returncode, proc.stdout) == (0, "")
+
+
+@pytest.mark.parametrize(
+    "pyproject",
+    [None, "not = [valid toml", "[tool.forge.hooks]\ncaveman = true\n"],
+    ids=["missing", "unparseable", "explicit-true"],
+)
+def test_caveman_mode_defaults_on(pyproject: str | None, tmp_path: Path) -> None:
+    """Missing, unreadable or explicitly-true config leaves the hook on.
+
+    Args:
+        pyproject: Contents of ``pyproject.toml``, or None to omit the file.
+    """
+    if pyproject is not None:
+        (tmp_path / "pyproject.toml").write_text(pyproject, encoding="utf-8")
+    proc = _run_caveman_hook("SessionStart", tmp_path)
+    assert proc.returncode == 0
+    context = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert "Caveman full" in context
