@@ -24,6 +24,7 @@ from forge.agent_profile_tokens import (
     FEW_TOOL_CALLS,
     FIXED_SHARE_THRESHOLD,
     LARGE_RESULT_CHARS,
+    LONG_REPORT_CHARS,
     NO_SKILL,
     SessionTokens,
     TokenUsage,
@@ -616,6 +617,29 @@ def test_waste_flags(
         repeated_reads=reads,
     )
     run = AgentRun(agent_id="a1", agent_type="forge:x", stats=stats)
+
+    assert [flag.kind for flag in waste_flags(run)] == expected
+
+
+@pytest.mark.parametrize(
+    ("handback", "expected"),
+    [
+        pytest.param(LONG_REPORT_CHARS, ["long-report"], id="report-at-limit"),
+        pytest.param(LONG_REPORT_CHARS - 1, [], id="report-below-limit"),
+    ],
+)
+def test_waste_flags_long_report(handback: int, expected: list[str]) -> None:
+    """Behavior: the long-report flag fires exactly at ``LONG_REPORT_CHARS``.
+
+    Args:
+        handback: Characters in the run's report back to the caller.
+        expected: Waste flag kinds expected to fire.
+    """
+    usage = TokenUsage(input_tokens=_PROMPT, fixed_tokens=1, requests=2)
+    stats = TranscriptStats(tool_calls=FEW_TOOL_CALLS + 1, tokens=usage)
+    run = AgentRun(
+        agent_id="a1", agent_type="forge:x", stats=stats, handback_chars=handback
+    )
 
     assert [flag.kind for flag in waste_flags(run)] == expected
 

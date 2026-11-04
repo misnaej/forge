@@ -9855,6 +9855,10 @@ def test_caveman_mode_delivers_instruction_on_start_events(
     assert out["hookEventName"] == event
     assert "Caveman full" in out["additionalContext"]
     assert "Plain concise English" in out["additionalContext"]
+    assert (
+        "Your report back to the agent that started you is agent traffic too"
+        in out["additionalContext"]
+    )
 
 
 def test_caveman_mode_is_silent_on_other_events(tmp_path: Path) -> None:

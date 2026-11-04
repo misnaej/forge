@@ -220,8 +220,8 @@ these rows "fixed ctx" is the conversation's size when the skill
 started), the size of delegation briefs and hand-back reports, and
 mechanical waste flags: a single-call delegation, a run whose fixed
 context dominates its prompt on three or fewer tool calls, a tool
-result of 20,000 characters or more, and a file read again in the same
-run. Runs without usage in their transcript are counted, never shown
+result of 20,000 characters or more, a report back to the caller of
+2,000 characters or more, and a file read again in the same run. Runs without usage in their transcript are counted, never shown
 as zero. Turn and output-token counts in digest lines written before
 this accounting stay as they were recorded.
 

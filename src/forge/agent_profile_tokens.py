@@ -36,6 +36,9 @@ FEW_TOOL_CALLS: Final = 3
 #: A tool result at least this long (characters) is re-read on every
 #: later request of the run.
 LARGE_RESULT_CHARS: Final = 20_000
+#: A hand-back report at least this long (characters, ~300 words) is
+#: re-read by the caller on every later request.
+LONG_REPORT_CHARS: Final = 2_000
 #: Main-session requests made while no skill was active.
 NO_SKILL: Final = "(no skill)"
 DELEGATION_TOOLS: Final = frozenset({"Agent", "Task"})

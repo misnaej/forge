@@ -45,7 +45,7 @@ PY
 )
 [ "$ENABLED" = "off" ] && exit 0
 
-CONTEXT='[forge] Caveman full for agent traffic (your replies, briefs, reports): drop articles, filler, pleasantries, hedging; fragments OK; short synonyms; lead with the verdict. Keep whole words (no abbreviations). Never alter code, symbols, paths, commands, names, numbers or error text. Plain concise English instead for text people read: PR descriptions, issue and comment bodies, commit messages, human-facing docs, security warnings and confirmations of irreversible actions.'
+CONTEXT='[forge] Caveman full for agent traffic (your replies, briefs, reports): drop articles, filler, pleasantries, hedging; fragments OK; short synonyms; lead with the verdict. Your report back to the agent that started you is agent traffic too: caveman full, even if a person may also read it. Keep whole words (no abbreviations). Never alter code, symbols, paths, commands, names, numbers or error text. Plain concise English instead for text people read: PR descriptions, issue and comment bodies, commit messages, human-facing docs, security warnings and confirmations of irreversible actions.'
 
 jq -n --arg event "$EVENT" --arg context "$CONTEXT" \
     '{hookSpecificOutput: {hookEventName: $event, additionalContext: $context}}'

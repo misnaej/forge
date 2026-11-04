@@ -69,6 +69,7 @@ from forge.agent_profile_tokens import (
     FEW_TOOL_CALLS,
     FIXED_SHARE_THRESHOLD,
     LARGE_RESULT_CHARS,
+    LONG_REPORT_CHARS,
     SessionTokens,
     TokenReport,
     TokenRow,
@@ -1653,7 +1654,8 @@ def waste_flags(run: AgentRun) -> list[WasteFlag]:
 
     Returns:
         Its findings: fixed context dominating a short run (or a run of a
-        single tool call), a large tool result, and files read repeatedly.
+        single tool call), a large tool result, a long report back to the
+        caller, and files read repeatedly.
     """
     stats = run.stats
     tokens = stats.tokens if stats is not None else None
@@ -1690,6 +1692,15 @@ def waste_flags(run: AgentRun) -> list[WasteFlag]:
                 label,
                 f"{stats.largest_result} returned {stats.largest_result_chars} chars",
                 stats.largest_result_chars // _CHARS_PER_TOKEN,
+            )
+        )
+    if run.handback_chars >= LONG_REPORT_CHARS:
+        flags.append(
+            WasteFlag(
+                "long-report",
+                label,
+                f"report back to the caller was {run.handback_chars} chars",
+                run.handback_chars // _CHARS_PER_TOKEN,
             )
         )
     flags.extend(
