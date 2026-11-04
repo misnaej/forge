@@ -157,7 +157,7 @@ precommit_fixer = ["block_fixer_recon", "require_fixer_verdict"]
 [tool.forge.precommit]
 # Forge dogfoods its own opt-in steps: typecheck (see [tool.forge.typecheck]),
 # c4 (architecture-diagram drift guard — keeps docs/architecture.dsl + the
-# README C4 block in sync with the import graph; self-skips without
+# C4 block in docs/architecture.md in sync with the import graph; self-skips without
 # [tool.forge.c4]), and layering (see [tool.forge.layering]).
 enable = ["typecheck", "c4", "layering"]
 

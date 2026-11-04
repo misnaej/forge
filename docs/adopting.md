@@ -95,7 +95,7 @@ edited this — leave it"). Add repo-specific steps in
 `.githooks/post-merge.d/` / `post-checkout.d/` (a drop-in dir the
 installer never touches) or by editing the wrapper directly — see
 [`customizing-precommit.md`](customizing-precommit.md). Drop-in scripts
-run from the repo root in sorted filename order and inherit the shell's
+(executable `*.sh` files) run from the repo root in sorted filename order and inherit the shell's
 environment; one that fails logs a warning and is skipped.
 `install-forge-githooks --force` overwrites edited wrappers and keeps the
 old one as `.githooks/<name>.before-forge-vX.Y.Z.bak`.
