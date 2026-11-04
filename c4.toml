@@ -12,7 +12,7 @@ output = "docs/architecture.dsl"
 # When set, forge-gen-c4 also keeps the managed C4 block (between the
 # <!-- forge:c4:start/end --> markers) in this file in sync, and --check
 # fails on drift — so the diagram refreshes at each PR if the structure changed.
-readme = "README.md"
+readme = "docs/architecture.md"
 
 [[person]]
 tags = ["person"]
