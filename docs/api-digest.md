@@ -1183,13 +1183,14 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `marketplace_dir(name: str) -> Path` — Return the shared directory holding marketplace *name*.
 - `marketplace_manifest(version: str, commit: str) -> dict[str, object]` — Return the ``marketplace.json`` content for forge *version*.
 - `write_marketplace(version: str, commit: str) -> Path` — Write the per-version marketplace and return its directory.
-- `resolve_commit(version: str) -> str | None` — Ask GitHub which commit release tag ``v<version>`` points at.
+- `class TagLookup` — What GitHub said about one release tag.
+- `resolve_commit(version: str) -> TagLookup` — Ask GitHub which commit release tag ``v<version>`` points at.
 - `_printable(text: str) -> str` _(internal)_ — Return *text* with control characters escaped, capped in length.
 - `_claude(args: list[str], cwd: Path) -> tuple[bool, str]` _(internal)_ — Run ``claude plugin <args> --json`` in *cwd*.
 - `_refusal(root: Path) -> str | None` _(internal)_ — Name a setup this command must not install alongside, if any.
 - `_run_install_steps(root: Path, directory: Path, name: str) -> bool` _(internal)_ — Register the per-version marketplace and install the plugin from it.
 - `_remove_stale_installs(root: Path, name: str) -> None` _(internal)_ — Uninstall this checkout's older local forge installs.
-- `_install(root: Path, version: str, name: str) -> int` _(internal)_ — Write the release marketplace, install it, and verify the result.
+- `_install(root: Path, version: str, name: str, *, quiet: bool) -> int` _(internal)_ — Write the release marketplace, install it, and verify the result.
 - `sync(root: Path, *, check: bool = False, quiet: bool = False) -> int` — Bring *root*'s own forge plugin install onto its target release.
 - `main(argv: list[str] | None = None) -> int` — Parse arguments and run :func:`sync` on the current repo.
 

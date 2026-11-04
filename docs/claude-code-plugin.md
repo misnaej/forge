@@ -33,6 +33,9 @@ git+...@vX.Y.Z` pin names; a pin on a branch names no fixed content, so
 the command refuses (exit 2) — pin a release tag. In forge's own repo it
 is the version `.claude-plugin/plugin.json` names: the latest tag, except
 on a release-assembly commit, which names the release about to be tagged.
+Until CI pushes that tag there is nothing to install: the hooks stay
+silent, a manual run says so, and the next pull or branch switch installs
+it.
 
 **Why per checkout.** Claude Code keeps one marketplace registration per
 *name* for the whole machine. While every repo registered forge under the

@@ -214,7 +214,7 @@ def test_resolve_commit_prefers_the_peeled_target(
     listing = f"{OTHER_COMMIT}\trefs/tags/v1.2.3\n{COMMIT}\trefs/tags/v1.2.3^{{}}"
     monkeypatch.setattr(plugin_sync, "run_git", _remote(listing))
 
-    assert plugin_sync.resolve_commit(VERSION) == COMMIT
+    assert plugin_sync.resolve_commit(VERSION) == (True, COMMIT)
 
 
 def test_resolve_commit_accepts_a_lightweight_tag(
@@ -223,7 +223,7 @@ def test_resolve_commit_accepts_a_lightweight_tag(
     """A lightweight tag has no peeled line; its own line is the commit."""
     monkeypatch.setattr(plugin_sync, "run_git", _remote(f"{COMMIT}\trefs/tags/v1.2.3"))
 
-    assert plugin_sync.resolve_commit(VERSION) == COMMIT
+    assert plugin_sync.resolve_commit(VERSION) == (True, COMMIT)
 
 
 @pytest.mark.parametrize(
@@ -232,22 +232,30 @@ def test_resolve_commit_accepts_a_lightweight_tag(
         subprocess.CalledProcessError(128, "git"),
         subprocess.TimeoutExpired("git", 30),
         OSError("no git"),
-        "",
         "not-a-sha\trefs/tags/v1.2.3",
     ],
-    ids=["git-error", "timeout", "oserror", "empty", "non-hex"],
+    ids=["git-error", "timeout", "oserror", "non-hex"],
 )
-def test_resolve_commit_is_none_when_the_remote_gives_no_commit(
+def test_resolve_commit_is_unreached_when_the_remote_gives_no_commit(
     monkeypatch: pytest.MonkeyPatch, answer: str | Exception
 ) -> None:
-    """Offline, unpublished or garbled answers are "unknown", never a guess.
+    """Offline or garbled answers are "unknown", never a guess.
 
     Args:
         answer: The remote listing, or the exception the remote raises.
     """
     monkeypatch.setattr(plugin_sync, "run_git", _remote(answer))
 
-    assert plugin_sync.resolve_commit(VERSION) is None
+    assert plugin_sync.resolve_commit(VERSION) == (False, None)
+
+
+def test_resolve_commit_reports_an_unpublished_tag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty answer is the one proof the tag is absent: reached, no commit."""
+    monkeypatch.setattr(plugin_sync, "run_git", _remote(""))
+
+    assert plugin_sync.resolve_commit(VERSION) == (True, None)
 
 
 # ---------------------------------------------------------------------------
@@ -561,12 +569,37 @@ def test_sync_unresolvable_commit_writes_no_marketplace(
     online: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Offline (or an unpublished tag) is "unknown", before any file is written."""
+    """Offline is "unknown", before any file is written."""
     monkeypatch.setattr(plugin_sync, "run_git", _remote(OSError("offline")))
     monkeypatch.setattr(plugin_sync, "_claude", _fail_loud)
 
     assert plugin_sync.sync(repo) == plugin_sync.EXIT_UNKNOWN
     assert not xdg_cache.exists()
+
+
+@pytest.mark.parametrize("quiet", [True, False], ids=["hook", "manual"])
+def test_sync_unpublished_release_is_a_success_with_nothing_installed(
+    sync_env: SyncEnv,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    *,
+    quiet: bool,
+) -> None:
+    """A release not yet tagged is expected after an assembly merge, not a failure.
+
+    Args:
+        quiet: Whether the sync runs in quiet mode, as the git hooks do.
+    """
+    repo, _, _, xdg_cache = sync_env
+    monkeypatch.setattr(plugin_sync, "run_git", _remote(""))
+    monkeypatch.setattr(plugin_sync, "_claude", _fail_loud)
+
+    with caplog.at_level(logging.INFO):
+        rc = plugin_sync.sync(repo, quiet=quiet)
+
+    assert rc == plugin_sync.EXIT_OK
+    assert not xdg_cache.exists()
+    assert ("not tagged on GitHub yet" in caplog.text) is not quiet
 
 
 def test_sync_installs_and_replaces_only_this_checkouts_old_install(

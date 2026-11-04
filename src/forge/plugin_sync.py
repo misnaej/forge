@@ -34,7 +34,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Final
+from typing import Final, NamedTuple
 
 from forge.git_utils import (
     _FORGE_GITHUB_REPO,
@@ -143,15 +143,31 @@ def write_marketplace(version: str, commit: str) -> Path:
     return root
 
 
-def resolve_commit(version: str) -> str | None:
+class TagLookup(NamedTuple):
+    """What GitHub said about one release tag.
+
+    ``reached`` with no ``commit`` is the window between a release
+    assembly merging and CI pushing its tag — expected, not a failure.
+    """
+
+    reached: bool
+    commit: str | None
+
+
+def resolve_commit(version: str) -> TagLookup:
     """Ask GitHub which commit release tag ``v<version>`` points at.
+
+    Only an empty listing proves the tag absent; an answer with no
+    commit-shaped line is garbled, so it counts as unreached.
 
     Args:
         version: Release, ``X.Y.Z``.
 
     Returns:
-        The commit (the peeled target of an annotated tag), or ``None``
-        when the remote cannot be reached or holds no such tag.
+        ``reached`` and the commit (the peeled target of an annotated
+        tag) when published; ``reached`` with no commit when GitHub
+        answered and holds no such tag; neither when the remote could
+        not be reached or its answer could not be read.
     """
     tag = f"refs/tags/v{version}"
     try:
@@ -165,13 +181,16 @@ def resolve_commit(version: str) -> str | None:
             timeout=_LS_REMOTE_TIMEOUT_S,
         )
     except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        return None
+        return TagLookup(reached=False, commit=None)
+    if not listing.strip():
+        return TagLookup(reached=True, commit=None)
     refs: dict[str, str] = {}
     for line in listing.splitlines():
         sha, _, ref = line.partition("\t")
         if _COMMIT.fullmatch(sha):
             refs[ref] = sha
-    return refs.get(f"{tag}^{{}}") or refs.get(tag)
+    commit = refs.get(f"{tag}^{{}}") or refs.get(tag)
+    return TagLookup(reached=commit is not None, commit=commit)
 
 
 def _printable(text: str) -> str:
@@ -307,29 +326,39 @@ def _remove_stale_installs(root: Path, name: str) -> None:
                 )
 
 
-def _install(root: Path, version: str, name: str) -> int:
+def _install(root: Path, version: str, name: str, *, quiet: bool) -> int:
     """Write the release marketplace, install it, and verify the result.
 
     Args:
         root: Checkout root.
         version: The target plugin release version.
         name: The pinned marketplace name.
+        quiet: Print nothing when the release tag is not published yet.
 
     Returns:
-        :data:`EXIT_OK` when the install is recorded for this checkout;
-        :data:`EXIT_FAILED` when a Claude Code step fails or nothing is
-        recorded afterwards; :data:`EXIT_UNKNOWN` when the release commit
-        cannot be read.
+        :data:`EXIT_OK` when the install is recorded for this checkout,
+        or when GitHub holds no tag for the release yet (nothing to
+        install until it does); :data:`EXIT_FAILED` when a Claude Code
+        step fails or nothing is recorded afterwards;
+        :data:`EXIT_UNKNOWN` when GitHub cannot be reached or read.
     """
-    commit = resolve_commit(version)
-    if commit is None:
-        logger.error(
-            "forge-plugin-sync: could not read the commit of release v%s from "
-            "GitHub (offline, or the tag is not published yet).",
-            version,
-        )
-        return EXIT_UNKNOWN
-    directory = write_marketplace(version, commit)
+    lookup = resolve_commit(version)
+    if lookup.commit is None:
+        if not lookup.reached:
+            logger.error(
+                "forge-plugin-sync: could not read release v%s from GitHub "
+                "(offline, or an unreadable answer).",
+                version,
+            )
+            return EXIT_UNKNOWN
+        if not quiet:
+            logger.info(
+                "forge-plugin-sync: release v%s is not tagged on GitHub yet — "
+                "run forge-plugin-sync again once it is.",
+                version,
+            )
+        return EXIT_OK
+    directory = write_marketplace(version, lookup.commit)
     if not _run_install_steps(root, directory, name):
         return EXIT_FAILED
     _remove_stale_installs(root, name)
@@ -354,15 +383,17 @@ def sync(root: Path, *, check: bool = False, quiet: bool = False) -> int:
     Args:
         root: Checkout root.
         check: Report only; never call Claude Code.
-        quiet: Print nothing when already current or when ``claude`` is
-            absent — for git hooks. Changes and failures always print.
+        quiet: Print nothing when already current, when ``claude`` is
+            absent, or when the release is not tagged yet — for git
+            hooks. Changes and failures always print.
 
     Returns:
-        :data:`EXIT_OK` when current (or a change was made, or ``claude``
-        is absent); :data:`EXIT_FAILED` when not current under *check*, on
-        a conflicting install, or when Claude Code refused;
-        :data:`EXIT_UNKNOWN` when the target release or its commit cannot
-        be determined.
+        :data:`EXIT_OK` when current (or a change was made, ``claude`` is
+        absent, or the release is not tagged on GitHub yet);
+        :data:`EXIT_FAILED` when not current under *check*, on a
+        conflicting install, or when Claude Code refused;
+        :data:`EXIT_UNKNOWN` when the target release cannot be determined
+        or GitHub cannot be reached or read.
     """
     version = target_plugin_version(root)
     if version is None:
@@ -393,7 +424,7 @@ def sync(root: Path, *, check: bool = False, quiet: bool = False) -> int:
     if refusal is not None:
         logger.error("forge-plugin-sync: %s", refusal)
         return EXIT_FAILED
-    return _install(root, version, name)
+    return _install(root, version, name, quiet=quiet)
 
 
 def main(argv: list[str] | None = None) -> int:
