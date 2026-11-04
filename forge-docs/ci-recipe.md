@@ -4,8 +4,7 @@ A pasteable GitHub Actions setup for keeping `forge-scripts` current
 in a consumer repo. Channel-pinned, no third-party bot, no per-version
 pin maintenance.
 
-> See also: [README "Running forge in CI"](../README.md#running-forge-in-ci)
-> for the summary. This page is the full pasteable copy.
+> The full pasteable CI setup for forge.
 
 ---
 
@@ -27,13 +26,13 @@ dev = [
 ```
 
 `@main` = every release (forge is single-track). See the
-[pin table](../README.md#pick-a-pin) in the README.
+[pin table](../docs/adopting.md#pick-a-pin).
 
 A tag pin (`@v1.9.1`) is also supported for one-off frozen releases.
 For ongoing automated upgrades the channel pin is the recommended
 default: it requires no per-version maintenance and the scheduled
 workflow below handles the rest. Switching an existing branch pin to a
-tag pin? Read ["About branch pins (`@main`)"](../README.md#about-branch-pins-main)
+tag pin? Read ["Pick a pin"](../docs/adopting.md#pick-a-pin)
 first — branch-only refresh wrappers silently stop updating forge after
 the switch; `forge-upgrade` and `forge-doctor` now detect the mismatch.
 
