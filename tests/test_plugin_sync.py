@@ -602,6 +602,38 @@ def test_sync_unpublished_release_is_a_success_with_nothing_installed(
     assert ("not tagged on GitHub yet" in caplog.text) is not quiet
 
 
+@pytest.mark.parametrize("quiet", [True, False], ids=["hook", "manual"])
+def test_sync_consumer_pin_to_a_missing_tag_is_an_error(
+    sync_env: SyncEnv,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    *,
+    quiet: bool,
+) -> None:
+    """Only a plugin repo waits for its tag; a consumer's missing tag is a bad pin.
+
+    Args:
+        quiet: Whether the sync runs in quiet mode, as the git hooks do.
+    """
+    _, tmp_path, _, xdg_cache = sync_env
+    consumer = tmp_path / "consumer"
+    consumer.mkdir()
+    (consumer / "pyproject.toml").write_text(
+        "[project]\nname = 'c'\n[project.optional-dependencies]\n"
+        f'dev = ["forge-scripts @ git+https://github.com/misnaej/forge.git@v{VERSION}"]\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(plugin_sync, "run_git", _remote(""))
+    monkeypatch.setattr(plugin_sync, "_claude", _fail_loud)
+
+    with caplog.at_level(logging.INFO):
+        rc = plugin_sync.sync(consumer, quiet=quiet)
+
+    assert rc == plugin_sync.EXIT_UNKNOWN
+    assert not xdg_cache.exists()
+    assert "names a published release tag" in caplog.text
+
+
 def test_sync_installs_and_replaces_only_this_checkouts_old_install(
     sync_env: SyncEnv,
     monkeypatch: pytest.MonkeyPatch,

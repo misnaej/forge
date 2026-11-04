@@ -46,6 +46,7 @@ from forge.git_utils import (
 )
 from forge.run_context import is_ci
 from forge.version_surfaces import (
+    MANIFEST_AREA,
     UNPRINTABLE,
     checkout_installs,
     checkout_plugin_current,
@@ -337,10 +338,11 @@ def _install(root: Path, version: str, name: str, *, quiet: bool) -> int:
 
     Returns:
         :data:`EXIT_OK` when the install is recorded for this checkout,
-        or when GitHub holds no tag for the release yet (nothing to
-        install until it does); :data:`EXIT_FAILED` when a Claude Code
-        step fails or nothing is recorded afterwards;
-        :data:`EXIT_UNKNOWN` when GitHub cannot be reached or read.
+        or, in a plugin repo, when GitHub holds no tag for the release
+        yet (nothing to install until it does); :data:`EXIT_FAILED` when
+        a Claude Code step fails or nothing is recorded afterwards;
+        :data:`EXIT_UNKNOWN` when GitHub cannot be reached or read, or
+        when a consumer's pin names a tag GitHub does not hold.
     """
     lookup = resolve_commit(version)
     if lookup.commit is None:
@@ -348,6 +350,16 @@ def _install(root: Path, version: str, name: str, *, quiet: bool) -> int:
             logger.error(
                 "forge-plugin-sync: could not read release v%s from GitHub "
                 "(offline, or an unreadable answer).",
+                version,
+            )
+            return EXIT_UNKNOWN
+        # Only forge's own manifest names a release before its tag exists
+        # (the assembly merge, minutes before CI tags it); a consumer's pin
+        # naming a missing tag is a mistake worth an error every time.
+        if not (root / MANIFEST_AREA).is_file():
+            logger.error(
+                "forge-plugin-sync: GitHub holds no release v%s — check that "
+                "the forge-scripts pin names a published release tag.",
                 version,
             )
             return EXIT_UNKNOWN
@@ -384,16 +396,17 @@ def sync(root: Path, *, check: bool = False, quiet: bool = False) -> int:
         root: Checkout root.
         check: Report only; never call Claude Code.
         quiet: Print nothing when already current, when ``claude`` is
-            absent, or when the release is not tagged yet — for git
-            hooks. Changes and failures always print.
+            absent, or when a plugin repo's release is not tagged yet —
+            for git hooks. Changes and failures always print.
 
     Returns:
         :data:`EXIT_OK` when current (or a change was made, ``claude`` is
-        absent, or the release is not tagged on GitHub yet);
+        absent, or a plugin repo's release is not tagged on GitHub yet);
         :data:`EXIT_FAILED` when not current under *check*, on a
         conflicting install, or when Claude Code refused;
-        :data:`EXIT_UNKNOWN` when the target release cannot be determined
-        or GitHub cannot be reached or read.
+        :data:`EXIT_UNKNOWN` when the target release cannot be determined,
+        GitHub cannot be reached or read, or a consumer's pin names a
+        tag GitHub does not hold.
     """
     version = target_plugin_version(root)
     if version is None:
