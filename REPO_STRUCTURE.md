@@ -375,7 +375,8 @@ Architecture RFCs and research reports — aspirational or advisory, not descrip
    - README.md: main repository documentation
    - REPO_STRUCTURE.md: this file
    - CHANGELOG.md: main-only release history (Keep a Changelog format)
-   - CONTRIBUTING.md: contribution guidelines
+   - CONTRIBUTING.md: contribution policy and how to work on forge
+   - CODE_OF_CONDUCT.md: code of conduct (Contributor Covenant 2.1)
    - LICENSE: MIT license
    - docs/architecture.dsl: generated C4 model (Structurizr DSL) — `forge-gen-c4` output
 
