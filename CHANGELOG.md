@@ -20,6 +20,14 @@ fragment type (**Features / Changes / Fixes / Removed / Docs**).
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v10.8.1 — 2026-11-04
+
+### Changes
+- The `caveman_mode` instruction now says a helper's report back to the agent that started it is agent traffic too, so it is written in caveman full even when a person may also read it (live testing showed helpers kept writing reports in full prose). `forge-agent-profile --tokens` adds a `long-report` waste flag for reports of 2,000 characters or more, so whether reports actually shrink shows up in `/perf`.
+
+### Docs
+- CONTRIBUTING.md lists Ingmar Schuster as a contributor.
+
 ## v10.8.0 — 2026-11-04
 
 ### Features
