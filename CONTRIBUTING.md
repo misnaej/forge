@@ -18,12 +18,12 @@ instead; this page is for changing forge itself.
    searches for a duplicate first.
 2. **Issues filed any other way are triaged, not lost.** An issue from
    someone who is not a maintainer that did not come through
-   `/report-to-forge` is labelled `needs-forge-report`, and a maintainer replies: we will fix
-   it, we invite you to fix it, or we do not plan to and say why — you
-   are welcome to argue the case.
+   `/report-to-forge` is labelled `needs-forge-report`, and a maintainer
+   replies: we will fix it, we invite you to fix it, or we do not plan
+   to and say why — you are welcome to argue the case.
 3. **Outside pull requests are by invitation.** If you are not a
-   maintainer, open a PR only on an issue a maintainer has invited you to work on,
-   from your fork. Other PRs are closed with a pointer here.
+   maintainer, open a PR only on an issue a maintainer has invited you
+   to work on, from your fork. Other PRs are closed with a pointer here.
    Contributors whose work lands are credited in [Contributors](#contributors).
 4. **Nothing changes existing behaviour without the owner's approval.**
    Approval is a plan the owner validated with `/plan-issue` before work
