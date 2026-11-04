@@ -334,7 +334,8 @@ def _install(root: Path, version: str, name: str, *, quiet: bool) -> int:
         root: Checkout root.
         version: The target plugin release version.
         name: The pinned marketplace name.
-        quiet: Print nothing when the release tag is not published yet.
+        quiet: Print nothing when a plugin repo's release tag is not
+            published yet; a consumer's missing tag is reported anyway.
 
     Returns:
         :data:`EXIT_OK` when the install is recorded for this checkout,

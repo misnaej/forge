@@ -30,7 +30,8 @@ installed, and in CI.
 
 **Which release.** A consumer gets the release its `forge-scripts @
 git+...@vX.Y.Z` pin names; a pin on a branch names no fixed content, so
-the command refuses (exit 2) — pin a release tag. In forge's own repo it
+the command refuses (exit 2) — pin a release tag. A pin naming a tag
+GitHub does not hold is an error too (exit 2). In forge's own repo it
 is the version `.claude-plugin/plugin.json` names: the latest tag, except
 on a release-assembly commit, which names the release about to be tagged.
 Until CI pushes that tag there is nothing to install: the hooks stay
