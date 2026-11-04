@@ -187,6 +187,7 @@ forge-agent-profile                                   # this workspace's ledger
 forge-agent-profile --agent-type forge:precommit-fixer --last 20
 forge-agent-profile --transcripts ~/.claude/projects/<encoded-cwd>   # runs the ledger never named
 forge-agent-profile --json                            # runs + per-type + per-tool rows
+forge-agent-profile --tokens                          # where the tokens go, with waste flags
 ```
 
 The report answers four questions:
@@ -206,6 +207,24 @@ session's* transcript, not the subagent's, so a transcript is read only
 when its filename names that agent — reading the recorded path as given
 would charge one session's turns and repeated calls to every agent that
 ran beneath it.
+
+**Tokens.** Claude Code writes one transcript record per content block,
+each repeating its request's id and usage, so turns and tokens count
+each request once. A request's prompt is its fresh input plus cache
+writes plus cache reads; the first request's prompt is the run's
+**fixed context** — what the agent loads before any work, and re-sends
+on every later request. `--tokens` ranks subagent tokens per agent type
+and per skill that launched them, main-session tokens per active skill
+(read from this checkout's transcript directory, found on its own; for
+these rows "fixed ctx" is the conversation's size when the skill
+started), the size of delegation briefs and hand-back reports, and
+mechanical waste flags: a single-call delegation, a run whose fixed
+context dominates its prompt on three or fewer tool calls, a tool
+result of 20,000 characters or more, and a file read again in the same
+run. Runs without usage in their transcript are counted, never shown
+as zero. Turn and output-token counts in digest lines written before
+this accounting stay as they were recorded.
+
 Claude Code documents that format as internal and subject to change, so
 it is read tolerantly — an unrecognised line is skipped, never an error
 — and only ever enriches a run; `--transcripts <dir>` scans a project

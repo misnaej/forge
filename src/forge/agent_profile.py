@@ -60,11 +60,26 @@ import math
 import re
 import statistics
 from collections import Counter, defaultdict
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeGuard
 
+from forge.agent_profile_tokens import (
+    FEW_TOOL_CALLS,
+    FIXED_SHARE_THRESHOLD,
+    LARGE_RESULT_CHARS,
+    SessionTokens,
+    TokenReport,
+    TokenRow,
+    TokenUsage,
+    UsageTally,
+    WasteFlag,
+    parse_session,
+    rank,
+    render_token_report,
+    tool_result_chars,
+)
 from forge.git_utils import (
     code_health_dir,
     configure_cli_logging,
@@ -192,6 +207,44 @@ def _is_path_component(value: str | None) -> TypeGuard[str]:
     return bool(value) and value not in {".", ".."} and not set(value) & {"/", "\\"}
 
 
+_PROJECT_DIR_UNSAFE = re.compile(r"[^A-Za-z0-9]")
+
+
+def default_transcripts_dir(root: Path) -> Path | None:
+    """Claude Code's transcript directory for the checkout at *root*.
+
+    Claude Code names a project's directory after its absolute path with
+    every non-alphanumeric character replaced by ``-``.
+
+    Args:
+        root: The checkout root.
+
+    Returns:
+        ``~/.claude/projects/<encoded root>`` when it exists, else ``None``
+        (no Claude Code on this machine, as in CI).
+    """
+    encoded = _PROJECT_DIR_UNSAFE.sub("-", str(root.resolve()))
+    candidate = Path.home() / ".claude" / "projects" / encoded
+    return candidate if candidate.is_dir() else None
+
+
+def _read_meta(transcript: Path) -> dict[str, Any]:
+    """The ``agent-<id>.meta.json`` sidecar Claude Code writes beside a transcript.
+
+    Args:
+        transcript: A subagent transcript path.
+
+    Returns:
+        The sidecar's object, or ``{}`` when it is absent or unreadable.
+    """
+    meta = transcript.with_name(f"{transcript.stem}.meta.json")
+    try:
+        data = json.loads(meta.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 @dataclass
 class TranscriptStats:
     """What a subagent transcript adds to a run's ledger record."""
@@ -205,6 +258,13 @@ class TranscriptStats:
     repeated_call: str = ""
     precommit_runs: int = 0
     output_tokens: int = 0
+    #: ``None`` when the transcript carried no usage (or predates it), so
+    #: unknown cost is never mistaken for zero cost.
+    tokens: TokenUsage | None = None
+    largest_result_chars: int = 0
+    largest_result: str = ""
+    #: File path → characters of its second and later reads in the run.
+    repeated_reads: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -225,6 +285,11 @@ class AgentRun:
     ledger_active_s: float = 0.0
     ledger_precommit_runs: int = 0
     stats: TranscriptStats | None = None
+    #: Set by ``--tokens`` from the launching session: the skill active
+    #: when this agent was started, and the size of its brief and report.
+    caller_skill: str | None = None
+    brief_chars: int = 0
+    handback_chars: int = 0
     last_event: datetime | None = field(default=None, repr=False)
 
     @property
@@ -787,6 +852,10 @@ def parse_transcript(path: Path) -> TranscriptStats | None:
     resumed with a follow-up message legitimately re-runs ``git
     status``; only repetition inside a single prompt suggests a loop.
 
+    Claude Code writes one record per content block, each repeating its
+    request's id and usage, so turns and tokens count each request once
+    (:class:`~forge.agent_profile_tokens.UsageTally`).
+
     Args:
         path: The ``agent-<id>.jsonl`` transcript.
 
@@ -794,10 +863,8 @@ def parse_transcript(path: Path) -> TranscriptStats | None:
         The stats, or ``None`` when the file holds no timestamped record.
     """
     stats = TranscriptStats()
+    scan = _TranscriptScan()
     previous: datetime | None = None
-    signatures: Counter[str] = Counter()
-    labels: dict[str, str] = {}
-    precommit_in_segment = 0
     for record in _iter_jsonl(path):
         ts = _parse_ts(record.get("timestamp"))
         if ts is None:
@@ -807,42 +874,109 @@ def parse_transcript(path: Path) -> TranscriptStats | None:
         stats.active_s += _clipped_gap(previous, ts)
         previous = ts
         if _is_resume(record):
-            stats.precommit_runs = max(stats.precommit_runs, precommit_in_segment)
-            precommit_in_segment = 0
-            signatures.clear()
-            continue
-        if record.get("type") != "assistant":
-            continue
-        stats.turns += 1
-        stats.output_tokens += _output_tokens(record)
+            scan.new_segment(stats)
+        elif record.get("type") == "assistant":
+            scan.assistant(stats, record)
+        elif record.get("type") == "user":
+            scan.results(stats, record)
+    scan.finish(stats)
+    return stats if stats.started is not None else None
+
+
+class _TranscriptScan:
+    """Running state of one :func:`parse_transcript` pass."""
+
+    def __init__(self) -> None:
+        """Start an empty scan."""
+        self.tally = UsageTally()
+        self.signatures: Counter[str] = Counter()
+        self.labels: dict[str, str] = {}
+        self.precommit_in_segment = 0
+        self.call_labels: dict[str, str] = {}
+        self.read_paths: dict[str, str] = {}
+        self.reads_seen: Counter[str] = Counter()
+        self.reread_chars: Counter[str] = Counter()
+
+    def new_segment(self, stats: TranscriptStats) -> None:
+        """Close a prompt segment: keep its precommit count, reset repeats.
+
+        Args:
+            stats: The stats being built; updated in place.
+        """
+        stats.precommit_runs = max(stats.precommit_runs, self.precommit_in_segment)
+        self.precommit_in_segment = 0
+        self.signatures.clear()
+
+    def assistant(self, stats: TranscriptStats, record: dict[str, Any]) -> None:
+        """Fold one assistant record: its request (once) and its tool calls.
+
+        Args:
+            stats: The stats being built; updated in place.
+            record: The assistant record.
+        """
+        if self.tally.add_record(record):
+            stats.turns += 1
         for block in _content_blocks(record):
             if block.get("type") != "tool_use":
                 continue
             stats.tool_calls += 1
             signature = _call_signature(block)
-            signatures[signature] += 1
-            labels.setdefault(signature, _describe_call(block))
-            if signatures[signature] > stats.max_repeat:
-                stats.max_repeat = signatures[signature]
-                stats.repeated_call = labels[signature]
-            precommit_in_segment += _is_full_precommit_run(block)
-    stats.precommit_runs = max(stats.precommit_runs, precommit_in_segment)
-    return stats if stats.started is not None else None
+            self.signatures[signature] += 1
+            self.labels.setdefault(signature, _describe_call(block))
+            if self.signatures[signature] > stats.max_repeat:
+                stats.max_repeat = self.signatures[signature]
+                stats.repeated_call = self.labels[signature]
+            self.precommit_in_segment += _is_full_precommit_run(block)
+            self._remember_call(block)
 
+    def _remember_call(self, block: dict[str, Any]) -> None:
+        """Note a call's label, and its file when it is a ``Read``.
 
-def _output_tokens(record: dict[str, Any]) -> int:
-    """Output tokens reported on an assistant record, ``0`` when absent.
+        Args:
+            block: A ``tool_use`` content block.
+        """
+        call_id = block.get("id")
+        if not isinstance(call_id, str):
+            return
+        self.call_labels[call_id] = _describe_call(block)
+        tool_input = block.get("input")
+        if block.get("name") == "Read" and isinstance(tool_input, dict):
+            file_path = tool_input.get("file_path")
+            if isinstance(file_path, str) and file_path:
+                self.read_paths[call_id] = _call_label(file_path)
 
-    Args:
-        record: One assistant transcript record.
+    def results(self, stats: TranscriptStats, record: dict[str, Any]) -> None:
+        """Measure the tool results a user record returns to the agent.
 
-    Returns:
-        The reported output-token count, or ``0`` when missing.
-    """
-    message = record.get("message")
-    usage = message.get("usage") if isinstance(message, dict) else None
-    tokens = usage.get("output_tokens") if isinstance(usage, dict) else 0
-    return tokens if isinstance(tokens, int) else 0
+        Args:
+            stats: The stats being built; updated in place.
+            record: A user record carrying ``tool_result`` blocks.
+        """
+        for block in _content_blocks(record):
+            if block.get("type") != "tool_result":
+                continue
+            chars = tool_result_chars(block)
+            call_id = str(block.get("tool_use_id"))
+            if chars > stats.largest_result_chars:
+                stats.largest_result_chars = chars
+                stats.largest_result = self.call_labels.get(call_id, "?")
+            path = self.read_paths.get(call_id)
+            if path is not None:
+                self.reads_seen[path] += 1
+                if self.reads_seen[path] > 1:
+                    self.reread_chars[path] += chars
+
+    def finish(self, stats: TranscriptStats) -> None:
+        """Copy the scan's totals into *stats*.
+
+        Args:
+            stats: The stats being built; updated in place.
+        """
+        self.new_segment(stats)
+        usage = self.tally.usage
+        stats.output_tokens = usage.output_tokens
+        stats.tokens = usage if usage.requests else None
+        stats.repeated_reads = dict(self.reread_chars)
 
 
 def _is_full_precommit_run(block: dict[str, Any]) -> int:
@@ -929,9 +1063,19 @@ def runs_from_transcripts(root: Path) -> dict[str, AgentRun]:
         if stats is None:
             continue
         agent_type, description = types.get(agent_id, ("?", None))
+        # The sidecar is Claude Code's own record of the type; the session
+        # pairing above is the fallback for transcripts that predate it.
+        meta = _read_meta(path)
+        meta_type = meta.get("agentType")
+        if isinstance(meta_type, str) and meta_type:
+            agent_type = meta_type
+        meta_description = meta.get("description")
+        if description is None and isinstance(meta_description, str):
+            description = meta_description
         runs[agent_id] = AgentRun(
             agent_id=agent_id,
             agent_type=agent_type,
+            session_id=path.parent.parent.name,
             transcript_path=str(path),
             description=description,
             stats=stats,
@@ -980,6 +1124,18 @@ def _is_count(value: object) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def _is_size(value: object) -> bool:
+    """Whether *value* is a non-negative JSON integer — a token or char count.
+
+    Args:
+        value: A decoded JSON value.
+
+    Returns:
+        ``True`` for an ``int`` (not ``bool``) of zero or more.
+    """
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
 def _stats_from_digest(record: dict[str, Any]) -> TranscriptStats | None:
     """Rebuild the stats one digest line carries, ``None`` when it is damaged.
 
@@ -1008,13 +1164,57 @@ def _stats_from_digest(record: dict[str, Any]) -> TranscriptStats | None:
         or not isinstance(record.get("repeated_call"), str)
     ):
         return None
+    token_fields = _token_fields_from_digest(record)
+    if token_fields is None:
+        return None
     return TranscriptStats(
         started=started,
         ended=_parse_ts(record.get("ended")),
         active_s=float(active_s),
         repeated_call=_call_label(record["repeated_call"]),
         **{name: record[name] for name in _DIGEST_COUNTS},
+        **token_fields,
     )
+
+
+_TOKEN_USAGE_FIELDS = tuple(item.name for item in fields(TokenUsage))
+
+
+def _token_fields_from_digest(record: dict[str, Any]) -> dict[str, Any] | None:
+    """The token fields a digest line carries; lines from before them load bare.
+
+    A line written before token accounting existed has none of these keys
+    and loads with ``tokens=None`` — unknown, never zero. A key that is
+    present but damaged rejects the line, as the core fields do.
+
+    Args:
+        record: One decoded digest line.
+
+    Returns:
+        Keyword arguments for :class:`TranscriptStats`, or ``None`` when a
+        present token field is the wrong shape.
+    """
+    out: dict[str, Any] = {}
+    tokens = record.get("tokens")
+    if tokens is not None:
+        if not isinstance(tokens, dict) or not all(
+            _is_size(tokens.get(name)) for name in _TOKEN_USAGE_FIELDS
+        ):
+            return None
+        out["tokens"] = TokenUsage(
+            **{name: tokens[name] for name in _TOKEN_USAGE_FIELDS}
+        )
+    chars = record.get("largest_result_chars", 0)
+    label = record.get("largest_result", "")
+    reads = record.get("repeated_reads", {})
+    if not _is_size(chars) or not isinstance(label, str) or not isinstance(reads, dict):
+        return None
+    if not all(isinstance(k, str) and _is_size(v) for k, v in reads.items()):
+        return None
+    out["largest_result_chars"] = chars
+    out["largest_result"] = _call_label(label)
+    out["repeated_reads"] = {_call_label(k): v for k, v in reads.items()}
+    return out
 
 
 def _load_digest(path: Path) -> dict[str, TranscriptStats]:
@@ -1050,6 +1250,10 @@ def _digest_is_behind(stats: TranscriptStats, known: TranscriptStats | None) -> 
         ``True`` when the run is new to the digest or has grown since.
     """
     if known is None or stats.turns > known.turns:
+        return True
+    # A line digested before token accounting existed: re-record it once
+    # the transcript yields tokens, or the run stays "unknown" for good.
+    if known.tokens is None and stats.tokens is not None:
         return True
     if stats.ended is None:
         return False
@@ -1234,7 +1438,10 @@ def _run_label(run: AgentRun) -> str:
         The label, truncated to 80 characters.
     """
     tail = run.description or run.agent_id
-    return f"{run.agent_type or '?'}  {tail}"[:80]
+    # Types and descriptions come from transcripts and sidecars anyone can
+    # write; a control character would otherwise reach the terminal.
+    label = f"{run.agent_type or '?'}  {tail}"
+    return "".join(ch if ch.isprintable() else " " for ch in label)[:80]
 
 
 def render_report(runs: list[AgentRun], tools: list[ToolRow], *, top: int) -> str:
@@ -1430,6 +1637,178 @@ def render_json(runs: list[AgentRun], tools: list[ToolRow]) -> str:
     )
 
 
+# --- tokens ----------------------------------------------------------------
+
+#: Rough characters per token, only to put a size on re-read text the
+#: transcript reports in characters; usage figures are exact.
+_CHARS_PER_TOKEN = 4
+WASTE_FLAG_CAP = 20
+
+
+def waste_flags(run: AgentRun) -> list[WasteFlag]:
+    """The mechanical waste findings for *run* (none without token data).
+
+    Args:
+        run: A subagent run.
+
+    Returns:
+        Its findings: fixed context dominating a short run (or a run of a
+        single tool call), a large tool result, and files read repeatedly.
+    """
+    stats = run.stats
+    tokens = stats.tokens if stats is not None else None
+    if stats is None or tokens is None:
+        return []
+    label = _run_label(run)
+    flags: list[WasteFlag] = []
+    if stats.tool_calls <= 1:
+        flags.append(
+            WasteFlag(
+                "single-call",
+                label,
+                f"{stats.tool_calls} tool call(s) — could be a direct command",
+                tokens.total_tokens,
+            )
+        )
+    elif (
+        tokens.fixed_share >= FIXED_SHARE_THRESHOLD
+        and stats.tool_calls <= FEW_TOOL_CALLS
+    ):
+        flags.append(
+            WasteFlag(
+                "fixed-context",
+                label,
+                f"{tokens.fixed_share:.0%} of prompt is fixed context, "
+                f"{stats.tool_calls} tool calls",
+                tokens.fixed_cost,
+            )
+        )
+    if stats.largest_result_chars >= LARGE_RESULT_CHARS:
+        flags.append(
+            WasteFlag(
+                "large-result",
+                label,
+                f"{stats.largest_result} returned {stats.largest_result_chars} chars",
+                stats.largest_result_chars // _CHARS_PER_TOKEN,
+            )
+        )
+    flags.extend(
+        WasteFlag(
+            "repeated-read",
+            label,
+            f"{path} read again ({chars} chars)",
+            chars // _CHARS_PER_TOKEN,
+        )
+        for path, chars in stats.repeated_reads.items()
+    )
+    return flags
+
+
+def load_sessions(
+    transcripts: Path | None, runs: Iterable[AgentRun]
+) -> dict[str, SessionTokens]:
+    """Parse the main-session transcripts of the sessions *runs* belong to.
+
+    Only the sessions in the report's window are read: a main transcript
+    can run to tens of megabytes.
+
+    Args:
+        transcripts: The Claude Code project directory, or ``None``.
+        runs: The reported runs.
+
+    Returns:
+        Session id → its token breakdown, for each readable transcript.
+    """
+    if transcripts is None:
+        return {}
+    sessions: dict[str, SessionTokens] = {}
+    for session_id in sorted({r.session_id for r in runs if r.session_id}):
+        if not _is_path_component(session_id):
+            continue
+        path = transcripts / f"{session_id}{_TRANSCRIPT_SUFFIX}"
+        if path.is_file():
+            sessions[session_id] = parse_session(_iter_jsonl(path))
+    return sessions
+
+
+def join_sessions(runs: Iterable[AgentRun], sessions: dict[str, SessionTokens]) -> None:
+    """Link each subagent run to the skill and brief that launched it.
+
+    Args:
+        runs: Runs to annotate in place.
+        sessions: Parsed main sessions, by id.
+    """
+    for run in runs:
+        session = sessions.get(run.session_id or "")
+        if session is None or not run.transcript_path:
+            continue
+        run.handback_chars = session.handback_chars.get(run.agent_id, 0)
+        call_id = _read_meta(Path(run.transcript_path)).get("toolUseId")
+        if isinstance(call_id, str):
+            run.caller_skill = session.skill_of_call.get(call_id)
+            run.brief_chars = session.brief_chars.get(call_id, 0)
+
+
+def _grouped(pairs: Iterable[tuple[str, TokenUsage]]) -> list[TokenRow]:
+    """Sum usage per label, ranked.
+
+    Args:
+        pairs: ``(label, usage)`` per run or skill.
+
+    Returns:
+        One ranked row per label.
+    """
+    totals: dict[str, TokenUsage] = defaultdict(TokenUsage)
+    counts: Counter[str] = Counter()
+    for label, usage in pairs:
+        totals[label].add(usage)
+        counts[label] += 1
+    return rank(
+        TokenRow(label, counts[label], usage) for label, usage in totals.items()
+    )
+
+
+def render_tokens(runs: list[AgentRun], sessions: dict[str, SessionTokens]) -> str:
+    """Render the ``--tokens`` report for *runs* and their sessions.
+
+    Args:
+        runs: Reported runs, joined with :func:`join_sessions`.
+        sessions: Parsed main sessions, by id.
+
+    Returns:
+        The report text.
+    """
+    subagents = [r for r in runs if r.agent_type != MAIN_SESSION_TYPE]
+    known = [(r, r.stats.tokens) for r in subagents if r.stats and r.stats.tokens]
+    by_type = _grouped((r.agent_type or "?", tokens) for r, tokens in known)
+    by_skill = _grouped(
+        (skill, usage)
+        for session in sessions.values()
+        for skill, usage in session.by_skill.items()
+    )
+    by_caller = _grouped((r.caller_skill, t) for r, t in known if r.caller_skill)
+    all_flags = sorted(
+        (flag for run in subagents for flag in waste_flags(run)),
+        key=lambda flag: -flag.tokens,
+    )
+    delegation = (
+        sum(len(s.brief_chars) for s in sessions.values()),
+        sum(sum(s.brief_chars.values()) for s in sessions.values()),
+        sum(sum(s.handback_chars.values()) for s in sessions.values()),
+    )
+    return render_token_report(
+        TokenReport(
+            by_type=by_type,
+            by_caller=by_caller,
+            by_skill=by_skill,
+            flags=all_flags[:WASTE_FLAG_CAP],
+            flag_total=len(all_flags),
+            unknown_runs=len(subagents) - len(known),
+            delegation=delegation,
+        )
+    )
+
+
 # --- history ---------------------------------------------------------------
 
 
@@ -1451,6 +1830,9 @@ def append_history(root: Path, runs: list[AgentRun], label: str) -> None:
             "active_s": f"{sum(r.active_s for r in runs):.0f}",
             "loop_suspects": sum(r.loop_suspect for r in runs),
             "cap_breaches": sum(r.cap_breach for r in runs),
+            "tokens": sum(
+                r.stats.tokens.total_tokens for r in runs if r.stats and r.stats.tokens
+            ),
         },
     )
 
@@ -1544,6 +1926,14 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Do not append to the history ledger or refresh the transcript digest.",
     )
+    parser.add_argument(
+        "--tokens",
+        action="store_true",
+        help="Rank token use by agent type, launching skill and main-session "
+        "skill, with waste flags. Reads this checkout's Claude Code "
+        "transcripts (~/.claude/projects/<encoded path>) unless "
+        "--transcripts names another directory.",
+    )
     return parser
 
 
@@ -1600,18 +1990,26 @@ def main() -> int:
         return 2
     ledger_path = args.ledger or code_health_dir(root) / LEDGER_NAME
     events = list(_iter_jsonl(ledger_path)) if ledger_path.is_file() else []
+    # Only --tokens finds the transcripts on its own: the default report
+    # keeps reading the ledger alone, as it always has.
+    transcripts = args.transcripts
+    if args.tokens and transcripts is None:
+        transcripts = default_transcripts_dir(root)
     runs = filter_runs(
-        collect_runs(ledger_path, args.transcripts, record_digest=not args.no_history),
+        collect_runs(ledger_path, transcripts, record_digest=not args.no_history),
         agent_type=args.agent_type,
         since=since,
         last=args.last,
     )
     tools = tool_rows(events)
-    output = (
-        render_json(runs, tools)
-        if args.json
-        else render_report(runs, tools, top=args.top)
-    )
+    if args.tokens:
+        sessions = load_sessions(transcripts, runs)
+        join_sessions(runs, sessions)
+        output = render_tokens(runs, sessions)
+    elif args.json:
+        output = render_json(runs, tools)
+    else:
+        output = render_report(runs, tools, top=args.top)
     logger.info("%s", output)
     if not args.no_history:
         append_history(root, runs, args.label)

@@ -29,7 +29,7 @@ usage: forge-agent-profile [-h] [--ledger LEDGER] [--transcripts TRANSCRIPTS]
                            [--agent-type AGENT_TYPE] [--since SINCE]
                            [--last LAST] [--top TOP] [--label LABEL] [--json]
                            [--history] [--edits] [--session SESSION]
-                           [--no-history]
+                           [--no-history] [--tokens]
 
 Report where agent and subagent time goes, and which files a subagent wrote
 (writes only its own code_health/ ledgers, always exits 0).
@@ -58,6 +58,11 @@ options:
                         shared per clone).
   --no-history          Do not append to the history ledger or refresh the
                         transcript digest.
+  --tokens              Rank token use by agent type, launching skill and
+                        main-session skill, with waste flags. Reads this
+                        checkout's Claude Code transcripts
+                        (~/.claude/projects/<encoded path>) unless
+                        --transcripts names another directory.
 ```
 
 ## forge-audit-agents
