@@ -94,7 +94,11 @@ on upgrade *without* clobbering your edits (a changed body-sha means "you
 edited this — leave it"). Add repo-specific steps in
 `.githooks/post-merge.d/` / `post-checkout.d/` (a drop-in dir the
 installer never touches) or by editing the wrapper directly — see
-[`customizing-precommit.md`](customizing-precommit.md).
+[`customizing-precommit.md`](customizing-precommit.md). Drop-in scripts
+run from the repo root in sorted filename order and inherit the shell's
+environment; one that fails logs a warning and is skipped.
+`install-forge-githooks --force` overwrites edited wrappers and keeps the
+old one as `.githooks/<name>.before-forge-vX.Y.Z.bak`.
 
 ## Track 3 — add the Claude Code plugin (one install **per checkout**)
 
@@ -207,10 +211,36 @@ forge-upgrade --continue              # phase 2: install-forge-bootstrap re-sync
 
 After a successful upgrade, forge prints the **⚠️ Upgrade notes** for the
 new releases (the consumer-action items) — review any newer than your
-previous version. Pin choice (`@main` every release vs a frozen
-`@vX.Y.Z` tag) and the full flow:
-[`Upgrading forge`](../README.md#upgrading-forge-in-your-repo). CI
+previous version, review the diff of managed files, and commit it. If
+the upgrade moved the plugin, **restart the Claude Code session**: a
+running session keeps the plugin it started with
+([plugin staleness](../forge-docs/plugin-staleness.md)). CI
 integration: [`ci-recipe.md`](../forge-docs/ci-recipe.md).
+
+A repo that pins through `requirements.txt` or a lockfile runs the
+phase-1 install command by hand, then `forge-upgrade --continue`.
+`forge-upgrade --apply` does both phases in one call (force-reinstall
+plus re-sync) for setup scripts; it is refused in a pixi-locked repo,
+and agents never run it, because they never install packages.
+
+### Pick a pin
+
+| Pin | When |
+|---|---|
+| `@vX.Y.Z` (a release tag) | The default, and required for the Claude Code plugin. Upgrades are explicit and comparable. |
+| `@main` | Following every merge. pip caches by name and version, and a branch ref does not change the version, so a plain `pip install` silently keeps an old build; `forge-doctor` can look healthy while you are behind. Use `forge-upgrade` to refresh. |
+
+Switching from a branch pin to a tag has a trap: a refresh script that
+force-reinstalls only branch-pinned packages stops refreshing forge. So
+`forge-upgrade` checks the installed build's recorded revision
+(`direct_url.json`) against the pin — phase 1 warns, `--continue`
+refuses to regenerate from a stale install, and `forge-doctor` reports
+it. A `.devN+gHASH` version is the fingerprint of a branch install.
+
+Forge never rewrites managed files on its own when it drifts: the hooks
+warn, and you run the sync and commit the result. The upstream-version
+check is cached for 24 hours (`~/.cache/forge/upstream_check.json`),
+only ever warns, and prints the upgrade command.
 
 ### Which tags you can adopt
 

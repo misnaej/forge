@@ -4,665 +4,74 @@
 [![CI](https://github.com/misnaej/forge/actions/workflows/ci.yml/badge.svg)](https://github.com/misnaej/forge/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/) [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff) ![License](https://img.shields.io/badge/License-MIT-green) ![forge](https://img.shields.io/badge/forge-enabled-blue) ![Claude Code](https://img.shields.io/badge/Claude_Code-555?logo=claude) ![Docstring coverage](.badges/docstring-coverage.svg)
 <!-- forge:badges:end -->
 
-AI agents write more code, faster — but without guardrails, quality
-drifts: lint rules silently disabled, docstrings half-written,
-standards left as prose nobody runs. Good output needs hard guardrails,
-not good intentions.
+AI agents write code quickly, and without hard limits quality drifts:
+lint rules get switched off, docstrings go stale, and "please don't
+force-push" is a sentence an agent can ignore. Forge turns a repository's
+standards into checks that run on every commit, and gives coding agents
+guardrails that refuse unsafe actions outright. The same tools run for a
+person at a terminal, in CI, and for an agent.
 
-Forge ships those guardrails as **deterministic tools** that run the
-same way whether a human or an agent invokes them:
+## What you get
 
-- A pip-installable Python package (`forge-scripts`) with CLIs that
-  codify a repo's quality standards (lint, docstrings, test naming,
-  GitHub labels, env diagnostics).
-- A **drop-in pre-commit hook** that runs those CLIs in order on every
-  commit, with no per-repo wiring.
-- An optional **Claude Code plugin** (agents, skills, hooks) that wires
-  the same CLIs into an agent session — an add-on, not a prerequisite.
+- **A pre-commit gate.** One hook runs lint, formatting, docstring
+  accuracy, test naming, structure, type and dependency checks, and
+  writes each result to a log that people and agents read back.
+- **A Claude Code plugin** (optional). Agents and skills for the whole
+  loop — plan an issue, write and test the change, review it, open the
+  PR with a verified wrap-up — each step backed by a forge command, not
+  by the model's judgement.
+- **Safety hooks.** Agents cannot force-push, rebase, merge a PR, delete
+  a protected branch, bypass the pre-commit hook or install dependencies.
+- **Backlog on GitHub.** A label schema, triage, and a pipeline that
+  turns an issue into a validated plan before anyone works on it.
+- **Audits.** Dead code, duplication, dependency layering, suppressions
+  and claims that no longer match the code.
 
-Everything mechanical is a plain CLI or shell hook. The Claude Code
-plugin is a thin orchestrator on top — the gate is the CLI, never the
-model.
+Everything except the plugin works without any AI tool.
 
----
+## Try it
 
-## At a glance: adopting forge
+```bash
+pip install "git+https://github.com/misnaej/forge.git@vX.Y.Z"   # latest release
+install-forge-bootstrap        # hooks, labels, docs, plugin, then forge-doctor
+git commit                     # the gate now runs on every commit
+```
 
-Adopting forge is three steps, roughly 1 minute of work. Step 3 is
-optional. The numbered [Quickstart](#quickstart-adopt-forge-in-your-repo)
-below has the full detail; [`docs/adopting.md`](docs/adopting.md) breaks
-it into **three independent install tracks** (CLIs only / + git hooks / +
-plugin) so you can take exactly the layer(s) you want.
+Pin a [release tag](https://github.com/misnaej/forge/releases), and add
+the same pin to your project's dev dependencies so the version is
+tracked. `install-forge-bootstrap` is safe to re-run after every upgrade.
 
-1. **Install `forge-scripts`** — `pip install
-   "git+https://github.com/misnaej/forge.git@main"` puts every forge CLI
-   on `PATH`. (~30s)
-2. **Run `install-forge-bootstrap`** — one-shot umbrella: wires git
-   hooks, scaffolds `FOUNDATION.md` / `CLAUDE.md`, installs the
-   canonical GitHub label schema, generates `docs/api-digest.md` +
-   `docs/cli-reference.md` + `code_health/audit_deps_tree.log`, and
-   runs `forge-doctor`. Idempotent — safe to re-run after every forge
-   upgrade. (~30s)
-3. **(Optional) Install the Claude Code plugin** — only if your team
-   uses Claude Code. (~30s)
+## How it works
 
-Steps 1–2 are Claude-independent. After step 2, `forge-doctor` reports
-the install status automatically.
+Every check is a plain command (`forge-precommit`, `forge-doctor`, the
+`verify-forge-*` and `forge-audit-*` tools), configured under
+`[tool.forge]` in `pyproject.toml`. The git hook calls those commands;
+the plugin's agents call the same commands and act on their output, and
+its hooks stop an agent before a forbidden git or GitHub operation runs.
+The model decides what to write; forge decides whether it passes.
 
----
+## Documentation
 
-## Why this exists
-
-Most teams accumulate the same scaffolding in every repo — a ruff
-config, a pre-commit hook, a `gh label` setup script, a doctor command —
-and it drifts. Repo A runs strict ruff while repo B silently disabled
-three rules. Contributors set up their env differently in each repo.
-Standards live as stale prose nobody runs against.
-
-Forge collapses that scaffolding into **one pip-installable package**
-and **one drop-in pre-commit hook**. Adopt forge and you get:
-
-- A canonical `ruff` configuration philosophy (`select = ["ALL"]`
-  strict, per-file ignores only).
-- A `verify-forge-docstrings` checker that validates Google-style
-  Args/Returns against actual function signatures.
-- A consistent set of GitHub labels installed by one command
-  (`install-forge-labels`).
-- A `forge-doctor` CLI that tells a contributor exactly what's wrong
-  with their local install.
-- A pre-commit hook running all of the above on every commit. New
-  checks are added in forge and propagate to every consumer on the next
-  version bump. (Pytest is deliberately NOT in the default sequence —
-  too slow for pre-commit; run it in CI or wire it into
-  `.githooks/pre-commit` yourself.)
-
-Need something forge doesn't ship (custom mypy step, secret scan)? See
-[`docs/customizing-precommit.md`](docs/customizing-precommit.md) —
-edit `.githooks/pre-commit` directly. No plugin system, no config file.
-
----
-
-## What you get today
-
-| Category | Items |
+| I want to… | Read |
 |---|---|
-| **CLIs** (pip package, no Claude required) | `install-forge-bootstrap` (one-shot umbrella), `forge-upgrade` (two-phase upgrade flow), `forge-precommit` (full sequence dispatcher), `fix-forge-ruff` (ruff phase), `verify-forge-docstrings`, `verify-forge-docstring-coverage`, `verify-forge-repo-structure`, `verify-forge-test-naming`, `verify-forge-manifest`, `verify-forge-plugin-version`, `verify-forge-cli-wiring`, `forge-continuation`, `forge-next-prep`, `forge-config` (config reference + setup advisor — see [`forge-docs/configuration.md`](forge-docs/configuration.md)), `forge-gen-c4` (C4 architecture diagram generator), `install-forge-labels`, `forge-doctor`, `install-forge-githooks`, `install-forge-claude-md` |
-| **Audit-pack CLIs** (pip package, no extras required) | `forge-audit-dup`, `forge-audit-deps`, `forge-audit-suppressions`, `forge-audit-orphans`, `forge-audit-data`, `forge-audit-claims`, `forge-audit-agents` (non-blocking template-conformance audit), `forge-audit-layering` (opt-in layer-composition gate), `forge-audit-all` — see [`docs/audit-pack.md`](docs/audit-pack.md) |
-| **Git hooks** (drop-in, no Claude required) | `.githooks/pre-commit` (dispatcher), `.githooks/post-merge` + `.githooks/post-checkout` (auto-warn on FOUNDATION.md drift) |
-| **Process docs** | `docs/security.md`, `docs/audit-pack.md`, `docs/cli-reference.md` (generated CLI reference), `docs/api-digest.md` (generated index of all top-level functions/classes, public API + internal helpers); foundation engineering principles at `FOUNDATION.md` |
-| **Claude Code plugin** (optional) | Agents (`pr-manager`, `precommit-fixer`, `git-commit-push`, `design-checker`, `docs-types-checker`, `security-checker`, `issue-triage`, `perf-optimizer`, `weekly-summary`, `knowledge-search`, `test-advisor`, `test-writer`); skills (`commit`, `pr`, `pr-comments`, `next`, `triage`, `plan-issue`, `plan-batch`, `sentinel`, `weekly`, `fix`, `test`, `c4`, `memory-audit`, `smart-test`, `report-to-forge`, `perf`); Claude Code hooks (`block_protected_branches`, `block_force_push`, `block_git_rebase`, `block_git_destructive`, `block_amend_pushed_commit`, `block_pr_merge`, `block_branch_deletion`, `block_no_verify`, `block_install_deps`, `block_claude_attribution`, `block_continuation_delete`, `block_protected_files`, `check_commit_format`, `check_foundation_sync`, `keep_squash_comment_last`, `warn_pr_checks`, `warn_stale_wrapup`, `warn_generated_conflicts`, `block_raw_ruff`, `block_raw_git`, `block_raw_wrapup_post`,
-`block_fixer_recon`, `require_fixer_verdict`) |
-
-Everything in the first three rows is **Claude-independent** — works
-from any shell, CI, or IDE.
-
-The audit-pack CLIs run out of the box (`vulture`, backing
-`forge-audit-orphans`, is a core dependency). Two optional extras widen
-coverage: `pip install "forge-scripts[audit]"` pulls in `jsonschema` and
-`PyYAML` for `forge-audit-data`'s schema-validation and YAML checks;
-`[audit-tach]` adds `tach` for dependency-graph checks. See
-[`docs/audit-pack.md`](docs/audit-pack.md) for what each audit detects
-and how findings land in `code_health/audit_*.log`.
-
----
-
-## Architecture
-
-forge's own C4 component model, generated by `forge-gen-c4` from the import
-graph + [`c4.toml`](c4.toml) (the component dependencies are machine-derived;
-context/containers and runtime/subprocess edges are human-declared). Elements
-are tagged by kind and coloured from forge-gen-c4's reference palette — the same
-one the [agent architecture](docs/agent-architecture.md) uses, so the two
-diagrams read alike. The canonical Structurizr DSL lives in
-[`docs/architecture.dsl`](docs/architecture.dsl); `forge-gen-c4 --format html`
-emits an offline self-contained view. See
-[`docs/c4-architecture.md`](docs/c4-architecture.md).
-
-<!-- forge:c4:start -->
-<!-- Generated by forge-gen-c4 — do not edit by hand; regenerate with `forge-gen-c4`. -->
-```mermaid
-graph LR
-    forge_developer(["<b>Forge developer</b><br/>[Person]<br/>Maintains forge and runs its pre-commit gate"])
-    consumer_repo(["<b>Consumer repo</b><br/>[Person]<br/>A repo that adopts forge's governance layer"])
-    github[["<b>GitHub</b><br/>[External system]<br/>Hosts repos, PRs, issues, labels, releases"]]
-    subgraph forge_scripts["forge-scripts"]
-        pre_commit_dispatcher["<b>Pre-commit dispatcher</b><br/>[Python]<br/>The single quality gate — runs each step by shelling out, reading back exit code + code_health/&lt;step&gt;.log"]
-        audit_suite["<b>Audit suite</b><br/>[Python (AST)]<br/>Deeper code-health audits: dependency graph, duplication, dead code, doc-claim checks"]
-        verifiers["<b>Verifiers</b><br/>[Python (AST)]<br/>Single-responsibility pre-commit checks: docstrings, naming, repo structure, manifest, wiring, CVE usage"]
-        installers["<b>Installers</b><br/>[Python + gh]<br/>Install/refresh git hooks, CLAUDE.md, labels, README badges, and Claude settings; bootstrap umbrella"]
-        doc_generators["<b>Doc generators</b><br/>[Python]<br/>Generate drift-checked docs: API digest, CLI reference, and this C4 model"]
-        git_hook_entrypoints["<b>Git-hook entrypoints</b><br/>[Python]<br/>Managed post-merge / post-checkout hooks: foundation drift check + backgrounded self-refresh"]
-        release_tooling["<b>Release tooling</b><br/>[Python + git/gh]<br/>Rolling-next versioning, tag-per-merge releases, PR squash messages, continuation status panel"]
-        smart_test["<b>Smart-test</b><br/>[Python (ast) + git/pytest]<br/>Change-driven test selection by import depth: git diff + reverse import graph (+ opt-in mock-patch edges / coverage union) run in depth-tiered pytest batches"]
-        config_shared["<b>Config + shared</b><br/>[Python]<br/>Shared foundation: pyproject/[tool.forge] config, git + logging utils, CI run-context, ruff/doctor, single-scan pip-audit helper"]
-    end
-    forge_developer -->|"develops, commits, runs CLIs"| forge_scripts
-    consumer_repo -->|"installs + invokes forge CLIs/hooks"| forge_scripts
-    forge_scripts -->|"reads/writes via gh"| github
-    pre_commit_dispatcher -->|"runs each verifier via subprocess"| verifiers
-    pre_commit_dispatcher -->|"runs audit steps via subprocess"| audit_suite
-    pre_commit_dispatcher -->|"runs --check drift steps"| doc_generators
-    installers -->|"bootstrap runs generators"| doc_generators
-    audit_suite -->|"imports"| config_shared
-    config_shared -->|"imports"| release_tooling
-    config_shared -->|"imports"| smart_test
-    doc_generators -->|"imports"| audit_suite
-    doc_generators -->|"imports"| config_shared
-    doc_generators -->|"imports"| release_tooling
-    git_hook_entrypoints -->|"imports"| config_shared
-    git_hook_entrypoints -->|"imports"| release_tooling
-    installers -->|"imports"| config_shared
-    installers -->|"imports"| release_tooling
-    pre_commit_dispatcher -->|"imports"| config_shared
-    pre_commit_dispatcher -->|"imports"| installers
-    pre_commit_dispatcher -->|"imports"| release_tooling
-    release_tooling -->|"imports"| config_shared
-    release_tooling -->|"imports"| installers
-    smart_test -->|"imports"| config_shared
-    verifiers -->|"imports"| audit_suite
-    verifiers -->|"imports"| config_shared
-    verifiers -->|"imports"| release_tooling
-    classDef component fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e
-    classDef container fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
-    classDef external fill:#f3e8ff,stroke:#9333ea,color:#581c87
-    classDef person fill:#fef9c3,stroke:#ca8a04,color:#713f12
-    class forge_developer person
-    class consumer_repo person
-    class github external
-    class forge_scripts container
-    class pre_commit_dispatcher component
-    class audit_suite component
-    class verifiers component
-    class installers component
-    class doc_generators component
-    class git_hook_entrypoints component
-    class release_tooling component
-    class smart_test component
-    class config_shared component
-```
-<!-- forge:c4:end -->
-
-### Agent fleet
-
-forge's AI **subagents** are actors too: the **main agent** the developer talks
-to orchestrates them — running skills, following FOUNDATION guidelines, and
-delegating to specialist agents that drive the deterministic CLIs. That graph is
-too dense for one picture, so it lives in its own document, sliced into
-workflow-phase subviews (Design & Development, Review, Release, Backlog, Docs)
-plus a cross-cutting FOUNDATION-enforcers view:
-
-**→ [Agent architecture](docs/agent-architecture.md)** — how the agents, skills,
-hooks, and CLIs interact, colour-coded by kind (agent / skill / hook / CLI) with
-reporter-vs-mutator and FOUNDATION-enforcer (⚖️) signals.
-
----
-
-## Quickstart: adopt forge in your repo
-
-The full tutorial for the three steps in [At a glance](#at-a-glance-adopting-forge).
-
-### 1. Install `forge-scripts`
-
-Forge is a public repo, so no auth setup is needed. Install directly
-from GitHub:
-
-```bash
-pip install --upgrade "git+https://github.com/misnaej/forge.git@main"
-```
-
-Pin to the release branch or a specific version:
-
-| Pin | Cadence |
-|---|---|
-| `@main` | Every release, as it ships |
-| `@v1.3.0` | Frozen at a specific tag |
-
-(`@dev` is deprecated — pin `@main` or a tag instead.)
-
-For a project's `pyproject.toml`:
-
-```toml
-[project.optional-dependencies]
-dev = [
-    "forge-scripts @ git+https://github.com/misnaej/forge.git@main",
-    # ... your other dev deps
-]
-```
-
-Then install editably:
-
-```bash
-pip install -e ".[dev]"
-```
-
-The forge CLIs are now on your `PATH`:
-
-```bash
-forge-precommit --help
-forge-doctor
-```
-
-### 2. Run `install-forge-bootstrap` (recommended)
-
-```bash
-install-forge-bootstrap
-```
-
-One-shot umbrella that runs every installer + generator in dependency
-order. Idempotent — re-run safely after every forge upgrade.
-
-> Source of truth: the `STEPS` tuple in
-> [`src/forge/install_bootstrap.py`](src/forge/install_bootstrap.py).
-> The table below is rendered documentation; update the tuple, not this
-> table, when adding or reordering steps.
-
-| Step | CLI | What lands on disk |
-|---|---|---|
-| 1 | `install-forge-githooks` | `.githooks/pre-commit`, `.githooks/post-merge`, `.githooks/post-checkout` + `core.hooksPath` |
-| 2 | `install-forge-claude-md` | `FOUNDATION.md` + scaffolded `CLAUDE.md` (if absent) + `.claude/` |
-| 3 | `install-forge-labels` | Canonical GitHub label schema (skipped when `gh` missing or no remote) |
-| 4 | `forge-gen-api-digest` | `docs/api-digest.md` (index of top-level functions / classes) |
-| 5 | `forge-gen-cli-reference` | `docs/cli-reference.md` (generated from each CLI's `--help`) |
-| 6 | `forge-audit-deps --tree` | `code_health/audit_deps_tree.log` (dependency tree) |
-| 7 | `forge-doctor` | Verifies the install |
-| 8 | `forge-config` | Post-install nudge: what `[tool.forge.*]` config forge reads + what to set ([`forge-docs/configuration.md`](forge-docs/configuration.md)) |
-
-Flags: `--check` (dry-run), `--skip <slug>` (repeatable; slugs are
-`githooks`, `claude-md`, `labels`, `api-digest`, `cli-reference`,
-`audit-deps`, `doctor`, `config`), `--strict` (abort on first failure; default is
-continue-on-fail).
-
-Want to run an installer on its own? Each step is also a standalone CLI
-— see [`docs/standalone-installers.md`](docs/standalone-installers.md).
-
-**Self-updating hooks (wrapper pattern).** Each managed git hook is
-a one-line wrapper that calls a forge-shipped CLI:
-
-```bash
-#!/usr/bin/env bash
-# forge:githook-managed v2 body-sha=<hex>
-set -euo pipefail
-# (staleness preamble — advisory warning when installed forge is newer)
-forge-post-merge "$@"
-```
-
-`forge-precommit`, `forge-post-merge`, and `forge-post-checkout`
-carry the actual logic. The hook *file* is yours — you can add
-repo-specific steps after the forge CLI call:
-
-```bash
-#!/usr/bin/env bash
-# forge:githook-managed v2 body-sha=<hex>
-set -euo pipefail
-forge-post-merge "$@"
-./scripts/install-editable.sh   # consumer step — survives forge upgrades
-```
-
-The marker embeds a SHA of the canonical body. On every `git pull`,
-the `forge-post-merge` CLI backgrounds an `install-forge-githooks
---refresh --quiet` so consumers pick up new forge hook content
-automatically — but auto-refresh **leaves modified wrappers alone**
-(your repo-specific lines survive). Use `install-forge-githooks
---force` to override and rewrite a modified wrapper; the previous
-content is saved as `.githooks/<name>.before-forge-vX.Y.Z.bak` so
-nothing is lost.
-
-**Cleaner: drop-in extension directories.** Rather than editing the
-managed wrapper at all, drop an executable script into
-`.githooks/post-merge.d/` (or `.githooks/post-checkout.d/`). After its
-own work, `forge-post-merge` / `forge-post-checkout` runs every
-executable `*.sh` in that directory in sorted filename order (`10-`,
-`20-`, … the `cron.d` convention). The subdirectory is one
-`install-forge-githooks` never writes, so your scripts survive every
-refresh with no body-sha bookkeeping:
-
-```bash
-# .githooks/post-merge.d/10-refresh-deps.sh   (yours — remember chmod +x)
-#!/usr/bin/env bash
-./scripts/install-editable.sh
-```
-
-A failing extension logs a warning and is skipped — it never breaks
-your `git pull` / `git checkout`. Extensions run only in interactive
-contexts (skipped in CI, same posture as the drift check). Each script
-needs a shebang and the executable bit; it runs with the repo root as
-its working directory and inherits your shell environment. Because a
-`.d/` script is committed and runs automatically, review it with the
-same care as any executable hook — the directory is intentionally
-outside forge's refresh cycle, so forge never inspects or rewrites it.
-
-`git commit` now runs the canonical pre-commit sequence:
-
-| Step | What it does | When it runs |
-|---|---|---|
-| `ruff` | `fix-forge-ruff` — runs `ruff format` (in-place) + `ruff check --fix --unsafe-fixes`, re-stages modified tracked files via `git add`, writes `code_health/ruff.log`. PASSes iff ruff cleared every violation; residue (rules without autofix) lands in the log. | Always (skipped if no `src/` or `tests/`) |
-| `docstrings` | `verify-forge-docstrings` — validates Google-style Args/Returns against signatures | Always (CLI picks files via staged + unstaged + branch diff vs main; reports cleanly when nothing matches) |
-| `docstring_coverage` | `verify-forge-docstring-coverage` — interrogate-based aggregate coverage %, per-file table, and a `MISSING:` symbol list for `forge:precommit-fixer`. | When `pyproject.toml` + a `src/` tree exist (self-skips otherwise). No `[tool.interrogate]` section required — forge defaults apply when it's absent. **Non-blocking**: reports only, never refuses the commit. |
-| `test_naming` | `verify-forge-test-naming` — validates test file / function naming conventions | Always (CLI selects modified test files from the diff vs main). **Warning-only**: always exits 0, never refuses a commit. |
-| `repo_structure` | `verify-forge-repo-structure` — asserts `REPO_STRUCTURE.md` matches the actual tree | Only when `REPO_STRUCTURE.md` exists |
-| `intake_check` | `forge-intake check`, in process — refuses secret-shaped strings in every intake entry; in findings also missing filing fields, evidence without a `file:line`, machine paths and `[tool.forge.intake].redact` names | Only when the intake directory (`docs/intake` by default) exists |
-| `manifest_json` | Validates `.claude-plugin/*.json` as parseable JSON | Only when `.claude-plugin/` exists |
-| `cli_wiring` | `verify-forge-cli-wiring` — asserts every `[project.scripts]` entry is reachable from a wiring source (install/precommit/audit/hooks/agents/skills) | Opt-in via `[tool.forge.cli_wiring] enabled = true`; self-skips otherwise |
-| `c4` | `forge-gen-c4 --check` — keeps the architecture diagram (`docs/architecture.dsl` + README block) in sync with the import graph | Opt-in via `[tool.forge.c4]`; self-skips otherwise |
-| `commit_types_parity` | `forge-gen-commit-types --check` — asserts the conventional-commit types in `claude-hooks/check_commit_format.sh` match the canonical `CONVENTIONAL_COMMIT_TYPES` tuple | Only when `claude-hooks/check_commit_format.sh` exists |
-| `config_doc_check` | `forge-gen-config-doc --check` — asserts the key/default table in `forge-docs/configuration.md` matches the keys `forge-config` declares | Forge's own repo only; self-skips elsewhere |
-| `plugin_version` | Asserts `plugin.json["version"] > latest_tag` (semver) | Only when `.claude-plugin/plugin.json` exists and tags exist; skipped on the release commit |
-| `pip_audit` | `pip-audit --skip-editable --desc` — dependency CVE scan | Always. **Non-blocking by default**: CVE findings render as yellow `WARN` and do NOT refuse the commit; `[tool.forge.pip_audit].blocking = true` makes them a `FAIL`. A missing `pip-audit` binary is always a loud non-blocking `WARN`, never a silent skip. |
-
-Pytest is **not** in the default sequence — too slow for pre-commit.
-Run it in CI, or add a `pytest -q` line to `.githooks/pre-commit`
-directly. To customize further, see
-[`docs/customizing-precommit.md`](docs/customizing-precommit.md).
-
-Per-step stdout is captured to `code_health/<step>.log`. The hook exits
-non-zero if any **blocking** non-skipped step fails. Non-blocking steps
-(`pip_audit`, `docstring_coverage`) and warning-only steps
-(`test_naming`) print but don't change the exit code.
-
----
-
-## Wire it into your setup script
-
-Two commands cover the lifecycle:
-
-- **`install-forge-bootstrap`** — idempotent install + re-sync. Same
-  command for first install and every subsequent forge upgrade.
-- **`forge-upgrade --apply`** — full one-shot upgrade for human-run
-  setup scripts: rewrites the pin, runs the force-reinstall pip
-  command, then runs `install-forge-bootstrap`. Use this when your
-  consumer pins forge to `@main` (a moving branch ref);
-  without the force-reinstall, pip silently freezes at the first
-  install — see ["About branch pins (`@main`)"](#about-branch-pins-main)
-  below.
-
-**`Makefile`**
-
-```makefile
-.PHONY: setup
-setup:
-	pip install -e ".[dev]"
-	install-forge-bootstrap
-
-.PHONY: upgrade
-upgrade:
-	forge-upgrade --apply
-```
-
-**`setup.sh`** (or any shell rig)
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-pip install -e ".[dev]"
-install-forge-bootstrap
-# After upgrades: `forge-upgrade --apply --channel main` (or @vX.Y.Z)
-```
-
-**`uv` project**
-
-```bash
-uv sync --all-extras
-uv run install-forge-bootstrap
-```
-
-**CI** (GitHub Actions example)
-
-```yaml
-- run: pip install -e ".[dev]"
-- run: install-forge-bootstrap --check    # CI fails if anything drifted
-```
-
-> Forge dogfoods this pattern in [`dev/setup.sh`](dev/setup.sh) (its
-> own bootstrap rig). The one wrinkle there: forge runs
-> `install-forge-bootstrap --skip claude-md` because forge IS the
-> source of `FOUNDATION.md` (root file is a symlink to
-> `src/forge/data/FOUNDATION.md`). Consumer repos don't need the
-> `--skip`.
-
-The CLI inspects on-disk state to decide what each step needs to do —
-first-time install or refresh after a forge bump. No `--update` flag
-needed.
-
-### About branch pins (`@main`)
-
-When your `pyproject.toml` pins forge via a branch ref
-(`forge-scripts @ git+https://github.com/.../forge.git@main`), pip
-**caches by `(package_name, version)`**. A branch ref doesn't bump
-the version, so subsequent `pip install` runs silently no-op — even
-if the upstream branch has advanced by months. Symptom: `forge-doctor`
-reports everything healthy while you're actually N commits behind.
-
-Three ways to handle this:
-
-| Approach | When |
-|---|---|
-| **Pin to a tag** (`@v1.3.0`) | CI / production — version comparisons are reliable. An upgrade to a tag whose own changelog does not document it is refused (exit `2`) — only tags cut per merge before releases were tagged at the release merge hit this ([which tags you can adopt](docs/adopting.md#which-tags-you-can-adopt)); a branch pin is never gated. |
-| **`forge-upgrade --apply`** | Setup scripts / Makefile / human-driven upgrades. Wraps the `--force-reinstall --no-deps` pip command + re-sync in one call. Refused in a repo that installs from a pixi lock — use the two-phase flow there. |
-| **Two-phase `forge-upgrade` + manual install** | Claude Code agents — they're blocked from running `pip install`, so the agent rewrites the pin + prints the command (pip, or `pixi lock && pixi install --locked` in a pixi-locked repo); you run it. |
-
-**Switching from a branch pin to a tag pin has a footgun**: refresh
-wrappers built around the branch-caching rule above typically
-force-reinstall only deps pinned to a *branch* — a tag pin falls outside
-that logic, so after the switch nothing refreshes forge again and the
-environment silently keeps running the old build. `forge-upgrade` now
-verifies the installed build's recorded git revision (PEP 610
-`direct_url.json`) against the pin: phase 1 warns on a mismatch,
-`--continue` refuses to regenerate managed artifacts from a stale
-install, and `forge-doctor` reports the same mismatch as an advisory.
-If you maintain a refresh wrapper, extend it to also force-reinstall on
-any pin *change*, not only on branch pins.
-
-The channel-aware upstream warning in `install-forge-claude-md` also
-fires a freeze hint when it detects a `.devN+gHASH` install (the
-fingerprint of a branch-ref pip install).
-
----
-
-## Running forge in CI
-
-CI runners are not workstation dev loops. forge's defaults already
-know this — every CI-relevant tool consults
-[`forge.run_context`](src/forge/run_context.py)
-([FOUNDATION §15](FOUNDATION.md#15-runtime-context-awareness)). Concretely
-in a CI job:
-
-- `forge-doctor` and `forge-audit-deps` **self-skip** under
-  `install-forge-bootstrap` (no `--skip` flags needed).
-- `install-forge-claude-md`'s upstream-version warning is
-  suppressed — no value to a runner.
-- `forge-upgrade` picks the pip URL form
-  (`ssh` / `https-token` / `https-anonymous`) that the runner can
-  actually authenticate against, and **aborts loudly** (exit 2) if it
-  detects neither SSH keys nor `GITHUB_TOKEN` before subprocess hang.
-- The post-merge / post-checkout git hooks short-circuit when a CI
-  marker is set, so a CI checkout that fires them before
-  `forge-scripts` is installed does not crash the runner.
-
-### The recipe
-
-Branch-pinned forge (`@main`) + a scheduled GitHub Actions
-workflow that runs `forge-upgrade --apply` and opens a PR whenever
-the upgrade produces a diff. No third-party bot, no per-version pin
-maintenance, every upgrade exercised by your own CI before it
-merges.
-
-Per-PR CI step:
-
-```yaml
-- run: pip install -e ".[dev]"
-- run: install-forge-bootstrap          # idempotent re-sync
-- run: install-forge-bootstrap --check  # fail PR if anything drifted
-- run: forge-precommit                  # full quality gate
-- run: pytest -q --durations=25 --durations-min=1.0 | tee code_health/pytest.log
-- if: always()                          # slow + failing is when you want it
-  run: forge-slow-tests-report --out code_health/slow_tests.log
-```
-
-`forge-slow-tests-report` parses pytest's `slowest N durations` output
-and prints the slowest tests, merged across batches. Read-only, always
-exits `0` — a reporter, not a gate. Pass `--durations` explicitly on the
-command line (as above) so the report works regardless of your repo's
-pytest config; optionally mirror the flags in your own pytest config for
-bare local runs. The tee'd `pytest.log` is unstamped and never evidence —
-it only feeds the report in the same job.
-
-Full pasteable workflows (per-PR CI + scheduled
-`forge-upgrade --apply`) are in
-[`forge-docs/ci-recipe.md`](forge-docs/ci-recipe.md). For private-fork auth
-(deploy keys, PATs), see [`docs/ci-access.md`](docs/ci-access.md).
-
----
-
-## How forge stays in sync
-
-After bootstrap, three triggers check whether your repo's `CLAUDE.md`
-foundation matches the installed `forge-scripts` version. None
-auto-rewrite the file — they warn, and you run
-`install-forge-claude-md` to apply when ready.
-
-| Trigger | Source | When it fires | Behavior |
-|---|---|---|---|
-| `post-merge` git hook | `.githooks/post-merge` (written by `install-forge-githooks`) | After every `git pull` / merge | Runs `install-forge-claude-md --check --quiet`. One-line warning on drift. |
-| `post-checkout` git hook | `.githooks/post-checkout` | On branch switch / clone (only when HEAD moves) | Same drift check. |
-| `SessionStart` Claude Code hook | `claude-hooks/check_foundation_sync.sh` (plugin-shipped) | When you open a Claude Code session in the repo | Same drift check. Catches a `pip install -U` of `forge-scripts` without a `git pull`. |
-| Manual / CI | `install-forge-claude-md --check` | Anytime | Exits non-zero on drift. Drop into CI to block merges with stale foundation. |
-
-**Auto-rewrite is intentionally NOT done.** Hooks warn loudly; you run
-the sync command, review the diff, and commit. This avoids silent
-rewrites that surprise contributors after a `git pull`.
-
-### Upstream-version drift warning
-
-In addition to the local FOUNDATION drift check above, every
-`install-forge-claude-md` run also queries the latest forge tag from
-GitHub once per 24h (cached at `~/.cache/forge/upstream_check.json`)
-and emits a `⚠` warning when your installed `forge-scripts` or Claude
-plugin version is behind. The post-merge / post-checkout hooks inherit
-this automatically — no consumer-side hook changes needed.
-
-Strictly warning-only: network failures, missing `gh`, or stale-but-
-working installs never change the exit code. Includes the exact upgrade
-command in the warning line.
-
----
-
-## Upgrading forge in your repo
-
-### Pick a pin
-
-Every forge release ships on `main` — pin the branch or a tag:
-
-| Pin target | Cadence | Best for |
-|---|---|---|
-| `@main` | Every release (`vX.Y.Z`) | Repos that track forge as it ships |
-| `@v1.2.3` | Frozen at a specific version | CI / production pinning |
-
-`@dev` is deprecated — pin `@main` or a tag instead
-(`forge-upgrade --channel main`).
-
-### Upgrade flow
-
-One command (`forge-upgrade`) wraps the multi-step flow. Two phases
-because [FOUNDATION §2](FOUNDATION.md#2-core-safety-rules) forbids
-agents from running `pip install`:
-
-```bash
-# Phase 1 — rewrite the pin + print the exact install command
-#           (pip, or the pixi steps in a pixi-locked repo).
-forge-upgrade --channel main          # pin @main (every release)
-forge-upgrade --to v1.3.0             # pin a specific tag
-forge-upgrade --check                 # dry-run; print without writing
-
-# Phase 2 — after running the printed command, re-sync managed
-#           artifacts (forge-doctor included).
-forge-upgrade --continue
-```
-
-The phase-1 rewrite targets the `forge-scripts @ git+...` line in
-`pyproject.toml`. Phase 2 runs `install-forge-bootstrap` under the
-hood; if your project uses requirements.txt or a lockfile, run the
-phase-1 install command manually then `forge-upgrade --continue`. A
-repo that installs from a pixi lock (`pixi.lock`, `pixi.toml` or a
-`[tool.pixi]` table) is told `pixi lock && pixi install --locked`
-instead of pip.
-
-The same upgrade run by hand:
-
-```bash
-# 1. Bump the pin in pyproject.toml.
-#    "forge-scripts @ git+https://github.com/misnaej/forge.git@v1.3.0"   (or @main)
-pip install --upgrade --force-reinstall --no-deps \
-    "forge-scripts @ git+https://github.com/misnaej/forge.git@v1.3.0"
-
-# 2. Re-sync every managed artifact in one call (idempotent):
-install-forge-bootstrap
-
-# 3. (If you use Claude Code) nothing to type: step 2 ran
-#    `forge-plugin-sync`, which installs this checkout's own copy of the
-#    release the pin names (docs/claude-code-plugin.md). Run it yourself
-#    only to retry a failed sync.
-#
-# 3b. RESTART THE SESSION. This is the last required step of any upgrade
-#     that moved the plugin, not a footnote. A session binds its plugin
-#     slot at startup; `/reload-plugins` does not reliably rebind skills
-#     or monitors. Observed: a session kept running a skill from a slot
-#     five releases old, invoking a command its own installed hook had
-#     begun refusing, with every version check green throughout.
-#     No check can confirm you did it: forge can see which slot is
-#     installed, never which one your session is running.
-#     Full reasoning: FOUNDATION.md §11 "Plugin staleness".
-
-# 4. Review the diff:
-git diff FOUNDATION.md       # foundation content changes
-git diff .githooks/          # hook template upgrades
-git diff docs/api-digest.md docs/cli-reference.md
-# Commit the updates.
-```
-
-Note: forge's `post-merge` hook already auto-runs
-`install-forge-githooks --refresh --quiet` on every `git pull`, so the
-`.githooks/` content stays current even if you forget step 2. The
-explicit `install-forge-bootstrap` in step 2 still adds value for
-generators (`docs/api-digest.md`, `docs/cli-reference.md`,
-`code_health/audit_deps_tree.log`) and the GitHub label schema.
-
-If `install-forge-claude-md` refuses to overwrite `FOUNDATION.md` (you
-removed the managed markers or wrote your own), pass `--force` to
-re-establish the managed file.
-
-**Upgrading from v1.1.2?** A one-time `install-forge-claude-md
---migrate` step converts the old inline-block layout to the split
-file. See [`docs/standalone-installers.md`](docs/standalone-installers.md)
-for the full migration recipe.
-
-If `install-forge-githooks` refuses to overwrite (you replaced a hook
-with your own content sans marker), restore the marker or pass
-`--force` (overwrites; re-apply your customizations).
-
----
-
-## Further reading
-
-Topic-specific docs (read what you need, skip what you don't):
-
-| Doc | When to read |
-|---|---|
-| [`docs/adopting.md`](docs/adopting.md) | You want to install forge one layer at a time (CLIs only / + git hooks / + plugin), with a "what lands on disk" table. |
-| [`docs/standalone-installers.md`](docs/standalone-installers.md) | You want to run a single installer manually instead of `install-forge-bootstrap`. |
-| [`docs/customizing-precommit.md`](docs/customizing-precommit.md) | You want to add a repo-specific step (mypy, secret scan, etc.) to the pre-commit hook. |
-| [`docs/claude-code-plugin.md`](docs/claude-code-plugin.md) | You use Claude Code and want the agents / skills / hooks. |
-| [`forge-docs/ci-recipe.md`](forge-docs/ci-recipe.md) | You want a pasteable GitHub Actions workflow for running forge in CI. |
-| [`forge-docs/backlog-tracks.md`](forge-docs/backlog-tracks.md) | You group backlog issues into tracks that ship as one PR (`/plan-batch`, `/sentinel`, placement after `/pr`). |
-| [`docs/ci-access.md`](docs/ci-access.md) | Your CI runner can't clone forge with implicit SSH. |
-| [`docs/audit-pack.md`](docs/audit-pack.md) | You want to use the `forge-audit-*` CLIs for codebase health checks. |
-| [`docs/consumer-release.md`](docs/consumer-release.md) | Your repo's version derives from `v*` git tags (setuptools-scm) and you want `forge-release` (or its public primitives) instead of hand-rolling the tag/push flow. |
-| [`docs/security.md`](docs/security.md) | Security-sensitive coding standards forge enforces. |
-| [`FOUNDATION.md`](FOUNDATION.md) | The engineering principles forge ships to every consumer (linked from your `CLAUDE.md`). |
-| [`REPO_STRUCTURE.md`](REPO_STRUCTURE.md) | Map of every directory in this repo. |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | You want to report a problem or change forge itself. |
-
----
+| Adopt forge one layer at a time, upgrade it, or pin a version | [Adopting forge](docs/adopting.md) |
+| Set options and see every key | [Configuration](forge-docs/configuration.md) |
+| Run forge in CI | [CI recipe](forge-docs/ci-recipe.md) |
+| Use the agents, skills and hooks | [Claude Code plugin](docs/claude-code-plugin.md) · [Agent architecture](docs/agent-architecture.md) |
+| Add my own pre-commit step | [Customising pre-commit](docs/customizing-precommit.md) |
+| Run code-health audits | [Audit pack](docs/audit-pack.md) |
+| Release my own package with forge | [Consumer releases](docs/consumer-release.md) |
+| Look up a command | [CLI reference](docs/cli-reference.md) |
+| Read the rules forge gives every agent | [FOUNDATION.md](FOUNDATION.md) |
+| Understand forge's own design | [Architecture](docs/architecture.md) · [Repository map](REPO_STRUCTURE.md) |
+
+## Status
+
+Forge is open source and maintained around its owner's own work. It is
+being consolidated until early 2027 and takes no new directions before
+then. Reports go through forge itself, with `/report-to-forge`; see
+[CONTRIBUTING](CONTRIBUTING.md).
 
 ## License
 
-MIT.
+[MIT](LICENSE).

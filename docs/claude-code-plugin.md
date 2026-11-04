@@ -106,8 +106,8 @@ terminal step of a plugin-moving upgrade.
 `install-forge-claude-md` writes two files: the foundation lives in
 `FOUNDATION.md` (forge-managed); your `CLAUDE.md` carries only the
 `@FOUNDATION.md` include directive and your repo-specific rules.
-Claude Code inlines the foundation at session start. See [How forge
-stays in sync](../README.md#how-forge-stays-in-sync) for upgrade
+Claude Code inlines the foundation at session start. See [How forge detects drift and
+refreshes](adopting.md#how-forge-detects-drift-and-refreshes) for upgrade
 behavior.
 
 ## Consumer-specific Claude Code hooks
