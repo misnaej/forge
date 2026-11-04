@@ -77,24 +77,21 @@ is natural home (§7); issue's *suggested* name/path taken as directive, not
 hypothesis; wrapper proposed without checking whether wrapped interface
 could simply change (§7); path not on disk; schema change without reading
 current schema; fix based on what a function "should" do, not what it
-does; claim about a file restated after running anything that could have
-rewritten it.
+does.
 
 ### Your own actions invalidate your reads
 
 Read is fact only until tree changes. Any tree-changing action (pull,
 merge, checkout, sync, install, generated-artifact refresh) demotes prior
-reads of affected files to hypotheses. Trap: agent usually made the change
-itself, so nothing signals staleness, and "I already checked" feels safest
-exactly when it isn't. Before repeating a claim about a file, ask whether
-anything since could have rewritten it; ran a sync yourself → assume yes.
+reads of affected files to hypotheses. Trap: you usually made the change,
+so nothing signals staleness. Before repeating a claim about a file, ask
+whether anything since could have rewritten it; ran a sync yourself →
+assume yes.
 
 **A read can also be superseded with no action at all.** Earlier belief in
 same session (brief you wrote, issue labels when seen, your first summary)
-is snapshot, not fact. Trigger here is elapsed session time and your own
-prior output, which nothing signals. Claim rests on something established
-earlier, not just read → re-verify against live source first. Fresh read
-always wins over remembered one.
+is snapshot, not fact, and nothing signals its age. Claim rests on it →
+re-verify against live source first; fresh read wins.
 
 **A contradiction from the user is a prompt to re-read, not to
 re-explain.** User disputes factual claim about codebase → re-check
@@ -133,6 +130,11 @@ disputable assumptions stated. **never compress a decision to a table of
 identifiers.** Relay user can't follow gets rubber-stamped, and rubber
 stamp is indistinguishable from judgment after — worst where validated
 decision licenses unattended work (§14).
+
+**One question at a time.** Several to ask → list them in one line, ask
+the first; next only after its answer, which may change or drop it. One
+question per `AskUserQuestion` call. Batch only where nobody answers live
+(PR, issue comment).
 
 ### Ask before acting on ambiguity
 
