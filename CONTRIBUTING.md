@@ -1,9 +1,10 @@
 # Contributing to forge
 
-Forge is open source, and it is also shaped around its owner's own work.
-Until it has been consolidated — expected in early 2027 — it does not
-take on new directions. Contributions are welcome within that limit, and
-this page says what the limit is.
+Forge is open source and maintained around its owner's own work. Until it
+has been consolidated — expected in early 2027 — it does not take on new
+directions. Contributions are welcome within that limit, and this page
+says what the limit is. Below, a *maintainer* is anyone with write access
+to this repository.
 
 To adopt forge in your own repository, read the [README](README.md)
 instead; this page is for changing forge itself.
@@ -11,15 +12,17 @@ instead; this page is for changing forge itself.
 ## The rules
 
 1. **Contributing means using forge.** Report a problem from a repository
-   that runs forge, with `/report-to-forge`. It captures versions and
-   evidence, strips anything private, and checks for a duplicate first.
+   that runs forge: record it in your intake with `forge-intake new`, then
+   file it with `/report-to-forge`, which captures versions and evidence,
+   checks the record for private details and asks you to confirm, and
+   searches for a duplicate first.
 2. **Issues filed any other way are triaged, not lost.** An issue from
-   someone without write access that did not come through
+   someone who is not a maintainer that did not come through
    `/report-to-forge` is labelled, and a maintainer replies: we will fix
    it, we invite you to fix it, or we do not plan to and say why — you
    are welcome to argue the case.
-3. **Outside pull requests are by invitation.** Without write access,
-   open a PR only on an issue a maintainer has invited you to work on,
+3. **Outside pull requests are by invitation.** If you are not a
+   maintainer, open a PR only on an issue a maintainer has invited you to work on,
    from your fork. Other PRs are closed with a pointer here.
    Contributors whose work lands are credited in [Contributors](#contributors).
 4. **Nothing changes existing behaviour without the owner's approval.**
@@ -31,12 +34,9 @@ instead; this page is for changing forge itself.
    [private vulnerability reporting](https://github.com/misnaej/forge/security/advisories/new),
    never in a public issue.
 
-"Contributor" here means a person with write access to this repository.
-
 ## What to expect
 
-There is no guaranteed response time. Forge is maintained around its
-owner's needs, and replies come when they come.
+There is no guaranteed response time; replies come when they come.
 
 Everyone taking part follows the [code of conduct](CODE_OF_CONDUCT.md).
 Contributions are accepted under the repository's [MIT licence](LICENSE).

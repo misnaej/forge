@@ -7,8 +7,7 @@ project runs.
 In short: be considerate, argue about the work and not the person, and
 accept that the owner decides where forge goes.
 
-Report unacceptable behaviour privately through the repository's
-[private reporting form](https://github.com/misnaej/forge/security/advisories/new)
-— it is labelled for security, and conduct reports are welcome there too —
+Report unacceptable behaviour privately through the
+[private reporting form](https://github.com/misnaej/forge/security/advisories/new),
 never in a public thread. The owner reviews every report and
 decides the response, up to removing someone from the project.
