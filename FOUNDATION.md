@@ -1045,7 +1045,7 @@ comparison.
   first, else siblings cover each other's lines and all score zero.
 - Library performance = same-machine before/after ratio
   `forge:perf-optimizer` already reports.
-- Token economy = tokens per task and fixed-context share per agent type.
+- Token economy = tokens per run and fixed-context share per agent type.
 - No metric carries a threshold to tune.
 
 **Enforcement is a review lens, never a gate** — no build fails on a

@@ -90,6 +90,18 @@ class TokenUsage:
             )
 
 
+def _printable(text: str) -> str:
+    """*text* with every non-printable character turned into a space.
+
+    Args:
+        text: A label read from a transcript, which anyone can write.
+
+    Returns:
+        The label, safe to print to a terminal.
+    """
+    return "".join(ch if ch.isprintable() else " " for ch in text)
+
+
 def _count(value: object) -> int:
     """A usage field as a non-negative int (``0`` for anything else).
 
@@ -225,7 +237,7 @@ def parse_session(records: Iterable[dict[str, Any]]) -> SessionTokens:
         kind = record.get("type")
         if kind == "assistant":
             skill = record.get("attributionSkill")
-            skill = skill if isinstance(skill, str) and skill else NO_SKILL
+            skill = _printable(skill) if isinstance(skill, str) and skill else NO_SKILL
             tallies.setdefault(skill, UsageTally()).add_record(record)
             _note_delegations(session, record, skill)
         elif kind == "user":
@@ -364,8 +376,10 @@ class TokenReport:
     by_caller: list[TokenRow]
     #: Main-session usage per active skill.
     by_skill: list[TokenRow]
-    #: Waste findings, largest first.
+    #: Waste findings, largest first (capped).
     flags: list[WasteFlag]
+    #: Findings before the cap.
+    flag_total: int
     #: Subagent runs left out for want of token data.
     unknown_runs: int
     #: ``(delegations, brief chars, hand-back chars)``.
@@ -407,7 +421,8 @@ def render_token_report(report: TokenReport) -> str:
         ]
     if unknown_runs:
         lines += [f"{unknown_runs} run(s) without token data left out.", ""]
-    lines.append(f"Waste flags: {len(flags)}")
+    shown = f" (largest {len(flags)} shown)" if report.flag_total > len(flags) else ""
+    lines.append(f"Waste flags: {report.flag_total}{shown}")
     lines += [
         f"  {fmt_tokens(flag.tokens):>6}  {flag.kind}: {flag.detail}"
         f"  [{flag.run_label}]"

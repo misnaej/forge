@@ -107,6 +107,7 @@ A compact index of this codebase's symbols — every top-level function and clas
   - `fixed_cost(self) -> int` — Prompt tokens spent re-sending the fixed context, every request.
   - `fixed_share(self) -> float` — :attr:`fixed_cost` as a share of prompt tokens (``0`` when none).
   - `add(self, other: TokenUsage) -> None` — Add *other*'s counts into this usage.
+- `_printable(text: str) -> str` _(internal)_ — *text* with every non-printable character turned into a space.
 - `_count(value: object) -> int` _(internal)_ — A usage field as a non-negative int (``0`` for anything else).
 - `class UsageTally` — Adds each request's usage once, however many records repeat it.
   - `add_record(self, record: dict[str, Any]) -> bool` — Count *record*'s usage unless its message was already counted.

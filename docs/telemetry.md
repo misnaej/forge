@@ -207,6 +207,7 @@ session's* transcript, not the subagent's, so a transcript is read only
 when its filename names that agent — reading the recorded path as given
 would charge one session's turns and repeated calls to every agent that
 ran beneath it.
+
 **Tokens.** Claude Code writes one transcript record per content block,
 each repeating its request's id and usage, so turns and tokens count
 each request once. A request's prompt is its fresh input plus cache

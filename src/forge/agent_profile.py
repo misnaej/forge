@@ -1438,7 +1438,10 @@ def _run_label(run: AgentRun) -> str:
         The label, truncated to 80 characters.
     """
     tail = run.description or run.agent_id
-    return f"{run.agent_type or '?'}  {tail}"[:80]
+    # Types and descriptions come from transcripts and sidecars anyone can
+    # write; a control character would otherwise reach the terminal.
+    label = f"{run.agent_type or '?'}  {tail}"
+    return "".join(ch if ch.isprintable() else " " for ch in label)[:80]
 
 
 def render_report(runs: list[AgentRun], tools: list[ToolRow], *, top: int) -> str:
@@ -1663,7 +1666,7 @@ def waste_flags(run: AgentRun) -> list[WasteFlag]:
             WasteFlag(
                 "single-call",
                 label,
-                f"{stats.tool_calls} tool call — could be a direct command",
+                f"{stats.tool_calls} tool call(s) — could be a direct command",
                 tokens.total_tokens,
             )
         )
@@ -1784,10 +1787,10 @@ def render_tokens(runs: list[AgentRun], sessions: dict[str, SessionTokens]) -> s
         for skill, usage in session.by_skill.items()
     )
     by_caller = _grouped((r.caller_skill, t) for r, t in known if r.caller_skill)
-    flags = sorted(
+    all_flags = sorted(
         (flag for run in subagents for flag in waste_flags(run)),
         key=lambda flag: -flag.tokens,
-    )[:WASTE_FLAG_CAP]
+    )
     delegation = (
         sum(len(s.brief_chars) for s in sessions.values()),
         sum(sum(s.brief_chars.values()) for s in sessions.values()),
@@ -1798,7 +1801,8 @@ def render_tokens(runs: list[AgentRun], sessions: dict[str, SessionTokens]) -> s
             by_type=by_type,
             by_caller=by_caller,
             by_skill=by_skill,
-            flags=flags,
+            flags=all_flags[:WASTE_FLAG_CAP],
+            flag_total=len(all_flags),
             unknown_runs=len(subagents) - len(known),
             delegation=delegation,
         )
