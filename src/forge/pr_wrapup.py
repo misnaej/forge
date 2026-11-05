@@ -334,9 +334,11 @@ def _check_budget(head: list[str], sections: list[tuple[str, list[str]]]) -> lis
         sections: ``(title, body_lines)`` pairs in document order.
 
     Returns:
-        One violation when the body exceeds the :func:`forge.text_budget.ceiling`
-        of ``WORD_BUDGET`` plus
-        ``FINDING_ALLOWANCE`` per required non-clean, non-status section.
+        One violation when the body exceeds the
+        :func:`forge.text_budget.ceiling` of the budget (``WORD_BUDGET``
+        plus ``FINDING_ALLOWANCE`` per required non-clean, non-status
+        section). Between the budget and its ceiling it only logs a
+        warning and returns nothing.
     """
     titles = {title.casefold(): body for title, body in sections}
     findings = sum(

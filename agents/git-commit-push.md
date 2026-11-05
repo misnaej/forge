@@ -91,7 +91,7 @@ MUST have run first; you fail if the pre-commit hook finds violations.
    git commit -m "<type>: <description>"
    ```
 
-   **Commit message rules:** max 50 words; conventional format (`fix:`,
+   **Commit message rules:** 50-word target, 55 max; conventional format (`fix:`,
    `feat:`, `refactor:`, `test:`, `docs:`, `chore:`); what/why, not how;
    **NEVER any Claude or AI attribution**. A refused commit command ran
    nothing: restart from step 4, never the commit alone.

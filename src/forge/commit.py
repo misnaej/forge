@@ -13,7 +13,8 @@ git commands is enforced here (FOUNDATION §7: a CLI performing a
 - never on a protected branch (``[tool.forge].base_branch``) or a detached HEAD;
 - the pre-commit verdict must pass first (an armed ``forge-emergency``
   lets stale or missing logs through, never a failed step);
-- the message is conventional, at most 50 words, with no AI attribution;
+- the message is conventional, a 50-word target (warned up to 55, refused
+  past it), with no AI attribution;
 - the index must equal the named files before the commit, and the commit
   may add only what the hook regenerates (generated docs, the cadence stamp);
 - the pre-commit hook runs on the commit (git's per-process overrides
