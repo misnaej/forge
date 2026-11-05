@@ -83,7 +83,11 @@ COMMAND=$(parse_or_block '.tool_input.command // empty')
 # terminated, parenthesized and variable-indirected forms all contain the
 # literal. Combined with any destructive verb, in-place editor, interpreter
 # that could write, or a redirect.
-PATH_HIT=$(printf '%s' "$COMMAND" | grep -cE '\.vibe|\.agents|(^|[[:space:];|&()<>])AGENTS\.md([[:space:];|&()<>'"'"'`]|$)') || true
+# Substring match on all three protected names: quoted, /-prefixed,
+# semicolon-terminated, parenthesized and variable-indirected forms all
+# contain the literal. Nested docs/AGENTS.md over-blocks in Bash — safe
+# direction; the Edit branch narrows AGENTS.md to the repo root.
+PATH_HIT=$(printf '%s' "$COMMAND" | grep -cE '\.vibe|\.agents|AGENTS\.md') || true
 if [ "$PATH_HIT" -gt 0 ]; then
     # Block on a destructive verb/redirect OR on command construction
     # (compound commands, substitution, variables) — verb indirection like
