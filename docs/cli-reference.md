@@ -348,6 +348,25 @@ options:
   -h, --help            show this help message and exit
 ```
 
+## forge-commit
+
+```text
+usage: forge-commit [-h] [-m MESSAGE] [--no-push] [--push-only] [paths ...]
+
+Commit exactly the named files with forge's guards enforced, then push (never
+force, never to a protected branch).
+
+positional arguments:
+  paths                 Files to commit (repo-relative).
+
+options:
+  -h, --help            show this help message and exit
+  -m, --message MESSAGE
+                        Commit message (conventional title).
+  --no-push             Commit only.
+  --push-only           Push commits that already exist (no new commit).
+```
+
 ## forge-config
 
 ```text

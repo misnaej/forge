@@ -302,6 +302,8 @@ class TokenRow:
     label: str
     runs: int
     usage: TokenUsage
+    #: Characters of the runs' reports back to their caller (0 when unknown).
+    report_chars: int = 0
 
 
 @dataclass(frozen=True)
@@ -354,17 +356,23 @@ def _table(title: str, rows: list[TokenRow]) -> list[str]:
     """
     header = (
         f"{'':<34} {'runs':>5} {'total':>7} {'per run':>8} "
-        f"{'fixed ctx':>9} {'fixed %':>7} {'output':>7}"
+        f"{'fixed ctx':>9} {'fixed %':>7} {'output':>7} {'avg report':>10}"
     )
     lines = [title, header]
     for row in rows:
         usage = row.usage
         per_run = usage.total_tokens // row.runs if row.runs else 0
         fixed_each = usage.fixed_tokens // row.runs if row.runs else 0
+        report = (
+            f"{row.report_chars // row.runs} ch"
+            if row.report_chars and row.runs
+            else "-"
+        )
         lines.append(
             f"{row.label[:34]:<34} {row.runs:>5} {fmt_tokens(usage.total_tokens):>7} "
             f"{fmt_tokens(per_run):>8} {fmt_tokens(fixed_each):>9} "
-            f"{usage.fixed_share:>6.0%} {fmt_tokens(usage.output_tokens):>7}"
+            f"{usage.fixed_share:>6.0%} "
+            f"{fmt_tokens(usage.output_tokens):>7} {report:>10}"
         )
     return [*lines, ""]
 
