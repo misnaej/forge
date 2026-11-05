@@ -475,6 +475,55 @@ def test_install_deps_blocks_pixi_update_project_and_exec_verbs(command: str) ->
 @pytest.mark.parametrize(
     "command",
     [
+        "pixi run pixi add x",
+        "pixi run pixi update",
+        "pixi run pixi exec x",
+        "pixi run --locked pixi add x",
+        "uv run pixi add x",
+        "pixi run /usr/bin/pixi add x",
+        "pixi run pixi lock && pixi run pixi add x",
+    ],
+)
+def test_install_deps_blocks_a_disallowed_pixi_verb_inside_a_run(command: str) -> None:
+    """A pixi verb behind a manager's `run` faces the same allowlist.
+
+    The per-segment check reads only the outer verb, so `pixi run pixi add x`
+    passed on its allowed `run`. The chained row pins that an allowed inner
+    `lock` does not vouch for a later blocked `add`.
+
+    Args:
+        command: A manager `run` whose inner pixi verb is not allowlisted.
+    """
+    assert _run_hook(_INSTALL_DEPS, command) == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "pixi run pixi lock",
+        "pixi run pixi run pytest",
+        "pixi run --locked pytest -q",
+        "pixi run pixi --version",
+        "pixi run /usr/bin/pixi lock",
+        'echo "pixi run pixi add x"',
+    ],
+)
+def test_install_deps_allows_allowlisted_pixi_verbs_inside_a_run(command: str) -> None:
+    """Inner pixi verbs on the allowlist, terminal flags, and quoted prose pass.
+
+    The inner-verb rule must not over-block: `lock` and `run` are allowed
+    behind a `run`, `--version` dispatches no subcommand, and prose in a
+    quoted `echo` argument is not a command.
+
+    Args:
+        command: A command whose inner pixi use is allowed or only quoted.
+    """
+    assert _run_hook(_INSTALL_DEPS, command) == 0
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "conda run python -m pip install x",
         "conda run -n base pip install x",
         "pixi run --locked pip install x",

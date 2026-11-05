@@ -207,6 +207,21 @@ match($0, PFX) {
         echo "BLOCKED: \`pixi $verb\` is not on the agent allowlist ($(printf '%s' "$PIXI_ALLOWED_VERBS" | tr '|' ' ')). Unrecognised pixi verbs block by default — most of pixi's surface writes pixi.toml, pixi.lock, or the global tool store. If this one only reads, tell the user to run it themselves with: ! $COMMAND" >&2
         exit 2
     fi
+    # The same allowlist for a pixi run INSIDE a manager's `run`: the
+    # segment check above reads only the outer verb, so `pixi run pixi add x`
+    # passed on its allowed `run`. Read from the --words view like the
+    # `<mgr> run pip install` rule; every `pixi <verb>` behind a `run` up to
+    # the next separator is judged, so an allowed verb never vouches for a
+    # later one. Text that merely names pixi there blocks too: fail closed.
+    inner=$(printf '%s\n' "$WORDS" | grep -oE "${CMD_PFX}"'(conda|mamba|micromamba|pipenv|uv|poetry|pixi)[[:space:]]+run\b[^;&|]*' |
+        grep -oE '(^|[[:space:]])([^[:space:]]*/)?pixi[[:space:]]+[^[:space:]]+' | awk '{print $2}') || inner=""
+    for v in $inner; do
+        case "$v" in --version | -V | --help | -h | help) continue ;; esac
+        if ! printf '%s\n' "$v" | grep -qxE "($PIXI_ALLOWED_VERBS)"; then
+            echo "BLOCKED: \`pixi $v\` behind a \`run\` is not on the agent allowlist ($(printf '%s' "$PIXI_ALLOWED_VERBS" | tr '|' ' ')). Tell the user to run it themselves with: ! $COMMAND" >&2
+            exit 2
+        fi
+    done
 fi
 
 # pip / conda — anchored to command start or after a shell separator so a
