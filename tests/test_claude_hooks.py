@@ -63,9 +63,7 @@ def _run_hook_proc(
             ``"block_claude_attribution.sh"``).
         command: The ``Bash`` tool command the hook inspects.
         options: Optional hook configuration — defaults to empty (no
-            agent_type/id, session_id, cwd, env overrides). Set
-            ``agent_type="forge:git-commit-push"`` to exercise the
-            sanctioned-agent bypass path.
+            agent_type/id, session_id, cwd, env overrides).
 
     Returns:
         The completed subprocess (exit code + captured stdout/stderr).
@@ -147,6 +145,45 @@ def _write_wrapup(repo: Path, sha: str) -> None:
 _PROTECTED = "block_protected_branches.sh"
 
 
+@pytest.fixture
+def on_feature_branch(tmp_path: Path) -> HookOptions:
+    """Hook options running from a throwaway repo checked out on `my-feat`.
+
+    The current-branch guard of `block_protected_branches.sh` never fires
+    there, so a row judges only the refspec-destination guard, whatever
+    branch the real checkout is on.
+
+    Returns:
+        Options whose `cwd` is the feature-branch repo.
+    """
+    init_git_repo(tmp_path)
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "my-feat"],
+        cwd=tmp_path,
+        env=GIT_ENV,
+        check=True,
+    )
+    return HookOptions(cwd=tmp_path, env=GIT_ENV)
+
+
+def _protected_options(hook: str, request: pytest.FixtureRequest) -> HookOptions | None:
+    """Feature-branch options for the protected-branch hook, none for any other.
+
+    Builds the throwaway repo only for the rows that need it.
+
+    Args:
+        hook: Hook script the row runs.
+        request: The test's fixture request, to build `on_feature_branch` lazily.
+
+    Returns:
+        `on_feature_branch` options for `_PROTECTED`, else `None`.
+    """
+    if hook != _PROTECTED:
+        return None
+    options: HookOptions = request.getfixturevalue("on_feature_branch")
+    return options
+
+
 def test_protected_blocks_push_head_to_main() -> None:
     """`git push origin HEAD:main` is blocked by the refspec-destination guard.
 
@@ -167,30 +204,25 @@ def test_protected_blocks_push_fully_qualified_main_ref() -> None:
     assert _run_hook(_PROTECTED, "git push -u origin my-feat:refs/heads/main") == 2
 
 
-def test_protected_destination_guard_has_no_agent_bypass() -> None:
-    """Even forge:git-commit-push cannot push to a protected destination (#74).
+def test_protected_destination_guard_fires_from_feature_branch(
+    on_feature_branch: HookOptions,
+) -> None:
+    """From an unprotected branch, a push to a protected destination blocks.
 
-    This is the exact incident: the sanctioned agent bypasses the
-    current-branch check, but the refspec-destination guard must still block
-    a push whose destination is a protected branch.
+    The current-branch check passes there, so the refspec-destination guard
+    alone must catch a push whose destination is a protected branch.
     """
-    assert (
-        _run_hook(
-            _PROTECTED,
-            "git push origin HEAD:main",
-            options=HookOptions(agent_type="forge:git-commit-push"),
-        )
-        == 2
-    )
+    command = "git push origin HEAD:main"
+    assert _run_hook(_PROTECTED, command, options=on_feature_branch) == 2
 
 
-def test_protected_allows_feature_push() -> None:
+def test_protected_allows_feature_push(on_feature_branch: HookOptions) -> None:
     """A normal feature-branch push (unprotected destination) is allowed."""
     assert (
         _run_hook(
             _PROTECTED,
             "git push -u origin my-feat:refs/heads/my-feat",
-            options=HookOptions(agent_type="forge:git-commit-push"),
+            options=on_feature_branch,
         )
         == 0
     )
@@ -206,28 +238,22 @@ def test_protected_allows_feature_push() -> None:
         "git --no-pager push origin main",
     ],
 )
-def test_protected_branches_blocks_bypass_forms(command: str) -> None:
-    """The refspec-destination guard (#74) still fires under every bypass form.
+def test_protected_branches_blocks_bypass_forms(
+    command: str, on_feature_branch: HookOptions
+) -> None:
+    """The refspec-destination guard still fires under every bypass form.
 
     Leading whitespace, an inline env-var prefix, a `cd &&` chain, a
     subshell, and a `--no-pager` global option are the shared bypass
-    forms `GIT_ANCHOR` (`git_anchor.sh`) now tolerates for every hook that
-    sources it; the sanctioned `forge:git-commit-push` agent bypasses only
-    the *current-branch* check (guard 2), never the destination guard
-    (guard 1) — same no-bypass posture as
-    `test_protected_destination_guard_has_no_agent_bypass`, exercised
-    across each syntactic form.
+    forms `GIT_ANCHOR` (`git_anchor.sh`) tolerates for every hook that
+    sources it. Run from a feature branch, so only the destination guard
+    can block.
 
     Args:
         command: A `git push origin main` invocation wrapped in one of the
             five bypass forms.
     """
-    assert (
-        _run_hook(
-            _PROTECTED, command, options=HookOptions(agent_type="forge:git-commit-push")
-        )
-        == 2
-    )
+    assert _run_hook(_PROTECTED, command, options=on_feature_branch) == 2
 
 
 @pytest.mark.parametrize(
@@ -239,7 +265,7 @@ def test_protected_branches_blocks_bypass_forms(command: str) -> None:
     ],
 )
 def test_protected_branches_blocks_protected_push_earlier_in_a_chain(
-    command: str,
+    command: str, on_feature_branch: HookOptions
 ) -> None:
     """A protected push anywhere in a chain blocks, not only the last one.
 
@@ -255,15 +281,12 @@ def test_protected_branches_blocks_protected_push_earlier_in_a_chain(
         command: A two-push chain with the protected destination in a
             different position (or refspec form) each time.
     """
-    assert (
-        _run_hook(
-            _PROTECTED, command, options=HookOptions(agent_type="forge:git-commit-push")
-        )
-        == 2
-    )
+    assert _run_hook(_PROTECTED, command, options=on_feature_branch) == 2
 
 
-def test_protected_branches_allows_a_chain_with_no_protected_destination() -> None:
+def test_protected_branches_allows_a_chain_with_no_protected_destination(
+    on_feature_branch: HookOptions,
+) -> None:
     """A chain of two pushes, neither targeting a protected branch, is allowed.
 
     Companion to the blocking cases above — confirms the per-invocation
@@ -273,7 +296,7 @@ def test_protected_branches_allows_a_chain_with_no_protected_destination() -> No
         _run_hook(
             _PROTECTED,
             "git push origin safe-branch && git push origin other-branch",
-            options=HookOptions(agent_type="forge:git-commit-push"),
+            options=on_feature_branch,
         )
         == 0
     )
@@ -1137,13 +1160,11 @@ def test_no_verify_short_flag_blocks_when_a_separator_follows(command: str) -> N
 # The hook's own git queries read no machine config (GIT_ENV), so a
 # developer's global core.hooksPath cannot change a verdict.
 
-_COMMIT_AGENT = "forge:git-commit-push"
 # The PreToolUse block status (the shared `_BLOCK` is defined further down,
 # after these parametrize tables are evaluated).
 _BLOCK_EXIT = 2
 
 
-@pytest.mark.parametrize("agent_type", ["", _COMMIT_AGENT])
 @pytest.mark.parametrize(
     "command",
     [
@@ -1229,20 +1250,16 @@ _BLOCK_EXIT = 2
         ),
     ],
 )
-def test_no_verify_blocks_every_hooks_path_change(
-    command: str, agent_type: str, tmp_path: Path
-) -> None:
+def test_no_verify_blocks_every_hooks_path_change(command: str, tmp_path: Path) -> None:
     """Changing or overriding where git looks for hooks is refused for everyone.
 
     Run outside a repo, so only the core.hooksPath rule is under test.
 
     Args:
         command: A command that writes, removes or overrides the key.
-        agent_type: The calling agent — the main thread or the commit agent,
-            which has no bypass here.
         tmp_path: A directory that is not a git repo.
     """
-    options = HookOptions(agent_type=agent_type, cwd=tmp_path, env=GIT_ENV)
+    options = HookOptions(cwd=tmp_path, env=GIT_ENV)
     assert _run_hook(_NO_VERIFY, command, options=options) == _BLOCK_EXIT
 
 
@@ -1711,18 +1728,6 @@ def test_rebase_blocks_pull_rebase_short_flag() -> None:
     assert _run_hook(_REBASE, "git pull -r") == 2
 
 
-def test_rebase_has_no_agent_bypass() -> None:
-    """Even forge:git-commit-push cannot rebase — the block has no bypass."""
-    assert (
-        _run_hook(
-            _REBASE,
-            "git rebase origin/dev",
-            options=HookOptions(agent_type="forge:git-commit-push"),
-        )
-        == 2
-    )
-
-
 def test_rebase_allows_plain_pull() -> None:
     """A non-rebase `git pull` is allowed (merge is the sanctioned sync)."""
     assert _run_hook(_REBASE, "git pull origin dev") == 0
@@ -2102,21 +2107,19 @@ _REDIRECTION_BLOCKED = [
 
 
 @pytest.mark.parametrize(("hook", "command"), _REDIRECTION_BLOCKED)
-def test_guards_read_past_a_redirection_word(hook: str, command: str) -> None:
+def test_guards_read_past_a_redirection_word(
+    hook: str, command: str, request: pytest.FixtureRequest
+) -> None:
     """A redirection before a command, or between a tool and its subcommand, blocks.
 
-    The protected-branch rows run as the commit agent, as in the allowed
-    table, so the current-branch exemption leaves only the destination
-    check under test.
+    The protected-branch rows run from a feature-branch repo, as in the
+    allowed table, so only the destination check is under test.
 
     Args:
         hook: Hook script under test.
         command: A command the hook refuses without the redirection.
     """
-    options = (
-        HookOptions(agent_type="forge:git-commit-push") if hook == _PROTECTED else None
-    )
-    assert _run_hook(hook, command, options=options) == 2
+    assert _run_hook(hook, command, options=_protected_options(hook, request)) == 2
 
 
 _REDIRECTION_ALLOWED = [
@@ -2145,25 +2148,21 @@ _REDIRECTION_ALLOWED = [
 
 @pytest.mark.parametrize(("hook", "command"), _REDIRECTION_ALLOWED)
 def test_guards_do_not_take_a_redirection_target_for_a_command(
-    hook: str, command: str
+    hook: str, command: str, request: pytest.FixtureRequest
 ) -> None:
     """A redirection never turns a mention, a plain push or a help request into a block.
 
     `> git push -f` writes to a file named `git` and runs `push`; after
     `echo` git is only an argument. The protected-branch guard also refuses
     any push made while the checkout itself sits on a protected branch — CI
-    on `main` does — so its rows run as the commit agent, which that
-    current-branch check exempts, leaving only the refspec-destination
-    check under test.
+    on `main` does — so its rows run from a feature-branch repo, leaving
+    only the refspec-destination check under test.
 
     Args:
         hook: Hook script under test.
         command: A command the hook allows.
     """
-    options = (
-        HookOptions(agent_type="forge:git-commit-push") if hook == _PROTECTED else None
-    )
-    assert _run_hook(hook, command, options=options) == 0
+    assert _run_hook(hook, command, options=_protected_options(hook, request)) == 0
 
 
 # --- Branch deletion behind git global options ---------------------------------
@@ -2353,23 +2352,20 @@ _BINPATH_ALLOWED = [
 
 @pytest.mark.parametrize(("hook", "command"), _BINPATH_ALLOWED)
 def test_guards_do_not_take_a_path_for_a_command_it_is_not(
-    hook: str, command: str
+    hook: str, command: str, request: pytest.FixtureRequest
 ) -> None:
     """A directory path never turns another name, a mention or a safe verb into a block.
 
     `>/tmp/git push -f` writes to the file `/tmp/git` and runs `push`. The
     protected-branch guard also refuses any push while the checkout sits on
-    a protected branch (CI on `main` does), so its rows run as the commit
-    agent, which that check exempts, leaving the refspec rule under test.
+    a protected branch (CI on `main` does), so its rows run from a
+    feature-branch repo, leaving the refspec rule under test.
 
     Args:
         hook: Hook script under test.
         command: A command the hook allows.
     """
-    options = (
-        HookOptions(agent_type="forge:git-commit-push") if hook == _PROTECTED else None
-    )
-    assert _run_hook(hook, command, options=options) == 0
+    assert _run_hook(hook, command, options=_protected_options(hook, request)) == 0
 
 
 # --- Wrapper options that take a value ---------------------------------------
@@ -2426,17 +2422,16 @@ _WRAPPER_VALUE_BLOCKED = [
 
 
 @pytest.mark.parametrize(("hook", "command"), _WRAPPER_VALUE_BLOCKED)
-def test_guards_read_past_a_wrapper_option_value(hook: str, command: str) -> None:
+def test_guards_read_past_a_wrapper_option_value(
+    hook: str, command: str, request: pytest.FixtureRequest
+) -> None:
     """A wrapper's option value never hides the command it runs.
 
     Args:
         hook: Hook script under test.
         command: A command the hook refuses without the wrapper.
     """
-    options = (
-        HookOptions(agent_type="forge:git-commit-push") if hook == _PROTECTED else None
-    )
-    assert _run_hook(hook, command, options=options) == 2
+    assert _run_hook(hook, command, options=_protected_options(hook, request)) == 2
 
 
 _WRAPPER_VALUE_ALLOWED = [
@@ -2461,7 +2456,7 @@ _WRAPPER_VALUE_ALLOWED = [
 
 @pytest.mark.parametrize(("hook", "command"), _WRAPPER_VALUE_ALLOWED)
 def test_guards_do_not_take_a_wrapper_value_for_a_command(
-    hook: str, command: str
+    hook: str, command: str, request: pytest.FixtureRequest
 ) -> None:
     """Reading past a wrapper's value never turns a safe command into a block.
 
@@ -2469,10 +2464,7 @@ def test_guards_do_not_take_a_wrapper_value_for_a_command(
         hook: Hook script under test.
         command: A command the hook allows.
     """
-    options = (
-        HookOptions(agent_type="forge:git-commit-push") if hook == _PROTECTED else None
-    )
-    assert _run_hook(hook, command, options=options) == 0
+    assert _run_hook(hook, command, options=_protected_options(hook, request)) == 0
 
 
 # A command each hook's guard would normally block — any command works here,
@@ -2679,102 +2671,27 @@ def test_raw_git_blocks_env_var_prefix_push() -> None:
     assert _run_hook(_RAW_GIT, "GIT_DIR=/tmp/x git push origin main") == 2
 
 
-def test_raw_git_env_prefix_still_bypassable_slips_agent_bypass() -> None:
-    """The git-commit-push bypass still applies under an env prefix."""
-    assert (
-        _run_hook(
-            _RAW_GIT,
-            "GIT_DIR=/tmp/x git push origin main",
-            options=HookOptions(agent_type="forge:git-commit-push"),
-        )
-        == 0
-    )
+@pytest.mark.parametrize("agent_type", ["git-commit-push", "forge:git-commit-push"])
+@pytest.mark.parametrize("command", ["git commit -m x", "git push"])
+def test_raw_git_blocks_commit_and_push_for_former_commit_agent(
+    agent_type: str, command: str
+) -> None:
+    """The agent that once ran raw `git commit` / `git push` is refused like everyone.
 
-
-@pytest.mark.parametrize(
-    ("command", "expected"),
-    [
-        pytest.param("git push origin --delete feature", 2, id="delete"),
-        pytest.param("git push origin --del feature", 2, id="delete-prefix"),
-        pytest.param("git push -d origin feature", 2, id="short-d"),
-        pytest.param("git push -fd origin feature", 2, id="cluster-d"),
-        pytest.param("git push origin :feature", 2, id="empty-src"),
-        pytest.param("git push origin +:feature", 2, id="plus-empty-src"),
-        pytest.param("git push --mirror origin", 2, id="mirror"),
-        pytest.param("git push --prune origin", 2, id="prune"),
-        pytest.param("git push --m origin", 2, id="mirror-shortest-prefix"),
-        pytest.param("git push --mi origin", 2, id="mirror-prefix"),
-        pytest.param("git push origin :feat*", 2, id="empty-src-glob"),
-        pytest.param("git push origin $(echo :foo)", 2, id="dynamic-subst"),
-        pytest.param("git push origin `echo :foo`", 2, id="dynamic-backtick"),
-        pytest.param("x=:foo; git push origin $x", 2, id="dynamic-var"),
-        pytest.param("g=git; $g push origin :foo", 2, id="dynamic-git-var"),
-        pytest.param("git push origin $(cat f)", 2, id="dynamic-cat"),
-        pytest.param("xargs git push origin", 2, id="dynamic-xargs"),
-        pytest.param(
-            "gh api -X DELETE repos/o/r/git/refs/heads/foo", 2, id="gh-api-delete-ref"
-        ),
-        pytest.param(
-            "gh api --method DELETE repos/o/r/branches/foo",
-            2,
-            id="gh-api-delete-branch",
-        ),
-        pytest.param("git push origin {,:}x", 2, id="dynamic-brace"),
-        pytest.param("git push origin x {:,}y", 2, id="dynamic-brace-second"),
-        pytest.param(
-            "gh api -X DELETE repos/o/r/git/refs/tags/v1", 2, id="gh-api-delete-tag"
-        ),
-        pytest.param(
-            "gh api -X DELETE repos/o/r/git/refs/%68eads/foo",
-            2,
-            id="gh-api-delete-percent-encoded",
-        ),
-        pytest.param('gh api -X DELETE "$URL"', 2, id="gh-api-dynamic-endpoint"),
-        pytest.param(
-            "gh api -X $M repos/o/r/git/refs/heads/x", 2, id="gh-api-dynamic-method"
-        ),
-        pytest.param(
-            'gh api graphql -f query=\'mutation{deleteRef(input:{refId:"x"})'
-            "{clientMutationId}}'",
-            2,
-            id="gh-api-graphql-deleteref",
-        ),
-        pytest.param("gh api repos/o/r/pulls", 0, id="gh-api-get"),
-        pytest.param("gh api repos/{owner}/{repo}/pulls", 0, id="gh-api-placeholders"),
-        pytest.param("git push -u origin feature-d", 0, id="branch-with-d"),
-        pytest.param("git push origin HEAD", 0, id="plain-push"),
-    ],
-)
-def test_raw_git_commit_agent_branch_deleting_push(command: str, expected: int) -> None:
-    """The commit agent pushes work but never deletes a remote branch.
-
-    Only option tokens and empty-source refspecs count, so a branch whose
-    name contains ``d`` and a ``-u`` push stay allowed. A push whose words
-    are built at run time (a variable, a substitution, ``xargs``, git
-    itself behind a variable) cannot be judged and is refused, as is a
-    ``gh api`` DELETE of a branch. The refusal names the sanctioned path
-    for merged branches and the human escape.
+    Commits and pushes go through `forge-commit`; no caller identity
+    exempts the raw verbs, and the refusal names that CLI.
 
     Args:
-        command: The push the commit agent runs.
-        expected: ``2`` for a refused delete, ``0`` for an ordinary push.
+        agent_type: Name the retired commit agent identified itself with.
+        command: A plain commit or push.
     """
-    proc = _run_hook_proc(
-        _RAW_GIT, command, options=HookOptions(agent_type="forge:git-commit-push")
-    )
-    assert proc.returncode == expected
-    if expected == 2:
-        assert "forge-next-prep --prune-remote" in proc.stderr
-        assert f"! {command}" in proc.stderr
+    proc = _run_hook_proc(_RAW_GIT, command, options=HookOptions(agent_type=agent_type))
+    assert proc.returncode == 2
+    assert "forge-commit" in proc.stderr
 
 
-def test_raw_git_gh_api_read_allowed_outside_commit_agent() -> None:
-    """The gh-api branch-delete rule is the commit agent's; a GET is untouched."""
-    assert _run_hook(_RAW_GIT, "gh api repos/o/r/branches/foo") == 0
-
-
-def test_branch_deletion_still_guards_protected_branch_for_non_agents() -> None:
-    """A protected-branch delete outside the commit agent still hits its own hook."""
+def test_branch_deletion_still_guards_protected_branch() -> None:
+    """A protected-branch delete hits the branch-deletion hook."""
     assert _run_hook("block_branch_deletion.sh", "git push origin --delete main") == 2
 
 
@@ -2885,29 +2802,6 @@ def test_raw_git_blocks_commit_creating_sequencer_verbs(
     assert _run_hook(_RAW_GIT, command) == expected_exit
 
 
-_COMMIT_AGENTS = ("git-commit-push", "forge:git-commit-push")
-
-
-@pytest.mark.parametrize("agent_type", _COMMIT_AGENTS)
-@pytest.mark.parametrize(("command", "expected_exit"), _SEQUENCER_CASES.items())
-def test_raw_git_commit_agent_gets_sequencer_rule_like_everyone(
-    agent_type: str, command: str, expected_exit: int
-) -> None:
-    """The commit agent's exemption covers commit/push only, not the sequencer.
-
-    revert/cherry-pick create commits without running pre-commit, so the
-    one agent allowed to commit is judged by the same sequencer verdicts as
-    every other caller.
-
-    Args:
-        agent_type: Name the commit agent identifies itself with.
-        command: A sequencer or unrelated git command.
-        expected_exit: The no-agent verdict for the same command.
-    """
-    options = HookOptions(agent_type=agent_type)
-    assert _run_hook(_RAW_GIT, command, options=options) == expected_exit
-
-
 _ROUTE_SHAPE = (
     'python3 -c "import subprocess; '
     "t=subprocess.check_output(['git','write-tree']).decode().strip(); "
@@ -2916,20 +2810,16 @@ _ROUTE_SHAPE = (
 )
 
 
-@pytest.mark.parametrize("agent_type", ["", "forge:git-commit-push"])
 @pytest.mark.parametrize(
     "command", ["git update-ref refs/heads/x HEAD", "git fast-import < s"]
 )
-def test_raw_git_blocks_ref_plumbing_for_everyone(
-    agent_type: str, command: str
-) -> None:
+def test_raw_git_blocks_ref_plumbing_for_everyone(command: str) -> None:
     """`update-ref` / `fast-import` move refs past every hook; no agent is exempt.
 
     Args:
-        agent_type: Caller identity ("" for none, or the commit agent).
         command: A ref-plumbing invocation.
     """
-    assert _run_hook(_RAW_GIT, command, options=HookOptions(agent_type=agent_type)) == 2
+    assert _run_hook(_RAW_GIT, command) == 2
 
 
 @pytest.mark.parametrize(
@@ -2973,19 +2863,6 @@ def test_raw_git_blocks_inline_interpreter_git(command: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "command", [_ROUTE_SHAPE, "python3 -c \"import os; os.system('git commit')\""]
-)
-def test_raw_git_interpreter_rule_has_no_commit_agent_bypass(command: str) -> None:
-    """The commit agent may run git itself, not route it through an interpreter.
-
-    Args:
-        command: An interpreter invocation carrying git in inline code.
-    """
-    options = HookOptions(agent_type="forge:git-commit-push")
-    assert _run_hook(_RAW_GIT, command, options=options) == 2
-
-
-@pytest.mark.parametrize(
     "command",
     [
         'python -c "from forge import git_utils"',
@@ -3016,67 +2893,6 @@ def test_raw_git_allows_interpreter_lookalikes(command: str) -> None:
         command: A command that only resembles the blocked route.
     """
     assert _run_hook(_RAW_GIT, command) == 0
-
-
-@pytest.mark.parametrize("agent_type", _COMMIT_AGENTS)
-@pytest.mark.parametrize("command", ["git commit -m x", "git push origin feat"])
-def test_raw_git_commit_agent_may_commit_and_push(
-    agent_type: str, command: str
-) -> None:
-    """The commit agent keeps its sanctioned `git commit` / `git push`.
-
-    Args:
-        agent_type: Name the commit agent identifies itself with.
-        command: A plain commit or push.
-    """
-    assert _run_hook(_RAW_GIT, command, options=HookOptions(agent_type=agent_type)) == 0
-
-
-@pytest.mark.parametrize("agent_type", _COMMIT_AGENTS)
-@pytest.mark.parametrize(
-    "command",
-    [
-        "git commit -m x && git revert HEAD",
-        "git push origin feat; git cherry-pick abc",
-    ],
-)
-def test_raw_git_commit_agent_mixed_chain_with_sequencer_blocked(
-    agent_type: str, command: str
-) -> None:
-    """An allowed commit/push does not shelter a chained revert/cherry-pick.
-
-    Args:
-        agent_type: Name the commit agent identifies itself with.
-        command: An allowed verb chained with a commit-creating sequencer verb.
-    """
-    assert _run_hook(_RAW_GIT, command, options=HookOptions(agent_type=agent_type)) == 2
-
-
-@pytest.mark.parametrize("agent_type", _COMMIT_AGENTS)
-def test_raw_git_fails_closed_without_anchor_lib_for_commit_agent(
-    agent_type: str, tmp_path: Path
-) -> None:
-    """A missing `git_anchor.sh` blocks even the commit agent (fail-closed).
-
-    Args:
-        agent_type: Name the commit agent identifies itself with.
-        tmp_path: Isolated directory standing in for a damaged plugin cache.
-    """
-    isolated_hook = tmp_path / _RAW_GIT
-    isolated_hook.write_bytes((_HOOKS_DIR / _RAW_GIT).read_bytes())
-    isolated_hook.chmod(0o755)
-    payload = json.dumps(
-        {"tool_input": {"command": "git commit -m x"}, "agent_type": agent_type}
-    )
-    proc = subprocess.run(
-        ["bash", str(isolated_hook)],
-        input=payload,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert proc.returncode == 2
-    assert "anchor lib missing" in proc.stderr
 
 
 def test_rebase_blocks_env_var_prefix() -> None:
@@ -3160,18 +2976,6 @@ def test_destructive_blocks_reset_subshell_and_sudo_wrapper() -> None:
 def test_destructive_allows_restore_staged_path() -> None:
     """`git restore --staged some_file.py` — the sanctioned unstage — is allowed."""
     assert _run_hook(_DESTRUCTIVE, "git restore --staged some_file.py") == 0
-
-
-def test_destructive_reset_has_no_agent_bypass() -> None:
-    """Even forge:git-commit-push cannot reset — the block has no bypass."""
-    assert (
-        _run_hook(
-            _DESTRUCTIVE,
-            "git reset",
-            options=HookOptions(agent_type="forge:git-commit-push"),
-        )
-        == 2
-    )
 
 
 def test_destructive_blocks_reset_compound_command() -> None:
@@ -4985,23 +4789,6 @@ def test_amend_blocks_double_dollar_before_quote(tmp_path: Path) -> None:
     assert _run_hook(_AMEND, cmd, options=HookOptions(cwd=work)) == 2
 
 
-def test_amend_has_no_agent_bypass(tmp_path: Path) -> None:
-    """Even forge:git-commit-push — the one agent that runs `git commit` — cannot amend.
-
-    Its own contract is "never amend — always a new commit"; this hook
-    deliberately carries no sanctioned-agent bypass.
-    """
-    work, _bare = init_single_track_repo(tmp_path)
-    assert (
-        _run_hook(
-            _AMEND,
-            'git commit --amend -m "fix"',
-            options=HookOptions(cwd=work, agent_type="forge:git-commit-push"),
-        )
-        == 2
-    )
-
-
 def test_amend_allows_non_git_repo_cwd(tmp_path: Path) -> None:
     """Amending in a plain (non-git) directory is allowed, with no leaked git noise.
 
@@ -5955,7 +5742,7 @@ def test_fixer_recon_ignores_other_agent() -> None:
         _run_hook(
             _FIXER_RECON,
             "git status",
-            options=HookOptions(agent_type="forge:git-commit-push"),
+            options=HookOptions(agent_type="forge:design-checker"),
         )
         == 0
     )
@@ -9053,13 +8840,17 @@ _SCANNER_WORD_CASES = [
 
 @pytest.mark.parametrize(("hook", "command", "expected"), _SCANNER_WORD_CASES)
 def test_guards_read_each_shell_word_whole_and_assembled_text_joined(
-    hook: str, command: str, expected: int, tmp_path: Path
+    hook: str,
+    command: str,
+    expected: int,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
 ) -> None:
     """SCENARIO: a guard reads a word, and a joined command, as the shell does.
 
-    The protected-branch rows run as the commit agent, so the verdict does
-    not depend on which branch the test checkout is on (CI runs on `main`)
-    and only the destination check is under test. The no-verify rows run
+    The protected-branch rows run from a feature-branch repo, so the verdict
+    does not depend on which branch the test checkout is on (CI runs on
+    `main`) and only the destination check is under test. The no-verify rows run
     outside any repo for the same reason: that hook also refuses a commit
     whose resolved hooks folder holds no pre-commit, which depends on how
     the test checkout's hooks are wired.
@@ -9070,10 +8861,8 @@ def test_guards_read_each_shell_word_whole_and_assembled_text_joined(
         expected: Its verdict (2 blocks, 0 allows).
         tmp_path: A directory outside any repo, for the no-verify rows.
     """
-    options = None
-    if hook == _PROTECTED:
-        options = HookOptions(agent_type="forge:git-commit-push")
-    elif hook == _NO_VERIFY:
+    options = _protected_options(hook, request)
+    if hook == _NO_VERIFY:
         options = HookOptions(cwd=tmp_path)
     assert _run_hook(hook, command, options=options) == expected
 
@@ -9361,58 +9150,51 @@ def test_guard_blocks_within_timeout_past_thousands_of_command_segments(
 
 
 @pytest.mark.parametrize(
-    ("hook", "padding", "command", "agent_type"),
+    ("hook", "padding", "command"),
     [
         pytest.param(
             "block_branch_deletion.sh",
             "git push origin feature",
             "git push origin :main",
-            "",
             id="branch_deletion",
         ),
         pytest.param(
             _PROTECTED,
             "git push origin feature",
             "git push origin HEAD:main",
-            "forge:git-commit-push",
             id="protected_branches",
         ),
         pytest.param(
-            _INSTALL_DEPS, "pixi run --locked x", "pixi add y", "", id="install_deps"
+            _INSTALL_DEPS, "pixi run --locked x", "pixi add y", id="install_deps"
         ),
-        pytest.param(
-            _RAW_GIT, "git revert --abort", "git revert HEAD", "", id="raw_git"
-        ),
+        pytest.param(_RAW_GIT, "git revert --abort", "git revert HEAD", id="raw_git"),
         pytest.param(
             _DESTRUCTIVE,
             "git checkout feature",
             "git checkout -f",
-            "",
             id="git_destructive",
         ),
     ],
 )
 def test_guard_blocks_within_timeout_past_thousands_of_matching_segments(
-    hook: str, padding: str, command: str, agent_type: str
+    hook: str, padding: str, command: str, request: pytest.FixtureRequest
 ) -> None:
     """Thousands of guard-shaped harmless segments cannot time a guard out.
 
     Padding made of segments the guard must actually parse (not trivial `a;`)
     is the real attack shape: a timed-out hook ALLOWS the command, so the
-    per-segment cost on matching segments must stay linear and cheap.
+    per-segment cost on matching segments must stay linear and cheap. The
+    protected-branch row runs from a feature-branch repo, so only the
+    destination check can block it.
 
     Args:
         hook: The guard hook script under test.
         padding: A harmless segment the guard recognises and allows.
         command: The blocked command placed after the padding.
-        agent_type: Agent identity to run the hook as, or empty.
     """
+    options = _protected_options(hook, request)
     start = time.monotonic()
-    verdict = _run_hook(
-        hook,
-        (padding + ";") * 3000 + command,
-        options=HookOptions(agent_type=agent_type),
-    )
+    verdict = _run_hook(hook, (padding + ";") * 3000 + command, options=options)
     elapsed = time.monotonic() - start
 
     assert verdict == 2

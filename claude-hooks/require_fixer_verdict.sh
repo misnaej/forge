@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Refuse a precommit-fixer hand-back that the pre-commit verdict contradicts.
 #
-# The fixer's report is what the commit agent and the PR flow act on, and
+# The fixer's report is what `forge-commit` and the PR flow act on, and
 # as prose it was wrong in both directions: "all checks passed" over failed
 # or stale checks, and "semantics preserved" over a behavior change. The
 # agent's contract (agents/precommit-fixer.md) makes the verdict a pasted

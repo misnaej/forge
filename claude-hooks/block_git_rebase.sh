@@ -8,7 +8,7 @@
 # merge of the base branch (`git merge origin/<base>`) resolves "sync my
 # branch" without rewriting anything.
 #
-# No agent bypass — not even forge:git-commit-push. A human who truly needs a
+# No agent bypass. A human who truly needs a
 # rebase runs it themselves with `! git rebase …`.
 set -e
 INPUT=$(cat)

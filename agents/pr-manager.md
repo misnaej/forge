@@ -122,7 +122,7 @@ never assumed.
 
 1. **The three checkers** via Task — one design/security/docs report each; skip per pre-run coverage, all three under delta mode.
 2. **`precommit-fixer` in `mode: strict`** — unless the caller supplied pre-commit results for the current `HEAD`; otherwise ALWAYS, because docstring fixes shift line lengths (`strict`'s `pip_audit` escalation: `/pr` Step 2).
-3. **Deferred changelog** (`precommit_enforce = false`, no `CHANGELOG.md` entry in the diff): author it now — MANDATORY per `/pr` Step 3 (bullet convention: `docs/consumer-release.md`); commit via `forge:git-commit-push`, disclosed per Output; wrap-up line "wrote CHANGELOG bullet: <text>".
+3. **Deferred changelog** (`precommit_enforce = false`, no `CHANGELOG.md` entry in the diff): author it now — MANDATORY per `/pr` Step 3 (bullet convention: `docs/consumer-release.md`); commit via `forge-commit -m "<msg>" <files>`, disclosed per Output; wrap-up line "wrote CHANGELOG bullet: <text>".
 4. **Compose, fill and post the wrap-up**: `forge-pr-wrapup compose --base origin/<base> --pr <PR#> --design <file> --security <file> --docs <file> [--prior-art <file>]`, fill its slots (task above), then `forge-pr-wrapup post --pr <PR#>` — never a raw `gh pr comment` (the `block_raw_wrapup_post` hook refuses it). What `post` refuses and refreshes: [`/pr` Step 4](../skills/pr/SKILL.md#step-4-post-with-the-clis-mandatory) — do not restate; on exit 3 report the fix it names.
 5. **Post the squash-merge message as a separate PR comment, LAST** (task above) — MANDATORY in every wrap-up. It goes after the wrap-up because the person merging copies it out of the bottom of the conversation (FOUNDATION §6); anything posted later is followed by a `forge-pr-squash-comment --pr <PR#>` re-post, which the `keep_squash_comment_last` hook fires on its own.
 
@@ -145,7 +145,7 @@ gh issue create --title "<title>" \
 ### I WILL NOT (report and stop):
 - **Merge PRs** ([FOUNDATION §2](../FOUNDATION.md#2-core-safety-rules))
 - Implement code fixes (below); fix pre-commit findings → **`precommit-fixer`**
-- Commit → **`git-commit-push`**; write tests → **`test-writer`**
+- Commit → **caller runs `forge-commit`**; write tests → **`test-writer`**
 
 ### When PR Comments Need Code Changes:
 Report:

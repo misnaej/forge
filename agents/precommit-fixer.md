@@ -141,7 +141,7 @@ it contradicts.
 
 ### I WILL NOT (report and stop)
 
-- Commit / stage / push → **Use `forge:git-commit-push`**
+- Commit / stage / push → **caller runs `forge-commit`**
 - Review design or security broadly → **Use `forge:design-checker` / `forge:security-checker`**
 - **Run any release action (`forge-next-prep`, `git tag`, `git push`,
   `gh release`) or switch branches, EVER — even when a step's message
@@ -154,7 +154,7 @@ it contradicts.
 ```
 OUTSIDE MY SCOPE: I do not commit.
 
-NEXT STEP (caller): drive git-commit-push yourself.
+NEXT STEP (caller): run `forge-commit -m "<msg>" <files>` yourself.
 ```
 
 ## Critical Rules
@@ -218,7 +218,7 @@ STUCK (only when the loop cap was reached):
   - <step>: <one-line finding excerpt> — tried: <edits made>; needs the
     main agent / human. Do NOT keep looping.
 
-NEXT STEP (for the caller — not me): drive git-commit-push to commit.
+NEXT STEP (for the caller — not me): run `forge-commit -m "<msg>" <files>`.
 ```
 
 ## Success Criteria

@@ -40,8 +40,8 @@
 #   every form blocks, read-only ones too (`$G stash list`) — a false
 #   block that costs only spelling `git` literally.
 #
-# No agent bypass — not even forge:git-commit-push. A human who truly
-# needs one of these runs it themselves with `! git …`.
+# No agent bypass. A human who truly needs one of these runs it
+# themselves with `! git …`.
 set -e
 INPUT=$(cat)
 COMMAND=$(jq -r '.tool_input.command // empty' <<< "$INPUT")

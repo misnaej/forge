@@ -11,7 +11,7 @@ pre-commit hook to work.
 ## Install — one copy per checkout, at the release it pins
 
 If your team uses [Claude Code](https://claude.com/claude-code) and
-wants the agents (`pr-manager`, `precommit-fixer`, `git-commit-push`, etc.)
+wants the agents (`pr-manager`, `precommit-fixer`, `design-checker`, etc.)
 and slash commands (`/commit`, `/pr`, `/next`, …), each checkout installs
 forge for itself:
 

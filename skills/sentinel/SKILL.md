@@ -154,7 +154,7 @@ track counts as one execution.
 
 Freeze, never guess:
 
-1. Commit and push the work as it stands (`forge:git-commit-push`).
+1. Commit and push the work as it stands (`forge-commit -m "<msg>" <files>`).
 2. Open a **draft PR** (FOUNDATION §6's early-visibility escape hatch).
 3. Post PR comment(s) framing each open question, with the options
    considered and a recommendation.

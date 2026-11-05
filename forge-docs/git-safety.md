@@ -91,7 +91,7 @@ Notes:
   (git documents it lossy for uncommitted changes).
 - Humans: never `export FORGE_WIP_SYNC` in a persistent shell — silently
   defers gate on every later commit. Use inline, once.
-- Who runs it: main agent. `forge:git-commit-push` does not; a `wip-sync:`
+- Who runs it: main agent, never `forge-commit`; a `wip-sync:`
   checkpoint (env `FORGE_WIP_SYNC=1`) is the one commit whose gate
   legitimately defers.
 - Stranded-changelog recovery mid-branch: `git merge origin/<base>` via

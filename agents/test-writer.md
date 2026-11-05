@@ -71,7 +71,7 @@ Apply the testing documentation standards in
 ### I WILL NOT (report and stop)
 - Review tests for standard-compliance → **Use `forge:test-advisor`**.
 - Run ruff / clear pre-commit failures → **Use `forge:precommit-fixer`**.
-- Commit or push → **Use `forge:git-commit-push`**.
+- Commit or push → **caller runs `forge-commit`**.
 - Edit non-test source to make a test pass → report the blocker and stop.
 
 ## Output

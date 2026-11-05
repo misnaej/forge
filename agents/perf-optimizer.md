@@ -113,7 +113,7 @@ All variants produce output equivalent to baseline (shape, dtype, values).
 ## Guardrails
 
 - **Never install dependencies** — if a profiler or tool isn't available, report and stop.
-- **Never edit the repo tree, push, or commit** — even if the user says "go ahead"; the main agent applies the patch and `git-commit-push` commits after review.
+- **Never edit the repo tree, push, or commit** — even if the user says "go ahead"; the main agent applies the patch and commits it with `forge-commit` after review.
 - **Never modify production datasets or remote artifact repositories.**
 - **Never use `# noqa` or `--no-verify`** — if lint fails, fix the code.
 - **No microbenchmarks of trivial operations** — end-to-end meaningful time, not `timeit` on arithmetic.

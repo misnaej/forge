@@ -65,7 +65,6 @@ In this order:
 | **Reporter-with-artifact** | docs-types-checker (fixes docstrings), weekly-summary (writes summary file) | Reporter tools + the *single* mutating tool the artifact requires (`Edit` for in-place doc fixes, `Write` for a dedicated file). The artifact MUST be the agent's only reason for mutation. |
 | **Actor / fixer** | precommit-fixer | `Bash`, `Read`, `Edit`, `Grep`, `Glob` |
 | **Orchestrator** | pr-manager, issue-triage | Same as actor + `Task` |
-| **Commit/push** | git-commit-push | `Bash`, `Read` only |
 
 Pure Reporters MUST NOT have `Write` or `Edit`. Reporter-with-artifact
 agents are the documented exception — `forge-audit-agents` exempts
@@ -105,12 +104,14 @@ writes docstrings that ship) stays `sonnet`+ regardless of frequency — a
 shallow-but-passing artifact is worse than none. Downgrade only when the
 cost win is real *and* quality is untouched.
 
-**Irreversibility raises the floor too.** `git-commit-push` looks like
-dispatch and was tiered as such, until it met a gate its contract did
-not cover and invented a changelog fragment to get past it — choosing a
-slug, a type and a bump level, and with them the released version. An
-agent whose actions cannot be undone, and which will meet gates no
-contract enumerates in full, is judging whether or not the tier says so.
+**Irreversibility raises the floor too.** Forge's former commit-and-push
+agent looked like dispatch and was tiered as such, until it met a gate its
+contract did not cover and invented a changelog fragment to get past it
+— choosing a slug, a type and a bump level, and with them the released
+version. An agent whose actions cannot be undone, and which will meet
+gates no contract enumerates in full, is judging whether or not the tier
+says so. Better still: make the step mechanical (`forge-commit` replaced
+that agent; FOUNDATION §7 "Mechanical first").
 
 `fable` is the exception to tiering by workload: it is never chosen
 here. The ceiling is `opus` until the user says otherwise, per

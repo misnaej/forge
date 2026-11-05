@@ -51,7 +51,7 @@ one-line docstring, and time spent that way is what makes a gate feel worth
 skipping.
 
 The hand-back still needs every enabled step's evidence to describe the
-tree the fixer leaves, because the commit agent refuses stale logs and the
+tree the fixer leaves, because `forge-commit` refuses a failing or stale verdict and the
 verdict is read mechanically. Hence one full closing run after the last
 Edit. With no Edit since the opening run, the opening run already is the
 closing one.

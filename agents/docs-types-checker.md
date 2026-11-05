@@ -241,8 +241,7 @@ def process(data: list) -> None:
 
 ### I WILL NOT (report and stop):
 - Fix ruff linting issues (line length, formatting) → **Use `precommit-fixer`** (which calls me)
-- Commit changes → **Use `git-commit-push`**
-- Push to remote → **Use `git-commit-push`**
+- Commit or push → **caller runs `forge-commit`**
 - Write tests → **Use `test-writer`**
 - Review design → **Use `design-checker`**
 

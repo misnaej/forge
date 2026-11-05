@@ -25,8 +25,8 @@ the hook or agent runs**. Both higher layers shell out to its CLIs:
   clones the repo but hasn't installed the env has a broken commit gate
   until they install layer 1.
 - **Layer 3 (plugin)** — the agents/skills orchestrate the CLIs
-  (`forge:precommit-fixer` → `forge-precommit`, `forge:git-commit-push` →
-  the gate, …). The plugin is **installed per checkout** (Track 3), from
+  (`forge:precommit-fixer` → `forge-precommit`, `/commit` →
+  `forge-commit`, …). The plugin is **installed per checkout** (Track 3), from
   a marketplace named after the release it pins — Claude Code registers
   each marketplace name once per machine, so one name per release keeps
   repos on different releases apart — and it drives CLIs that must exist
