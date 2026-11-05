@@ -447,6 +447,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `check_message(message: str) -> None` — Refuse a commit message forge's rules forbid.
 - `current_branch(root: Path) -> str` — The checked-out branch, refused when protected or detached.
 - `check_verdict(root: Path) -> None` — Refuse unless the latest pre-commit verdict passed on this tree.
+- `_git_paths(root: Path, *args: str) -> set[str]` _(internal)_ — Run a ``-z`` path-listing git command and return its paths.
 - `_staged(root: Path) -> set[str]` _(internal)_ — Paths currently staged.
 - `stage_exactly(root: Path, paths: tuple[str, ...]) -> None` — Stage *paths* and refuse when the index then holds anything else.
 - `committed_paths(root: Path) -> set[str]` — Paths the HEAD commit changed.

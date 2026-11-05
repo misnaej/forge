@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 from pathlib import Path
 
@@ -26,7 +27,11 @@ from tests.conftest import (
 
 @pytest.fixture
 def feature_repo(tmp_path: Path) -> Path:
-    """Git repo on branch ``feat/x`` with two tracked files."""
+    """Git repo on branch ``feat/x`` with two tracked files.
+
+    Returns:
+        The repo root.
+    """
     init_git_repo(tmp_path)
     (tmp_path / "a.txt").write_text("a\n", encoding="utf-8")
     (tmp_path / "b.txt").write_text("b\n", encoding="utf-8")
@@ -353,6 +358,29 @@ def test_main_success_exits_0(main_env: Path) -> None:
     """A clean commit from main exits zero."""
     (main_env / "a.txt").write_text("changed\n", encoding="utf-8")
     assert commit.main(["-m", "fix: a", "--no-push", "a.txt"]) == commit.EXIT_OK
+
+
+@pytest.mark.usefixtures("_fake_evidence")
+def test_main_ignores_inherited_git_index_file(
+    main_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    """An inherited ``GIT_INDEX_FILE`` cannot redirect where main stages.
+
+    A stray index variable (as set inside a git hook) would make staging
+    land in another index and the commit miss the named path; ``main``
+    must strip it for its run and restore it afterwards.
+    """
+    foreign_index = str(tmp_path_factory.mktemp("foreign") / "other-index")
+    monkeypatch.setenv("GIT_INDEX_FILE", foreign_index)
+    (main_env / "a.txt").write_text("changed\n", encoding="utf-8")
+
+    assert commit.main(["-m", "fix: x", "--no-push", "a.txt"]) == commit.EXIT_OK
+
+    committed = git_stdout(main_env, "show", "--name-only", "--format=", "HEAD").split()
+    assert committed == ["a.txt"]
+    assert os.environ.get("GIT_INDEX_FILE") == foreign_index
 
 
 @pytest.mark.usefixtures("_fake_evidence")

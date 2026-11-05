@@ -46,11 +46,12 @@ from forge.gh_comments import ValidationError, validate_no_ai_attribution
 from forge.git_utils import (
     configure_cli_logging,
     create_commit,
+    git_env_overrides_removed,
     push_branch,
     repo_root,
     run_git,
 )
-from forge.pr_squash_comment import TITLE_RE
+from forge.pr_squash_comment import MAX_WORDS, TITLE_RE
 from forge.precommit import verdict
 
 
@@ -65,7 +66,6 @@ EXIT_OK: Final = 0
 EXIT_REFUSED: Final = 1
 EXIT_PUSH_FAILED: Final = 2
 
-MAX_MESSAGE_WORDS: Final = 50
 #: A push failing on these is GitHub being briefly unavailable, not a
 #: rejection; it is retried a few times before being reported.
 _TRANSIENT_PUSH: Final = re.compile(
@@ -97,15 +97,17 @@ def check_message(message: str) -> None:
 
     Raises:
         CommitRefusedError: When the title is not conventional, the message runs over
-            :data:`MAX_MESSAGE_WORDS`, or it carries AI attribution.
+            :data:`forge.pr_squash_comment.MAX_WORDS` (the one 50-word
+            target commit and squash messages share), or it carries AI
+            attribution.
     """
     title = message.strip().splitlines()[0] if message.strip() else ""
     if not TITLE_RE.match(title):
         msg = f"commit title {title!r} is not conventional (`<type>(scope)?: subject`)."
         raise CommitRefusedError(msg)
     words = len(message.split())
-    if words > MAX_MESSAGE_WORDS:
-        msg = f"commit message is {words} words; at most {MAX_MESSAGE_WORDS}."
+    if words > MAX_WORDS:
+        msg = f"commit message is {words} words; at most {MAX_WORDS}."
         raise CommitRefusedError(msg)
     try:
         validate_no_ai_attribution(message)
@@ -162,6 +164,19 @@ def check_verdict(root: Path) -> None:
     raise CommitRefusedError(msg)
 
 
+def _git_paths(root: Path, *args: str) -> set[str]:
+    """Run a ``-z`` path-listing git command and return its paths.
+
+    Args:
+        root: Repo root.
+        *args: Git argv tail whose output is NUL-separated paths.
+
+    Returns:
+        The repo-relative paths.
+    """
+    return {p for p in run_git(*args, cwd=root).split("\0") if p}
+
+
 def _staged(root: Path) -> set[str]:
     """Paths currently staged.
 
@@ -171,8 +186,7 @@ def _staged(root: Path) -> set[str]:
     Returns:
         The staged paths, repo-relative.
     """
-    out = run_git("diff", "--cached", "--name-only", "-z", cwd=root)
-    return {p for p in out.split("\0") if p}
+    return _git_paths(root, "diff", "--cached", "--name-only", "-z")
 
 
 def stage_exactly(root: Path, paths: tuple[str, ...]) -> None:
@@ -214,8 +228,7 @@ def committed_paths(root: Path) -> set[str]:
     Returns:
         The repo-relative paths in HEAD's diff against its first parent.
     """
-    out = run_git("show", "--name-only", "-z", "--format=", "HEAD", cwd=root)
-    return {p for p in out.split("\0") if p}
+    return _git_paths(root, "show", "--name-only", "-z", "--format=", "HEAD")
 
 
 def push(root: Path, branch: str) -> int:
@@ -334,6 +347,8 @@ def _dispatch(args: argparse.Namespace, root: Path) -> int:
         CommitRefusedError: When the argument combination is invalid or a
             guard refuses.
     """
+    # --push-only re-checks the branch, not the commits it publishes: each
+    # was already refused or admitted by this command or the commit hook.
     if args.push_only:
         if args.paths or args.message:
             msg = "--push-only takes no files and no message."
@@ -357,9 +372,11 @@ def main(argv: list[str] | None = None) -> int:
         failed (commits stay local).
     """
     args = _build_parser().parse_args(sys.argv[1:] if argv is None else argv)
-    root = repo_root()
     try:
-        return _dispatch(args, root)
+        # Every git call, not just the commit: an inherited GIT_DIR or
+        # GIT_INDEX_FILE would otherwise stage into or inspect another repo.
+        with git_env_overrides_removed():
+            return _dispatch(args, repo_root())
     except CommitRefusedError as exc:
         logger.warning("forge-commit: refused — %s", exc)
         return EXIT_REFUSED
