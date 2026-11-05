@@ -1,7 +1,8 @@
 # Intake
 
 One file per sighting of a problem not yet filed (FOUNDATION §1, §12).
-Write entries with `forge-intake new`; never edit one to bump a count —
+Write entries with `forge-intake new`, in caveman full (agent-facing,
+FOUNDATION §8 "Write terse"); never edit one to bump a count —
 a second sighting is a second file. Counting: all files from one
 feature branch are one sighting; on the base branch
 (`[tool.forge].base_branch`, default `main`) or with no branch, each

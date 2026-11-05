@@ -89,7 +89,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `waste_flags(run: AgentRun) -> list[WasteFlag]` — The mechanical waste findings for *run* (none without token data).
 - `load_sessions(transcripts: Path | None, runs: Iterable[AgentRun]) -> dict[str, SessionTokens]` — Parse the main-session transcripts of the sessions *runs* belong to.
 - `join_sessions(runs: Iterable[AgentRun], sessions: dict[str, SessionTokens]) -> None` — Link each subagent run to the skill and brief that launched it.
-- `_grouped(pairs: Iterable[tuple[str, TokenUsage]]) -> list[TokenRow]` _(internal)_ — Sum usage per label, ranked.
+- `_grouped(rows: Iterable[tuple[str, TokenUsage, int]]) -> list[TokenRow]` _(internal)_ — Sum usage and report size per label, ranked.
 - `render_tokens(runs: list[AgentRun], sessions: dict[str, SessionTokens]) -> str` — Render the ``--tokens`` report for *runs* and their sessions.
 - `append_history(root: Path, runs: list[AgentRun], label: str) -> None` — Append one summary line for this report to the profile ledger.
 - `_render_history(root: Path) -> int` _(internal)_ — Print the append-only profile ledger as a trend table.
@@ -437,6 +437,25 @@ A compact index of this codebase's symbols — every top-level function and clas
 > _Shared schema for the consumer ``.claude/settings.json`` forge block._
 
 - `scaffold() -> dict[str, object]` — Return a fresh deep copy of the empty-file settings scaffold.
+
+## `forge.commit`
+
+> _forge-commit — commit named files and push them, with forge's git guards in code._
+
+- `class CommitRefusedError` — A guard refused the request; the message says which and why.
+- `class Request` — What the caller asked forge-commit to do.
+- `check_message(message: str) -> None` — Refuse a commit message forge's rules forbid.
+- `current_branch(root: Path) -> str` — The checked-out branch, refused when protected or detached.
+- `check_verdict(root: Path) -> None` — Refuse unless the latest pre-commit verdict passed on this tree.
+- `_git_paths(root: Path, *args: str) -> set[str]` _(internal)_ — Run a ``-z`` path-listing git command and return its paths.
+- `_staged(root: Path) -> set[str]` _(internal)_ — Paths currently staged.
+- `stage_exactly(root: Path, paths: tuple[str, ...]) -> None` — Stage *paths* and refuse when the index then holds anything else.
+- `committed_paths(root: Path) -> set[str]` — Paths the HEAD commit changed.
+- `push(root: Path, branch: str) -> int` — Push *branch*, retrying briefly when GitHub is momentarily unavailable.
+- `commit_and_push(root: Path, request: Request) -> int` — Run the guarded commit, then the push.
+- `_build_parser() -> argparse.ArgumentParser` _(internal)_ — The CLI surface.
+- `_dispatch(args: argparse.Namespace, root: Path) -> int` _(internal)_ — Route parsed arguments to push-only or a guarded commit.
+- `main(argv: list[str] | None = None) -> int` — Entry point for ``forge-commit``.
 
 ## `forge.config`
 

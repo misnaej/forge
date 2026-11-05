@@ -1760,22 +1760,25 @@ def join_sessions(runs: Iterable[AgentRun], sessions: dict[str, SessionTokens]) 
             run.brief_chars = session.brief_chars.get(call_id, 0)
 
 
-def _grouped(pairs: Iterable[tuple[str, TokenUsage]]) -> list[TokenRow]:
-    """Sum usage per label, ranked.
+def _grouped(rows: Iterable[tuple[str, TokenUsage, int]]) -> list[TokenRow]:
+    """Sum usage and report size per label, ranked.
 
     Args:
-        pairs: ``(label, usage)`` per run or skill.
+        rows: ``(label, usage, report chars)`` per run or skill.
 
     Returns:
         One ranked row per label.
     """
     totals: dict[str, TokenUsage] = defaultdict(TokenUsage)
     counts: Counter[str] = Counter()
-    for label, usage in pairs:
+    reports: Counter[str] = Counter()
+    for label, usage, report_chars in rows:
         totals[label].add(usage)
         counts[label] += 1
+        reports[label] += report_chars
     return rank(
-        TokenRow(label, counts[label], usage) for label, usage in totals.items()
+        TokenRow(label, counts[label], usage, reports[label])
+        for label, usage in totals.items()
     )
 
 
@@ -1791,13 +1794,17 @@ def render_tokens(runs: list[AgentRun], sessions: dict[str, SessionTokens]) -> s
     """
     subagents = [r for r in runs if r.agent_type != MAIN_SESSION_TYPE]
     known = [(r, r.stats.tokens) for r in subagents if r.stats and r.stats.tokens]
-    by_type = _grouped((r.agent_type or "?", tokens) for r, tokens in known)
+    by_type = _grouped(
+        (r.agent_type or "?", tokens, r.handback_chars) for r, tokens in known
+    )
     by_skill = _grouped(
-        (skill, usage)
+        (skill, usage, 0)
         for session in sessions.values()
         for skill, usage in session.by_skill.items()
     )
-    by_caller = _grouped((r.caller_skill, t) for r, t in known if r.caller_skill)
+    by_caller = _grouped(
+        (r.caller_skill, t, r.handback_chars) for r, t in known if r.caller_skill
+    )
     all_flags = sorted(
         (flag for run in subagents for flag in waste_flags(run)),
         key=lambda flag: -flag.tokens,
