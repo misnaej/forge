@@ -47,20 +47,6 @@ def test_coverage_badge_only_when_svg_present(tmp_path: Path) -> None:
     )
 
 
-def test_git_remote_slug_parses_ssh_and_https(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The owner/repo slug is parsed from SSH and HTTPS origin URLs."""
-    monkeypatch.setattr(
-        rb, "run_git", lambda *_a, **_k: "git@github.com:acme/widget.git"
-    )
-    assert rb._git_remote_slug(tmp_path) == "acme/widget"
-    monkeypatch.setattr(
-        rb, "run_git", lambda *_a, **_k: "https://github.com/acme/widget"
-    )
-    assert rb._git_remote_slug(tmp_path) == "acme/widget"
-
-
 def test_inject_creates_block_after_h1() -> None:
     """With no existing markers, the block is inserted after the first H1."""
     out = rb.inject("# Title\n\nbody\n", rb.render_block(["![x](y)"]))
@@ -103,7 +89,7 @@ def test_main_writes_block_when_enabled(
     )
     (tmp_path / "README.md").write_text("# Demo\n\nIntro.\n")
     monkeypatch.setattr(rb, "get_repo_root", lambda: tmp_path)
-    monkeypatch.setattr(rb, "_git_remote_slug", lambda _root: None)  # no CI badge
+    monkeypatch.setattr(rb, "github_slug", lambda _root: None)  # no CI badge
     monkeypatch.setattr("sys.argv", ["install-forge-readme-badges"])
     assert rb.main() == 0
     text = (tmp_path / "README.md").read_text()
@@ -122,7 +108,7 @@ def test_main_check_reports_drift(
     )
     (tmp_path / "README.md").write_text("# Demo\n")
     monkeypatch.setattr(rb, "get_repo_root", lambda: tmp_path)
-    monkeypatch.setattr(rb, "_git_remote_slug", lambda _root: None)
+    monkeypatch.setattr(rb, "github_slug", lambda _root: None)
     monkeypatch.setattr("sys.argv", ["install-forge-readme-badges", "--check"])
     assert rb.main() == 1
     assert rb._START not in (tmp_path / "README.md").read_text()
@@ -247,7 +233,7 @@ def test_main_keeps_existing_ci_badge_when_no_workflow_identifiable(
     wf.mkdir(parents=True)
     (wf / "nightly.yml").write_text("on:\n  schedule:\n    - cron: '0 0 * * *'\n")
     monkeypatch.setattr(rb, "get_repo_root", lambda: tmp_path)
-    monkeypatch.setattr(rb, "_git_remote_slug", lambda _root: "acme/widget")
+    monkeypatch.setattr(rb, "github_slug", lambda _root: "acme/widget")
     monkeypatch.setattr("sys.argv", ["install-forge-readme-badges"])
     with caplog.at_level(logging.WARNING):
         assert rb.main() == 0
@@ -283,7 +269,7 @@ def test_main_warns_about_missing_remote_not_workflow_when_no_slug(
     wf.mkdir(parents=True)
     (wf / "nightly.yml").write_text("on:\n  schedule:\n    - cron: '0 0 * * *'\n")
     monkeypatch.setattr(rb, "get_repo_root", lambda: tmp_path)
-    monkeypatch.setattr(rb, "_git_remote_slug", lambda _root: None)
+    monkeypatch.setattr(rb, "github_slug", lambda _root: None)
     monkeypatch.setattr("sys.argv", ["install-forge-readme-badges"])
     with caplog.at_level(logging.WARNING):
         assert rb.main() == 0

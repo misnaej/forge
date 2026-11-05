@@ -766,3 +766,101 @@ def test_default_report_does_not_read_default_transcripts_dir(
     monkeypatch.setattr("sys.argv", ["forge-agent-profile"])
 
     assert agent_profile.main() == 0
+
+
+def on_branch(branch: str, record: dict[str, object]) -> dict[str, object]:
+    """*record* stamped with the ``gitBranch`` Claude Code writes on every line.
+
+    Args:
+        branch: The branch checked out when the record was written.
+        record: A transcript record.
+
+    Returns:
+        A copy carrying ``gitBranch``.
+    """
+    return {**record, "gitBranch": branch}
+
+
+def test_branch_usage_charges_requests_to_branch_and_agent_type(
+    tmp_path: Path,
+) -> None:
+    """Behavior: usage groups by branch and agent type, each request once.
+
+    The repeated message id is one request; the subagent is charged to its
+    meta-sidecar type and counted as one run; a read-only ``--freshness``
+    probe is not a pre-commit run; a time window cuts the branch's records.
+    """
+    precommit = _tool_use("t1", "Bash", {"command": "forge-precommit"})
+    probe = _tool_use("t2", "Bash", {"command": "forge-precommit --freshness"})
+    smart = _tool_use("t3", "Bash", {"command": "forge-smart-test --depth 1"})
+    _write_jsonl(
+        tmp_path / "s1.jsonl",
+        [
+            on_branch("feat/a", _request(0, "m1", usage=(10, 0, 0, 5))),
+            on_branch("feat/a", _request(1, "m1", usage=(10, 0, 0, 5))),
+            on_branch("feat/a", _request(60, "m2", blocks=[precommit, probe])),
+            on_branch("main", _request(120, "m3", usage=(7, 0, 0, 0))),
+            _request(130, "m4", usage=(99, 0, 0, 0)),  # no branch: never charged
+        ],
+    )
+    sub = tmp_path / "s1" / "subagents" / "agent-abc.jsonl"
+    _write_jsonl(sub, [on_branch("feat/a", _request(90, "m5", blocks=[smart]))])
+    sub.with_name("agent-abc.meta.json").write_text(
+        json.dumps({"agentType": "forge:design-checker"})
+    )
+
+    tally = agent_profile.branch_usage([tmp_path])
+
+    summary = tally.summary("feat/a")
+    assert summary is not None
+    usage = {t: (u.requests, u.input_tokens) for t, u in summary.tokens.items()}
+    assert usage == {"main": (2, 10), "forge:design-checker": (1, 0)}
+    assert summary.runs == {"main": 1, "forge:design-checker": 1}
+    assert (summary.precommit_runs, summary.test_runs) == (1, 1)
+    assert agent_profile.active_and_wall(summary.timestamps) == (90.0, 90.0)
+    daily = {k: (u.requests, u.input_tokens) for k, u in tally.daily("main").items()}
+    assert daily == {(_at(0).date().isoformat(), "main"): (1, 7)}
+    early = tally.summary("feat/a", until=_at(30))
+    assert early is not None
+    assert set(early.tokens) == {"main"}
+    assert tally.summary("feat/a", after=_at(90)) is None
+
+
+def test_active_and_wall_clips_idle_gaps() -> None:
+    """Behavior: a gap longer than the idle cutoff counts toward wall time only."""
+    stamps = [_at(0), _at(60), _at(60 + 3600)]
+    active, wall = agent_profile.active_and_wall(stamps)
+    assert wall == 3660.0
+    assert active == 60.0 + agent_profile.IDLE_GAP_S
+    assert agent_profile.active_and_wall([]) == (0.0, 0.0)
+
+
+def test_repo_transcript_dirs_selects_checkouts_of_the_same_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Behavior: every checkout dir whose origin matches is read, others are not.
+
+    MOCK SETUP: ``github_slug`` maps each checkout path to an origin.
+    EXPECTED BEHAVIOR: own dir first, the sibling clone next; another repo,
+    a deleted checkout and a dir with no ``cwd`` record are left out.
+    """
+    root, sibling, other = (tmp_path / name for name in ("dev-0", "dev-1", "other"))
+    for checkout in (root, sibling, other):
+        checkout.mkdir()
+    slugs = {root: "acme/widget", sibling: "acme/widget", other: "acme/gadget"}
+    monkeypatch.setattr(agent_profile, "github_slug", slugs.get)
+    projects = tmp_path / "projects"
+    own = projects / re.sub(r"[^A-Za-z0-9]", "-", str(root.resolve()))
+    for name, cwd in (
+        (own.name, root),
+        ("sib", sibling),
+        ("oth", other),
+        ("gone", tmp_path / "deleted"),
+    ):
+        _write_jsonl(projects / name / "s.jsonl", [{"type": "user", "cwd": str(cwd)}])
+    _write_jsonl(projects / "nocwd" / "s.jsonl", [{"type": "mode"}])
+
+    assert agent_profile.repo_transcript_dirs(root, projects) == [
+        own,
+        projects / "sib",
+    ]

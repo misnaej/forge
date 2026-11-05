@@ -1292,9 +1292,11 @@ def test_classify_mention_none_on_plain_prose() -> None:
 _PLUGIN_ROSTER_HEADER = (
     "# Shipped roster of forge's plugin-provided surface, read by\n"
     "# verify-forge-agent-doc so consumer agent docs can name plugin skills\n"
-    "# and hooks without the checker calling them dangling (#375 class).\n"
+    "# and hooks without the checker calling them dangling (#375 class), and\n"
+    "# by forge-metrics export to tell shipped agent types from local ones.\n"
     "# Regenerated + drift-checked by tests/test_verify_agent_doc.py against\n"
-    "# skills/*/SKILL.md and claude-hooks/*.sh — edit those, never this file.\n"
+    "# skills/*/SKILL.md, claude-hooks/*.sh and agents/*.md — edit those,\n"
+    "# never this file.\n"
     "\n"
 )
 
@@ -1330,12 +1332,17 @@ def _generate_plugin_roster_toml(root: Path) -> str:
     """
     skill_names = sorted(p.parent.name for p in (root / "skills").glob("*/SKILL.md"))
     hook_names = sorted(p.stem for p in (root / "claude-hooks").glob("*.sh"))
+    agent_names = sorted(
+        p.stem for p in (root / "agents").glob("*.md") if not p.stem.startswith("_")
+    )
     return (
         _PLUGIN_ROSTER_HEADER
         + "[skills]\n"
         + _toml_name_array(skill_names)
         + "\n[hooks]\n"
         + _toml_name_array(hook_names)
+        + "\n[agents]\n"
+        + _toml_name_array(agent_names)
     )
 
 

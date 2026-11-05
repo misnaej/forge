@@ -5396,3 +5396,32 @@ def test_merge_tree_clean_is_unknown_when_git_cannot_answer(
 
     monkeypatch.setattr(git_utils, "run_git", failing)
     assert git_utils.merge_tree_clean(tmp_path, "a", "b") is None
+
+
+def test_github_slug_parses_ssh_and_https(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The owner/repo slug is parsed from SSH and HTTPS origin URLs."""
+    monkeypatch.setattr(
+        git_utils, "run_git", lambda *_a, **_k: "git@github.com:acme/widget.git"
+    )
+    assert git_utils.github_slug(tmp_path) == "acme/widget"
+    monkeypatch.setattr(
+        git_utils, "run_git", lambda *_a, **_k: "https://github.com/acme/widget"
+    )
+    assert git_utils.github_slug(tmp_path) == "acme/widget"
+
+
+def test_forge_data_dir_honours_xdg_and_falls_back_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Behavior: per-repo data lives under XDG_DATA_HOME, else ~/.local/share."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    assert git_utils.forge_data_dir("acme/widget") == (
+        tmp_path / "data" / "forge" / "acme" / "widget"
+    )
+    monkeypatch.setenv("XDG_DATA_HOME", "")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert git_utils.forge_data_dir("acme/widget") == (
+        tmp_path / ".local" / "share" / "forge" / "acme" / "widget"
+    )

@@ -36,7 +36,7 @@ import urllib.parse
 from typing import TYPE_CHECKING
 
 from forge.config import read_pyproject_raw, read_tool_forge_section
-from forge.git_utils import configure_cli_logging, run_git
+from forge.git_utils import configure_cli_logging, github_slug
 from forge.git_utils import repo_root as get_repo_root
 from forge.upgrade import find_pin
 
@@ -92,31 +92,6 @@ def _md(alt: str, image: str, link: str | None = None) -> str:
     """
     img = f"![{alt}]({image})"
     return f"[{img}]({link})" if link else img
-
-
-def _git_remote_slug(root: Path) -> str | None:
-    """Return ``owner/repo`` from the ``origin`` remote, or ``None``.
-
-    Args:
-        root: Repo root.
-
-    Returns:
-        The GitHub ``owner/repo`` slug parsed from the origin URL (SSH or
-        HTTPS form), or ``None`` when there is no origin or it is not a
-        recognizable GitHub URL.
-    """
-    url = run_git("remote", "get-url", "origin", cwd=root, check=False)
-    if not url:
-        return None
-    match = re.search(r"github\.com[:/]+(?P<slug>[^/]+/[^/]+?)(?:\.git)?/?$", url)
-    if match is None:
-        return None
-    slug = match.group("slug")
-    # Restrict to GitHub's own owner/repo charset before it flows into URL
-    # f-strings and markdown — a crafted remote can't inject markdown.
-    if not re.fullmatch(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+", slug):
-        return None
-    return slug
 
 
 _PULL_REQUEST_TRIGGER_RE = re.compile(
@@ -305,7 +280,7 @@ def build_badges(root: Path) -> list[str]:
     data = read_pyproject_raw(root)
     badges_cfg = read_tool_forge_section(root, "badges")
     workflow = badges_cfg.get("workflow") if isinstance(badges_cfg, dict) else None
-    slug = _git_remote_slug(root)
+    slug = github_slug(root)
     candidates = [
         _ci_badge(root, slug, str(workflow) if workflow else None),
         _python_badge(data),
@@ -427,7 +402,7 @@ def main() -> int:
         if kept:
             # No workflow is identifiable as CI; re-pointing the badge would
             # be a guess, so the one the README already carries stays.
-            if _git_remote_slug(root) is None:
+            if github_slug(root) is None:
                 logger.warning(
                     "No GitHub remote detected — keeping the existing CI badge."
                 )

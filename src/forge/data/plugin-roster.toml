@@ -1,8 +1,10 @@
 # Shipped roster of forge's plugin-provided surface, read by
 # verify-forge-agent-doc so consumer agent docs can name plugin skills
-# and hooks without the checker calling them dangling (#375 class).
+# and hooks without the checker calling them dangling (#375 class), and
+# by forge-metrics export to tell shipped agent types from local ones.
 # Regenerated + drift-checked by tests/test_verify_agent_doc.py against
-# skills/*/SKILL.md and claude-hooks/*.sh — edit those, never this file.
+# skills/*/SKILL.md, claude-hooks/*.sh and agents/*.md — edit those,
+# never this file.
 
 [skills]
 names = [
@@ -58,4 +60,20 @@ names = [
     "warn_pr_checks",
     "warn_stale_wrapup",
     "wrapup_anchor",
+]
+
+[agents]
+names = [
+    "design-checker",
+    "docs-types-checker",
+    "issue-triage",
+    "knowledge-search",
+    "perf-optimizer",
+    "pr-manager",
+    "precommit-fixer",
+    "prior-art",
+    "security-checker",
+    "test-advisor",
+    "test-writer",
+    "weekly-summary",
 ]
