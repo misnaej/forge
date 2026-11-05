@@ -26,6 +26,9 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_resolve_subagent_transcript(path: str | None, *, session_id: str | None, agent_id: str) -> Path | None` _(internal)_ — The transcript belonging to *agent_id*, or ``None`` when none is readable.
 - `_is_path_component(value: str | None) -> TypeGuard[str]` _(internal)_ — Whether *value* is safe to splice into a path as one segment.
 - `default_transcripts_dir(root: Path) -> Path | None` — Claude Code's transcript directory for the checkout at *root*.
+- `_projects_dir() -> Path` _(internal)_ — Claude Code's per-user directory of project transcript directories.
+- `_transcript_cwd(project: Path) -> Path | None` _(internal)_ — The checkout a transcript directory's sessions ran in.
+- `repo_transcript_dirs(root: Path, projects: Path | None = None) -> list[Path]` — Every transcript directory belonging to a checkout of *root*'s repo.
 - `_read_meta(transcript: Path) -> dict[str, Any]` _(internal)_ — The ``agent-<id>.meta.json`` sidecar Claude Code writes beside a transcript.
 - `class TranscriptStats` — What a subagent transcript adds to a run's ledger record.
 - `class AgentRun` — One agent invocation, assembled from the ledger and its transcript.
@@ -42,9 +45,9 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_safe_label(raw: str) -> str` _(internal)_ — Render an untrusted path as one bounded, single-line label.
 - `_relative_to_root(raw: str, root: Path) -> str` _(internal)_ — Return *raw* relative to *root*, marked when it is not under it.
 - `render_edit_receipt(receipt: EditReceipt) -> str` — Render the receipt as the line an agent hands back.
-- `_parse_ts(value: object) -> datetime | None` _(internal)_ — Parse an ISO-8601 timestamp (``Z`` suffix accepted); ``None`` if not one.
 - `_event_ts(event: dict[str, Any]) -> datetime | None` _(internal)_ — A ledger event's timestamp, preferring the millisecond field.
 - `_clipped_gap(previous: datetime | None, current: datetime) -> float` _(internal)_ — Seconds between two records, clipped at :data:`IDLE_GAP_S`.
+- `active_and_wall(timestamps: Iterable[datetime]) -> tuple[float, float]` — Active and wall seconds spanned by a set of record times.
 - `_run_key(event: dict[str, Any]) -> tuple[str, str]` _(internal)_ — ``(agent_id, agent_type)`` for an event; main-session tools get a pseudo id.
 - `_apply_event(runs: dict[str, AgentRun], event: dict[str, Any]) -> None` _(internal)_ — Fold one ledger event into *runs*.
 - `_apply_tool_event(run: AgentRun, event: dict[str, Any]) -> None` _(internal)_ — Accumulate one ``PostToolUse`` event's duration into *run*.
@@ -64,6 +67,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_is_full_precommit_run(block: dict[str, Any]) -> int` _(internal)_ — ``1`` when a ``Bash`` tool call runs ``forge-precommit`` without ``--only``.
 - `_agent_types_from_sessions(root: Path) -> dict[str, tuple[str, str | None]]` _(internal)_ — Map subagent ids to ``(agent_type, description)`` from main-session transcripts.
 - `runs_from_transcripts(root: Path) -> dict[str, AgentRun]` — Build runs from every subagent transcript under *root*.
+- `branch_usage(dirs: Iterable[Path]) -> BranchUsageTally` — Token usage and activity per branch across every transcript in *dirs*.
 - `_digest_record(run: AgentRun, stats: TranscriptStats) -> dict[str, object]` _(internal)_ — One digest line for *run*: its ids, its transcript stats, and when.
 - `_is_count(value: object) -> bool` _(internal)_ — Whether *value* is a JSON integer (``bool`` excluded).
 - `_is_size(value: object) -> bool` _(internal)_ — Whether *value* is a non-negative JSON integer — a token or char count.
@@ -104,6 +108,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `class TokenUsage` — Summed request usage for one run, skill, or agent type.
   - `prompt_tokens(self) -> int` — Tokens sent to the model across all requests.
   - `total_tokens(self) -> int` — Prompt plus output tokens.
+  - `new_tokens(self) -> int` — Tokens not served from cache: fresh input, cache writes, output.
   - `fixed_cost(self) -> int` — Prompt tokens spent re-sending the fixed context, every request.
   - `fixed_share(self) -> float` — :attr:`fixed_cost` as a share of prompt tokens (``0`` when none).
   - `add(self, other: TokenUsage) -> None` — Add *other*'s counts into this usage.
@@ -118,6 +123,16 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `parse_session(records: Iterable[dict[str, Any]]) -> SessionTokens` — Split a main-session transcript's tokens by the skill that was active.
 - `_note_delegations(session: SessionTokens, record: dict[str, Any], skill: str) -> None` _(internal)_ — Record each delegation an assistant record makes.
 - `_note_handback(session: SessionTokens, record: dict[str, Any]) -> None` _(internal)_ — Record a subagent hand-back delivered into the conversation.
+- `class BranchEvent` — One transcript record on a branch: when, who, and what it cost.
+- `class BranchSummary` — A branch's events inside one time window, summed.
+- `_bash_counts(record: dict[str, Any]) -> tuple[int, int]` _(internal)_ — ``(precommit, smart-test)`` ``Bash`` calls an assistant record makes.
+- `_in_window(time: datetime | None, after: datetime | None, until: datetime | None) -> bool` _(internal)_ — Whether *time* falls in ``after < time <= until``.
+- `class BranchUsageTally` — Every transcript record per git branch, for windowed per-PR sums.
+  - `add_transcript(self, records: Iterable[dict[str, Any]], agent_type: str, run: str) -> None` — Keep one transcript's records under the branches they ran on.
+  - `branches_with_usage(self) -> set[str]` — Branches with at least one request.
+  - `summary(self, branch: str, *, after: datetime | None = None, until: datetime | None = None) -> BranchSummary | None` — Sum *branch*'s events with ``after < time <= until``.
+  - `daily(self, branch: str) -> dict[tuple[str, str], TokenUsage]` — *branch*'s usage per ``(UTC day, agent type)``.
+- `parse_ts(value: object) -> datetime | None` — A transcript ``timestamp`` as an aware UTC datetime, ``None`` if absent.
 - `class TokenRow` — One ranked line: an agent type or a skill, and what it cost.
 - `class WasteFlag` — One mechanical waste finding, with the tokens it concerns.
 - `rank(rows: Iterable[TokenRow]) -> list[TokenRow]` — Order rows by total tokens, costliest first.
@@ -808,6 +823,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `require_cli(name: str, *, caller: str | None = None, extra: str | None = None, hint: str | None = None) -> None` — Abort with a clear install hint if *name* isn't on PATH.
 - `code_health_dir(repo_root: Path) -> Path` — Return the directory forge writes and reads its step logs in.
 - `forge_cache_dir() -> Path` — Return the per-user directory forge keeps machine-wide caches in.
+- `forge_data_dir(slug: str) -> Path` — Return the per-user directory forge keeps one repo's lasting data in.
+- `github_slug(root: Path) -> str | None` — Return ``owner/repo`` from the ``origin`` remote, or ``None``.
 - `write_step_log(repo_root: Path, name: str, output: str) -> Path` — Write *output* to ``code_health/<name>.log`` under *repo_root*.
 - `capturing_to_step_log(repo_root: Path, name: str) -> Iterator[None]` — Tee root-logger output into ``code_health/<name>.log`` for the block.
 - `gh_api(*args: str, timeout: int = GH_TIMEOUT_S) -> str | None` — Run ``gh api`` with *args* and return stripped stdout, or ``None``.
@@ -975,7 +992,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 - `_shields_static(label: str, message: str, color: str) -> str` _(internal)_ — Build a static shields.io badge image URL.
 - `_md(alt: str, image: str, link: str | None = None) -> str` _(internal)_ — Render one markdown badge (optionally wrapped in a link).
-- `_git_remote_slug(root: Path) -> str | None` _(internal)_ — Return ``owner/repo`` from the ``origin`` remote, or ``None``.
 - `_pick_ci_workflow(wf_dir: Path) -> str | None` _(internal)_ — Choose the workflow file the CI badge should point at.
 - `_extract_ci_badge(readme: str) -> str | None` _(internal)_ — Return the CI badge currently inside the managed block, if any.
 - `_ci_badge(root: Path, slug: str | None, workflow: str | None) -> str | None` _(internal)_ — Build the GitHub Actions CI badge for the chosen workflow, if any.
@@ -1333,6 +1349,46 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `class PackInputs` — The PR-specific inputs an evidence pack is rendered from.
 - `build_pack(root: Path, inputs: PackInputs) -> str` — Gather the evidence and render the pack.
 - `write_pack(root: Path, inputs: PackInputs) -> Path` — Build the pack and write it to ``code_health/pr_evidence.log``.
+
+## `forge.pr_metrics`
+
+> _``forge-metrics``: what each merged PR cost, kept in a local database._
+
+- `class PrFacts` — What GitHub says about one merged PR.
+- `open_db(path: Path) -> sqlite3.Connection` — Open the metrics database, creating file and schema on first use.
+- `_usage_values(usage: TokenUsage) -> tuple[int, ...]` _(internal)_ — *usage* in :data:`_TOKEN_COLUMNS` order.
+- `pr_summary(tally: BranchUsageTally, facts: PrFacts) -> BranchSummary | None` — The PR's share of its head branch's transcript records.
+- `review_rounds(summary: BranchSummary) -> int` — Review rounds: the most runs any one reporter type made.
+- `record_pr(conn: sqlite3.Connection, facts: PrFacts, tally: BranchUsageTally, *, now: datetime) -> None` — Replace *facts*' PR rows with what GitHub and the transcripts say now.
+- `record_unattributed(conn: sqlite3.Connection, tally: BranchUsageTally, base_branch: str) -> None` — Keep base-branch usage per day and agent type.
+- `_int(value: object) -> int` _(internal)_ — A JSON count as int, ``0`` for anything else.
+- `facts_from_api(pull: dict[str, Any], wrapups: int, same_head_merges: Iterable[str] = ()) -> PrFacts | None` — Build :class:`PrFacts` from a ``GET /pulls/N`` response.
+- `fetch_facts(number: int) -> PrFacts | None` — Read PR *number* and count its wrap-ups through ``gh api``.
+- `merged_prs() -> list[tuple[int, str]]` — The newest merged PRs, as ``(number, head branch)``.
+- `backfill(conn: sqlite3.Connection, merged: Iterable[tuple[int, str]], tally: BranchUsageTally, *, limit: int) -> list[int]` — Record merged PRs not yet in the database whose branch has usage.
+- `class PrRow` — One recorded PR with its tokens, as the report and export read it.
+  - `total_tokens(self) -> int` — Every agent's tokens summed, cache reads included.
+  - `new_tokens(self) -> int` — Every agent's tokens not served from cache.
+  - `cache_share(self) -> float | None` — Cache reads as a share of all tokens; ``None`` with no tokens.
+  - `changed_lines(self) -> int` — Lines added plus removed.
+- `load_rows(conn: sqlite3.Connection, *, last: int | None = None) -> list[PrRow]` — Recorded PRs, oldest merge first.
+- `_fmt_s(seconds: float | None) -> str` _(internal)_ — Seconds as ``1h05``, ``12m`` or ``-``.
+- `_top_helpers(row: PrRow, count: int = 2) -> str` _(internal)_ — The costliest helper types of a PR by new tokens, ``type 12k`` each.
+- `_per_line(row: PrRow) -> float | None` _(internal)_ — New (uncached) tokens per changed line; ``None`` without either.
+- `trend_lines(rows: list[PrRow]) -> list[str]` — Compare the older and newer half of *rows* on median cost.
+- `_fmt_median(value: float) -> str` _(internal)_ — A median for the trend line: compact tokens, or one decimal when small.
+- `render_report(rows: list[PrRow]) -> str` — The terminal report: one line per PR, then the trend.
+- `_cells(row: PrRow) -> dict[str, str]` _(internal)_ — One PR's report cells, shared by the terminal table and the page.
+- `_bar_chart(rows: list[PrRow]) -> str` _(internal)_ — An inline SVG bar chart of new tokens per PR, main session vs helpers.
+- `render_html(rows: list[PrRow]) -> str` — One self-contained HTML page: chart, table and trend, nothing fetched.
+- `_shared_tokens(tokens: dict[str, TokenUsage]) -> dict[str, dict[str, int]]` _(internal)_ — Per-type token counts with every non-forge type folded into ``other``.
+- `export_payload(rows: list[PrRow]) -> dict[str, Any]` — Figures only, safe to share: no titles, numbers, branches or dates.
+- `default_db_path(root: Path) -> Path | None` — Where this repo's metrics database lives.
+- `_scan(root: Path, explicit: list[Path] | None) -> BranchUsageTally` _(internal)_ — Read the transcripts of every checkout of the repo (or *explicit*).
+- `_build_parser() -> argparse.ArgumentParser` _(internal)_ — The ``forge-metrics`` argument parser.
+- `_record(conn: sqlite3.Connection, root: Path, args: argparse.Namespace) -> int` _(internal)_ — Run ``record`` or ``backfill``.
+- `_read(conn: sqlite3.Connection, args: argparse.Namespace) -> int` _(internal)_ — Run ``report`` or ``export``.
+- `main(argv: list[str] | None = None) -> int` — Entry point for ``forge-metrics``.
 
 ## `forge.pr_plan`
 

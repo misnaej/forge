@@ -564,6 +564,29 @@ options:
   -h, --help      show this help message and exit
 ```
 
+## forge-metrics
+
+```text
+usage: forge-metrics [-h] [--db DB] [--transcripts TRANSCRIPTS]
+                     {record,backfill,report,export} ...
+
+Per-PR cost metrics (tokens, time, size) in a local database.
+
+positional arguments:
+  {record,backfill,report,export}
+    record              Record one merged PR (replaces its rows).
+    backfill            Record merged PRs not yet recorded.
+    report              Print per-PR cost and the trend.
+    export              Write figures-only JSON for sharing.
+
+options:
+  -h, --help            show this help message and exit
+  --db DB               Database file (default: per repo).
+  --transcripts TRANSCRIPTS
+                        Transcript directory to read instead of every
+                        checkout's (repeatable).
+```
+
 ## forge-next-prep
 
 ```text

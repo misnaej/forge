@@ -550,6 +550,50 @@ def forge_cache_dir() -> Path:
     return Path(base) / "forge"
 
 
+def forge_data_dir(slug: str) -> Path:
+    """Return the per-user directory forge keeps one repo's lasting data in.
+
+    Keyed by GitHub ``owner/repo`` rather than checkout path, so every
+    clone of one repo on the machine shares it.
+
+    Args:
+        slug: The repo's ``owner/repo``, as :func:`github_slug` returns it.
+
+    Returns:
+        ``$XDG_DATA_HOME/forge/<owner>/<repo>``, or
+        ``~/.local/share/forge/<owner>/<repo>`` when the variable is unset
+        or empty.
+    """
+    base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
+    owner, _, repo = slug.partition("/")
+    return Path(base) / "forge" / owner / repo
+
+
+def github_slug(root: Path) -> str | None:
+    """Return ``owner/repo`` from the ``origin`` remote, or ``None``.
+
+    Args:
+        root: Repo root.
+
+    Returns:
+        The GitHub ``owner/repo`` slug parsed from the origin URL (SSH or
+        HTTPS form), or ``None`` when there is no origin or it is not a
+        recognizable GitHub URL.
+    """
+    url = run_git("remote", "get-url", "origin", cwd=root, check=False)
+    if not url:
+        return None
+    match = re.search(r"github\.com[:/]+(?P<slug>[^/]+/[^/]+?)(?:\.git)?/?$", url)
+    if match is None:
+        return None
+    slug = match.group("slug")
+    # Restrict to GitHub's own owner/repo charset before it flows into URL
+    # f-strings, markdown and filesystem paths.
+    if not re.fullmatch(r"[A-Za-z0-9._-]+/[A-Za-z0-9._-]+", slug):
+        return None
+    return slug
+
+
 def write_step_log(repo_root: Path, name: str, output: str) -> Path:
     """Write *output* to ``code_health/<name>.log`` under *repo_root*.
 

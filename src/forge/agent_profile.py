@@ -62,6 +62,7 @@ import statistics
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime
+from itertools import pairwise
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeGuard
 
@@ -70,6 +71,8 @@ from forge.agent_profile_tokens import (
     FIXED_SHARE_THRESHOLD,
     LARGE_RESULT_CHARS,
     LONG_REPORT_CHARS,
+    MAIN_AGENT,
+    BranchUsageTally,
     SessionTokens,
     TokenReport,
     TokenRow,
@@ -77,6 +80,7 @@ from forge.agent_profile_tokens import (
     UsageTally,
     WasteFlag,
     parse_session,
+    parse_ts,
     rank,
     render_token_report,
     tool_result_chars,
@@ -86,6 +90,7 @@ from forge.git_utils import (
     configure_cli_logging,
     diff_names_z,
     git_z_names,
+    github_slug,
     repo_root,
 )
 from forge.ledger import append_jsonl_record, append_ledger_line, parse_ledger
@@ -225,8 +230,67 @@ def default_transcripts_dir(root: Path) -> Path | None:
         (no Claude Code on this machine, as in CI).
     """
     encoded = _PROJECT_DIR_UNSAFE.sub("-", str(root.resolve()))
-    candidate = Path.home() / ".claude" / "projects" / encoded
+    candidate = _projects_dir() / encoded
     return candidate if candidate.is_dir() else None
+
+
+def _projects_dir() -> Path:
+    """Claude Code's per-user directory of project transcript directories.
+
+    Returns:
+        ``~/.claude/projects``.
+    """
+    return Path.home() / ".claude" / "projects"
+
+
+def _transcript_cwd(project: Path) -> Path | None:
+    """The checkout a transcript directory's sessions ran in.
+
+    The directory name encodes the path lossily (every non-alphanumeric
+    becomes ``-``), so the path is read from the ``cwd`` records carry.
+
+    Args:
+        project: One ``~/.claude/projects/<encoded>`` directory.
+
+    Returns:
+        The first ``cwd`` any session records, or ``None`` when none does.
+    """
+    for session in sorted(project.glob(f"*{_TRANSCRIPT_SUFFIX}")):
+        for record in _iter_jsonl(session):
+            cwd = record.get("cwd")
+            if isinstance(cwd, str) and cwd:
+                return Path(cwd)
+    return None
+
+
+def repo_transcript_dirs(root: Path, projects: Path | None = None) -> list[Path]:
+    """Every transcript directory belonging to a checkout of *root*'s repo.
+
+    One directory exists per checkout path, so parallel clones of one
+    repo each have their own. A directory belongs when the checkout its
+    sessions ran in still exists and has the same GitHub ``origin``; a
+    deleted checkout's transcripts cannot be attributed and are skipped.
+
+    Args:
+        root: The checkout asking.
+        projects: Directory to scan; ``~/.claude/projects`` when omitted.
+
+    Returns:
+        Matching directories, *root*'s own first when it has one.
+    """
+    projects = projects if projects is not None else _projects_dir()
+    own = projects / _PROJECT_DIR_UNSAFE.sub("-", str(root.resolve()))
+    found = [own] if own.is_dir() else []
+    slug = github_slug(root)
+    if slug is None or not projects.is_dir():
+        return found
+    for candidate in sorted(projects.iterdir()):
+        if candidate == own or not candidate.is_dir():
+            continue
+        cwd = _transcript_cwd(candidate)
+        if cwd is not None and cwd.is_dir() and github_slug(cwd) == slug:
+            found.append(candidate)
+    return found
 
 
 def _read_meta(transcript: Path) -> dict[str, Any]:
@@ -477,7 +541,7 @@ def subagent_edits(
             continue
         if session_id and event.get("session_id") != session_id:
             continue
-        when = _parse_ts(event.get("ts"))
+        when = parse_ts(event.get("ts"))
         if since is not None and when is not None and when < since:
             continue
         raw = event.get("file_path")
@@ -594,25 +658,6 @@ def render_edit_receipt(receipt: EditReceipt) -> str:
     return "\n".join(lines)
 
 
-def _parse_ts(value: object) -> datetime | None:
-    """Parse an ISO-8601 timestamp (``Z`` suffix accepted); ``None`` if not one.
-
-    Args:
-        value: The raw field to parse.
-
-    Returns:
-        The timezone-aware ``datetime``, or ``None`` when *value* isn't a
-        parseable ISO-8601 string.
-    """
-    if not isinstance(value, str):
-        return None
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
-
-
 def _event_ts(event: dict[str, Any]) -> datetime | None:
     """A ledger event's timestamp, preferring the millisecond field.
 
@@ -625,7 +670,7 @@ def _event_ts(event: dict[str, Any]) -> datetime | None:
     ms = event.get("ts_ms")
     if isinstance(ms, int | float):
         return datetime.fromtimestamp(ms / 1000, tz=UTC)
-    return _parse_ts(event.get("ts"))
+    return parse_ts(event.get("ts"))
 
 
 def _clipped_gap(previous: datetime | None, current: datetime) -> float:
@@ -641,6 +686,23 @@ def _clipped_gap(previous: datetime | None, current: datetime) -> float:
     if previous is None:
         return 0.0
     return min(max((current - previous).total_seconds(), 0.0), IDLE_GAP_S)
+
+
+def active_and_wall(timestamps: Iterable[datetime]) -> tuple[float, float]:
+    """Active and wall seconds spanned by a set of record times.
+
+    Args:
+        timestamps: Record times, any order; concurrent agents interleave.
+
+    Returns:
+        ``(active, wall)``: summed gaps clipped at :data:`IDLE_GAP_S`, and
+        last minus first; ``(0.0, 0.0)`` when there are none.
+    """
+    ordered = sorted(timestamps)
+    if not ordered:
+        return 0.0, 0.0
+    active = sum(_clipped_gap(prev, cur) for prev, cur in pairwise(ordered))
+    return active, (ordered[-1] - ordered[0]).total_seconds()
 
 
 def _run_key(event: dict[str, Any]) -> tuple[str, str]:
@@ -867,7 +929,7 @@ def parse_transcript(path: Path) -> TranscriptStats | None:
     scan = _TranscriptScan()
     previous: datetime | None = None
     for record in _iter_jsonl(path):
-        ts = _parse_ts(record.get("timestamp"))
+        ts = parse_ts(record.get("timestamp"))
         if ts is None:
             continue
         stats.started = stats.started or ts
@@ -1084,6 +1146,37 @@ def runs_from_transcripts(root: Path) -> dict[str, AgentRun]:
     return runs
 
 
+def branch_usage(dirs: Iterable[Path]) -> BranchUsageTally:
+    """Token usage and activity per branch across every transcript in *dirs*.
+
+    Args:
+        dirs: Claude Code project directories, e.g. from
+            :func:`repo_transcript_dirs`.
+
+    Returns:
+        The tally: main sessions under :data:`MAIN_AGENT`, each subagent
+        under its type (``"?"`` when nothing names it).
+    """
+    tally = BranchUsageTally()
+    for root in dirs:
+        for session in sorted(root.glob(f"*{_TRANSCRIPT_SUFFIX}")):
+            tally.add_transcript(_iter_jsonl(session), MAIN_AGENT, session.stem)
+        # Pairing via the main sessions re-reads them all; only pay that
+        # when a transcript predates its meta sidecar.
+        paired: dict[str, tuple[str, str | None]] | None = None
+        for path in sorted(root.glob(_SUBAGENT_GLOB)):
+            agent_id = _agent_id_from_transcript(path)
+            if agent_id is None:
+                continue
+            agent_type = _read_meta(path).get("agentType")
+            if not isinstance(agent_type, str) or not agent_type:
+                if paired is None:
+                    paired = _agent_types_from_sessions(root)
+                agent_type = paired.get(agent_id, ("?", None))[0]
+            tally.add_transcript(_iter_jsonl(path), agent_type, agent_id)
+    return tally
+
+
 # --- transcript digest -----------------------------------------------------
 
 _DIGEST_COUNTS = (
@@ -1155,7 +1248,7 @@ def _stats_from_digest(record: dict[str, Any]) -> TranscriptStats | None:
         or not a finite number.
     """
     active_s = record.get("active_s")
-    started = _parse_ts(record.get("started"))
+    started = parse_ts(record.get("started"))
     if (
         started is None
         or not all(_is_count(record.get(name)) for name in _DIGEST_COUNTS)
@@ -1170,7 +1263,7 @@ def _stats_from_digest(record: dict[str, Any]) -> TranscriptStats | None:
         return None
     return TranscriptStats(
         started=started,
-        ended=_parse_ts(record.get("ended")),
+        ended=parse_ts(record.get("ended")),
         active_s=float(active_s),
         repeated_call=_call_label(record["repeated_call"]),
         **{name: record[name] for name in _DIGEST_COUNTS},
@@ -2002,7 +2095,7 @@ def main() -> int:
         return _render_edits(root, session_id=args.session)
     if args.history:
         return _render_history(root)
-    since = _parse_ts(args.since) if args.since else None
+    since = parse_ts(args.since) if args.since else None
     if args.since and since is None:
         logger.error("--since must be an ISO-8601 timestamp, got %r", args.since)
         return 2

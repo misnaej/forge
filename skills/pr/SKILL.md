@@ -497,6 +497,9 @@ Skip when `forge.run_context.is_ci()` — nobody is there to answer them
     ```
     Agent(subagent_type="forge:issue-triage", prompt="Run post-pr mode. PR #<number> was just merged. Detect issues closed by this PR, remove their tier labels, run the overlap sweep (forge-plan-check overlap <number>), re-check the placement of its follow-ups (forge-plan-check tracks --from-pr <number>), and regenerate the 📋 Backlog Index issue.")
     ```
+    Then record the PR's cost: `forge-metrics record --pr <number>`
+    ([`forge-docs/metrics.md`](../../forge-docs/metrics.md)); best effort,
+    a failure is reported, never blocking.
 
 ## Step 6: Update CONTINUATION state
 
@@ -506,8 +509,9 @@ Skip when `forge.run_context.is_ci()` — nobody is there to answer them
 
 19. Delegate the background PR monitor per FOUNDATION §6 "PR
     finalization" — the canonical description of what it watches, what
-    runs on merge (local cleanup + `issue-triage` `post-pr` mode, i.e.
-    Step 5 no longer waits for a later session), and when to skip.
+    runs on merge (local cleanup + `issue-triage` `post-pr` mode +
+    `forge-metrics record --pr <number>`, i.e. Step 5 no longer waits for
+    a later session), and when to skip.
     Call-site delta: new review comments route to `/pr-comments`.
 
 ## Rules

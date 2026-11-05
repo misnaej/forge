@@ -22,7 +22,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field, fields
-from typing import TYPE_CHECKING, Any, Final
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
 
 if TYPE_CHECKING:
@@ -68,6 +69,11 @@ class TokenUsage:
     def total_tokens(self) -> int:
         """Prompt plus output tokens."""
         return self.prompt_tokens + self.output_tokens
+
+    @property
+    def new_tokens(self) -> int:
+        """Tokens not served from cache: fresh input, cache writes, output."""
+        return self.input_tokens + self.cache_write_tokens + self.output_tokens
 
     @property
     def fixed_cost(self) -> int:
@@ -122,10 +128,16 @@ def _count(value: object) -> int:
 class UsageTally:
     """Adds each request's usage once, however many records repeat it."""
 
-    def __init__(self) -> None:
-        """Start an empty tally."""
+    def __init__(self, seen: set[str] | None = None) -> None:
+        """Start an empty tally.
+
+        Args:
+            seen: Message ids already counted, shared between tallies that
+                split one transcript so a request lands in exactly one;
+                a fresh set when omitted.
+        """
         self.usage = TokenUsage()
-        self._seen: set[str] = set()
+        self._seen: set[str] = set() if seen is None else seen
 
     def add_record(self, record: dict[str, Any]) -> bool:
         """Count *record*'s usage unless its message was already counted.
@@ -293,6 +305,214 @@ def _note_handback(session: SessionTokens, record: dict[str, Any]) -> None:
     session.handback_chars[agent_id] = max(
         session.handback_chars.get(agent_id, 0), len(text)
     )
+
+
+#: Label for the main session in :class:`BranchUsageTally`.
+MAIN_AGENT: Final = "main"
+# `--freshness` / `--verdict` read logs and run no step.
+_PRECOMMIT_CALL = re.compile(r"\bforge-precommit\b(?![^\n]*--(?:freshness|verdict))")
+_TEST_CALL = re.compile(r"\bforge-smart-test\b")
+
+
+class BranchEvent(NamedTuple):
+    """One transcript record on a branch: when, who, and what it cost."""
+
+    time: datetime | None
+    agent_type: str
+    #: The transcript it came from — one subagent run, or one main session.
+    run: str
+    #: The request's usage when the record starts a new request, else ``None``.
+    usage: TokenUsage | None
+    precommit_runs: int
+    test_runs: int
+
+
+@dataclass
+class BranchSummary:
+    """A branch's events inside one time window, summed."""
+
+    tokens: dict[str, TokenUsage] = field(default_factory=dict)
+    #: Agent type → distinct transcripts (runs) with a request in the window.
+    runs: dict[str, int] = field(default_factory=dict)
+    timestamps: list[datetime] = field(default_factory=list)
+    #: ``Bash`` calls running ``forge-precommit`` (read-only probes excluded).
+    precommit_runs: int = 0
+    #: ``Bash`` calls running ``forge-smart-test``.
+    test_runs: int = 0
+
+
+def _bash_counts(record: dict[str, Any]) -> tuple[int, int]:
+    """``(precommit, smart-test)`` ``Bash`` calls an assistant record makes.
+
+    Args:
+        record: One assistant record.
+
+    Returns:
+        The two counts.
+    """
+    message = record.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    precommit = tests = 0
+    for block in content if isinstance(content, list) else []:
+        if not isinstance(block, dict) or block.get("name") != "Bash":
+            continue
+        tool_input = block.get("input")
+        command = tool_input.get("command") if isinstance(tool_input, dict) else None
+        if block.get("type") == "tool_use" and isinstance(command, str):
+            precommit += bool(_PRECOMMIT_CALL.search(command))
+            tests += bool(_TEST_CALL.search(command))
+    return precommit, tests
+
+
+def _in_window(
+    time: datetime | None, after: datetime | None, until: datetime | None
+) -> bool:
+    """Whether *time* falls in ``after < time <= until``.
+
+    Args:
+        time: An event time, ``None`` when the record carried none.
+        after: Exclusive lower bound, or ``None``.
+        until: Inclusive upper bound, or ``None``.
+
+    Returns:
+        ``True`` inside the window; a timeless event only when unbounded.
+    """
+    if time is None:
+        return after is None and until is None
+    return (after is None or time > after) and (until is None or time <= until)
+
+
+class BranchUsageTally:
+    """Every transcript record per git branch, for windowed per-PR sums.
+
+    Claude Code stamps every record with the checkout's ``gitBranch``, so a
+    branch's cost is the sum of the requests made while it was checked out
+    — main session and helpers alike. Records are kept, not pre-summed: a
+    branch name reused by a later PR is split by merge time when read
+    (:meth:`summary`). One shared seen-set counts each request once.
+    """
+
+    def __init__(self) -> None:
+        """Start an empty tally."""
+        self._seen: set[str] = set()
+        self.events: dict[str, list[BranchEvent]] = {}
+
+    def add_transcript(
+        self, records: Iterable[dict[str, Any]], agent_type: str, run: str
+    ) -> None:
+        """Keep one transcript's records under the branches they ran on.
+
+        Args:
+            records: The transcript's records, in file order.
+            agent_type: Who wrote it — :data:`MAIN_AGENT` or a subagent type.
+            run: The transcript's identity (session or agent id).
+        """
+        label = _printable(agent_type) or "?"
+        for record in records:
+            branch = record.get("gitBranch")
+            kind = record.get("type")
+            if not isinstance(branch, str) or not branch:
+                continue
+            if kind not in {"assistant", "user"}:
+                continue
+            usage = precommit = tests = None
+            if kind == "assistant":
+                request = UsageTally(self._seen)
+                usage = request.usage if request.add_record(record) else None
+                precommit, tests = _bash_counts(record)
+            self.events.setdefault(_printable(branch), []).append(
+                BranchEvent(
+                    parse_ts(record.get("timestamp")),
+                    label,
+                    run,
+                    usage,
+                    precommit or 0,
+                    tests or 0,
+                )
+            )
+
+    def branches_with_usage(self) -> set[str]:
+        """Branches with at least one request.
+
+        Returns:
+            The branch names.
+        """
+        return {
+            branch
+            for branch, events in self.events.items()
+            if any(e.usage is not None for e in events)
+        }
+
+    def summary(
+        self,
+        branch: str,
+        *,
+        after: datetime | None = None,
+        until: datetime | None = None,
+    ) -> BranchSummary | None:
+        """Sum *branch*'s events with ``after < time <= until``.
+
+        Args:
+            branch: The branch.
+            after: Exclusive lower bound; unbounded when ``None``.
+            until: Inclusive upper bound; unbounded when ``None``.
+
+        Returns:
+            The summary, or ``None`` when no event falls in the window.
+            Events without a time count only when both bounds are ``None``.
+        """
+        picked = [
+            e for e in self.events.get(branch, []) if _in_window(e.time, after, until)
+        ]
+        if not picked:
+            return None
+        out = BranchSummary()
+        run_ids: dict[str, set[str]] = {}
+        for event in picked:
+            if event.time is not None:
+                out.timestamps.append(event.time)
+            out.precommit_runs += event.precommit_runs
+            out.test_runs += event.test_runs
+            if event.usage is not None:
+                out.tokens.setdefault(event.agent_type, TokenUsage()).add(event.usage)
+                run_ids.setdefault(event.agent_type, set()).add(event.run)
+        out.runs = {agent: len(ids) for agent, ids in run_ids.items()}
+        return out
+
+    def daily(self, branch: str) -> dict[tuple[str, str], TokenUsage]:
+        """*branch*'s usage per ``(UTC day, agent type)``.
+
+        Args:
+            branch: The branch.
+
+        Returns:
+            Usage per key; requests without a time are left out.
+        """
+        days: dict[tuple[str, str], TokenUsage] = {}
+        for event in self.events.get(branch, []):
+            if event.usage is None or event.time is None:
+                continue
+            key = (event.time.date().isoformat(), event.agent_type)
+            days.setdefault(key, TokenUsage()).add(event.usage)
+        return days
+
+
+def parse_ts(value: object) -> datetime | None:
+    """A transcript ``timestamp`` as an aware UTC datetime, ``None`` if absent.
+
+    Args:
+        value: The raw field.
+
+    Returns:
+        The parsed time, or ``None`` when *value* is not ISO-8601.
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 @dataclass(frozen=True)
