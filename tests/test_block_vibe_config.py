@@ -89,6 +89,21 @@ BLOCKED_COMMANDS = [
     pytest.param('F=.vibe/hooks.toml; rm -f "$F"', id="variable-indirection"),
     pytest.param("rm .agents/skills/pr/SKILL.md", id="rm-agents"),
     pytest.param("echo hi > AGENTS.md", id="redirect-agents-md"),
+    pytest.param("rm -rf .vibe; echo done", id="rm-dir-then-echo"),
+    pytest.param('rm -rf ".vibe"', id="rm-quoted-dir"),
+    pytest.param("echo $(rm -rf .vibe)", id="command-substitution"),
+    pytest.param(
+        "python3 -c \"import shutil; shutil.rmtree('.vibe')\"", id="python-rmtree"
+    ),
+    pytest.param('D=.vibe; rm -rf "$D"', id="dir-variable-indirection"),
+    pytest.param("S=sed; $S -i s/a/b/ .vibe/hooks.toml", id="verb-indirection"),
+    pytest.param("unlink .vibe/hooks.toml", id="unlink"),
+    pytest.param("dd of=.vibe/hooks.toml if=/dev/zero", id="dd-overwrite"),
+    pytest.param("find .vibe -delete", id="find-delete"),
+    pytest.param(
+        "python3 -c \"open('.vibe'+'/forge-roster.json','w')\"",
+        id="python-constructed-path",
+    ),
 ]
 
 

@@ -269,11 +269,12 @@ def _translate_matcher_group(
         # mid-run.
         total_timeout = sum(float(h.get("timeout") or 5) for h in kept) + 2.0
         matcher_key = vibe_match or "*"
+        roster_abs = str(ctx.repo_root / ".vibe" / "forge-roster.json")
         dispatcher_cmd = (
             "forge-hook-dispatch --harness vibe "
             f"--event {ctx.vibe_event} "
             f"--matcher {json.dumps(matcher_key)} "
-            "--roster .vibe/forge-roster.json"
+            f"--roster {json.dumps(roster_abs)}"
         )
         entries.append(
             {

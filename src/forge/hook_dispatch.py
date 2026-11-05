@@ -166,7 +166,28 @@ def _validate_guard_commands(roster: dict, roster_path: Path) -> None:
     if not project_root:
         msg = f"Roster {roster_path} has no project_root; refusing to run guards"
         raise _DispatchDenyError(msg)
-    root = Path(project_root).resolve()
+    # Anchor to the roster file's own location, never to the roster's claim:
+    # a tampered roster could set project_root=/ and every path would pass
+    # containment. The roster lives at <root>/.vibe/forge-roster.json, so the
+    # anchor is its parent's parent (or its parent outside a .vibe dir).
+    # Deny on mismatch and on filesystem root.
+    roster_abs = roster_path.resolve()
+    anchor = (
+        roster_abs.parent.parent
+        if roster_abs.parent.name == ".vibe"
+        else roster_abs.parent
+    )
+    claimed = Path(project_root).resolve()
+    if claimed == Path(claimed.anchor):
+        msg = f"Roster {roster_path} claims project_root at filesystem root; refusing"
+        raise _DispatchDenyError(msg)
+    if claimed != anchor:
+        msg = (
+            f"Roster {roster_path} claims project_root {claimed} but lives at "
+            f"{roster_path}; refusing to run guards"
+        )
+        raise _DispatchDenyError(msg)
+    root = anchor
     for event_data in roster.get("events", {}).values():
         for guards in event_data.get("matchers", {}).values():
             for guard in guards:
