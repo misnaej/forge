@@ -402,7 +402,7 @@ Pin change (floor, cap, new pin — advisory or not) never rides a feature/fix P
 
 ### Commit messages
 
-- Max 50 words. What + why. **No Claude/AI attribution.**
+- Squash-message word limits (below). What + why. **No Claude/AI attribution.**
 - Conventional format — types in `forge.pr_squash_comment.CONVENTIONAL_COMMIT_TYPES` (canonical; shell hook synced via `forge-gen-commit-types`).
 
 ### PR descriptions

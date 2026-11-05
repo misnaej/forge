@@ -1805,6 +1805,12 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `run_command(cmd: Sequence[str], root: Path, *, capture: bool = False, cwd: Path | None = None, label: str = '') -> tuple[int, str]` — Run *cmd* under resource sampling and write the telemetry artifacts.
 - `main(argv: list[str] | None = None) -> int` — Run the telemetry CLI: ``forge-telemetry -- <cmd> ...``.
 
+## `forge.text_budget`
+
+> _The one margin forge allows over a text-length target._
+
+- `ceiling(target: int) -> int` — Return the most words a budget with *target* accepts.
+
 ## `forge.text_clip`
 
 > _Shared "keep N characters, then add a marker" text cut._

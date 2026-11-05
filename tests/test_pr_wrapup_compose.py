@@ -503,6 +503,19 @@ def test_render_code_quality_empty_log_and_no_expected_steps_is_unverified() -> 
             "stale",
             "❔ pytest (no run at this tree)",
         ),
+        (
+            "2743 passed, 2 xfailed in 1s",
+            None,
+            "✅ pytest 2743 passed, 2 xfailed in 1s",
+        ),
+        ("0 failed, 3 passed in 1s", None, "✅ pytest 0 failed, 3 passed in 1s"),
+        (
+            "5 passed, 1 xpassed in 1s",
+            None,
+            "✅ pytest 5 passed, 1 xpassed in 1s",
+        ),
+        ("1 failed, 3 passed in 1s", None, "❌ pytest 1 failed, 3 passed in 1s"),
+        ("3 passed, 2 errors in 1s", None, "❌ pytest 3 passed, 2 errors in 1s"),
     ],
 )
 def test_render_code_quality_pytest_part_covers_each_status(

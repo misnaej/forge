@@ -36,6 +36,7 @@ Checked on every commit by `verify-forge-repo-structure`: every listed file and 
    - agent_profile_tokens.py: token accounting behind `forge-agent-profile --tokens` — per-request usage deduped by message id, fixed context vs work, main-session tokens per active skill, delegation brief and hand-back sizes, ranked rows and the token report renderer
    - ledger.py: the one writer + parser for the append-only `key=value` ledgers under `code_health/` (telemetry_history.log, smart_test_history.log, agent_profile_history.log), plus the JSON-lines appender for structured ones (agent_transcript_digest.jsonl)
    - text_clip.py: `truncate` — the shared "keep N characters, then append a marker" cut for bounded text (evidence, log fragments, labels, echoes); callers keep their own marker, budget arithmetic and stripping
+   - text_budget.py: `ceiling` and `MARGIN_PERCENT` — the one 10% margin forge allows over a text-length target (commit, squash and wrap-up word budgets): over the target warns, past the ceiling refuses
    - config.py: loader for the `[tool.forge]` table in a repo's `pyproject.toml` (base branch and the other forge settings, defaulting to single-branch `main` behaviour)
    - memory_audit.py: `forge-memory-audit` — `status` counts agent memory notes added since the last audit stamp, says whether to offer `/memory-audit`, and lists intake lesson groups due for promotion; `stamp` rewrites the stamp after an audit
    - intake.py: `forge-intake` — the per-sighting intake (lesson and finding folders under `[tool.forge.intake].dir`): `init` (layout + legacy lessons-file migration), `new` (stamped entry), `list`, `group` (recurrences + occurrence header), `check` (fields, evidence, secret/redaction scan; backs `intake_check`), `retire` (delete filed entries into the ledger file)
@@ -281,6 +282,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_gh_comments.py: tests for gh_comments (shared PR-comment plumbing: paging, filtering, attribution)
    - test_ledger.py: tests for ledger (the append-only `key=value` ledger shape)
    - test_text_clip.py: tests for text_clip (`truncate` under, at and over the limit; custom and empty suffix)
+   - test_text_budget.py: tests for text_budget (`ceiling` margin arithmetic)
    - test_memory_audit.py: tests for memory_audit (new-memory counting, the audit stamp, promotion candidates from intake lessons)
    - test_intake.py: tests for intake (check, stamped entries, init + migration, grouping and the occurrence header, retire guards, config)
    - test_pr_create.py: tests for pr_create (publishing a PR from the branch it verifies, and the CVE-scan freshness refusal, against real ephemeral git repos and real sidecars)

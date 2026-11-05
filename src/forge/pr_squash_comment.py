@@ -90,6 +90,7 @@ from forge.gh_comments import (
     validate_no_ai_attribution,
 )
 from forge.git_utils import configure_cli_logging, gh_api
+from forge.text_budget import ceiling
 
 
 configure_cli_logging()
@@ -130,7 +131,7 @@ MAX_BULLETS: Final[int] = 5
 # cannot be said in about 50 words, the PR is too big — survives a
 # small, visible overshoot.
 MAX_WORDS: Final[int] = 50
-HARD_MAX_WORDS: Final[int] = 55
+HARD_MAX_WORDS: Final[int] = ceiling(MAX_WORDS)
 # A breakdown line only has to identify the part to shorten, not show it.
 PREVIEW_CHARS: Final[int] = 40
 

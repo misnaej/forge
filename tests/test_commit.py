@@ -81,10 +81,10 @@ def test_current_branch_feature_returns_name(feature_repo: Path) -> None:
     "message",
     [
         "not conventional",
-        "fix: " + " ".join(["w"] * 50),
+        "fix: " + " ".join(["w"] * 55),
         "fix: x\n\nCo-Authored-By: Claude <noreply@anthropic.com>",
     ],
-    ids=["bad-title", "51-words", "ai-attribution"],
+    ids=["bad-title", "56-words", "ai-attribution"],
 )
 def test_check_message_refuses(message: str) -> None:
     """Non-conventional, over-long or AI-attributed messages are refused.
@@ -94,6 +94,15 @@ def test_check_message_refuses(message: str) -> None:
     """
     with pytest.raises(CommitRefusedError):
         commit.check_message(message)
+
+
+def test_check_message_within_margin_passes_with_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A 52-word message is over the 50 target, under the ceiling: warn, pass."""
+    with caplog.at_level(logging.WARNING):
+        commit.check_message("fix: " + " ".join(["w"] * 51))
+    assert "52 words" in caplog.text
 
 
 def test_check_message_accepts_valid() -> None:
