@@ -20,6 +20,24 @@ fragment type (**Features / Changes / Fixes / Removed / Docs**).
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v10.9.0 — 2026-11-05
+
+### Features
+- New `forge-commit` command: commits exactly the files you name with your message, then pushes, in one call. It refuses the protected base branch and a detached HEAD, requires a passing pre-commit verdict, a conventional title of at most 50 words and no AI attribution, checks the commit holds only the named files plus what the pre-commit hook regenerates itself, never forces, and retries a push briefly when GitHub is momentarily unavailable. `--no-push` commits only; `--push-only` pushes commits that already exist. The commit helper agent still works; switching the workflows over follows separately.
+
+### Changes
+- Agents may now run `pixi lock` in repos that install from a pixi lock: it writes down what the committed manifest already asks for and keeps existing pins, so the `block_install_deps` guard allows it (with any flags). Verbs that change what the project asks for — `pixi add`, `pixi update` and the like — stay blocked. FOUNDATION §2 now also says a repo's own bootstrap script that builds only that checkout's environment is not a forbidden install.
+- `block_install_deps` now also checks a pixi command run inside another manager's `run` (`pixi run pixi add x`, `uv run pixi update`): its verb must be on the same allowlist. Before, only the outer verb was read, so wrapping let any pixi verb through.
+- Intake entries are agent-facing text, so they are now written in caveman full like other agent traffic (FOUNDATION §8 "Write terse"). `forge-intake new` says so when it creates an entry, and the intake README states it. Existing entries are not rewritten.
+- Text-length budgets now allow a 10% margin over their target: a PR wrap-up (120 words, plus 40 per finding) and a `forge-commit` message (50 words) pass with a warning up to 10% over, and are refused only beyond that. The refusal states the total, the budget, the ceiling and how much to cut, instead of "121 words over a budget of 120", which read as 121 words too many. The squash message keeps its 50/55 limits, now from the same shared margin.
+- `forge-agent-profile --tokens` shows an `avg report` column: the average size of each helper's report back, per agent type and per skill that launched the helpers, so shrinking reports are visible at a glance.
+
+### Fixes
+- The PR wrap-up no longer shows ❌ beside a passing test run whose summary mentions `xfailed`: the mark now needs a nonzero failed or error count.
+
+### Docs
+- Forge contributors: agents now run `./dev/setup.sh` themselves instead of asking the user to, and pre-commit's "refresh the install" messages in forge's own repo say so.
+
 ## v10.8.1 — 2026-11-04
 
 ### Changes
