@@ -575,7 +575,7 @@ options:
 
 ```text
 usage: forge-hook-dispatch [-h] --harness {claude,vibe} --event EVENT
-                           [--roster ROSTER]
+                           [--roster ROSTER] [--matcher MATCHER]
 
 Dispatch hook events to forge guard scripts. Reads harness JSON from stdin,
 runs ordered guards, emits verdict to stdout.
@@ -587,6 +587,9 @@ options:
   --event EVENT         Event name (e.g., pre_tool, PreToolUse).
   --roster ROSTER       Path to roster sidecar file (default: .vibe/forge-
                         roster.json for vibe).
+  --matcher MATCHER     Vibe tool matcher selecting the guard subset (e.g.
+                        "re:bash|process_start"); the hooks.toml entry's
+                        match. When omitted, the payload's tool_name decides.
 ```
 
 ## forge-intake
@@ -623,6 +626,29 @@ positional arguments:
 
 options:
   -h, --help      show this help message and exit
+```
+
+## forge-metrics
+
+```text
+usage: forge-metrics [-h] [--db DB] [--transcripts TRANSCRIPTS]
+                     {record,backfill,report,export} ...
+
+Per-PR cost metrics (tokens, time, size) in a local database.
+
+positional arguments:
+  {record,backfill,report,export}
+    record              Record one merged PR (replaces its rows).
+    backfill            Record merged PRs not yet recorded.
+    report              Print per-PR cost and the trend.
+    export              Write figures-only JSON for sharing.
+
+options:
+  -h, --help            show this help message and exit
+  --db DB               Database file (default: per repo).
+  --transcripts TRANSCRIPTS
+                        Transcript directory to read instead of every
+                        checkout's (repeatable).
 ```
 
 ## forge-next-prep

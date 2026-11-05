@@ -3,7 +3,7 @@
 This module provides the generator that publishes skills to the Vibe-compatible
 .agents/skills/ directory and updates references to work with Vibe's harness.
 
-Per VIBE-HANDOFF.md Section 4, Deliverable 4:
+Publishes skills for the Vibe harness:
 - Publish skills/*/SKILL.md to .agents/skills/<name>/SKILL.md
 - Frontmatter is nearly compatible
 - Bodies have 73 forge:<agent> references and 17 CLAUDE.md references
@@ -17,33 +17,14 @@ similar to install_claudemd.py's pattern.
 from __future__ import annotations
 
 import argparse
+import logging
 import re
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 
-if TYPE_CHECKING:
-    from collections.abc import Mapping
+logger = logging.getLogger(__name__)
 
-
-# Mapping from Claude agent names to Vibe agent names
-# Per VIBE-HANDOFF.md Section 2: Vibe uses post_agent instead of SubagentStop
-# and has different naming conventions
-CLAUDE_TO_VIBE_AGENT: Mapping[str, str] = {
-    "forge:design-checker": "forge:design-checker",
-    "forge:docs-types-checker": "forge:docs-types-checker",
-    "forge:issue-triage": "forge:issue-triage",
-    "forge:knowledge-search": "forge:knowledge-search",
-    "forge:perf-optimizer": "forge:perf-optimizer",
-    "forge:pr-manager": "forge:pr-manager",
-    "forge:precommit-fixer": "forge:precommit-fixer",
-    "forge:prior-art": "forge:prior-art",
-    "forge:security-checker": "forge:security-checker",
-    "forge:test-advisor": "forge:test-advisor",
-    "forge:test-writer": "forge:test-writer",
-    "forge:weekly-summary": "forge:weekly-summary",
-}
 
 # Files to reference instead of CLAUDE.md
 # In Vibe, the equivalent would be AGENTS.md
@@ -57,12 +38,11 @@ FORGE_AGENT_PATTERN = re.compile(r"forge:(\w+)")
 CLAUDE_MD_PATTERN = re.compile(r"CLAUDE\.md")
 
 
-def _update_skill_content(content: str, _agent_name: str) -> str:
+def _update_skill_content(content: str) -> str:
     """Update skill content to use Vibe-compatible references.
 
     Args:
         content: The original skill content.
-        _agent_name: The skill name (unused, for future context).
 
     Returns:
         Updated content with Vibe-compatible references.
@@ -100,7 +80,7 @@ def _copy_skills(src_dir: Path, dest_dir: Path) -> tuple[int, list[str]]:
         content = skill_file.read_text(encoding="utf-8")
 
         # Update references
-        updated_content = _update_skill_content(content, skill_dir.name)
+        updated_content = _update_skill_content(content)
 
         # Create destination subdirectory
         dest_skill_dir = dest_dir / skill_dir.name
@@ -234,8 +214,8 @@ def publish_skills(
 
         for warning in warnings:
             sys.stderr.write(f"Warning: {warning}\n")
-    except Exception as e:  # noqa: BLE001
-        sys.stderr.write(f"Error publishing skills: {e}\n")
+    except Exception:
+        logger.exception("Error publishing skills")
         return 1
     else:
         return 0

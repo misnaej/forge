@@ -3,7 +3,7 @@
 This module provides the generator that reads Claude Code's plugin.json
 hooks block and emits an equivalent .vibe/hooks.toml configuration.
 
-Key invariants (per VIBE-HANDOFF.md Section 4, Deliverable 3):
+Key invariants:
 
 1. strict = true on every blocking entry. Vibe defaults it false, which
    turns a hook failure into a warning. Non-strict, a corrupted install
@@ -27,12 +27,16 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 import sys
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from forge.agent_harness import UNENFORCED_VIBE_HOOKS, resolve_hooks_base
 
 
 if TYPE_CHECKING:
@@ -42,7 +46,7 @@ logger = logging.getLogger(__name__)
 
 
 # Mapping from Claude Code event names to Vibe event names
-# Per VIBE-HANDOFF.md Section 2:
+# Harness facts:
 # - PreToolUse -> pre_tool
 # - PostToolUse -> post_tool
 # - SubagentStop -> post_agent
@@ -59,7 +63,7 @@ CLAUDE_TO_VIBE_EVENT: Mapping[str, str | None] = {
 }
 
 # Mapping from Claude Code matcher names to Vibe matcher names
-# Per VIBE-HANDOFF.md Section 2:
+# Harness facts:
 # - Bash -> "re:bash|process_start"
 # - Edit -> "edit"
 # - Write -> "write_file"
@@ -72,20 +76,11 @@ CLAUDE_TO_VIBE_MATCHER: Mapping[str, str] = {
     "Write": "write_file",
 }
 
-# Hooks that are explicitly unenforced in Vibe (per Section 6)
-UNENFORCED_CLAUDE_HOOKS: frozenset[str] = frozenset(
-    {
-        "block_fixer_recon.sh",
-        "require_fixer_verdict.sh",
-        "caveman_mode.sh",
-        "load_continuation.sh",
-        "keep_continuation_state.sh",
-        "log_agent_timing.sh",
-    }
-)
+# Hooks with no Vibe equivalent — single-sourced from the harness profile
+UNENFORCED_CLAUDE_HOOKS: frozenset[str] = frozenset(UNENFORCED_VIBE_HOOKS)
 
 # Events that are blocking in Vibe
-# Per VIBE-HANDOFF.md Section 6: Vibe has no SessionStart, PreCompact, or
+# Vibe has no SessionStart, PreCompact, or
 # SubagentStart, so those hooks cannot be enforced. Only pre_tool, post_tool,
 # and post_agent can block.
 BLOCKING_VIBE_EVENTS: frozenset[str] = frozenset(
@@ -133,35 +128,6 @@ def _load_plugin_json(plugin_dir: Path) -> dict:
         raise FileNotFoundError(msg)
     with plugin_json_path.open("rb") as f:
         return json.load(f)
-
-
-def _expand_claude_plugin_root(
-    command: str, plugin_root: Path, relative_to: Path | None = None
-) -> str:
-    """Expand ${CLAUDE_PLUGIN_ROOT} in a command string.
-
-    Args:
-        command: The command string, potentially containing ${CLAUDE_PLUGIN_ROOT}.
-        plugin_root: The path to the plugin root directory.
-        relative_to: If provided, make the path relative to this directory.
-
-    Returns:
-        The command with ${CLAUDE_PLUGIN_ROOT} replaced. If relative_to is
-        provided, the path is made relative; otherwise absolute.
-    """
-    expanded = command.replace("${CLAUDE_PLUGIN_ROOT}", str(plugin_root))
-
-    if relative_to is not None:
-        # Try to make it relative
-        try:
-            resolved = Path(expanded).resolve()
-            rel_path = resolved.relative_to(relative_to.resolve())
-            return str(rel_path)
-        except (ValueError, OSError):
-            # Can't make relative, keep absolute
-            pass
-
-    return expanded
 
 
 def _get_claude_hooks(plugin_json: dict) -> dict:
@@ -252,35 +218,6 @@ def _unenforced_label(claude_event: str, matcher: str | None, hook_name: str) ->
     return f"{claude_event}: {hook_name}"
 
 
-def _build_hook_entry(hook: dict, ctx: _EventContext, vibe_match: str | None) -> dict:
-    """Build one Vibe hook entry from a Claude hook config.
-
-    Args:
-        hook: The Claude hook dict (must contain "command").
-        ctx: The translation context for the event.
-        vibe_match: The translated Vibe matcher, or None for no match.
-
-    Returns:
-        The Vibe hook entry dict.
-    """
-    entry: dict = {
-        "name": _get_hook_name(hook["command"]),
-        "type": ctx.vibe_event,
-        "event": ctx.vibe_event,
-        "command": _expand_claude_plugin_root(
-            hook["command"], ctx.plugin_root, ctx.repo_root
-        ),
-        "timeout": hook.get("timeout", 5),
-    }
-    if vibe_match is not None:
-        # For Bash matchers, Vibe needs the combined matcher
-        entry["match"] = vibe_match
-    if ctx.is_blocking:
-        # Blocking hooks must have strict = true
-        entry["strict"] = True
-    return entry
-
-
 def _translate_matcher_group(
     claude_event: str,
     matcher: str | None,
@@ -314,6 +251,7 @@ def _translate_matcher_group(
 
     entries: list[dict] = []
     unenforced: list[str] = []
+    kept: list[dict] = []
     for hook in hooks:
         if not isinstance(hook, dict) or "command" not in hook:
             continue
@@ -321,7 +259,33 @@ def _translate_matcher_group(
         if _is_unenforced_hook(hook["command"]):
             unenforced.append(_unenforced_label(claude_event, matcher, hook_name))
             continue
-        entries.append(_build_hook_entry(hook, ctx, vibe_match))
+        kept.append(hook)
+    if kept:
+        # One hooks.toml entry per (event, matcher) group, routing through
+        # the dispatcher so the fail-closed matrix is the live path and the
+        # roster sidecar is the single runtime source of guard commands.
+        # Timeout bound (fail-closed row 5b): sum of per-guard timeouts
+        # plus margin, so Vibe's hook timeout never kills the dispatcher
+        # mid-run.
+        total_timeout = sum(float(h.get("timeout") or 5) for h in kept) + 2.0
+        matcher_key = vibe_match or "*"
+        dispatcher_cmd = (
+            "forge-hook-dispatch --harness vibe "
+            f"--event {ctx.vibe_event} "
+            f"--matcher {json.dumps(matcher_key)} "
+            "--roster .vibe/forge-roster.json"
+        )
+        entries.append(
+            {
+                "name": f"{ctx.vibe_event}:{matcher_key}",
+                "type": ctx.vibe_event,
+                "event": ctx.vibe_event,
+                "match": vibe_match,
+                "command": dispatcher_cmd,
+                "timeout": round(total_timeout, 1),
+                "strict": ctx.is_blocking,
+            }
+        )
     return entries, unenforced
 
 
@@ -437,15 +401,15 @@ def _generate_hooks_toml(grouped_hooks: dict[str, dict[str, list[dict]]]) -> str
             for hook in hooks:
                 lines.append("[[hooks]]")
                 if "name" in hook:
-                    lines.append(f'name = "{hook["name"]}"')
+                    lines.append(f"name = {json.dumps(hook['name'])}")
                 if "type" in hook:
-                    lines.append(f'type = "{hook["type"]}"')
-                lines.append(f'event = "{event}"')
+                    lines.append(f"type = {json.dumps(hook['type'])}")
+                lines.append(f"event = {json.dumps(event)}")
 
                 if match:
-                    lines.append(f'match = "{match}"')
+                    lines.append(f"match = {json.dumps(match)}")
 
-                lines.append(f'command = "{hook["command"]}"')
+                lines.append(f"command = {json.dumps(hook['command'])}")
                 lines.append(f"timeout = {hook['timeout']}")
 
                 # Add strict = true for blocking events
@@ -481,13 +445,7 @@ def generate_vibe_hooks(
     plugin_dir = repo_root / ".claude-plugin"
 
     # In the forge repo itself, claude-hooks are at repo root, not in .claude-plugin
-    local_claude_hooks = repo_root / "claude-hooks"
-    if local_claude_hooks.exists() and not (plugin_dir / "claude-hooks").exists():
-        # Override plugin_dir to use local claude-hooks
-        # We'll still read plugin.json from .claude-plugin but use local hooks path
-        hooks_base = repo_root
-    else:
-        hooks_base = plugin_dir
+    hooks_base = resolve_hooks_base(repo_root, plugin_dir)
 
     plugin_json = _load_plugin_json(plugin_dir)
     hooks = _get_claude_hooks(plugin_json)
@@ -535,7 +493,8 @@ def write_vibe_hooks(
 
     try:
         toml_content, _unenforced, warnings = generate_vibe_hooks(repo_root)
-    except Exception:  # noqa: BLE001
+    except Exception:
+        logger.exception("Failed to generate vibe hooks")
         return 1
     else:
         if check_mode:
@@ -563,8 +522,6 @@ def verify_existing_hooks(repo_root: Path | None = None) -> int:
     Returns:
         Exit code (0 = all good, 1 = violations found).
     """
-    import tomllib
-
     if repo_root is None:
         repo_root = Path.cwd()
 
@@ -591,7 +548,8 @@ def verify_existing_hooks(repo_root: Path | None = None) -> int:
 
         if violations:
             return 1
-    except Exception:  # noqa: BLE001
+    except Exception:
+        logger.exception("Failed to verify existing vibe hooks")
         return 1
     else:
         return 0
@@ -603,8 +561,6 @@ def main() -> int:
     Returns:
         Exit code.
     """
-    import argparse
-
     parser = argparse.ArgumentParser(
         prog="forge-gen-vibe-hooks",
         description="Generate .vibe/hooks.toml from .claude-plugin/plugin.json",

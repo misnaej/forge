@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
+    from pathlib import Path
 
 
 class HarnessName(Enum):
@@ -155,7 +156,7 @@ def _emit_vibe_error(reason: str) -> tuple[int, str]:
     """Emit a Vibe error verdict.
 
     Internal errors in the dispatcher must deny, not allow. Per Section 5
-    of VIBE-HANDOFF.md: every failure path the dispatcher cannot express
+    — every failure path the dispatcher cannot express
     as a deny-JSON is an allow. So we emit deny-JSON on any internal
     exception.
 
@@ -198,7 +199,7 @@ CLAUDE_PROFILE = HarnessProfile(
 )
 
 # Vibe profile: maps Vibe concepts to Claude Code equivalents
-# Per Section 2 of VIBE-HANDOFF.md:
+# Harness facts:
 # - pre-tool -> PreToolUse
 # - post-tool -> PostToolUse
 # - subagent done -> post_agent (and .agent_type -> .agent_name)
@@ -397,3 +398,44 @@ def translate_payload_field(field_name: str, harness_name: str) -> str | None:
     if field_name in profile.payload_field_renames:
         return profile.payload_field_renames[field_name]
     return field_name
+
+
+# Claude hooks with no Vibe equivalent (SessionStart / PreCompact /
+# SubagentStart / SubagentStop events Vibe does not implement, and
+# post_agent fires after a turn so it cannot block like SubagentStop).
+# Single source for the generator (which skips them) and the installer
+# (which prints them as unenforced protections).
+UNENFORCED_VIBE_HOOKS: Mapping[str, str] = {
+    "require_fixer_verdict.sh": (
+        "SubagentStop blocking gate - Vibe has no SubagentStop; "
+        "post_agent fires after the turn and cannot block"
+    ),
+    "caveman_mode.sh": "SessionStart context injection - Vibe has no SessionStart",
+    "load_continuation.sh": "SessionStart context injection - Vibe has no SessionStart",
+    "keep_continuation_state.sh": "PreCompact state write - Vibe has no PreCompact",
+    "log_agent_timing.sh": (
+        "SubagentStart half - Vibe has no SubagentStart; partial at best"
+    ),
+}
+
+
+def resolve_hooks_base(repo_root: Path, plugin_dir: Path) -> Path:
+    """Return the directory guard scripts live in for this checkout.
+
+    In forge's own repo, ``claude-hooks/`` sits at the repo root rather than
+    inside ``.claude-plugin/``; consumer installs carry it under the plugin
+    directory. Shared by the hooks.toml generator and the roster sidecar
+    generator so both resolve ``${CLAUDE_PLUGIN_ROOT}`` identically.
+
+    Args:
+        repo_root: Repository root.
+        plugin_dir: The ``.claude-plugin`` directory.
+
+    Returns:
+        ``repo_root`` when it has a top-level ``claude-hooks/`` and the
+        plugin dir does not, else ``plugin_dir``.
+    """
+    local = repo_root / "claude-hooks"
+    if local.exists() and not (plugin_dir / "claude-hooks").exists():
+        return repo_root
+    return plugin_dir

@@ -10,7 +10,7 @@ forge, including:
 5. Generating subagent TOML + prompt pairs from agents/*.md
 6. Printing trust requirement and unenforced protections
 
-Per VIBE-HANDOFF.md Section 4, Deliverable 5:
+Installs the Vibe integration:
 - Writes .vibe/hooks.toml and the roster sidecar
 - Publishes skills
 - Generates AGENTS.md
@@ -34,6 +34,7 @@ import logging
 import sys
 from pathlib import Path
 
+from forge.agent_harness import UNENFORCED_VIBE_HOOKS, resolve_hooks_base
 from forge.gen_vibe_agents import generate_vibe_agents
 from forge.gen_vibe_hooks import verify_existing_hooks, write_vibe_hooks
 from forge.git_utils import configure_cli_logging
@@ -43,25 +44,8 @@ configure_cli_logging()
 logger = logging.getLogger(__name__)
 
 
-# Unenforced protections per VIBE-HANDOFF.md Section 6
-# These hooks have no Vibe equivalent and cannot be enforced
-UNENFORCED_PROTECTIONS: list[tuple[str, str]] = [
-    (
-        "require_fixer_verdict.sh",
-        "SubagentStop blocking gate - Vibe has no SubagentStop, "
-        "post_agent fires after turn",
-    ),
-    ("caveman_mode.sh", "SessionStart context injection - Vibe has no SessionStart"),
-    (
-        "load_continuation.sh",
-        "SessionStart context injection - Vibe has no SessionStart",
-    ),
-    ("keep_continuation_state.sh", "PreCompact state write - Vibe has no PreCompact"),
-    (
-        "log_agent_timing.sh",
-        "SubagentStart half - Vibe has no SubagentStart, partial at best",
-    ),
-]
+# Unenforced protections — single-sourced from the harness profile
+UNENFORCED_PROTECTIONS: list[tuple[str, str]] = list(UNENFORCED_VIBE_HOOKS.items())
 
 # Trust requirement
 TRUST_REQUIREMENT = (
@@ -87,25 +71,17 @@ def _generate_roster_sidecar(
     Returns:
         Tuple of (roster_dict, warnings).
     """
-    import json as json_module
-
     warnings: list[str] = []
 
     with plugin_json_path.open("rb") as f:
-        plugin_json = json_module.load(f)
+        plugin_json = json.load(f)
 
     hooks = plugin_json.get("hooks", {})
     plugin_root = plugin_json_path.parent
 
     # In the forge repo itself, claude-hooks are at repo root, not in .claude-plugin
     # Check if this is a forge development checkout
-    local_claude_hooks = repo_root / "claude-hooks"
-    if local_claude_hooks.exists() and not (plugin_root / "claude-hooks").exists():
-        # Use local claude-hooks path
-        hooks_base = repo_root
-    else:
-        # Use plugin directory
-        hooks_base = plugin_root
+    hooks_base = resolve_hooks_base(repo_root, plugin_root)
 
     # Build roster structure: {events: {claude_event: {matchers: {matcher: [hooks]}}}}
     roster: dict = {
@@ -210,12 +186,22 @@ def _generate_subagent_toml(agent_file: Path) -> tuple[str, str]:
     # Escape double quotes for TOML
     description = description.replace('"', '\\"')
     prompt_id = agent_name
+    model_tier = _extract_frontmatter_field(content, "model")
 
     toml_content = (
         f'agent_type = "subagent"\n'
         f'description = "{description}"\n'
         f'system_prompt_id = "{prompt_id}"\n'
     )
+    if model_tier:
+        # Record the forge model tier; pinning it needs an active_model alias
+        # from the user's [[models]] — an unknown alias would reject the whole
+        # agent file, so we never emit active_model unprompted.
+        toml_content += (
+            f'# forge model tier: {model_tier} — set active_model = "<alias>" '
+            f"to pin it (alias must exist in Vibe [[models]]);\n"
+            f"# otherwise the subagent inherits the session model.\n"
+        )
 
     return toml_content, prompt_id
 
@@ -234,12 +220,15 @@ def _generate_prompt_file(agent_file: Path) -> str:
     return agent_file.read_text(encoding="utf-8")
 
 
-def _publish_subagents(agents_dir: Path, repo_root: Path) -> tuple[int, list[str]]:
+def _publish_subagents(
+    agents_dir: Path, repo_root: Path, *, check_mode: bool = False
+) -> tuple[int, list[str]]:
     """Generate subagent TOML + prompt pairs from agents/*.md.
 
     Args:
         agents_dir: Path to agents directory.
         repo_root: Repository root directory.
+        check_mode: When True, report only; write nothing.
 
     Returns:
         Tuple of (count, warnings).
@@ -248,9 +237,10 @@ def _publish_subagents(agents_dir: Path, repo_root: Path) -> tuple[int, list[str
     count = 0
 
     prompts_dir = repo_root / ".vibe" / "prompts"
-    prompts_dir.mkdir(parents=True, exist_ok=True)
     agents_toml_dir = repo_root / ".vibe" / "agents"
-    agents_toml_dir.mkdir(parents=True, exist_ok=True)
+    if not check_mode:
+        prompts_dir.mkdir(parents=True, exist_ok=True)
+        agents_toml_dir.mkdir(parents=True, exist_ok=True)
 
     for agent_file in sorted(agents_dir.glob("*.md")):
         # Skip template
@@ -263,17 +253,19 @@ def _publish_subagents(agents_dir: Path, repo_root: Path) -> tuple[int, list[str
         # Write TOML to .vibe/agents/NAME.toml (Vibe discovery location)
         agent_name = agent_file.stem
         toml_path = agents_toml_dir / f"{agent_name}.toml"
-        toml_path.write_text(toml_content, encoding="utf-8")
+        if not check_mode:
+            toml_path.write_text(toml_content, encoding="utf-8")
 
         # Clean up legacy .vibe/NAME.toml from older generator versions
         legacy_path = repo_root / ".vibe" / f"{agent_name}.toml"
-        if legacy_path.exists():
+        if legacy_path.exists() and not check_mode:
             legacy_path.unlink()
 
         # Generate and write prompt
         prompt_content = _generate_prompt_file(agent_file)
         prompt_path = prompts_dir / f"{prompt_id}.md"
-        prompt_path.write_text(prompt_content, encoding="utf-8")
+        if not check_mode:
+            prompt_path.write_text(prompt_content, encoding="utf-8")
 
         count += 1
 
@@ -352,32 +344,33 @@ def install_vibe(
     if not plugin_json_path.exists():
         return 1
 
-    if check_mode:
-        return 0
-
     # Step 1: Generate .vibe/hooks.toml
-    if write_vibe_hooks(repo_root, check_mode=False) != 0:
+    if write_vibe_hooks(repo_root, check_mode=check_mode) != 0:
         return 1
 
     # Step 2: Generate roster sidecar
     roster, roster_warnings = _generate_roster_sidecar(plugin_json_path, repo_root)
-    _write_roster_sidecar(roster, repo_root)
+    if not check_mode:
+        _write_roster_sidecar(roster, repo_root)
     _warn(roster_warnings)
 
     # Step 3: Publish skills
     _skills_count, skills_warnings, _references = generate_vibe_agents(
-        repo_root, check_mode=False
+        repo_root, check_mode=check_mode
     )
     _warn(skills_warnings)
 
     # Step 4: Generate subagent TOMLs and prompts
     agents_dir = repo_root / "agents"
     if agents_dir.exists():
-        _subagent_count, subagent_warnings = _publish_subagents(agents_dir, repo_root)
+        _subagent_count, subagent_warnings = _publish_subagents(
+            agents_dir, repo_root, check_mode=check_mode
+        )
         _warn(subagent_warnings)
 
     # Step 5: Generate AGENTS.md (if needed)
-    _install_agents_md(repo_root)
+    if not check_mode:
+        _install_agents_md(repo_root)
 
     # Step 6: Print trust requirement and unenforced protections
     _print_trust_summary()

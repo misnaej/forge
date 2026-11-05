@@ -12,7 +12,7 @@ The dispatcher:
 - Emits the harness's verdict via the profile
 - Prints all dispatcher output to stderr (stdout carries exactly one JSON)
 
-Fail-closed behavior (Section 5 of VIBE-HANDOFF.md):
+Fail-closed behavior:
     Every failure path that cannot express a deny must be an allow in Vibe.
     Therefore we wrap main() in a catch-all that emits deny-JSON on any
     internal exception.
@@ -26,15 +26,43 @@ Where roster.json contains the guard configuration (generated at install
 
 from __future__ import annotations
 
+import argparse
 import json
+import logging
 import os
 import subprocess
 import sys
 from pathlib import Path
 
+from forge.agent_harness import (
+    get_harness_profile,
+    translate_event,
+    translate_tool_matcher,
+)
+
+
+logger = logging.getLogger(__name__)
+
 
 # Claude Code guard exit code for block (exit 2 = deny)
 BLOCK_EXIT_CODE = 2
+
+
+class _DispatchDenyError(Exception):
+    """Control-flow exception carrying a deny reason to the verdict emitter.
+
+    Raised by the validation helpers; caught once in :func:`dispatch` and
+    converted into the harness profile's deny/error verdict.
+    """
+
+    def __init__(self, reason: str) -> None:
+        """Store the deny reason for the verdict emitter.
+
+        Args:
+            reason: Human-readable reason for the denial.
+        """
+        super().__init__(reason)
+        self.reason = reason
 
 
 def _deny_json(reason: str) -> str:
@@ -119,15 +147,53 @@ def _load_roster(roster_path: Path) -> dict:
         return json.load(f)
 
 
-def _resolve_guards(
-    roster: dict, event: str, tool_name: str | None = None
-) -> list[dict]:
-    """Resolve the ordered guard list for an event and optional tool matcher.
+def _validate_guard_commands(roster: dict, roster_path: Path) -> None:
+    """Ensure every roster guard command resolves under the project root.
+
+    The roster sidecar is a trust anchor: a guard command outside the
+    project root would let a tampered roster execute arbitrary paths.
+    Commands are absolute paths baked at generation time; resolve and
+    check containment.
 
     Args:
         roster: The loaded roster dict.
-        event: The event name (e.g., "pre_tool", "PreToolUse").
-        tool_name: Optional tool matcher to filter guards.
+        roster_path: Path to the roster file (for error messages).
+
+    Raises:
+        _DispatchDenyError: If any command escapes the project root.
+    """
+    project_root = roster.get("project_root")
+    if not project_root:
+        msg = f"Roster {roster_path} has no project_root; refusing to run guards"
+        raise _DispatchDenyError(msg)
+    root = Path(project_root).resolve()
+    for event_data in roster.get("events", {}).values():
+        for guards in event_data.get("matchers", {}).values():
+            for guard in guards:
+                cmd = guard.get("command", "")
+                if not cmd:
+                    continue
+                resolved = Path(cmd).resolve()
+                if root not in resolved.parents and resolved != root:
+                    msg = (
+                        f"Roster guard command escapes project root: {cmd} "
+                        f"(roster {roster_path})"
+                    )
+                    raise _DispatchDenyError(msg)
+
+
+def _resolve_guards(
+    roster: dict,
+    event: str,
+    claude_matcher: str | None = None,
+) -> list[dict]:
+    """Resolve the ordered guard list for an event and optional matcher.
+
+    Args:
+        roster: The loaded roster dict.
+        event: The Claude event name (e.g., "PreToolUse").
+        claude_matcher: Optional Claude matcher ("Bash", "Edit", "Write")
+            to select only that matcher's guards. None selects all.
 
     Returns:
         List of guard configs in order.
@@ -136,24 +202,18 @@ def _resolve_guards(
     # "matchers" map keyed by matcher name, each mapping to a list of guards.
     event_guards = roster.get("events", {}).get(event, {}).get("matchers", {})
 
+    if claude_matcher is not None:
+        return list(event_guards.get(claude_matcher, []))
     guards: list[dict] = []
-
-    # If tool_name is specified, only get guards for that matcher
-    if tool_name:
-        if tool_name in event_guards:
-            guards.extend(event_guards[tool_name])
-    else:
-        # Get all guards for all matchers in this event
-        for matcher_guards in event_guards.values():
-            guards.extend(matcher_guards)
-
+    for matcher_guards in event_guards.values():
+        guards.extend(matcher_guards)
     return guards
 
 
 def _get_claude_project_dir(payload: dict, roster: dict) -> str:
     """Extract CLAUDE_PROJECT_DIR from payload or roster.
 
-    Per Section 5 Row 10 of VIBE-HANDOFF.md: Eight guards read
+    Eight guards read
     CLAUDE_PROJECT_DIR, and Vibe does not set it. The dispatcher must
     export it for every guard.
 
@@ -249,92 +309,46 @@ def _run_guard(
         return (False, "")
 
 
-def _translate_to_claude_payload(payload: dict, harness_name: str) -> dict:
-    """Translate a harness payload to Claude Code format.
+def _claude_matcher_for_payload(payload: dict, harness_name: str) -> str | None:
+    """Map the payload's tool_name to a Claude matcher via the profile.
 
-    Per Section 2 of VIBE-HANDOFF.md, we need to handle:
-    - agent_name -> agent_type (for SubagentStop -> post_agent)
-    - Other fields may need translation based on harness profile
-
-    However, for Deliverable 2, we're re-feeding the original bytes.
-    This function is for reference and potential future use.
+    Vibe payloads carry a qualified tool name (``file_system.bash``);
+    the roster is keyed by Claude matchers ("Bash", "Edit", "Write").
+    The harness profile's tool_matcher_map translates the Vibe matcher
+    regex/glob to the Claude matcher.
 
     Args:
-        payload: The parsed harness payload.
+        payload: The parsed stdin JSON.
         harness_name: The harness identifier.
 
     Returns:
-        Translated payload dict.
+        The Claude matcher name, or None when the tool has no mapping.
     """
-    # For now, we re-feed original bytes, so this is just documentation
-    # of what translation WOULD look like
-    translated = dict(payload)
-
-    if harness_name == "vibe":
-        # Vibe uses agent_name, Claude uses agent_type
-        if "agent_name" in translated:
-            translated["agent_type"] = translated.pop("agent_name")
-        # Vibe event names map to Claude names
-        if "hook_event_name" in translated:
-            event_map = {
-                "pre_tool": "PreToolUse",
-                "post_tool": "PostToolUse",
-                "post_agent": "SubagentStop",
-            }
-            event = translated["hook_event_name"]
-            if event in event_map:
-                translated["hook_event_name"] = event_map[event]
-
-    return translated
+    profile = get_harness_profile(harness_name)
+    tool_name = str(payload.get("tool_name", ""))
+    short = tool_name.rsplit(".", 1)[-1]
+    for vibe_matcher, claude_matcher in profile.tool_matcher_map.items():
+        pattern = vibe_matcher.removeprefix("re:")
+        if pattern == short or tool_name == vibe_matcher:
+            return claude_matcher
+    return None
 
 
-class _DispatchDenyError(Exception):
-    """Internal control flow: dispatch must deny with a specific reason.
-
-    Attributes:
-        reason: Human-readable deny reason for the verdict emitter.
-    """
-
-    def __init__(self, reason: str) -> None:
-        """Store the deny reason.
-
-        Args:
-            reason: Human-readable deny reason.
-        """
-        super().__init__(reason)
-        self.reason = reason
-
-
-def _prepare_guards(
-    harness_name: str,
-    event: str,
-    payload_bytes: bytes,
-    roster_path: Path | None,
-) -> tuple[list[dict], str]:
-    """Validate the payload and resolve the guard list for an event.
+def _parse_payload_or_deny(payload_bytes: bytes) -> dict:
+    """Parse stdin bytes into a payload dict, denying on any bad input.
 
     Args:
-        harness_name: The harness identifier ("vibe", "claude").
-        event: The event name from the harness.
         payload_bytes: Raw stdin bytes (original, not re-serialized).
-        roster_path: Path to the roster file, or None for the default.
 
     Returns:
-        (guards, project_dir) — the ordered guard list and the value to
-        export as CLAUDE_PROJECT_DIR.
+        The parsed payload dict.
 
     Raises:
-        _DispatchDenyError: When any input is invalid — empty or malformed
-            stdin, missing or malformed roster, unknown event, or no
-            guards configured for the event.
+        _DispatchDenyError: When stdin is empty or the JSON is malformed.
     """
-    from forge.agent_harness import translate_event
-
     if not payload_bytes:
         msg = "Empty stdin"
         raise _DispatchDenyError(msg)
-
-    # Parse for project dir extraction (but re-feed original bytes to guards)
     try:
         payload = _validate_payload(payload_bytes)
     except ValueError as e:
@@ -343,12 +357,26 @@ def _prepare_guards(
     if payload is None:
         msg = "Empty stdin JSON"
         raise _DispatchDenyError(msg)
+    return payload
 
-    # Resolve roster path
+
+def _load_roster_or_deny(
+    harness_name: str, roster_path: Path | None
+) -> tuple[dict, Path]:
+    """Load the roster sidecar, denying when it is missing or malformed.
+
+    Args:
+        harness_name: The harness identifier, used for the default path.
+        roster_path: Caller-supplied roster path, or None for the default.
+
+    Returns:
+        The parsed roster dict and the path it was read from.
+
+    Raises:
+        _DispatchDenyError: When the roster file is missing or unparseable.
+    """
     if roster_path is None:
         roster_path = _get_roster_path(harness_name)
-
-    # Load roster
     try:
         roster = _load_roster(roster_path)
     except FileNotFoundError:
@@ -359,6 +387,98 @@ def _prepare_guards(
         # Row 3: roster unparseable -> deny, naming the path
         msg = f"Roster file malformed: {roster_path} ({e})"
         raise _DispatchDenyError(msg) from e
+    return roster, roster_path
+
+
+def _require_tool_input(payload: dict, event: str, vibe_matcher: str | None) -> None:
+    """Deny payloads whose tool_input shape cannot reach the guards safely.
+
+    Row 7b: a pre_tool payload without the matched field (command for
+    bash, file_path otherwise) would pass through to guards that fail
+    open on empty input. Deny instead of passing through.
+
+    Args:
+        payload: The parsed stdin JSON.
+        event: The event name from the harness (for error messages).
+        vibe_matcher: The Vibe matcher from argv, when given.
+
+    Raises:
+        _DispatchDenyError: When tool_input or its matched field is missing.
+    """
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_input, dict):
+        msg = f"Payload for event '{event}' has no tool_input object"
+        raise _DispatchDenyError(msg)
+    if vibe_matcher is not None and "bash" in vibe_matcher:
+        command = tool_input.get("command")
+        if not isinstance(command, str) or not command.strip():
+            msg = "Payload tool_input.command is missing or empty"
+            raise _DispatchDenyError(msg)
+    else:
+        file_path = tool_input.get("file_path")
+        if not isinstance(file_path, str) or not file_path:
+            msg = "Payload tool_input.file_path is missing or empty"
+            raise _DispatchDenyError(msg)
+
+
+def _resolve_claude_matcher(
+    payload: dict, harness_name: str, vibe_matcher: str | None
+) -> str | None:
+    """Translate the Vibe matcher or the payload's tool_name to a Claude matcher.
+
+    Args:
+        payload: The parsed stdin JSON.
+        harness_name: The harness identifier.
+        vibe_matcher: The Vibe matcher from argv, when given; otherwise the
+            payload's tool_name decides.
+
+    Returns:
+        The Claude matcher name, or None when the tool has no mapping.
+
+    Raises:
+        _DispatchDenyError: When an explicit Vibe matcher has no mapping.
+    """
+    if vibe_matcher is not None:
+        claude_matcher = translate_tool_matcher(vibe_matcher, harness_name)
+        if claude_matcher is None:
+            msg = f"Unknown matcher '{vibe_matcher}' for harness '{harness_name}'"
+            raise _DispatchDenyError(msg)
+        return claude_matcher
+    return _claude_matcher_for_payload(payload, harness_name)
+
+
+def _prepare_guards(
+    harness_name: str,
+    event: str,
+    payload_bytes: bytes,
+    roster_path: Path | None,
+    vibe_matcher: str | None = None,
+) -> tuple[list[dict], str]:
+    """Validate the payload and resolve the guard list for an event.
+
+    Args:
+        harness_name: The harness identifier ("vibe", "claude").
+        event: The event name from the harness.
+        payload_bytes: Raw stdin bytes (original, not re-serialized).
+        roster_path: Path to the roster file, or None for the default.
+        vibe_matcher: Optional Vibe matcher from argv (the hooks.toml
+            entry's match). When given, selects only that matcher's
+            guards; otherwise the payload's tool_name decides.
+
+    Returns:
+        (guards, project_dir) — the ordered guard list and the value to
+        export as CLAUDE_PROJECT_DIR.
+
+    Raises:
+        _DispatchDenyError: When any input is invalid — empty or malformed
+            stdin, missing or malformed roster, unknown event, or no
+            guards configured for the event.
+    """
+    payload = _parse_payload_or_deny(payload_bytes)
+    roster, roster_path = _load_roster_or_deny(harness_name, roster_path)
+
+    # Trust anchor: every guard command must live under the project root
+    _validate_guard_commands(roster, roster_path)
 
     # Translate event name to Claude event for guard matching
     # The roster is indexed by Claude event names
@@ -368,11 +488,16 @@ def _prepare_guards(
         msg = f"Unknown event '{event}' for harness '{harness_name}'"
         raise _DispatchDenyError(msg)
 
-    # Resolve guards for this event
-    guards = _resolve_guards(roster, claude_event)
+    _require_tool_input(payload, event, vibe_matcher)
+    claude_matcher = _resolve_claude_matcher(payload, harness_name, vibe_matcher)
+
+    guards = _resolve_guards(roster, claude_event, claude_matcher)
     if not guards:
         # Row 3b: roster empty for a blocking event -> error
-        msg = f"No guards configured for event '{claude_event}'"
+        msg = (
+            f"No guards configured for event '{claude_event}' "
+            f"matcher '{claude_matcher}'"
+        )
         raise _DispatchDenyError(msg)
 
     return guards, _get_claude_project_dir(payload, roster)
@@ -383,6 +508,7 @@ def dispatch(
     event: str,
     payload_bytes: bytes,
     roster_path: Path | None = None,
+    vibe_matcher: str | None = None,
 ) -> tuple[int, str]:
     """Dispatch a hook event through the guard roster.
 
@@ -395,6 +521,7 @@ def dispatch(
         payload_bytes: Raw stdin bytes (original, not re-serialized).
         roster_path: Optional path to roster file. If None, uses
             default location.
+        vibe_matcher: Optional Vibe matcher selecting the guard subset.
 
     Returns:
         (exit_code, stdout) tuple. stdout contains exactly one JSON
@@ -404,21 +531,20 @@ def dispatch(
         Any exception will be caught by the CLI wrapper and converted
         to a deny verdict (fail-closed).
     """
-    from forge.agent_harness import get_harness_profile
-
     profile = get_harness_profile(harness_name)
 
     try:
         guards, project_dir = _prepare_guards(
-            harness_name, event, payload_bytes, roster_path
+            harness_name, event, payload_bytes, roster_path, vibe_matcher
         )
     except _DispatchDenyError as deny:
         return profile.verdict_emitter.emit_error(deny.reason)
 
     # Run guards sequentially, short-circuit on first block
     for guard in guards:
-        # Use per-guard timeout or default
-        guard_timeout = guard.get("timeout", 5.0)
+        # Per-guard timeout; a present-but-null value means "no timeout",
+        # which would hang the chain — treat as the default (Row 5)
+        guard_timeout = guard.get("timeout") or 5.0
 
         is_blocked, reason = _run_guard(
             guard, payload_bytes, project_dir, guard_timeout
@@ -443,8 +569,6 @@ def main() -> int:
         Exit code (0 for pass/error with proper JSON, non-zero for
         internal failures that couldn't be expressed as JSON).
     """
-    import argparse
-
     parser = argparse.ArgumentParser(
         prog="forge-hook-dispatch",
         description=(
@@ -470,6 +594,15 @@ def main() -> int:
         default=None,
         help="Path to roster sidecar file (default: .vibe/forge-roster.json for vibe).",
     )
+    parser.add_argument(
+        "--matcher",
+        default=None,
+        help=(
+            "Vibe tool matcher selecting the guard subset "
+            '(e.g. "re:bash|process_start"); the hooks.toml entry\'s match. '
+            "When omitted, the payload's tool_name decides."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -483,16 +616,16 @@ def main() -> int:
             args.event,
             payload_bytes,
             args.roster,
+            args.matcher,
         )
 
         # Output verdict to stdout
         sys.stdout.write(stdout)
         sys.stdout.flush()
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
+        logger.exception("Dispatcher internal error")
         # Catch-all for fail-closed behavior (Row 2)
         # Emit deny-JSON on stderr for Vibe, or exit 2 for Claude
-        from forge.agent_harness import get_harness_profile
-
         try:
             profile = get_harness_profile(args.harness)
             exit_code, stdout = profile.verdict_emitter.emit_error(str(e))
@@ -500,7 +633,8 @@ def main() -> int:
             sys.stdout.flush()
             sys.stderr.write(f"DISPATCHER ERROR: {e}\n")
             sys.stderr.flush()
-        except Exception:  # noqa: BLE001
+        except Exception:
+            logger.exception("Cannot load harness profile")
             # Even getting the profile failed - ultimate fallback
             sys.stderr.write(f"CRITICAL: Cannot load harness profile: {e}\n")
             sys.stderr.flush()

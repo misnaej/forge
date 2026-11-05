@@ -143,6 +143,9 @@ markers = [
 # Single-track: every PR targets main; every merge tags.
 base_branch = "main"
 
+[tool.forge.vibe]
+enabled = true
+
 [tool.forge.cli_wiring]
 # Opt-in to the cli_wiring pre-commit step. Forge enables it because
 # its layout matches WIRING_SOURCES in src/forge/verify_cli_wiring.py.

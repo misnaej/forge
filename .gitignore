@@ -56,7 +56,6 @@ issue_*.md
 .agents/
 
 # Generated AGENTS.md (flattened from FOUNDATION.md + CLAUDE.md).
-# Becomes a generated artifact in deliverable 4.
 AGENTS.md
 
 # forge-gen-c4 on-demand offline HTML view (regenerate: forge-gen-c4 --format html)

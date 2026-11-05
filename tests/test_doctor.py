@@ -914,3 +914,211 @@ def test_check_checkout_plugin_is_silent_without_a_pinned_release(
 ) -> None:
     """No manifest version and no tag pin: nothing to judge, nothing reported."""
     assert doctor._check_checkout_plugin(tmp_path) == []
+
+
+@pytest.fixture
+def fake_vibe_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """An empty Vibe home pinned via ``VIBE_HOME`` so no test reads real ``~/.vibe``.
+
+    Returns:
+        The fake Vibe home path.
+    """
+    home = tmp_path / "vibe-home"
+    home.mkdir()
+    monkeypatch.setenv("VIBE_HOME", str(home))
+    return home
+
+
+def _vibe_repo(tmp_path: Path) -> Path:
+    """A tmp checkout with a complete, valid .vibe/ + .agents/ + AGENTS.md.
+
+    Args:
+        tmp_path: pytest tmp dir.
+
+    Returns:
+        The repo root path.
+    """
+    repo = tmp_path / "repo"
+    vibe_dir = repo / ".vibe"
+    (vibe_dir / "agents").mkdir(parents=True)
+    (vibe_dir / "prompts").mkdir()
+    (vibe_dir / "hooks.toml").write_text(
+        '[[hooks]]\nname = "pre_tool:re:bash|process_start"\ntype = "pre_tool"\n'
+        'event = "pre_tool"\nmatch = "re:bash|process_start"\n'
+        'command = "forge-hook-dispatch --harness vibe"\ntimeout = 12.0\n'
+        "strict = true\n",
+        encoding="utf-8",
+    )
+    (vibe_dir / "forge-roster.json").write_text(
+        json.dumps(
+            {
+                "project_root": str(repo),
+                "events": {"PreToolUse": {"matchers": {"Bash": []}}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (vibe_dir / "agents" / "agent1.toml").write_text(
+        'agent_type = "subagent"\ndescription = "d"\nsystem_prompt_id = "agent1"\n',
+        encoding="utf-8",
+    )
+    (vibe_dir / "prompts" / "agent1.md").write_text("# Agent 1\n", encoding="utf-8")
+    skill_dir = repo / ".agents" / "skills" / "skill1"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("---\nname: skill1\n---\n", encoding="utf-8")
+    (repo / "AGENTS.md").write_text("# Agents\n", encoding="utf-8")
+    return repo
+
+
+def test_vibe_check_advisory_when_not_installed(
+    tmp_path: Path, fake_vibe_home: Path
+) -> None:
+    """No ``.vibe/`` dir: a single advisory ``vibe:not-installed``, never a failure."""
+    results = doctor._check_vibe_integration(tmp_path)
+    assert len(results) == 1
+    assert results[0].name == "vibe:not-installed"
+    assert results[0].passed is True
+    assert results[0].info is True
+
+
+def test_vibe_auto_detect_skips_absent_harness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--harness auto`` with no vibe binary/home/checkout emits no ``vibe:*`` results.
+
+    A harness that is not installed is skipped, never failed. ``VIBE_HOME``
+    points at a nonexistent tmp path so the real ``~/.vibe`` is never read.
+    """
+    monkeypatch.setenv("VIBE_HOME", str(tmp_path / "no-vibe-home"))
+    monkeypatch.setattr(doctor.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(doctor.Path, "cwd", classmethod(lambda _cls: tmp_path))
+    argv = ["forge-doctor", "--json", "--harness", "auto"]
+    with patch.object(doctor.sys, "argv", argv):
+        doctor.main()
+    payload = json.loads(capsys.readouterr().out)
+    assert not [entry for entry in payload if entry["name"].startswith("vibe:")]
+
+
+def test_vibe_hooks_toml_strict_fail_and_pass(
+    tmp_path: Path, fake_vibe_home: Path
+) -> None:
+    """Tool-hook entries lacking strict=true fail; with strict they pass."""
+    vibe_dir = tmp_path / ".vibe"
+    vibe_dir.mkdir()
+    lax = (
+        '[[hooks]]\nname = "pre_tool:re:bash|process_start"\ntype = "pre_tool"\n'
+        'event = "pre_tool"\nmatch = "re:bash|process_start"\n'
+        'command = "forge-hook-dispatch --harness vibe"\ntimeout = 12.0\n'
+    )
+    (vibe_dir / "hooks.toml").write_text(lax, encoding="utf-8")
+    result = doctor._vibe_hooks_toml_result(vibe_dir)
+    assert result.passed is False
+    assert "missing strict" in result.detail
+    (vibe_dir / "hooks.toml").write_text(lax + "strict = true\n", encoding="utf-8")
+    assert doctor._vibe_hooks_toml_result(vibe_dir).passed is True
+    (vibe_dir / "hooks.toml").unlink()
+    assert doctor._vibe_hooks_toml_result(vibe_dir).passed is False
+
+
+def test_vibe_roster_result_missing_file_fails(
+    tmp_path: Path, fake_vibe_home: Path
+) -> None:
+    """No forge-roster.json sidecar is a blocking failure naming the path."""
+    vibe_dir = tmp_path / ".vibe"
+    vibe_dir.mkdir()
+    result = doctor._vibe_roster_result(vibe_dir)
+    assert result.passed is False
+    assert "missing" in result.detail
+
+
+def test_vibe_roster_result_unparseable_fails(
+    tmp_path: Path, fake_vibe_home: Path
+) -> None:
+    """An unparseable roster sidecar fails with an ``unparseable`` detail."""
+    vibe_dir = tmp_path / ".vibe"
+    vibe_dir.mkdir()
+    (vibe_dir / "forge-roster.json").write_text("{bad json", encoding="utf-8")
+    result = doctor._vibe_roster_result(vibe_dir)
+    assert result.passed is False
+    assert "unparseable" in result.detail
+
+
+def test_vibe_roster_result_zero_events_fails(
+    tmp_path: Path, fake_vibe_home: Path
+) -> None:
+    """A parseable roster with zero mapped events fails (guards disarmed)."""
+    vibe_dir = tmp_path / ".vibe"
+    vibe_dir.mkdir()
+    (vibe_dir / "forge-roster.json").write_text(
+        json.dumps({"project_root": str(tmp_path), "events": {}}), encoding="utf-8"
+    )
+    result = doctor._vibe_roster_result(vibe_dir)
+    assert result.passed is False
+    assert "0 events" in result.detail
+
+
+def test_vibe_agents_toml_without_prompt_fails(
+    tmp_path: Path, fake_vibe_home: Path
+) -> None:
+    """A valid subagent TOML whose prompt pair is missing fails."""
+    vibe_dir = tmp_path / ".vibe"
+    (vibe_dir / "agents").mkdir(parents=True)
+    (vibe_dir / "prompts").mkdir()
+    (vibe_dir / "agents" / "agent1.toml").write_text(
+        'agent_type = "subagent"\nsystem_prompt_id = "agent1"\n', encoding="utf-8"
+    )
+    result = doctor._vibe_agents_result(vibe_dir)
+    assert result.passed is False
+    assert "no prompt" in result.detail
+
+
+def test_vibe_trusted_folder_via_vibe_home_env(
+    tmp_path: Path, fake_vibe_home: Path
+) -> None:
+    """Trust comes from ``$VIBE_HOME/trusted_folders.toml`` — never real ``~/.vibe``."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    assert doctor._vibe_trusted_folder_result(repo).passed is False
+    (fake_vibe_home / "trusted_folders.toml").write_text(
+        f'trusted = ["{repo}"]\n', encoding="utf-8"
+    )
+    result = doctor._vibe_trusted_folder_result(repo)
+    assert result.passed is True
+    assert result.name == "vibe:trusted-folder"
+
+
+def test_vibe_all_seven_checks_pass_and_dispatcher_missing_fails(
+    tmp_path: Path,
+    fake_vibe_home: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A complete install passes all seven vibe checks; no dispatcher CLI fails one."""
+    repo = _vibe_repo(tmp_path)
+    (fake_vibe_home / "trusted_folders.toml").write_text(
+        f'trusted = ["{repo}"]\n', encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        doctor.shutil,
+        "which",
+        lambda name: (
+            "/usr/bin/forge-hook-dispatch" if name == "forge-hook-dispatch" else None
+        ),
+    )
+    results = doctor._check_vibe_integration(repo)
+    assert [r.name for r in results] == [
+        "vibe:hooks.toml",
+        "vibe:forge-roster.json",
+        "vibe:agents",
+        "vibe:skills",
+        "vibe:AGENTS.md",
+        "vibe:dispatcher",
+        "vibe:trusted-folder",
+    ]
+    assert all(r.passed for r in results)
+    monkeypatch.setattr(doctor.shutil, "which", lambda _name: None)
+    results = doctor._check_vibe_integration(repo)
+    dispatcher = next(r for r in results if r.name == "vibe:dispatcher")
+    assert dispatcher.passed is False
+    assert "not on PATH" in dispatcher.detail

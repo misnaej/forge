@@ -58,6 +58,7 @@ by `forge-gen-config-doc`; the sections below explain each key.
 | `[tool.forge.agent_doc].extra_clis` | unset (no extra known CLIs) |
 | `[tool.forge.agent_doc].extra_hooks` | unset (no extra known hooks) |
 | `[tool.forge.agent_doc].extra_skills` | unset (no extra known skills) |
+| `[tool.forge.vibe].enabled` | `False` |
 | `[tool.forge.docstring_coverage].badge` | `False` |
 | `[tool.forge.docstring_coverage].paths` | source_dirs + test_dirs |
 | `[tool.forge.docstring_verification].paths` | source_dirs + test_dirs |

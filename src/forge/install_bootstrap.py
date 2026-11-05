@@ -25,7 +25,7 @@ import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from forge.config import resolve_model_section
+from forge.config import read_tool_forge_section, resolve_model_section
 from forge.git_utils import configure_cli_logging, repo_root
 from forge.run_context import is_non_interactive
 
@@ -123,28 +123,21 @@ def _gate_c4(root: Path) -> str | None:
     return None
 
 
-def _gate_vibe(_root: Path) -> str | None:
-    """Skip Vibe installation unless explicitly opted in via [tool.forge].
+def _gate_vibe(root: Path) -> str | None:
+    """Skip Vibe installation unless opted in via ``[tool.forge.vibe]``.
 
-    Ungated, every consumer repo gets .vibe/ and .agents/ written unasked,
-    which is not desired. The opt-in gate checks for [tool.forge] table
-    (which most consumer repos won't have).
+    Ungated, every consumer repo gets .vibe/ and .agents/ written unasked.
+    The opt-in is a dedicated table so a plain ``[tool.forge]`` (common in
+    consumer repos) does not trigger it.
 
     Args:
-        _root: Repo root, scanned for [tool.forge] config.
+        root: Repo root, scanned for ``[tool.forge.vibe]``.
 
     Returns:
         A reason when Vibe is not opted in, or ``None`` when it is.
     """
-    # Check for [tool.forge] section
-    # Skip if there's no [tool.forge] at all to avoid installing Vibe
-    # for every consumer repo unasked
-    forge_config = resolve_model_section(_root)
-    if forge_config is None:
-        return "Vibe not opted in (no [tool.forge] config)"
-
-    # For now, if [tool.forge] exists, we install Vibe
-    # This could be refined to check for [tool.forge.vibe] in the future
+    if not read_tool_forge_section(root, "vibe").get("enabled", False):
+        return "Vibe not opted in ([tool.forge.vibe] enabled is not true)"
     return None
 
 

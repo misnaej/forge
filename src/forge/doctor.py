@@ -58,6 +58,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -812,8 +813,6 @@ def _vibe_hooks_toml_result(vibe_dir: Path) -> CheckResult:
     Returns:
         The check result for the hooks file.
     """
-    import tomllib
-
     hooks_toml = vibe_dir / "hooks.toml"
     if not hooks_toml.is_file():
         return CheckResult(
@@ -828,24 +827,28 @@ def _vibe_hooks_toml_result(vibe_dir: Path) -> CheckResult:
             name="vibe:hooks.toml", passed=False, detail=f"unparseable: {exc}"
         )
     entries = hooks_data.get("hooks", [])
+    # strict is required on tool hooks (pre_tool/post_tool) — without it a
+    # guard failure is only a warning and the guard is disarmed. Vibe
+    # forbids strict on post_agent, so those entries are exempt.
     problems = [
         h.get("name", f"#{i}")
         for i, h in enumerate(entries)
-        if not h.get("strict") or not h.get("name") or not h.get("command")
+        if h.get("type") in ("pre_tool", "post_tool")
+        and (not h.get("strict") or not h.get("name") or not h.get("command"))
     ]
     if problems:
         return CheckResult(
             name="vibe:hooks.toml",
             passed=False,
             detail=(
-                f"{len(problems)}/{len(entries)} entries missing "
+                f"{len(problems)}/{len(entries)} tool-hook entries missing "
                 f"strict=true or name/command: {', '.join(problems[:5])}"
             ),
         )
     return CheckResult(
         name="vibe:hooks.toml",
         passed=True,
-        detail=f"{len(entries)} hooks, all strict=true",
+        detail=f"{len(entries)} hooks, tool hooks all strict=true",
     )
 
 
@@ -888,8 +891,6 @@ def _vibe_agents_result(vibe_dir: Path) -> CheckResult:
     Returns:
         The check result for the subagent TOML + prompt pairs.
     """
-    import tomllib
-
     agents_dir = vibe_dir / "agents"
     prompts_dir = vibe_dir / "prompts"
     tomls = sorted(agents_dir.glob("*.toml")) if agents_dir.is_dir() else []
@@ -988,8 +989,6 @@ def _vibe_trusted_folder_result(repo_root: Path) -> CheckResult:
     Returns:
         The check result for folder trust.
     """
-    import tomllib
-
     trusted_file = _vibe_home() / "trusted_folders.toml"
     trusted = False
     if trusted_file.is_file():
