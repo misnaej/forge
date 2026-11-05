@@ -339,8 +339,8 @@ def test_install_deps_blocks_pixi_manifest_and_lock_mutations(command: str) -> N
     """Pixi verbs absent from the allowlist block, whatever the verb is.
 
     `pixi` is governed by an allowlist, not an enumerated denylist — `add`
-    blocks because it is not one of `run`/`shell`/`install`/`list`/`info`/
-    `tree`, not because it was singled out. `pixi global install` blocks
+    blocks because it is not one of `run`/`shell`/`install`/`lock`/`list`/
+    `info`/`tree`, not because it was singled out. `pixi global install` blocks
     on its first token (`global`), showing the verb is read positionally
     rather than by scanning the command for a known mutating word.
 
@@ -377,6 +377,9 @@ def test_install_deps_blocks_pixi_add_after_a_read_only_verb() -> None:
         "cd /tmp && pixi lock --check",
         "sudo pixi lock --check",
         "FOO=1 pixi lock --check",
+        "pixi lock",
+        "pixi lock --check && pixi lock",
+        "pixi lock --manifest-path x",
     ],
 )
 def test_install_deps_allows_pixi_materialisation_from_the_lock(command: str) -> None:
@@ -447,30 +450,22 @@ def test_install_deps_blocks_pixi_run_python_module_pip_install() -> None:
 @pytest.mark.parametrize(
     "command",
     [
-        "pixi lock",
         "pixi project channel add conda-forge",
         "pixi exec ruff",
-        "pixi lock --check && pixi lock",
-        "pixi lock --checkx",
-        "pixi lock <<< --check",
-        "pixi lock -- --check",
-        "pixi lock --manifest-path --check",
-        "pixi lock --check --update",
-        "pixi lock --check x",
+        "pixi update",
+        "pixi lock --check && pixi add x",
     ],
 )
-def test_install_deps_blocks_pixi_lock_project_and_exec_verbs(command: str) -> None:
-    """Verbs that write the lock, the manifest, or a temp env all block.
+def test_install_deps_blocks_pixi_update_project_and_exec_verbs(command: str) -> None:
+    """Verbs that write the manifest, re-resolve, or build a temp env all block.
 
-    `lock` rewrites pixi.lock, `project channel add` rewrites pixi.toml,
-    and `exec` materialises a throwaway environment of arbitrary packages —
-    none of them are on the read-only allowlist. The `--check` rows pin the
-    evasion where `pixi lock --check` is chained with, or only prefix-matches,
-    a real `lock`.
+    `update` re-resolves pixi.lock, `project channel add` rewrites
+    pixi.toml, and `exec` materialises a throwaway environment of arbitrary
+    packages — none of them are on the allowlist. The chained row pins that
+    an allowed `lock` segment does not vouch for a blocked `add` after it.
 
     Args:
-        command: A pixi invocation whose verb writes state outside the
-            committed lock.
+        command: A pixi invocation whose verb is not on the allowlist.
     """
     assert _run_hook(_INSTALL_DEPS, command) == 2
 
@@ -706,19 +701,19 @@ def test_install_deps_alias_follows_its_manager_opt_out_name(
     assert _run_hook(_INSTALL_DEPS, command, options=HookOptions(env=owning)) == 2
 
 
-def test_install_deps_blocks_pixi_lock_despite_leading_pip_list() -> None:
+def test_install_deps_blocks_pixi_add_despite_leading_pip_list() -> None:
     """A leading read-only segment does not shadow a later pixi mutation.
 
     `pip list` only reads, but a read-only segment never vouches for the
     rest of the command: the pixi verb loop judges each segment, so this
-    command must still block on the `pixi lock` segment.
+    command must still block on the `pixi add` segment.
     """
-    assert _run_hook(_INSTALL_DEPS, "pip list && pixi lock") == 2
+    assert _run_hook(_INSTALL_DEPS, "pip list && pixi add x") == 2
 
 
-def test_install_deps_blocks_pixi_lock_after_unrelated_leading_command() -> None:
+def test_install_deps_blocks_pixi_add_after_unrelated_leading_command() -> None:
     """A pixi mutation still blocks when it is not the first command."""
-    assert _run_hook(_INSTALL_DEPS, "cd /tmp && pixi lock") == 2
+    assert _run_hook(_INSTALL_DEPS, "cd /tmp && pixi add x") == 2
 
 
 @pytest.mark.parametrize(
@@ -780,13 +775,13 @@ def test_install_deps_allows_pixi_mentioned_inside_echo() -> None:
     """Text naming `pixi` mid-string, not at a segment start, is not a command.
 
     The per-segment scan anchors each check to `^[[:space:]]*pixi`, so
-    `echo pixi lock` — where `pixi lock` is text being echoed, not
+    `echo pixi add x` — where `pixi add x` is text being echoed, not
     invoked — is never read as a pixi command.
     """
-    assert _run_hook(_INSTALL_DEPS, "echo pixi lock") == 0
+    assert _run_hook(_INSTALL_DEPS, "echo pixi add x") == 0
 
 
-def test_install_deps_blocks_pixi_lock_on_newline_separated_command() -> None:
+def test_install_deps_blocks_pixi_add_on_newline_separated_command() -> None:
     """A newline between commands splits segments too, not only `;`/`&`/`|`.
 
     The per-segment read loop consumes a real newline as its own line
@@ -794,7 +789,7 @@ def test_install_deps_blocks_pixi_lock_on_newline_separated_command() -> None:
     punctuation boundaries into newlines — this exercises that path
     directly.
     """
-    assert _run_hook(_INSTALL_DEPS, "pixi list\npixi lock") == 2
+    assert _run_hook(_INSTALL_DEPS, "pixi list\npixi add x") == 2
 
 
 def test_install_deps_allows_pixi_list_inside_parenthesised_subshell() -> None:
@@ -894,7 +889,7 @@ def test_install_deps_advises_locked_on_pixi_run_inside_subshell() -> None:
         "while false; do pip install x; done",
         "case v in x) pip install y;; esac",
         "f(){ pip install x; }; f",
-        "{ pixi lock; }",
+        "{ pixi add x; }",
     ],
 )
 def test_install_deps_blocks_compound_command_boundaries(command: str) -> None:

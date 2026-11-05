@@ -12,10 +12,11 @@
 # only one governed by an ALLOWLIST. `pixi run` / `pixi shell` /
 # `pixi install` materialise a gitignored `.pixi/` inside the checkout from
 # the committed lock: deterministic, disposable, and no shared environment
-# to damage — not what FOUNDATION §2 protects. Those verbs, plus the
+# to damage — not what FOUNDATION §2 protects. Those verbs, `lock` (which
+# solves the committed manifest and keeps existing pins), and the
 # read-only `list` / `info` / `tree`, are permitted; every other pixi verb
 # blocks, including ones pixi has yet to ship. Enumerating verbs to block
-# kept missing them (`lock`, `project ... add`, `exec`), so the short,
+# kept missing them (`update`, `project ... add`, `exec`), so the short,
 # stable permitted set is named instead and the guard fails closed.
 # One rider: a bare `pixi run` DOES re-solve and rewrite the lock when the
 # manifest changed underneath it, so the hook advises `--locked` (which
@@ -156,17 +157,19 @@ if invoked "${CMD_PFX}"'(conda|mamba|micromamba|pipenv|uv|poetry|pixi)[[:space:]
 fi
 
 # pixi is an ALLOWLIST, not a denylist — the one manager here that is.
-# Enumerating pixi verbs to block kept missing them: `lock` writes the lock,
+# Enumerating pixi verbs to block kept missing them: `update` bumps pins,
 # `project ... add` writes the manifest, `exec` materialises a temp env of
 # arbitrary packages, and the subcommand surface keeps growing. So the verbs
-# that only materialise a committed lock are named, and everything else
+# that only materialise or lock what the committed manifest already asks for
+# (`lock` solves the manifest, keeping existing pins — the user's own
+# manifest edit, written down) are named, and everything else
 # blocks — including verbs pixi has not shipped yet. A read-only verb caught
 # by that default costs one `!`; a missed install defeats the guard.
 #
 # Judged PER SEGMENT, so a read-only segment never vouches for the rest of
-# the command: `pixi list && pixi lock` must block on the `lock` despite
+# the command: `pixi list && pixi add x` must block on the `add` despite
 # the `list`.
-PIXI_ALLOWED_VERBS='run|shell|install|list|info|tree'
+PIXI_ALLOWED_VERBS='run|shell|install|lock|list|info|tree'
 
 if blocked pixi; then
     # The verb is the FIRST token after `pixi`, flags included. Skipping
@@ -194,19 +197,9 @@ if blocked pixi; then
             -v PFX="^[[:space:]]*${_GUARD_PREFIX}${GUARD_BINPATH}pixi([[:space:]]+|$)" '
 match($0, PFX) {
     n = split(substr($0, RSTART + RLENGTH), T, /[[:space:]]+/)
-    v = ""; first = 0
-    for (i = 1; i <= n; i++) if (T[i] != "") { v = T[i]; first = i; break }
+    v = ""
+    for (i = 1; i <= n; i++) if (T[i] != "") { v = T[i]; break }
     if (v == "" || v == "--version" || v == "-V" || v == "--help" || v == "-h" || v == "help") next
-    # `pixi lock --check` only verifies the lock is current; plain
-    # `pixi lock` re-resolves it, which is the agent choosing dependencies
-    # (FOUNDATION §2). Only that exact form passes: a `--check` anywhere
-    # else in the segment may be a flag value, a here-string body or an
-    # argument after `--`, and other flags beside it are unclassified.
-    if (v == "lock") {
-        rest = 0
-        for (i = first + 1; i <= n; i++) if (T[i] != "") rest++
-        if (rest == 1 && T[first + 1] == "--check") next
-    }
     if (v !~ ("^(" OK ")$")) { print v; exit }
 }') || verb="(the pixi verb check could not run)"
     fi

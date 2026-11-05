@@ -2497,7 +2497,7 @@ def install_refresh_hint(repo_root: Path) -> str:
         A short command phrase for the remediation sentence.
     """
     if is_forge_repo(repo_root):
-        return "`./dev/setup.sh`"
+        return "`./dev/setup.sh`; an agent runs it itself, never hands it to the user"
     return "reinstall forge-scripts the way this repo installs it"
 
 

@@ -164,11 +164,12 @@ Git procedures (gate kinds, destructive forms, sync ladder):
 [`forge-docs/git-safety.md`](forge-docs/git-safety.md).
 
 - **NEVER install dependencies** (`pip install`, `conda install`). Tell user
-  exact command — installs break configured envs. Rule protects *environment*
-  and *pins*: materialising disposable per-checkout env from committed lock
-  (`pixi run` / `pixi install`) is not an install, stays allowed; editing a
-  manifest or re-resolving a lock (`pixi add` / `update`, `poetry add`,
-  `uv add`, …) is blocked. `block_install_deps` enforces both halves.
+  exact command. Rule protects *environment* and *pins*: materialising
+  disposable per-checkout env (`pixi run` / `pixi install`, repo's own
+  bootstrap script) or locking committed manifest (`pixi lock`) stays
+  allowed; editing a manifest or upgrading pins (`pixi add` / `update`,
+  `poetry add`, `uv add`, …) is blocked. `block_install_deps` enforces both
+  halves.
 - **NEVER select a model tier above `opus`** on your own judgment. `fable`
   sits above `opus`; agent frontmatter or a subagent `model` param can name
   it silently. Raise it as a **possibility**: one line on what step gains,
