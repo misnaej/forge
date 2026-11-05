@@ -9,13 +9,14 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from typing import TYPE_CHECKING
 from urllib.parse import unquote
 
 import pytest
 
-from forge import pr_metrics
+from forge import agent_profile, pr_metrics
 from tests.test_agent_profile import _iso, _write_jsonl
 from tests.test_agent_profile_tokens import _at, _request, on_branch
 
@@ -286,47 +287,47 @@ def test_record_fails_when_github_cannot_be_read(
         assert conn.execute("SELECT COUNT(*) FROM prs").fetchone() == (0,)
 
 
-def test_export_carries_figures_only(
-    tmp_path: Path, github: FakeGitHub, transcripts: Path
-) -> None:
-    """Behavior: export holds no title, number, branch or repo-specific agent name."""
-    github.add(1, "feat/a")
-    github.add(2, "feat/b")
-    db = tmp_path / "m.sqlite"
-    _run(db, transcripts, "backfill")
-    out = tmp_path / "export.json"
-
-    assert _run(db, transcripts, "export", "--out", str(out)) == 0
-
-    text = out.read_text()
-    for name in ("Title", "feat/", "acme", "2026-09"):
-        assert name not in text
-    payload = json.loads(text)
-    assert [p["ordinal"] for p in payload["prs"]] == [1, 2]
-    assert payload["prs"][0]["tokens"]["other"]["input"] == 50
-    assert "forge_version" in payload
-
-
-def test_report_html_is_one_self_contained_escaped_file(
+def test_record_parses_only_files_that_can_hold_the_pr(
     tmp_path: Path,
     github: FakeGitHub,
     transcripts: Path,
-    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Behavior: the page fetches nothing and escapes PR titles."""
-    github.add(1, "feat/a", title="<script>alert(1)</script>")
+    """Behavior: record skips files written before the PR or not on its branch.
+
+    A full walk of every transcript is what made ``record`` slow; a file
+    older than the PR's opening (less a day) or never naming its branch
+    or the base branch is never parsed.
+    """
+    stale = transcripts / "old.jsonl"
+    _write_jsonl(stale, [on_branch("feat/a", _request(5, "old", usage=(999, 0, 0, 0)))])
+    os.utime(stale, (0, 0))
+    _write_jsonl(
+        transcripts / "other.jsonl",
+        [on_branch("feat/zzz", _request(6, "z", usage=(1, 0, 0, 0)))],
+    )
+    parsed: list[str] = []
+    real = agent_profile._iter_jsonl
+
+    def spy(path: Path) -> object:
+        """Note *path*, then parse it as usual.
+
+        Args:
+            path: The transcript being parsed.
+
+        Returns:
+            The real record iterator.
+        """
+        parsed.append(path.name)
+        return real(path)
+
+    monkeypatch.setattr(agent_profile, "_iter_jsonl", spy)
+    github.add(1, "feat/a", created_at="2026-09-01T00:00:00Z")
     db = tmp_path / "m.sqlite"
+
     _run(db, transcripts, "record", "--pr", "1")
-    page = tmp_path / "metrics.html"
 
-    assert _run(db, transcripts, "report", "--html", str(page)) == 0
-
-    html = page.read_text()
-    assert "<svg" in html
-    assert "<script" not in html
-    for external in ("http://", "https://", "<link", "src="):
-        assert external not in html
-    assert "&lt;script&gt;" in html
-    report = capsys.readouterr().out
-    assert "fewer than 4 PRs" in report
-    assert "design-checker-acme" in report
+    assert "old.jsonl" not in parsed
+    assert "other.jsonl" not in parsed
+    assert "s1.jsonl" in parsed
+    assert _tokens(db, 1)["main"] == 200

@@ -1146,27 +1146,69 @@ def runs_from_transcripts(root: Path) -> dict[str, AgentRun]:
     return runs
 
 
-def branch_usage(dirs: Iterable[Path]) -> BranchUsageTally:
-    """Token usage and activity per branch across every transcript in *dirs*.
+@dataclass(frozen=True)
+class TranscriptFilter:
+    """Which transcript files a per-branch scan may skip unparsed."""
+
+    #: Skip files last written before this time.
+    since: datetime | None = None
+    #: Skip files that never mention one of these branches; ``None`` keeps all.
+    branches: frozenset[str] | None = None
+
+    def wants(self, path: Path) -> bool:
+        """Whether *path* can hold a record this scan counts.
+
+        A byte search for the quoted branch name is far cheaper than
+        parsing every line; a file without it holds no record on that
+        branch (a stray mention only costs a parse).
+
+        Args:
+            path: A transcript file.
+
+        Returns:
+            ``True`` when it must be parsed.
+        """
+        try:
+            if self.since is not None and (
+                datetime.fromtimestamp(path.stat().st_mtime, tz=UTC) < self.since
+            ):
+                return False
+            if self.branches is None:
+                return True
+            data = path.read_bytes()
+        except OSError:
+            return False
+        return any(
+            json.dumps(b, ensure_ascii=False).encode() in data for b in self.branches
+        )
+
+
+def branch_usage(
+    dirs: Iterable[Path], keep: TranscriptFilter | None = None
+) -> BranchUsageTally:
+    """Token usage and activity per branch across the transcripts in *dirs*.
 
     Args:
         dirs: Claude Code project directories, e.g. from
             :func:`repo_transcript_dirs`.
+        keep: Files to parse; every file when ``None``.
 
     Returns:
         The tally: main sessions under :data:`MAIN_AGENT`, each subagent
         under its type (``"?"`` when nothing names it).
     """
+    keep = keep or TranscriptFilter()
     tally = BranchUsageTally()
     for root in dirs:
         for session in sorted(root.glob(f"*{_TRANSCRIPT_SUFFIX}")):
-            tally.add_transcript(_iter_jsonl(session), MAIN_AGENT, session.stem)
+            if keep.wants(session):
+                tally.add_transcript(_iter_jsonl(session), MAIN_AGENT, session.stem)
         # Pairing via the main sessions re-reads them all; only pay that
         # when a transcript predates its meta sidecar.
         paired: dict[str, tuple[str, str | None]] | None = None
         for path in sorted(root.glob(_SUBAGENT_GLOB)):
             agent_id = _agent_id_from_transcript(path)
-            if agent_id is None:
+            if agent_id is None or not keep.wants(path):
                 continue
             agent_type = _read_meta(path).get("agentType")
             if not isinstance(agent_type, str) or not agent_type:

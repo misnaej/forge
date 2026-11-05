@@ -67,7 +67,9 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_is_full_precommit_run(block: dict[str, Any]) -> int` _(internal)_ — ``1`` when a ``Bash`` tool call runs ``forge-precommit`` without ``--only``.
 - `_agent_types_from_sessions(root: Path) -> dict[str, tuple[str, str | None]]` _(internal)_ — Map subagent ids to ``(agent_type, description)`` from main-session transcripts.
 - `runs_from_transcripts(root: Path) -> dict[str, AgentRun]` — Build runs from every subagent transcript under *root*.
-- `branch_usage(dirs: Iterable[Path]) -> BranchUsageTally` — Token usage and activity per branch across every transcript in *dirs*.
+- `class TranscriptFilter` — Which transcript files a per-branch scan may skip unparsed.
+  - `wants(self, path: Path) -> bool` — Whether *path* can hold a record this scan counts.
+- `branch_usage(dirs: Iterable[Path], keep: TranscriptFilter | None = None) -> BranchUsageTally` — Token usage and activity per branch across the transcripts in *dirs*.
 - `_digest_record(run: AgentRun, stats: TranscriptStats) -> dict[str, object]` _(internal)_ — One digest line for *run*: its ids, its transcript stats, and when.
 - `_is_count(value: object) -> bool` _(internal)_ — Whether *value* is a JSON integer (``bool`` excluded).
 - `_is_size(value: object) -> bool` _(internal)_ — Whether *value* is a non-negative JSON integer — a token or char count.
@@ -1356,9 +1358,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 - `class PrFacts` — What GitHub says about one merged PR.
 - `open_db(path: Path) -> sqlite3.Connection` — Open the metrics database, creating file and schema on first use.
-- `_usage_values(usage: TokenUsage) -> tuple[int, ...]` _(internal)_ — *usage* in :data:`_TOKEN_COLUMNS` order.
 - `pr_summary(tally: BranchUsageTally, facts: PrFacts) -> BranchSummary | None` — The PR's share of its head branch's transcript records.
-- `review_rounds(summary: BranchSummary) -> int` — Review rounds: the most runs any one reporter type made.
+- `review_rounds(summary: BranchSummary) -> int` — Review rounds on the PR, from reporter runs.
 - `record_pr(conn: sqlite3.Connection, facts: PrFacts, tally: BranchUsageTally, *, now: datetime) -> None` — Replace *facts*' PR rows with what GitHub and the transcripts say now.
 - `record_unattributed(conn: sqlite3.Connection, tally: BranchUsageTally, base_branch: str) -> None` — Keep base-branch usage per day and agent type.
 - `_int(value: object) -> int` _(internal)_ — A JSON count as int, ``0`` for anything else.
@@ -1366,6 +1367,19 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `fetch_facts(number: int) -> PrFacts | None` — Read PR *number* and count its wrap-ups through ``gh api``.
 - `merged_prs() -> list[tuple[int, str]]` — The newest merged PRs, as ``(number, head branch)``.
 - `backfill(conn: sqlite3.Connection, merged: Iterable[tuple[int, str]], tally: BranchUsageTally, *, limit: int) -> list[int]` — Record merged PRs not yet in the database whose branch has usage.
+- `default_db_path(root: Path) -> Path | None` — Where this repo's metrics database lives.
+- `_scan(root: Path, explicit: list[Path] | None, keep: TranscriptFilter | None = None) -> BranchUsageTally` _(internal)_ — Read the transcripts of every checkout of the repo (or *explicit*).
+- `pr_filter(facts: PrFacts, base_branch: str) -> TranscriptFilter` — The transcript files one PR's record needs.
+- `_build_parser() -> argparse.ArgumentParser` _(internal)_ — The ``forge-metrics`` argument parser.
+- `_record(conn: sqlite3.Connection, root: Path, args: argparse.Namespace) -> int` _(internal)_ — Run ``record`` or ``backfill``.
+- `_read(conn: sqlite3.Connection, args: argparse.Namespace) -> int` _(internal)_ — Run ``report`` or ``export``.
+- `main(argv: list[str] | None = None) -> int` — Entry point for ``forge-metrics``.
+
+## `forge.pr_metrics_report`
+
+> _Reading the ``forge-metrics`` database back: report, HTML page, export._
+
+- `usage_values(usage: TokenUsage) -> tuple[int, ...]` — *usage* in :data:`TOKEN_COLUMNS` order.
 - `class PrRow` — One recorded PR with its tokens, as the report and export read it.
   - `total_tokens(self) -> int` — Every agent's tokens summed, cache reads included.
   - `new_tokens(self) -> int` — Every agent's tokens not served from cache.
@@ -1381,14 +1395,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_cells(row: PrRow) -> dict[str, str]` _(internal)_ — One PR's report cells, shared by the terminal table and the page.
 - `_bar_chart(rows: list[PrRow]) -> str` _(internal)_ — An inline SVG bar chart of new tokens per PR, main session vs helpers.
 - `render_html(rows: list[PrRow]) -> str` — One self-contained HTML page: chart, table and trend, nothing fetched.
-- `_shared_tokens(tokens: dict[str, TokenUsage]) -> dict[str, dict[str, int]]` _(internal)_ — Per-type token counts with every non-forge type folded into ``other``.
+- `_shared_tokens(tokens: dict[str, TokenUsage]) -> dict[str, dict[str, int]]` _(internal)_ — Per-type token counts, every type forge does not ship folded into ``other``.
 - `export_payload(rows: list[PrRow]) -> dict[str, Any]` — Figures only, safe to share: no titles, numbers, branches or dates.
-- `default_db_path(root: Path) -> Path | None` — Where this repo's metrics database lives.
-- `_scan(root: Path, explicit: list[Path] | None) -> BranchUsageTally` _(internal)_ — Read the transcripts of every checkout of the repo (or *explicit*).
-- `_build_parser() -> argparse.ArgumentParser` _(internal)_ — The ``forge-metrics`` argument parser.
-- `_record(conn: sqlite3.Connection, root: Path, args: argparse.Namespace) -> int` _(internal)_ — Run ``record`` or ``backfill``.
-- `_read(conn: sqlite3.Connection, args: argparse.Namespace) -> int` _(internal)_ — Run ``report`` or ``export``.
-- `main(argv: list[str] | None = None) -> int` — Entry point for ``forge-metrics``.
 
 ## `forge.pr_plan`
 
@@ -1911,6 +1919,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 - `_config_doc_path(root: Path) -> str | None` _(internal)_ — Return the configured agent-doc path, or ``None`` to self-skip.
 - `_plugin_roster() -> dict[str, set[str]]` _(internal)_ — Read the shipped roster of forge's plugin skills and hook stems.
+- `_roster_names(kind: str) -> set[str]` _(internal)_ — Names one ``[kind]`` table of ``data/plugin-roster.toml`` lists.
+- `shipped_agent_names() -> frozenset[str]` — Agent names forge's plugin ships, without the ``forge:`` prefix.
 - `_extra_roster(root: Path) -> dict[str, set[str]]` _(internal)_ — Read the consumer escape-hatch roster additions from config.
 - `_roster(root: Path) -> dict[str, set[str]]` _(internal)_ — Discover the repo's agents, skills, hooks, and CLIs.
 - `_check_doc(doc: str, roster: dict[str, set[str]]) -> list[str]` _(internal)_ — Return coverage + dangling problems for *doc* against *roster*.

@@ -42,7 +42,13 @@ not charged twice. Work on the base branch goes to an
 
 `$XDG_DATA_HOME/forge/<owner>/<repo>/metrics.sqlite` (default
 `~/.local/share/...`): one database per repo, shared by all its checkouts,
-never committed. `--db PATH` overrides.
+never committed. It lives outside the per-checkout `code_health/` because
+one PR can be worked from any checkout of the repo. `--db PATH`
+overrides.
+
+`record` parses only transcript files written since the day before the
+PR was opened that name its branch or the base branch; `backfill` reads
+every transcript once and splits it across the PRs it records.
 
 ## Reading it
 
@@ -59,6 +65,7 @@ never committed. `--db PATH` overrides.
 
 Figures only. PRs are keyed by ordinal (1 = oldest); no PR numbers,
 titles, branch or file names, dates or messages. Agent types are kept only
-for `main` and forge's own (`forge:*`); every other type — a repo's own
-wrappers often carry its name — is summed under `other`. Read the file
+for `main` and the agents forge ships (the installed package's roster); every
+other type — a repo's own wrappers often carry its name, `forge:`-prefixed
+or not — is summed under `other`. Read the file
 before sending it.
