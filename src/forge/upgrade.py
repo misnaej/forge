@@ -11,12 +11,12 @@ shortcut via ``--apply``.
 - **Phase 1** — ``forge-upgrade`` (or ``forge-upgrade --channel main``
   / ``--to vX.Y.Z``). Detects the current pin in the consumer's
   ``pyproject.toml``, rewrites it to the requested target, and prints
-  the exact install command for the user to run — ``pip install``, or
-  ``pixi lock && pixi install --locked`` in a repo that installs from a
-  pixi lock.
-- **Phase 2** — ``forge-upgrade --continue``. After the user has run
-  the printed install command, runs ``install-forge-bootstrap`` to
-  re-sync managed artifacts (its ``plugin`` step runs
+  the exact install command — ``pip install`` for the user to run, or,
+  in a repo that installs from a pixi lock, ``pixi lock && pixi install
+  --locked``, which an agent may run itself.
+- **Phase 2** — ``forge-upgrade --continue``. After the printed install
+  command has run, runs ``install-forge-bootstrap`` to re-sync managed
+  artifacts (its ``plugin`` step runs
   ``forge-plugin-sync``) and prints the session-restart reminder.
 - **One-shot** — ``forge-upgrade --apply``. For human-run setup
   scripts only: rewrites the pin, runs the force-reinstall pip

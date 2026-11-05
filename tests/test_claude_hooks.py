@@ -383,13 +383,15 @@ def test_install_deps_blocks_pixi_add_after_a_read_only_verb() -> None:
     ],
 )
 def test_install_deps_allows_pixi_materialisation_from_the_lock(command: str) -> None:
-    """Materialising `.pixi/` from the committed lock is not an install (#466).
+    """Materialising `.pixi/` or locking the committed manifest is not an install.
 
-    It is deterministic, per-checkout and disposable — there is no shared
-    environment for an agent to damage, which is what FOUNDATION §2 guards.
+    Both are per-checkout: materialising is deterministic and disposable,
+    and `lock` writes down what the committed manifest already asks for,
+    keeping existing pins. Neither touches a shared environment or a pin,
+    which is what FOUNDATION §2 guards.
 
     Args:
-        command: A pixi invocation that only reads or materialises.
+        command: A pixi invocation that only reads, materialises or locks.
     """
     assert _run_hook(_INSTALL_DEPS, command) == 0
 
