@@ -219,7 +219,8 @@ def test_every_entry_routes_through_forge_hook_dispatch_with_roster(
         assert command.startswith("forge-hook-dispatch --harness vibe ")
         assert f"--event {entry['event']} " in command
         assert "--matcher " in command
-        assert "--roster .vibe/forge-roster.json" in command
+        assert "--roster " in command
+        assert command.rstrip().endswith('.vibe/forge-roster.json"')
 
 
 def test_written_hooks_toml_round_trips_through_tomllib(plugin_repo: Path) -> None:

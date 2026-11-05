@@ -21,6 +21,19 @@
 set -e
 INPUT=$(cat)
 
+# Extract COMMAND early: guard_begin enforces GUARD_MAX_CHARS on it.
+COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null || true)
+
+# Shared anchor lib: oversize-command refusal (GUARD_MAX_CHARS) + watchdog,
+# same prologue as every other block_*.sh guard. Fail CLOSED when missing.
+ANCHOR_LIB="$(dirname "$0")/git_anchor.sh"
+if [ ! -r "$ANCHOR_LIB" ]; then
+    echo "BLOCKED: guard anchor lib missing at $ANCHOR_LIB — refusing the command rather than running unguarded." >&2
+    exit 2
+fi
+source "$ANCHOR_LIB"
+guard_begin
+
 # jq parse failure must be a block (exit 2), not a crash exit code — the
 # script's contract is exit 2 = deny.
 parse_or_block() {
