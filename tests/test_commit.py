@@ -186,6 +186,33 @@ def test_stage_exactly_stages_only_named(feature_repo: Path) -> None:
     ]
 
 
+def test_stage_exactly_accepts_path_removed_with_git_rm(feature_repo: Path) -> None:
+    """A file removed with ``git rm`` is already staged; no error, both staged.
+
+    Regression from a real crash: ``git add`` on a path gone from index and
+    tree exits 128, and ``forge-commit`` died with a traceback naming it.
+    """
+    git_stdout(feature_repo, "rm", "-q", "b.txt")
+    (feature_repo / "a.txt").write_text("changed\n", encoding="utf-8")
+    commit.stage_exactly(feature_repo, ("a.txt", "b.txt"))
+    staged = git_stdout(feature_repo, "diff", "--cached", "--name-only").split()
+    assert sorted(staged) == ["a.txt", "b.txt"]
+    deleted = git_stdout(
+        feature_repo, "diff", "--cached", "--name-only", "--diff-filter=D"
+    ).split()
+    assert deleted == ["b.txt"]
+
+
+def test_stage_exactly_unknown_path_refuses_not_crashes(feature_repo: Path) -> None:
+    """A path that never existed raises CommitRefusedError, not CalledProcessError.
+
+    Regression from a real crash: the raw ``git add`` failure escaped as a
+    traceback instead of a refusal.
+    """
+    with pytest.raises(CommitRefusedError, match="could not stage"):
+        commit.stage_exactly(feature_repo, ("never_existed.txt",))
+
+
 @pytest.mark.usefixtures("_fake_evidence")
 def test_commit_and_push_no_push_commits_only_requested(feature_repo: Path) -> None:
     """Commit-only mode records the named file and leaves others out."""
@@ -201,6 +228,39 @@ def test_commit_and_push_no_push_commits_only_requested(feature_repo: Path) -> N
     assert (
         git_stdout(feature_repo, "log", "-1", "--format=%s").strip() == "fix: change a"
     )
+
+
+@pytest.mark.usefixtures("_fake_evidence")
+def test_commit_and_push_stages_new_file_before_verdict(
+    feature_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: a brand-new untracked file is named to forge-commit.
+
+    MOCK SETUP: ``verdict`` is a fake that records the staged paths at call
+    time and returns a pass.
+    EXPECTED BEHAVIOR: the file is already staged when the verdict is read
+    (so it is not treated as unchecked) and HEAD contains it.
+    """
+    staged_at_verdict: list[list[str]] = []
+
+    def fake_verdict(root: Path) -> tuple[bool, list[str]]:
+        staged_at_verdict.append(
+            git_stdout(root, "diff", "--cached", "--name-only").split()
+        )
+        return True, []
+
+    monkeypatch.setattr(commit, "verdict", fake_verdict)
+    (feature_repo / "new.txt").write_text("new\n", encoding="utf-8")
+
+    code = commit.commit_and_push(
+        feature_repo, Request("feat: add new", ("new.txt",), push=False)
+    )
+
+    assert code == commit.EXIT_OK
+    assert staged_at_verdict == [["new.txt"]]
+    assert git_stdout(
+        feature_repo, "show", "--name-only", "--format=", "HEAD"
+    ).split() == ["new.txt"]
 
 
 @pytest.mark.usefixtures("_fake_evidence")

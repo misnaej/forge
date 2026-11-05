@@ -182,7 +182,11 @@ def check_verdict(root: Path) -> None:
         logger.warning("forge-commit: emergency armed — committing on stale evidence.")
         return
     detail = "\n".join(lines[-6:])
-    msg = f"pre-commit verdict did not pass; run forge:precommit-fixer first.\n{detail}"
+    msg = (
+        "pre-commit verdict did not pass; run forge:precommit-fixer first, then "
+        "rerun forge-commit (the named files are left staged; it stages them "
+        f"again).\n{detail}"
+    )
     raise CommitRefusedError(msg)
 
 
@@ -230,7 +234,18 @@ def stage_exactly(root: Path, paths: tuple[str, ...]) -> None:
     if already:
         msg = f"other files are already staged: {sorted(already)}; unstage them first."
         raise CommitRefusedError(msg)
-    run_git("add", "--", *paths, cwd=root)
+    # A removal staged earlier (`git rm`) is gone from both index and tree,
+    # so `git add` cannot match it; it is already staged as it should be.
+    removed = _git_paths(
+        root, "diff", "--cached", "--name-only", "--diff-filter=D", "-z"
+    )
+    to_add = [p for p in paths if p not in removed]
+    if to_add:
+        try:
+            run_git("add", "--", *to_add, cwd=root)
+        except subprocess.CalledProcessError as exc:
+            msg = f"could not stage the named files (a path git does not know?): {exc}"
+            raise CommitRefusedError(msg) from exc
     staged = _staged(root)
     if staged != set(paths):
         msg = (
@@ -310,12 +325,16 @@ def commit_and_push(root: Path, request: Request) -> int:
     """
     branch = current_branch(root)
     check_message(request.message)
+    # Stage before reading the verdict: a new file is untracked until now,
+    # pre-commit passes over untracked files, and the verdict would refuse
+    # it as unchecked. Once staged, the commit's own pre-commit hook checks
+    # it like every other file, so nothing goes unchecked.
+    stage_exactly(root, request.paths)
     check_verdict(root)
     logger.info(
         "%s",
         render_edit_receipt(subagent_edits(root, paths=set(request.paths))),
     )
-    stage_exactly(root, request.paths)
     try:
         create_commit(root, request.message)
     except subprocess.CalledProcessError as exc:

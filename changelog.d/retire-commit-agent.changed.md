@@ -1,0 +1,3 @@
+bump: major
+
+- **Breaking:** the `forge:git-commit-push` agent is removed. Commits now go through the `forge-commit` command, which every shipped workflow (`/commit`, `/pr`, `/sentinel`, `/next`) and agent already calls; it commits and pushes in one call with forge's git rules checked in its own code. **Migration:** anything that delegated to `forge:git-commit-push`, or wraps it, runs `forge-commit -m "<message>" <files>` instead (`--push-only` pushes commits that already exist). `forge-commit` now stages the named files before checking the pre-commit result, so new files need no separate step. The git guards drop the exceptions that agent needed: no agent may type a raw `git commit` or `git push`.

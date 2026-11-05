@@ -9,9 +9,9 @@
 # Amending an UNPUSHED commit stays allowed — nothing published is
 # rewritten, and fixing up a local-only commit is normal work.
 #
-# No agent bypass — not even forge:git-commit-push (the one agent that
-# runs `git commit`; its contract is "never amend — always a new
-# commit"). A human who truly needs it runs: ! git commit --amend …
+# No agent bypass (`forge-commit`, the canonical commit path, never
+# amends — always a new commit). A human who truly needs it runs:
+# ! git commit --amend …
 #
 # Accepted residual: a commit pushed only to a remote whose tracking
 # refs were never fetched locally reads as unpushed (refs/remotes is

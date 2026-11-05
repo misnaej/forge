@@ -162,7 +162,7 @@ def test_check_reporter_tools_skips_actor() -> None:
         "description": "Applies ruff fixes and commits the result.",
         "tools": ("Read", "Edit", "Write"),
     }
-    doc = _agent_doc(frontmatter=fm, path="agents/git-commit-push.md")
+    doc = _agent_doc(frontmatter=fm, path="agents/pr-manager.md")
     assert (
         audit_agents._check_reporter_tools(
             doc,

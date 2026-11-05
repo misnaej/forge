@@ -8190,7 +8190,7 @@ def test_step_changelog_updated_fragments_mode_message_names_fragment_owner(
     """The fragments-mode failure names whose job the fragment is.
 
     SCENARIO: this gate fires inside the `git commit` that
-    `forge:git-commit-push` runs, so a commit agent is its usual reader.
+    `forge-commit` runs, so an agent committing work is its usual reader.
     A message that states the requirement and hands over the authoring
     recipe — path template, slug/type placeholders, exact first line —
     without naming an owner is one that reader will satisfy itself,

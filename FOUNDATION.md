@@ -242,8 +242,7 @@ Git procedures (gate kinds, destructive forms, sync ladder):
   real protection via BOTH `gh api repos/{owner}/{repo}/rules/branches/{branch}`
   and `.../rulesets` — never conclude "unprotected" from a 404 on legacy
   `/branches/{branch}/protection` alone (§1 "Absence of evidence"). Merged
-  branch pruning = `forge-next-prep --prune-remote` (lease-pinned);
-  commit agent's branch-deleting pushes refused by `block_raw_git`.
+  branch pruning = `forge-next-prep --prune-remote` (lease-pinned).
 - **No backwards-compatibility shims** unless explicitly requested — no
   `OldName = NewName`, no deprecation warnings, no re-exports of moved
   modules. Clean breaks by default.
@@ -272,9 +271,8 @@ forbidden.
 ### Agent naming convention
 
 Foundation agents resolve as `forge:<name>`; bare name fails with
-`Agent type '<name>' not found`. The thirteen:
-`forge:design-checker`, `forge:docs-types-checker`, `forge:git-commit-push`,
-`forge:issue-triage`, `forge:knowledge-search`, `forge:perf-optimizer`,
+`Agent type '<name>' not found`. The twelve:
+`forge:design-checker`, `forge:docs-types-checker`, `forge:issue-triage`, `forge:knowledge-search`, `forge:perf-optimizer`,
 `forge:pr-manager`, `forge:precommit-fixer`, `forge:prior-art`,
 `forge:security-checker`, `forge:test-advisor`, `forge:test-writer`,
 `forge:weekly-summary`.
@@ -289,7 +287,7 @@ delegate per §16 Pattern A.
 | Create a new file / module / top-level symbol | `forge:prior-art` | **BEFORE** writing — REUSE verdict = no new file |
 | Edit existing file | `forge:design-checker` (or delegating `design-checker-<repo>` wrapper) | **BEFORE** writing code |
 | Clear pre-commit failures | `forge:precommit-fixer` | Before commit |
-| Commit + push | `forge:git-commit-push` | After `forge:precommit-fixer` |
+| Commit + push | `forge-commit` command (no agent) | After `forge:precommit-fixer` |
 | Plan test coverage / review tests | `forge:test-advisor` | Before writing tests; after, to review |
 | Write tests | `forge:test-writer` | After `forge:test-advisor` (advise) |
 | Design / security review | `forge:design-checker` / `forge:security-checker` | Reports only — main agent acts |
@@ -299,7 +297,7 @@ delegate per §16 Pattern A.
 
 **Forbidden — do NOT handle directly:**
 - `git commit` / `git push`, and commit-creating `git revert` /
-  `git cherry-pick` (sequencer skips pre-commit hook) → `forge:git-commit-push`.
+  `git cherry-pick` (sequencer skips pre-commit hook) → `forge-commit`.
   `--abort` / `--quit` / `--skip` / `--no-commit` create nothing, stay allowed.
 - `ruff` or `fix-forge-ruff` from an agent → `forge:precommit-fixer` (reads
   `code_health/`; only pre-commit hook runs ruff).
@@ -310,7 +308,7 @@ delegate per §16 Pattern A.
 
 ### Standard workflow orders
 
-**Commit:** `forge:prior-art` (when creating files/symbols — first; REUSE verdict ends plan) → `forge:design-checker` (pre-write) → code changes → `forge:precommit-fixer` → `forge:git-commit-push`
+**Commit:** `forge:prior-art` (when creating files/symbols — first; REUSE verdict ends plan) → `forge:design-checker` (pre-write) → code changes → `forge:precommit-fixer` → `forge-commit`
 
 **PR finalization:** `forge:design-checker` + `forge:security-checker` + `forge:docs-types-checker` (parallel) → `forge:precommit-fixer` (mode `strict`) → `forge:pr-manager` → background PR monitor (§6 — "The flow does not end at posting")
 
@@ -744,7 +742,7 @@ Reviewed by `forge:design-checker`.
 - Consumer `.githooks/pre-commit` hooks **write each check's stdout / stderr**
   to `code_health/<check>.log` (`ruff.log`, `docstring_verification.log`, …).
 - Foundation agents (`forge:precommit-fixer`, `forge:pr-manager`,
-  `forge:design-checker`, `forge:git-commit-push`) **read these as the source
+  `forge:design-checker`) and `forge-commit` **read these as the source
   of truth**, never re-run the checks.
 - Who writes logs:
   - `forge:precommit-fixer` is the only agent that may run `forge-precommit`

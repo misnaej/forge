@@ -36,7 +36,7 @@
 #      deliberately on another hook manager is never refused. `git merge
 #      --abort` / `--quit` create nothing and are not checked.
 #
-# No agent bypass — the commit agent's whole job is a gated commit. A
+# No agent bypass — `forge-commit`'s whole job is a gated commit. A
 # human runs a refused form with `! …`; the real fix for 3 is
 # `install-forge-githooks`.
 #

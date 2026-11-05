@@ -149,44 +149,6 @@ def test_strict_mode_agent_command_forces_cve_scan() -> None:
     assert forced in body, f"strict-mode Phase 1 must run `{forced}`"
 
 
-def test_git_commit_push_agent_carries_changelog_contract() -> None:
-    """The shipped commit agent is forbidden from authoring fragments.
-
-    SCENARIO: `forge:git-commit-push` was observed inventing a
-    `changelog.d/` fragment to clear the `changelog_updated` gate,
-    picking slug, type and `bump:` level — and with them the released
-    version — inside a commit told to stage two files. The contract that
-    stops a repeat only works if it ships, and the agent doc is what the
-    agent reads.
-
-    EXPECTED BEHAVIOR: the shipped body marks `changelog.d/` REPORT ONLY,
-    forbids every write verb, and hands ownership to the PR author.
-    """
-    body = (REPO_ROOT / "agents" / "git-commit-push.md").read_text()
-    unwrapped = " ".join(body.split())
-    assert "**`changelog.d/` — REPORT ONLY.**" in unwrapped
-    assert "you never author, edit, rename, or delete one" in unwrapped
-    assert "The fragment is the PR author's." in unwrapped
-
-
-def test_git_commit_push_agent_refuses_commit_creating_revert_and_cherry_pick() -> None:
-    """The commit agent's written contract matches its narrowed hook exemption.
-
-    The `block_raw_git` exemption covers `git commit` / `git push` only;
-    revert/cherry-pick create commits that skip pre-commit, so the agent's
-    `I WILL NOT` list must name them.
-    """
-    body = (REPO_ROOT / "agents" / "git-commit-push.md").read_text()
-    heading = "### I WILL NOT (report and stop)"
-    assert heading in body, f"missing `{heading}` section"
-    start = body.index(heading)
-    end = body.index("\n## ", start)
-    bullets = [" ".join(chunk.split()) for chunk in body[start:end].split("\n- ")[1:]]
-    assert any("revert" in b and "cherry-pick" in b for b in bullets), (
-        "`I WILL NOT` list must name commit-creating revert/cherry-pick"
-    )
-
-
 def test_issue_triage_agent_never_signs_off_a_validated_plan() -> None:
     """The triage agent refuses to author a human sign-off claim.
 
