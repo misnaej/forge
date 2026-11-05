@@ -52,6 +52,11 @@ _NOT_RUN_CONCLUSIONS: Final[frozenset[str]] = frozenset({"SKIPPED"})
 _PYTEST_SUMMARY_RE: Final[re.Pattern[str]] = re.compile(
     r"\d+ (?:passed|failed|errors?)\b[^\n]*? in [\d.]+s"
 )
+#: A nonzero failure or error count; ``xfailed`` is its own word, so the
+#: leading word boundary keeps it out.
+_FAILURE_COUNT_RE: Final[re.Pattern[str]] = re.compile(
+    r"\b0*[1-9]\d* (?:failed|errors?)\b"
+)
 _SLOT_RE: Final[re.Pattern[str]] = re.compile(r"<!-- forge:fill (?P<name>.*?) -->")
 _BACKTICK_RUN_RE: Final[re.Pattern[str]] = re.compile(r"`+")
 _NAME_MAX: Final[int] = 60
@@ -327,7 +332,9 @@ def _pytest_part(pytest_line: str | None, pytest_verdict: str | None) -> str:
     # failure — so it is not shown at all rather than shown with a caveat.
     if pytest_verdict in NOT_VERIFIED:
         return "❔ pytest (no run at this tree)"
-    if "failed" in pytest_line or "error" in pytest_line:
+    # A count, not a substring: "2 xfailed" holds the word "failed" and
+    # "0 failed" names no failure, yet both are passing runs.
+    if _FAILURE_COUNT_RE.search(pytest_line):
         return f"❌ pytest {pytest_line}"
     return f"✅ pytest {pytest_line}"
 

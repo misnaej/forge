@@ -100,6 +100,7 @@ from forge.pr_wrapup_compose import (
     unfilled_slots,
 )
 from forge.precommit import freshness_verdicts, resolve_steps
+from forge.text_budget import ceiling
 
 
 if TYPE_CHECKING:
@@ -333,7 +334,8 @@ def _check_budget(head: list[str], sections: list[tuple[str, list[str]]]) -> lis
         sections: ``(title, body_lines)`` pairs in document order.
 
     Returns:
-        One violation when the body exceeds ``WORD_BUDGET`` plus
+        One violation when the body exceeds the :func:`forge.text_budget.ceiling`
+        of ``WORD_BUDGET`` plus
         ``FINDING_ALLOWANCE`` per required non-clean, non-status section.
     """
     titles = {title.casefold(): body for title, body in sections}
@@ -345,15 +347,20 @@ def _check_budget(head: list[str], sections: list[tuple[str, list[str]]]) -> lis
         and not _is_clean(body)
     )
     budget = WORD_BUDGET + FINDING_ALLOWANCE * findings
+    limit = ceiling(budget)
     words = _count_words(head, sections)
-    if words > budget:
+    if words > limit:
         return [
             (
-                f"{words} words over a budget of {budget} ({WORD_BUDGET} + "
-                f"{FINDING_ALLOWANCE} x {findings} findings); clean checks "
-                "are one line"
+                f"wrap-up is {words} words; budget is {budget} ({WORD_BUDGET} + "
+                f"{FINDING_ALLOWANCE} x {findings} findings), at most {limit} — "
+                f"cut {words - limit}; clean checks are one line"
             )
         ]
+    if words > budget:
+        logger.warning(
+            "wrap-up is %d words, over the %d budget (within %d).", words, budget, limit
+        )
     return []
 
 

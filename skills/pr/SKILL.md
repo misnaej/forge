@@ -440,7 +440,8 @@ Verification is done, fixes are committed, and the wrap-up is authored
 
 `forge-pr-squash-comment` enforces (check the bullets before posting):
 - **Target 50 words.** 51–55 posts with a warning naming what to trim;
-  over 55 is refused. Rewrite tighter rather than living in the band.
+  over 55 is refused. Inside the band, post as is: a rewrite costs more
+  tokens than the words it saves (same 10% margin as the wrap-up budget).
 - **3–5 bullet points.** Not 6, not 2.
 - **Conventional commit format** for the title line: `<type>: <brief description>`
 - **No prose paragraphs.** Title + bullets only, in two separate fences —

@@ -39,6 +39,7 @@ from forge.pr_delta import FOLLOW_UP_RE
 from forge.pr_plan import WrapupFreshness
 from forge.pr_squash_comment import SQUASH_MARKER
 from forge.pr_wrapup_compose import slot, summarize_rollup
+from forge.text_budget import ceiling
 from tests.conftest import CapturedCalls, commit_all, init_git_repo
 
 
@@ -246,7 +247,7 @@ def test_validate_wrapup_reports_many_violations_for_a_narrated_body(
     assert any("summary line" in p for p in problems)
     assert any("is clean (PASS) but runs" in p for p in problems)
     assert any("is a status line" in p for p in problems)
-    assert any("words over a budget" in p for p in problems)
+    assert any("wrap-up is" in p and "budget is" in p for p in problems)
     assert len(problems) >= 5
 
 
@@ -388,7 +389,7 @@ def test_validate_wrapup_refuses_an_over_budget_clean_body() -> None:
                 "This wrap-up exists purely to validate the shared word-budget "
                 "contract with a longer than usual but still single-line summary "
                 "sentence for the test, padded out a little further so the total "
-                "comfortably clears the default budget."
+                "comfortably clears the default budget" + " and more" * 20 + "."
             ),
         ],
         overrides={
@@ -402,7 +403,31 @@ def test_validate_wrapup_refuses_an_over_budget_clean_body() -> None:
         },
     )
     problems = mod.validate_wrapup(body)
-    assert any(f"words over a budget of {mod.WORD_BUDGET}" in p for p in problems)
+    limit = ceiling(mod.WORD_BUDGET)
+    assert any(
+        f"budget is {mod.WORD_BUDGET} ({mod.WORD_BUDGET} + "
+        f"{mod.FINDING_ALLOWANCE} x 0 findings), at most {limit}" in p
+        for p in problems
+    )
+
+
+@pytest.mark.parametrize("summary_words", [108, 115])
+def test_validate_wrapup_accepts_a_clean_body_within_the_margin_with_a_warning(
+    summary_words: int, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A clean body past the budget but within the ceiling passes, warning once.
+
+    The clean sections add 17 words, so 108 and 115 summary words give
+    bodies of 125 and 132 words: over 120, not over 132.
+
+    Args:
+        summary_words: Words in the one-line summary.
+    """
+    body = _body([VERIFIED_AT, " ".join(["word"] * summary_words)])
+    with caplog.at_level(logging.WARNING):
+        problems = mod.validate_wrapup(body)
+    assert problems == []
+    assert "over the 120 budget" in caplog.text
 
 
 def test_validate_wrapup_accepts_the_same_body_once_one_section_is_a_real_finding() -> (

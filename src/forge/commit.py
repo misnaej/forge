@@ -56,6 +56,7 @@ from forge.pr_squash_comment import MAX_WORDS, TITLE_RE
 from forge.precommit import verdict
 from forge.regen_docs import API_DIGEST_DOC, CLI_REFERENCE_DOC
 from forge.smart_test.lifecycle import STAMP_RELPATH
+from forge.text_budget import ceiling
 
 
 if TYPE_CHECKING:
@@ -105,19 +106,30 @@ def check_message(message: str) -> None:
         message: The full commit message (title, optional body).
 
     Raises:
-        CommitRefusedError: When the title is not conventional, the message runs over
-            :data:`forge.pr_squash_comment.MAX_WORDS` (the one 50-word
-            target commit and squash messages share), or it carries AI
-            attribution.
+        CommitRefusedError: When the title is not conventional, the message runs
+            past the ceiling of :data:`forge.pr_squash_comment.MAX_WORDS`
+            (the 50-word target commit and squash messages share; see
+            :mod:`forge.text_budget`), or it carries AI attribution.
     """
     title = message.strip().splitlines()[0] if message.strip() else ""
     if not TITLE_RE.match(title):
         msg = f"commit title {title!r} is not conventional (`<type>(scope)?: subject`)."
         raise CommitRefusedError(msg)
     words = len(message.split())
-    if words > MAX_WORDS:
-        msg = f"commit message is {words} words; at most {MAX_WORDS}."
+    limit = ceiling(MAX_WORDS)
+    if words > limit:
+        msg = (
+            f"commit message is {words} words; budget is {MAX_WORDS}, "
+            f"at most {limit} — cut {words - limit}."
+        )
         raise CommitRefusedError(msg)
+    if words > MAX_WORDS:
+        logger.warning(
+            "forge-commit: message is %d words, over the %d target (within %d).",
+            words,
+            MAX_WORDS,
+            limit,
+        )
     try:
         validate_no_ai_attribution(message)
     except ValidationError as exc:
