@@ -20,6 +20,11 @@ fragment type (**Features / Changes / Fixes / Removed / Docs**).
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v11.1.0 — 2026-11-05
+
+### Features
+- New `forge-metrics` command keeps a local record of what each merged PR cost: tokens (main session and each helper type), active and wall time, files and lines changed, commits, review rounds, and pre-commit and test runs. Rows are written after merge by `/next` and the PR monitor, and `backfill` recovers recent PRs while Claude Code still holds their transcripts (about 30 days). `report` prints per-PR figures and a trend and can write a self-contained HTML page; `export` writes a figures-only summary — no titles, branch or file names — that a repo can share with forge. The database lives in your user data folder, one per repo, shared by every checkout and never committed. See `forge-docs/metrics.md`.
+
 ## v11.0.0 — 2026-11-05
 
 ### Changes
