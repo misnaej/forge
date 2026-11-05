@@ -429,7 +429,7 @@ Mechanics (modes, commands, templates): the `/pr` skill. Rules:
 - Why: wrap-up posted at one SHA, read at another, describes a dead tree — `verified-at:` header (reporter contract, `agents/_TEMPLATE.md`) makes drift detectable.
 - **The flow does not end at posting — monitor the PR.** Canonical monitor description; skills point here, state only call-site delta. Default: after wrap-up posts, one background monitor per open PR, five signals:
   - **New review comments** → surface.
-  - **Merged / closed** → on merge: local cleanup (sync base, prune merged local branch — `/next` cleanup phase) **and** `issue-triage` `post-pr` mode (closed-issue tier-label removal + Backlog Index regeneration).
+  - **Merged / closed** → on merge: local cleanup (sync base, prune merged local branch, `forge-metrics record` — `/next` cleanup phase) **and** `issue-triage` `post-pr` mode (closed-issue tier-label removal + Backlog Index regeneration).
   - **`mergeable == CONFLICTING`** → alert only; **the monitor never syncs the branch it watches** (read-only watcher).
   - **A CI run concluding in failure** → surface, investigate (§1); never auto-push fixes.
   - **Wrap-up staleness** — `forge-pr-plan --freshness --pr <N>` → `fresh: false` (newest comment's *header* `verified-at:` no longer prefixes PR head; quoted reporter stamps below it don't count) → alert **once per new head**, naming both SHAs. Refresh = `/pr <N>` (delta mode) by whoever picks up work; newer `verified-at:` clears signal. `fresh: null` (no `gh`, no wrap-up yet) = unknown for now: skip poll, never alert, retry next cycle (first poll of a finalization-spawned monitor expected null). **The monitor never posts the refresh.** `warn_stale_wrapup` Claude Code hook runs same verdict after every agent `git push` (at-the-cause); monitor covers pushes elsewhere. Both read-only.
@@ -1034,8 +1034,8 @@ occasional campaigns.
 
 **Token economy.** Every agent request re-sends its whole context; a
 delegation pays its fixed context each turn. Measure with
-`forge-agent-profile --tokens`; cut fixed context and needless delegations
-first.
+`forge-agent-profile --tokens`, per PR `forge-metrics`; cut fixed context
+and needless delegations first.
 
 **Measured as ratios, not seconds.** Wall-clock varies by machine and
 load: it locates time; proving a change helped needs a same-machine

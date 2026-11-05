@@ -274,6 +274,7 @@ FORGE_DOCS_PAGES = (
     "precommit-fixer.md",
     "git-safety.md",
     "plugin-staleness.md",
+    "metrics.md",
 )
 FORGE_DOCS_README = "README.md"
 # Distinct from BLOCK_NAME: the mirrored-docs README is its own managed

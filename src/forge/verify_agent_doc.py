@@ -134,16 +134,34 @@ def _plugin_roster() -> dict[str, set[str]]:
         is absent (older installed package) or unparseable — enrichment
         degrades, never blocks.
     """
+    return {kind: _roster_names(kind) for kind in ("skills", "hooks")}
+
+
+def _roster_names(kind: str) -> set[str]:
+    """Names one ``[kind]`` table of ``data/plugin-roster.toml`` lists.
+
+    Args:
+        kind: ``"skills"``, ``"hooks"`` or ``"agents"``.
+
+    Returns:
+        The names; empty when the file is absent or unparseable.
+    """
     try:
         text = resources.files("forge").joinpath("data/plugin-roster.toml").read_text()
         data = tomllib.loads(text)
     except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
-        return {"skills": set(), "hooks": set()}
-    out: dict[str, set[str]] = {}
-    for kind in ("skills", "hooks"):
-        names = data.get(kind, {}).get("names", [])
-        out[kind] = {n for n in names if isinstance(n, str)}
-    return out
+        return set()
+    names = data.get(kind, {}).get("names", [])
+    return {n for n in names if isinstance(n, str)}
+
+
+def shipped_agent_names() -> frozenset[str]:
+    """Agent names forge's plugin ships, without the ``forge:`` prefix.
+
+    Returns:
+        The names from the shipped roster; empty when it cannot be read.
+    """
+    return frozenset(_roster_names("agents"))
 
 
 def _extra_roster(root: Path) -> dict[str, set[str]]:
