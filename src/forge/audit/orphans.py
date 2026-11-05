@@ -71,7 +71,7 @@ def _load_vulture() -> object:
         The imported ``vulture`` module.
     """
     try:
-        import vulture  # noqa: PLC0415 — guarded broken-install signal
+        import vulture  # pyrefly: ignore[missing-import]
     except ImportError:
         sys.stderr.write(f"forge-audit-orphans: {VULTURE_MISSING_HINT}\n")
         raise SystemExit(1) from None

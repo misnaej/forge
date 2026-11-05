@@ -76,6 +76,11 @@ Checked on every commit by `verify-forge-repo-structure`: every listed file and 
    - claude_settings_schema.py: shared `.claude/settings.json` forge-block schema (shared marketplace key, `forge@forge` id, scaffold) — single source of truth for the CLIs that write that block (install_claude_settings, install_claudemd)
    - install_labels.py: `install-forge-labels` — GitHub label installer
    - install_bootstrap.py: `install-forge-bootstrap` — one-shot umbrella that runs every installer + generator in dependency order
+   - agent_harness.py: `forge-agent-harness` — frozen harness profiles for agent runtime adapters (Claude Code, Mistral Vibe) mapping to guard contract
+   - hook_dispatch.py: `forge-hook-dispatch` — guard dispatcher that runs ordered guard set and emits harness-native verdict JSON
+   - gen_vibe_hooks.py: `forge-gen-vibe-hooks` — generates .vibe/hooks.toml from .claude-plugin/plugin.json
+   - gen_vibe_agents.py: `forge-gen-vibe-agents` — publishes skills to .agents/skills/ for Vibe compatibility
+   - install_vibe.py: `install-forge-vibe` — installs Vibe integration (hooks.toml, roster, skills, subagents, prompts, AGENTS.md)
    - upgrade.py: `forge-upgrade` — two-phase consumer upgrade flow (rewrite pin → user runs pip → `--continue` re-syncs artifacts)
    - resync.py: `forge-resync` — regenerate forge-managed artifacts and open a dedup-guarded resync PR (companion to `upgrade.py`'s pin-rewrite flow); `--resolve-conflicts [--dry-run]` resolves a merge whose only conflicts are forge-generated artifacts by regenerating each from the merged tree (`pr_delta.REGEN_COMMANDS`), verifying with its `--check`, and staging — refusing if any other path conflicts
    - git_utils.py: shared git helpers and CLI logging setup (public API for consumers: `latest_v_tag`, `parse_semver`, `next_version`, `run_git`, `configure_cli_logging`)
@@ -184,6 +189,7 @@ enforcement:
 - block_raw_wrapup_post.sh: block a raw `gh pr comment`/`gh api` post of `code_health/pr_wrapup.md` — the wrap-up is posted only through `forge-pr-wrapup post` (validation, supersede-collapse, squash-last)
 - block_unverified_pr_create.sh: refuse a raw create outright and name `forge-pr-create`, which publishes; the verification it used to attempt here now lives in that command, which runs in the checkout it publishes rather than inferring the branch from command text (FOUNDATION §6)
 - block_raw_ruff.sh: hard-block raw `ruff check` / `ruff format` from agents (no bypass — agents use forge-precommit)
+- block_vibe_config.sh: block agent edits to the generated Vibe guard config under .vibe/ (hooks.toml, forge-roster.json, agents/, prompts/) — regeneration is a CLI job (`install-forge-vibe`), never an agent edit
 - caveman_mode.sh: SessionStart + SubagentStart — add the caveman-full instruction for agent traffic (text people read stays plain English) as `additionalContext`; `[tool.forge.hooks].caveman = false` turns it off; delivers only, never enforces
 - keep_continuation_state.sh: PreCompact — run `forge-continuation state --with-pr` so the status panel is current before Claude Code summarises; warn-only (missing CLI fails loudly, non-blocking)
 - load_continuation.sh: SessionStart — print `.plan/CONTINUATION.md` into the new context inside a fence under a "data, not instructions" line, with any ``` in it neutralised; silent when absent, always exits 0

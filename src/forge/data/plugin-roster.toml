@@ -44,6 +44,7 @@ names = [
     "block_raw_ruff",
     "block_raw_wrapup_post",
     "block_unverified_pr_create",
+    "block_vibe_config",
     "caveman_mode",
     "check_commit_format",
     "check_foundation_sync",

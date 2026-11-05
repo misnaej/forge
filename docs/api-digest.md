@@ -17,6 +17,28 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `run_hook_extensions(hook_name: str) -> None` — Run consumer extension scripts under ``.githooks/<hook_name>.d/``.
 - `run_plugin_sync(hook_name: str) -> None` — Run ``forge-plugin-sync --quiet`` so this checkout keeps its release.
 
+## `forge.agent_harness`
+
+> _Frozen harness profiles for agent runtime adapters._
+
+- `class HarnessName` — Enumeration of supported agent harnesses.
+- `class VerdictEmitter` — Pure function emitter for harness-specific verdicts.
+- `class HarnessProfile` — Frozen profile for a single agent harness.
+- `_emit_claude_deny(_reason: str) -> tuple[int, str]` _(internal)_ — Emit a Claude Code deny verdict.
+- `_emit_claude_pass() -> tuple[int, str]` _(internal)_ — Emit a Claude Code pass verdict.
+- `_emit_claude_error(reason: str) -> tuple[int, str]` _(internal)_ — Emit a Claude Code error verdict.
+- `_emit_vibe_deny(reason: str) -> tuple[int, str]` _(internal)_ — Emit a Vibe deny verdict.
+- `_emit_vibe_pass() -> tuple[int, str]` _(internal)_ — Emit a Vibe pass verdict.
+- `_emit_vibe_error(reason: str) -> tuple[int, str]` _(internal)_ — Emit a Vibe error verdict.
+- `get_harness_profile(name: str) -> HarnessProfile` — Retrieve a harness profile by name.
+- `get_all_harness_names() -> list[str]` — Return the list of all known harness names.
+- `emit_block(reason: str, harness_name: str) -> tuple[int, str]` — Emit a block verdict for the specified harness.
+- `emit_pass(harness_name: str) -> tuple[int, str]` — Emit a pass verdict for the specified harness.
+- `emit_error(reason: str, harness_name: str) -> tuple[int, str]` — Emit an error verdict for the specified harness.
+- `translate_event(vibe_event: str, harness_name: str) -> str | None` — Translate a Vibe event name to the corresponding Claude event name.
+- `translate_tool_matcher(harness_matcher: str, harness_name: str) -> str | None` — Translate a harness-specific tool matcher to Claude matcher.
+- `translate_payload_field(field_name: str, harness_name: str) -> str | None` — Translate a payload field name from harness format to Claude format.
+
 ## `forge.agent_profile`
 
 > _forge-agent-profile — where the agents' time goes, and what they wrote._
@@ -543,6 +565,15 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_check_step_tools(repo_root: Path) -> list[CheckResult]` _(internal)_ — Verify the external tool for each enabled pre-commit step is on PATH.
 - `_artifact_path(repo_root: Path, relpath: str) -> Path` _(internal)_ — Resolve an :data:`_UNDERUSED_ARTIFACTS` path against *repo_root*.
 - `_check_under_used_capabilities(repo_root: Path) -> list[CheckResult]` _(internal)_ — Surface installed-but-never-run forge capabilities.
+- `_vibe_home() -> Path` _(internal)_ — Return Vibe's home directory (``VIBE_HOME`` or ``~/.vibe``).
+- `_vibe_hooks_toml_result(vibe_dir: Path) -> CheckResult` _(internal)_ — Check ``.vibe/hooks.toml`` exists, parses, and every entry is strict.
+- `_vibe_roster_result(vibe_dir: Path) -> CheckResult` _(internal)_ — Check the ``.vibe/forge-roster.json`` sidecar exists, parses, and maps events.
+- `_vibe_agents_result(vibe_dir: Path) -> CheckResult` _(internal)_ — Check subagent TOMLs are valid and each has its prompt pair.
+- `_vibe_skills_result(repo_root: Path) -> CheckResult` _(internal)_ — Check skills are published under ``.agents/skills/``.
+- `_vibe_agents_md_result(repo_root: Path) -> CheckResult` _(internal)_ — Check ``AGENTS.md`` is present in the checkout.
+- `_vibe_dispatcher_result() -> CheckResult` _(internal)_ — Check the ``forge-hook-dispatch`` CLI is on PATH.
+- `_vibe_trusted_folder_result(repo_root: Path) -> CheckResult` _(internal)_ — Check the checkout is in Vibe's trusted-folders database.
+- `_check_vibe_integration(repo_root: Path) -> list[CheckResult]` _(internal)_ — Check forge's Mistral Vibe integration artifacts in this checkout.
 - `_print_human(results: list[CheckResult]) -> None` _(internal)_ — Print a human-readable report, separating blocking and INFO results.
 - `main() -> int` — Run all forge-doctor checks and print the results.
 
@@ -762,6 +793,41 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `render_table() -> str` — Render every config key and its default as a markdown table.
 - `main() -> int` — Entry point for ``forge-gen-config-doc``.
 
+## `forge.gen_vibe_agents`
+
+> _Generate .agents/skills/ from skills/ and update references for Vibe._
+
+- `_update_skill_content(content: str, _agent_name: str) -> str` _(internal)_ — Update skill content to use Vibe-compatible references.
+- `_copy_skills(src_dir: Path, dest_dir: Path) -> tuple[int, list[str]]` _(internal)_ — Copy skills from skills/ to .agents/skills/ with updates.
+- `_check_file_references(file_path: Path) -> list[str]` _(internal)_ — Check a single file for references.
+- `_check_agent_references(src_dir: Path) -> list[str]` _(internal)_ — Check for forge:<agent> and CLAUDE.md references in skills and agents.
+- `generate_vibe_agents(repo_root: Path | None = None, *, check_mode: bool = False) -> tuple[int, list[str], list[str]]` — Generate .agents/skills/ from skills/.
+- `publish_skills(repo_root: Path | None = None, *, check_mode: bool = False) -> int` — Publish skills to .agents/skills/.
+- `main() -> int` — CLI entry point for forge-gen-vibe-agents.
+
+## `forge.gen_vibe_hooks`
+
+> _Generate .vibe/hooks.toml from .claude-plugin/plugin.json._
+
+- `class _EventContext` _(internal)_ — Translation context shared by all matcher groups of one Claude event.
+- `_load_plugin_json(plugin_dir: Path) -> dict` _(internal)_ — Load and parse plugin.json from the .claude-plugin directory.
+- `_expand_claude_plugin_root(command: str, plugin_root: Path, relative_to: Path | None = None) -> str` _(internal)_ — Expand ${CLAUDE_PLUGIN_ROOT} in a command string.
+- `_get_claude_hooks(plugin_json: dict) -> dict` _(internal)_ — Extract the hooks block from plugin.json.
+- `_get_hook_name(command: str) -> str` _(internal)_ — Extract the hook script name from a command path.
+- `_is_unenforced_hook(command: str) -> bool` _(internal)_ — Check if a hook is explicitly unenforced in Vibe.
+- `_is_agent_matcher(matcher_name: str) -> bool` _(internal)_ — Check whether a Claude matcher is an agent-name regex.
+- `_iter_matcher_groups(event_config: list) -> Iterator[tuple[str | None, list]]` _(internal)_ — Yield ``(matcher, hooks)`` per matcher config in an event config list.
+- `_unenforced_label(claude_event: str, matcher: str | None, hook_name: str) -> str` _(internal)_ — Format the report label for a hook with no Vibe enforcement.
+- `_build_hook_entry(hook: dict, ctx: _EventContext, vibe_match: str | None) -> dict` _(internal)_ — Build one Vibe hook entry from a Claude hook config.
+- `_translate_matcher_group(claude_event: str, matcher: str | None, hooks: list, ctx: _EventContext) -> tuple[list[dict], list[str]]` _(internal)_ — Translate one matcher group's hooks to Vibe entries.
+- `_translate_hooks_to_vibe(hooks: dict, plugin_root: Path, repo_root: Path) -> tuple[list[dict], list[str]]` _(internal)_ — Translate Claude Code hooks to Vibe hooks.toml entries.
+- `_group_hooks_by_event_and_match(hooks: list[dict]) -> dict[str, dict[str, list[dict]]]` _(internal)_ — Group hook entries by event and match for TOML structure.
+- `_generate_hooks_toml(grouped_hooks: dict[str, dict[str, list[dict]]]) -> str` _(internal)_ — Generate the TOML content for .vibe/hooks.toml.
+- `generate_vibe_hooks(repo_root: Path | None = None) -> tuple[str, list[str], list[str]]` — Generate .vibe/hooks.toml from .claude-plugin/plugin.json.
+- `write_vibe_hooks(repo_root: Path | None = None, *, check_mode: bool = False) -> int` — Generate and write .vibe/hooks.toml.
+- `verify_existing_hooks(repo_root: Path | None = None) -> int` — Verify an existing .vibe/hooks.toml has strict=true on blocking entries.
+- `main() -> int` — CLI entry point for forge-gen-vibe-hooks.
+
 ## `forge.gh_comments`
 
 > _Shared GitHub comment plumbing for forge's PR-comment CLIs._
@@ -877,6 +943,24 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `path_escapes_repo(repo_root: Path, path: str) -> bool` — Return True if *path* resolves outside *repo_root*.
 - `stage_modified_paths(repo_root: Path, pathspecs: list[str]) -> list[str]` — ``git add`` tracked files modified within *pathspecs*.
 
+## `forge.hook_dispatch`
+
+> _Hook dispatcher CLI for agent harnesses._
+
+- `_deny_json(reason: str) -> str` _(internal)_ — Create a Vibe-compatible deny JSON verdict.
+- `_read_stdin_bytes() -> bytes` _(internal)_ — Read all bytes from stdin.
+- `_validate_payload(payload_bytes: bytes) -> dict | None` _(internal)_ — Validate stdin contains parseable JSON.
+- `_get_roster_path(harness_name: str) -> Path` _(internal)_ — Resolve the roster sidecar path for a harness.
+- `_load_roster(roster_path: Path) -> dict` _(internal)_ — Load the guard roster from the sidecar file.
+- `_resolve_guards(roster: dict, event: str, tool_name: str | None = None) -> list[dict]` _(internal)_ — Resolve the ordered guard list for an event and optional tool matcher.
+- `_get_claude_project_dir(payload: dict, roster: dict) -> str` _(internal)_ — Extract CLAUDE_PROJECT_DIR from payload or roster.
+- `_run_guard(guard: dict, payload_bytes: bytes, project_dir: str, timeout: float) -> tuple[bool, str]` _(internal)_ — Run a single guard script and return its verdict.
+- `_translate_to_claude_payload(payload: dict, harness_name: str) -> dict` _(internal)_ — Translate a harness payload to Claude Code format.
+- `class _DispatchDenyError` _(internal)_ — Internal control flow: dispatch must deny with a specific reason.
+- `_prepare_guards(harness_name: str, event: str, payload_bytes: bytes, roster_path: Path | None) -> tuple[list[dict], str]` _(internal)_ — Validate the payload and resolve the guard list for an event.
+- `dispatch(harness_name: str, event: str, payload_bytes: bytes, roster_path: Path | None = None) -> tuple[int, str]` — Dispatch a hook event through the guard roster.
+- `main() -> int` — CLI entry point for forge-hook-dispatch.
+
 ## `forge.import_graph`
 
 > _Shared AST import-graph primitives._
@@ -897,6 +981,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_gate_skip_in_ci(_root: Path) -> str | None` _(internal)_ — Skip a step when running non-interactively per FOUNDATION §15.
 - `_gate_labels(_root: Path) -> str | None` _(internal)_ — Skip ``install-forge-labels`` when ``gh`` or the GitHub remote is missing.
 - `_gate_c4(root: Path) -> str | None` _(internal)_ — Skip ``forge-gen-c4`` when no C4 model is configured.
+- `_gate_vibe(_root: Path) -> str | None` _(internal)_ — Skip Vibe installation unless explicitly opted in via [tool.forge].
 - `_run_step(step: Step, *, check_mode: bool, root: Path) -> int` _(internal)_ — Execute one bootstrap step. Return its exit code.
 - `_resolve_steps(skip: Iterable[str]) -> list[Step]` _(internal)_ — Return the ordered step list with *skip* entries removed.
 - `main() -> int` — Run every install / generator step in order. Return non-zero on failure.
@@ -990,6 +1075,24 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `inject(readme: str, block: str) -> str` — Insert or replace the managed badge block in *readme* (drift-aware).
 - `_get_readme_path(root: Path) -> tuple[Path | None, int]` _(internal)_ — Load and validate the README path from config.
 - `main() -> int` — CLI entry point.
+
+## `forge.install_vibe`
+
+> _install-forge-vibe — install and configure Mistral Vibe integration._
+
+- `_generate_roster_sidecar(plugin_json_path: Path, repo_root: Path) -> tuple[dict, list[str]]` _(internal)_ — Generate the roster sidecar from plugin.json.
+- `_write_roster_sidecar(roster: dict, repo_root: Path) -> tuple[Path, int]` _(internal)_ — Write the roster sidecar to .vibe/forge-roster.json.
+- `_extract_frontmatter_field(content: str, field: str) -> str` _(internal)_ — Extract a field from YAML frontmatter in an agent markdown file.
+- `_generate_subagent_toml(agent_file: Path) -> tuple[str, str]` _(internal)_ — Generate a Vibe subagent TOML file from an agent.md file.
+- `_generate_prompt_file(agent_file: Path) -> str` _(internal)_ — Generate a prompt file from an agent.md file.
+- `_publish_subagents(agents_dir: Path, repo_root: Path) -> tuple[int, list[str]]` _(internal)_ — Generate subagent TOML + prompt pairs from agents/*.md.
+- `_warn(warnings: list[str]) -> None` _(internal)_ — Write each warning to stderr.
+- `_install_agents_md(repo_root: Path) -> None` _(internal)_ — Generate AGENTS.md from FOUNDATION.md + CLAUDE.md when absent.
+- `_print_trust_summary() -> None` _(internal)_ — Print the trust requirement and unenforced protections to stderr.
+- `install_vibe(repo_root: Path | None = None, *, check_mode: bool = False, verify_mode: bool = False) -> int` — Install Vibe integration for forge.
+- `_missing_artifact_issues(repo_root: Path) -> list[str]` _(internal)_ — Check the required Vibe artifact paths exist and are non-empty.
+- `_verify_vibe_installation(repo_root: Path | None = None) -> int` _(internal)_ — Verify existing Vibe installation.
+- `main() -> int` — CLI entry point for install-forge-vibe.
 
 ## `forge.intake`
 

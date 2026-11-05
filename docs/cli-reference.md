@@ -405,7 +405,7 @@ options:
 
 ```text
 usage: forge-doctor [-h] [--json] [--plugin-name PLUGIN_NAME]
-                    [--skip-plugin-checks]
+                    [--skip-plugin-checks] [--harness {auto,all,claude,vibe}]
 
 Validate a forge install in the current environment.
 
@@ -418,7 +418,16 @@ options:
                         other than forge a user-scope install. Consumers who
                         don't use Claude Code pass --skip-plugin-checks.
   --skip-plugin-checks  Skip all Claude Code plugin checks entirely. Useful
-                        for consumers who only adopt the pip CLIs.
+                        for consumers who only adopt the pip CLIs. Implies
+                        --harness vibe when no --harness is given.
+  --harness {auto,all,claude,vibe}
+                        Which agent harness registration layer to check:
+                        'claude' checks the Claude Code plugin install, 'vibe'
+                        checks .vibe/ + .agents/ + trust, 'all' checks both,
+                        'auto' (default) checks only the harnesses detected on
+                        this system — a harness that is not installed is
+                        skipped, never failed. Common checks (CLIs, gh, git
+                        hooks) always run.
 ```
 
 ## forge-emergency
@@ -526,6 +535,58 @@ forge.forge_config.CONFIG_KEYS.
 options:
   -h, --help  show this help message and exit
   --check     Verify the table is in sync without writing. Exit 1 on drift.
+```
+
+## forge-gen-vibe-agents
+
+```text
+usage: forge-gen-vibe-agents [-h] [--check] [--repo-root REPO_ROOT]
+
+Publish skills to .agents/skills/ for Vibe compatibility
+
+options:
+  -h, --help            show this help message and exit
+  --check               Check mode: don't write, just report what would be
+                        done.
+  --repo-root REPO_ROOT
+                        Repository root directory (default: current
+                        directory).
+```
+
+## forge-gen-vibe-hooks
+
+```text
+usage: forge-gen-vibe-hooks [-h] [--check] [--verify] [--repo-root REPO_ROOT]
+
+Generate .vibe/hooks.toml from .claude-plugin/plugin.json
+
+options:
+  -h, --help            show this help message and exit
+  --check               Check mode: don't write, just report what would be
+                        done.
+  --verify              Verify existing .vibe/hooks.toml has strict=true on
+                        blocking entries.
+  --repo-root REPO_ROOT
+                        Repository root directory (default: current
+                        directory).
+```
+
+## forge-hook-dispatch
+
+```text
+usage: forge-hook-dispatch [-h] --harness {claude,vibe} --event EVENT
+                           [--roster ROSTER]
+
+Dispatch hook events to forge guard scripts. Reads harness JSON from stdin,
+runs ordered guards, emits verdict to stdout.
+
+options:
+  -h, --help            show this help message and exit
+  --harness {claude,vibe}
+                        Agent harness name (claude or vibe).
+  --event EVENT         Event name (e.g., pre_tool, PreToolUse).
+  --roster ROSTER       Path to roster sidecar file (default: .vibe/forge-
+                        roster.json for vibe).
 ```
 
 ## forge-intake
@@ -1016,7 +1077,8 @@ options:
                others just print their intent.
   --skip SLUG  Skip a step by slug. Repeatable. Known slugs: githooks, claude-
                md, claude-settings, plugin, labels, intake, readme-badges,
-               api-digest, cli-reference, c4, audit-deps, doctor, config.
+               api-digest, cli-reference, c4, vibe, audit-deps, doctor,
+               config.
   --strict     Abort on the first failed step. Default is continue-on-fail.
 ```
 
@@ -1100,6 +1162,24 @@ Write a drift-aware status-badge block into the README. Opt-in via
 options:
   -h, --help  show this help message and exit
   --check     Verify the block is current without writing (exit 1 on drift).
+```
+
+## install-forge-vibe
+
+```text
+usage: install-forge-vibe [-h] [--check] [--verify] [--repo-root REPO_ROOT]
+
+Install Mistral Vibe integration for forge. Generates .vibe/hooks.toml,
+.vibe/forge-roster.json, publishes skills to .agents/skills/, generates
+subagent configs, and prints trust requirements.
+
+options:
+  -h, --help            show this help message and exit
+  --check               Dry-run: report what would be done without writing.
+  --verify              Verify existing Vibe installation.
+  --repo-root REPO_ROOT
+                        Repository root directory (default: current
+                        directory).
 ```
 
 ## verify-forge-agent-doc

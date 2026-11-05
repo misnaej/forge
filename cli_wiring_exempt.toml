@@ -3,3 +3,12 @@
 
 [exempt."forge-release"]
 reason = "Consumer-facing release orchestrator for single-track tag-versioned repos; run by a human at release time, not from a pre-commit/hook/bootstrap path (forge itself uses the rolling-next flow instead)."
+
+[exempt."forge-hook-dispatch"]
+reason = "Called by Vibe hooks at runtime, not by forge CLIs. Wired via .vibe/hooks.toml generation."
+
+[exempt."forge-gen-vibe-hooks"]
+reason = "Internal generator called by install-forge-vibe, not a user-facing CLI."
+
+[exempt."forge-gen-vibe-agents"]
+reason = "Internal generator called by install-forge-vibe, not a user-facing CLI."

@@ -676,6 +676,7 @@ def test_global_install_advisory_leaves_exit_code_unchanged(
         "_check_plugin_manifests",
         "_check_plugin_contents",
         "_check_checkout_plugin",
+        "_check_vibe_integration",
     ):
         monkeypatch.setattr(doctor, name, lambda *_a: [])
     monkeypatch.setattr(

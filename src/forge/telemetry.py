@@ -352,10 +352,10 @@ def _render_plot(root: Path, samples: list[Sample], label: str = "") -> None:
     if not samples:
         return
     try:
-        import matplotlib as mpl  # noqa: PLC0415 — optional dep, needed only here
+        import matplotlib as mpl  # pyrefly: ignore[missing-import]
 
         mpl.use("Agg")
-        import matplotlib.pyplot as plt  # noqa: PLC0415 — after backend pin
+        import matplotlib.pyplot as plt  # pyrefly: ignore[missing-import]
     except ImportError:
         logger.info(
             "telemetry: %s — skipping the PNG chart (text log written).",

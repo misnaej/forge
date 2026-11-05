@@ -29,6 +29,7 @@ def test_steps_in_expected_order() -> None:
         "api-digest",
         "cli-reference",
         "c4",
+        "vibe",
         "audit-deps",
         "doctor",
         "config",
