@@ -366,7 +366,11 @@ def test_push_sets_upstream_only_when_missing(
 
 @pytest.fixture
 def main_env(feature_repo: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """``feature_repo`` wired as ``main()``'s repo root."""
+    """``feature_repo`` wired as ``main()``'s repo root.
+
+    Returns:
+        The repo root.
+    """
     monkeypatch.setattr(commit, "repo_root", lambda: feature_repo)
     return feature_repo
 
