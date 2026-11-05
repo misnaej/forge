@@ -14,7 +14,8 @@ git commands is enforced here (FOUNDATION §7: a CLI performing a
 - the pre-commit verdict must pass first (an armed ``forge-emergency``
   lets stale or missing logs through, never a failed step);
 - the message is conventional, at most 50 words, with no AI attribution;
-- the index must equal the named files, before and after the commit;
+- the index must equal the named files before the commit, and the commit
+  may add only what the hook regenerates (generated docs, the cadence stamp);
 - the pre-commit hook runs on the commit (git's per-process overrides
   that could skip it are dropped);
 - pushes never force and never delete; a rejected push is reported, the
@@ -53,6 +54,8 @@ from forge.git_utils import (
 )
 from forge.pr_squash_comment import MAX_WORDS, TITLE_RE
 from forge.precommit import verdict
+from forge.regen_docs import API_DIGEST_DOC, CLI_REFERENCE_DOC
+from forge.smart_test.lifecycle import STAMP_RELPATH
 
 
 if TYPE_CHECKING:
@@ -66,6 +69,12 @@ EXIT_OK: Final = 0
 EXIT_REFUSED: Final = 1
 EXIT_PUSH_FAILED: Final = 2
 
+#: Files the pre-commit hook itself regenerates and stages into a commit it
+#: lets through (the generated docs, the full-run cadence stamp); a commit
+#: may hold these beyond the named files.
+HOOK_STAGED_PATHS: Final = frozenset(
+    {API_DIGEST_DOC, CLI_REFERENCE_DOC, str(STAMP_RELPATH)}
+)
 #: A push failing on these is GitHub being briefly unavailable, not a
 #: rejection; it is retried a few times before being reported.
 _TRANSIENT_PUSH: Final = re.compile(
@@ -302,12 +311,16 @@ def commit_and_push(root: Path, request: Request) -> int:
             f"Fix the failing step with forge:precommit-fixer. Detail: {exc}"
         )
         raise CommitRefusedError(msg) from exc
-    if committed_paths(root) != set(request.paths):
+    committed = committed_paths(root)
+    extra = committed - set(request.paths)
+    if set(request.paths) - committed or extra - HOOK_STAGED_PATHS:
         msg = (
             "the commit holds other files than requested; it stays local, "
             "nothing pushed. Report it — never rewrite the commit."
         )
         raise CommitRefusedError(msg)
+    if extra:
+        logger.info("forge-commit: pre-commit hook added %s.", ", ".join(sorted(extra)))
     sha = run_git("rev-parse", "--short", "HEAD", cwd=root).strip()
     logger.info("forge-commit: committed %s on %s.", sha, branch)
     return push(root, branch) if request.push else EXIT_OK

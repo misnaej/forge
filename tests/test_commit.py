@@ -232,6 +232,44 @@ def test_commit_and_push_committed_paths_mismatch_refuses(
 
 
 @pytest.mark.usefixtures("_fake_evidence")
+def test_commit_and_push_hook_staged_extra_is_allowed(
+    feature_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: the pre-commit hook adds a generated doc to the commit.
+
+    MOCK SETUP: ``committed_paths`` reports the named file plus
+    ``docs/api-digest.md`` (a member of ``HOOK_STAGED_PATHS``).
+    EXPECTED BEHAVIOR: the commit is accepted and the exit code is OK.
+    """
+    monkeypatch.setattr(
+        commit, "committed_paths", lambda _r: {"a.txt", "docs/api-digest.md"}
+    )
+    (feature_repo / "a.txt").write_text("changed\n", encoding="utf-8")
+
+    code = commit.commit_and_push(
+        feature_repo, Request("fix: a", ("a.txt",), push=False)
+    )
+
+    assert code == commit.EXIT_OK
+
+
+@pytest.mark.usefixtures("_fake_evidence")
+def test_commit_and_push_named_file_missing_from_commit_refuses(
+    feature_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: a requested file is absent from the resulting commit.
+
+    MOCK SETUP: ``committed_paths`` reports an empty set.
+    EXPECTED BEHAVIOR: refused with the "other files" message.
+    """
+    monkeypatch.setattr(commit, "committed_paths", lambda _r: set())
+    (feature_repo / "a.txt").write_text("changed\n", encoding="utf-8")
+
+    with pytest.raises(CommitRefusedError, match="other files"):
+        commit.commit_and_push(feature_repo, Request("fix: a", ("a.txt",), push=False))
+
+
+@pytest.mark.usefixtures("_fake_evidence")
 def test_commit_and_push_blocking_hook_refuses(feature_repo: Path) -> None:
     """A failing pre-commit hook refuses the commit with a clear message."""
     hook = feature_repo / ".git" / "hooks" / "pre-commit"

@@ -116,7 +116,8 @@ _README = """\
 # Intake
 
 One file per sighting of a problem not yet filed (FOUNDATION §1, §12).
-Write entries with `forge-intake new`; never edit one to bump a count —
+Write entries with `forge-intake new`, in caveman full (agent-facing,
+FOUNDATION §8 "Write terse"); never edit one to bump a count —
 a second sighting is a second file. Counting: all files from one
 feature branch are one sighting; on the base branch
 (`[tool.forge].base_branch`, default `main`) or with no branch, each
@@ -1091,6 +1092,9 @@ def _dispatch_write(args: argparse.Namespace, root: Path, intake_dir: Path) -> N
             emit(line)
     elif args.command == "new":
         emit(str(new_entry(intake_dir, args.kind, args.slug, args.title, args.surface)))
+        # Said where the entry gets written: one line here beats a rule the
+        # writer would have to remember to look up.
+        emit("fill the sections in caveman full (FOUNDATION §8 'Write terse').")
     else:
         base = load_config(root).base_branch
         emit(retire(intake_dir, args.paths, args.issue, base_branch=base))
