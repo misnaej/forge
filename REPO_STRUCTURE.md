@@ -78,6 +78,7 @@ Checked on every commit by `verify-forge-repo-structure`: every listed file and 
    - claude_settings_schema.py: shared `.claude/settings.json` forge-block schema (shared marketplace key, `forge@forge` id, scaffold) — single source of truth for the CLIs that write that block (install_claude_settings, install_claudemd)
    - install_labels.py: `install-forge-labels` — GitHub label installer
    - install_bootstrap.py: `install-forge-bootstrap` — one-shot umbrella that runs every installer + generator in dependency order
+   - instruction_files.py: packaged FOUNDATION.md text, recursive `@`-include resolution, AGENTS.md flatten/drift (shared by install_claudemd + install_vibe + doctor)
    - agent_harness.py: frozen harness profiles for agent runtime adapters (Claude Code, Mistral Vibe) mapping to the guard contract — pure data, shared by hook_dispatch and the generators
    - hook_dispatch.py: `forge-hook-dispatch` — guard dispatcher that runs ordered guard set and emits harness-native verdict JSON
    - gen_vibe_hooks.py: `forge-gen-vibe-hooks` — generates .vibe/hooks.toml from .claude-plugin/plugin.json
@@ -234,6 +235,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_gen_vibe_agents.py: tests for gen_vibe_agents (skill publishing to .agents/skills, AGENTS.md rewrite)
    - test_gen_vibe_hooks.py: tests for gen_vibe_hooks (hooks.toml invariants: strict, regex matcher, dispatcher wiring)
    - test_hook_dispatch.py: tests for hook_dispatch (fail-closed matrix, one test per row)
+   - test_instruction_files.py: tests for instruction_files (include resolution, flatten, drift)
    - test_install_vibe.py: tests for install_vibe (roster sidecar, subagent TOML+prompts, check/verify modes)
    - test_gen_api_digest.py: tests for gen_api_digest
    - test_gen_c4.py: tests for gen_c4 (C4 / Structurizr DSL generator)

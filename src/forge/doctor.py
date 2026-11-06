@@ -73,6 +73,7 @@ from forge.git_utils import (
     parse_semver,
     run_git,
 )
+from forge.instruction_files import flatten_agents_md
 from forge.upgrade import pin_revision_mismatch, pip_command
 from forge.version_surfaces import (
     SKEW_REMEDIATION,
@@ -945,7 +946,12 @@ def _vibe_skills_result(repo_root: Path) -> CheckResult:
 
 
 def _vibe_agents_md_result(repo_root: Path) -> CheckResult:
-    """Check ``AGENTS.md`` is present in the checkout.
+    """Check ``AGENTS.md`` is present and in sync with its sources.
+
+    Content drift (FOUNDATION.md / CLAUDE.md changed since the last
+    install) fails the check: Vibe loads AGENTS.md verbatim, so a stale
+    file means the session runs stale rules. When the source files are
+    absent (not a forge checkout), presence-only applies.
 
     Args:
         repo_root: Checkout to inspect.
@@ -954,14 +960,26 @@ def _vibe_agents_md_result(repo_root: Path) -> CheckResult:
         The check result for AGENTS.md.
     """
     agents_md = repo_root / "AGENTS.md"
+    if not agents_md.is_file():
+        return CheckResult(
+            name="vibe:AGENTS.md",
+            passed=False,
+            detail=f"missing {agents_md} — run `install-forge-vibe`",
+        )
+    expected = flatten_agents_md(repo_root)
+    if expected is not None and agents_md.read_text(encoding="utf-8") != expected:
+        return CheckResult(
+            name="vibe:AGENTS.md",
+            passed=False,
+            detail=(
+                "stale vs FOUNDATION.md + CLAUDE.md (or their @-includes) — "
+                "run `install-forge-vibe`, then restart the Vibe session"
+            ),
+        )
     return CheckResult(
         name="vibe:AGENTS.md",
-        passed=agents_md.is_file(),
-        detail=(
-            f"{agents_md.stat().st_size} bytes"
-            if agents_md.is_file()
-            else f"missing {agents_md} — run `install-forge-vibe`"
-        ),
+        passed=True,
+        detail=f"{agents_md.stat().st_size} bytes, in sync",
     )
 
 

@@ -36,6 +36,7 @@ from forge._hook_helpers import (
     run_foundation_drift_check,
     run_hook_extensions,
     run_plugin_sync,
+    run_vibe_regen,
 )
 from forge.git_utils import configure_cli_logging
 from forge.run_context import is_ci, is_non_interactive
@@ -98,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     rc = 0
     if not is_non_interactive():
         rc = run_foundation_drift_check("post-checkout")
+        run_vibe_regen("post-checkout")
 
     # Consumer extensions are the consumer's own logic — they must run
     # wherever a human is present, including a no-tty local checkout.

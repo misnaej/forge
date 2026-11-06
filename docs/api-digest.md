@@ -14,6 +14,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 > _Shared helpers for forge's managed git-hook entrypoints._
 
 - `run_foundation_drift_check(hook_name: str) -> int` — Run ``install-forge-claude-md --check --quiet``.
+- `run_vibe_regen(hook_name: str) -> None` — Regenerate the Vibe instruction surface when the repo opted in.
 - `run_hook_extensions(hook_name: str) -> None` — Run consumer extension scripts under ``.githooks/<hook_name>.d/``.
 - `run_plugin_sync(hook_name: str) -> None` — Run ``forge-plugin-sync --quiet`` so this checkout keeps its release.
 
@@ -588,7 +589,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_vibe_roster_result(vibe_dir: Path) -> CheckResult` _(internal)_ — Check the ``.vibe/forge-roster.json`` sidecar exists, parses, and maps events.
 - `_vibe_agents_result(vibe_dir: Path) -> CheckResult` _(internal)_ — Check subagent TOMLs are valid and each has its prompt pair.
 - `_vibe_skills_result(repo_root: Path) -> CheckResult` _(internal)_ — Check skills are published under ``.agents/skills/``.
-- `_vibe_agents_md_result(repo_root: Path) -> CheckResult` _(internal)_ — Check ``AGENTS.md`` is present in the checkout.
+- `_vibe_agents_md_result(repo_root: Path) -> CheckResult` _(internal)_ — Check ``AGENTS.md`` is present and in sync with its sources.
 - `_vibe_dispatcher_result() -> CheckResult` _(internal)_ — Check the ``forge-hook-dispatch`` CLI is on PATH.
 - `_vibe_trusted_folder_result(repo_root: Path) -> CheckResult` _(internal)_ — Check the checkout is in Vibe's trusted-folders database.
 - `_check_vibe_integration(repo_root: Path) -> list[CheckResult]` _(internal)_ — Check forge's Mistral Vibe integration artifacts in this checkout.
@@ -1023,7 +1024,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _install-forge-claude-md — sync the forge foundation into a consumer repo._
 
-- `_foundation_text() -> str` _(internal)_ — Return the bundled FOUNDATION.md text shipped with the pip package.
 - `_build_foundation_file(*, foundation: str) -> str` _(internal)_ — Render the full ``FOUNDATION.md`` content including markers.
 - `_has_managed_markers(text: str) -> bool` _(internal)_ — Return True if *text* contains a forge-managed START/END pair.
 - `sync_foundation(foundation_path: Path, *, check_only: bool = False, force: bool = False) -> bool` — Write or update ``FOUNDATION.md`` with the shipped foundation text.
@@ -1108,13 +1108,24 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_generate_subagent_toml(agent_file: Path) -> tuple[str, str]` _(internal)_ — Generate a Vibe subagent TOML file from an agent.md file.
 - `_generate_prompt_file(agent_file: Path) -> str` _(internal)_ — Generate a prompt file from an agent.md file.
 - `_publish_subagents(agents_dir: Path, repo_root: Path, *, check_mode: bool = False) -> tuple[int, list[str]]` _(internal)_ — Generate subagent TOML + prompt pairs from agents/*.md.
+- `_write_if_changed(path: Path, content: str) -> bool` _(internal)_ — Write content to path only when it differs; return True when written.
+- `_ensure_gitignored(repo_root: Path) -> list[str]` _(internal)_ — Ensure the generated Vibe artifacts are gitignored in this repo.
 - `_warn(warnings: list[str]) -> None` _(internal)_ — Write each warning to stderr.
-- `_install_agents_md(repo_root: Path) -> None` _(internal)_ — Generate AGENTS.md from FOUNDATION.md + CLAUDE.md when absent.
-- `_print_trust_summary() -> None` _(internal)_ — Print the trust requirement and unenforced protections to stderr.
+- `_install_agents_md(repo_root: Path) -> bool` _(internal)_ — Regenerate AGENTS.md from FOUNDATION.md + CLAUDE.md with includes resolved.
+- `_print_trust_summary(*, restart_needed: bool) -> None` _(internal)_ — Print the trust requirement and unenforced protections to stderr.
+- `_artifact_snapshot(repo_root: Path) -> dict[str, str]` _(internal)_ — Map every generated Vibe artifact path to its content hash.
 - `install_vibe(repo_root: Path | None = None, *, check_mode: bool = False, verify_mode: bool = False) -> int` — Install Vibe integration for forge.
 - `_missing_artifact_issues(repo_root: Path) -> list[str]` _(internal)_ — Check the required Vibe artifact paths exist and are non-empty.
 - `_verify_vibe_installation(repo_root: Path | None = None) -> int` _(internal)_ — Verify existing Vibe installation.
 - `main() -> int` — CLI entry point for install-forge-vibe.
+
+## `forge.instruction_files`
+
+> _Instruction-document text: packaged foundation, ``@``-includes, AGENTS.md._
+
+- `foundation_text() -> str` — Return the bundled FOUNDATION.md text shipped with the pip package.
+- `resolve_includes(text: str, base_dir: Path, *, _seen: frozenset[Path] = frozenset()) -> str` — Replace whole-line ``@path`` directives with the referenced file's content.
+- `flatten_agents_md(repo_root: Path) -> str | None` — Compose the flattened AGENTS.md for a checkout.
 
 ## `forge.intake`
 

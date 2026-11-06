@@ -20,6 +20,7 @@ import os
 import shutil
 import subprocess
 
+from forge.config import read_tool_forge_section
 from forge.git_utils import forge_install_command, repo_root
 
 
@@ -61,6 +62,38 @@ def run_foundation_drift_check(hook_name: str) -> int:
         logger.info("  → run `install-forge-claude-md` to sync.")
 
     return 0
+
+
+def run_vibe_regen(hook_name: str) -> None:
+    """Regenerate the Vibe instruction surface when the repo opted in.
+
+    Runs ``install-forge-vibe`` when ``[tool.forge.vibe] enabled`` is set,
+    so AGENTS.md (with recursive ``@``-include resolution), .vibe/ hooks,
+    agents and roster refresh on every merge/checkout. Skips silently when
+    the CLI is absent or the repo did not opt in; never propagates a
+    non-zero exit — a managed git hook must not fail a pull.
+
+    Args:
+        hook_name: The calling hook's short name, for log lines.
+    """
+    root = repo_root()
+    if root is None:
+        return
+    if not read_tool_forge_section(root, "vibe").get("enabled", False):
+        return
+    if shutil.which("install-forge-vibe") is None:
+        logger.info(
+            "[forge] %s: install-forge-vibe not on PATH; skipping Vibe regen.",
+            hook_name,
+        )
+        return
+    proc = subprocess.run(["install-forge-vibe"], check=False, cwd=root)
+    if proc.returncode != 0:
+        logger.info(
+            "[forge] %s: install-forge-vibe exited %d; Vibe artifacts may be stale.",
+            hook_name,
+            proc.returncode,
+        )
 
 
 def run_hook_extensions(hook_name: str) -> None:
