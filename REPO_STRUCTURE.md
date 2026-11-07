@@ -365,6 +365,7 @@ repos by `install-forge-claude-md` (guarded there by a README notice + the
 - agent-architecture.md: hand-maintained agent × skill × hook × CLI interaction subviews by workflow phase + a FOUNDATION-enforcers view; gated by the `agent_doc` step, tracked for full drift-check by #163
 - ci-access.md: how a consumer's CI runner pulls forge
 - claude-code-plugin.md: optional Claude Code plugin install + extension
+- vibe.md: optional Mistral Vibe integration — opt-in `[tool.forge.vibe]`, generated .vibe/ + .agents/ + flattened AGENTS.md, trust requirement, unenforced events
 - cli-reference.md: generated CLI reference (`forge-gen-cli-reference`)
 - adopting.md: modular adoption guide — three independent install tracks (CLIs / + git hooks / + plugin) + "what lands on disk" table + drift/upgrade explainer
 - release-process.md: forge-only single source of truth for versioning + tag-on-merge releases + the invariant→test contract

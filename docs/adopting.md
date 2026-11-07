@@ -126,6 +126,11 @@ and writes `{ "enabledPlugins": { "forge@forge": false } }`, merging
 around your other keys. Details and the refusals:
 [`claude-code-plugin.md`](claude-code-plugin.md).
 
+Using Mistral Vibe instead of (or alongside) Claude Code? Set
+`[tool.forge.vibe] enabled = true` and the bootstrap `vibe` step generates
+`.vibe/` hooks + agents, `.agents/skills/` and a flattened `AGENTS.md` —
+see [docs/vibe.md](vibe.md).
+
 > **Avoid a global `/plugin install forge@forge`.** A user-scope install
 > is active in **every** repo, its agents then error in repos that lack
 > `forge-scripts`, and beside a checkout's own copy two plugins named
