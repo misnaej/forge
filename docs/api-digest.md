@@ -1115,6 +1115,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_install_agents_md(repo_root: Path) -> bool` _(internal)_ — Regenerate AGENTS.md from FOUNDATION.md + CLAUDE.md with includes resolved.
 - `_print_trust_summary(*, restart_needed: bool) -> None` _(internal)_ — Print the trust requirement and unenforced protections to stderr.
 - `_artifact_snapshot(repo_root: Path) -> dict[str, str]` _(internal)_ — Map every generated Vibe artifact path to its content hash.
+- `_write_model_presets(repo_root: Path) -> bool` _(internal)_ — Write forge-owned [[models]] presets into .vibe/config.toml.
 - `install_vibe(repo_root: Path | None = None, *, check_mode: bool = False, verify_mode: bool = False) -> int` — Install Vibe integration for forge.
 - `_missing_artifact_issues(repo_root: Path) -> list[str]` _(internal)_ — Check the required Vibe artifact paths exist and are non-empty.
 - `_verify_vibe_installation(repo_root: Path | None = None) -> int` _(internal)_ — Verify existing Vibe installation.

@@ -75,6 +75,11 @@ class HarnessProfile:
         verdict_emitter: The emitter for this harness's verdict format.
         blocking_events: Set of event names that are blocking (must have
             strict=true in Vibe, exit 2 in Claude).
+        model_alias_map: Mapping from forge model tier names (haiku, sonnet,
+            opus, inherit) to harness model aliases. Claude tiers are
+            identity; Vibe maps to the forge-owned [[models]] presets that
+            install-forge-vibe writes. "inherit"/unknown tiers map to None
+            (emit nothing — the subagent inherits the session model).
     """
 
     name: str
@@ -83,6 +88,7 @@ class HarnessProfile:
     payload_field_renames: Mapping[str, str]
     verdict_emitter: VerdictEmitter
     blocking_events: frozenset[str]
+    model_alias_map: Mapping[str, str | None]
 
 
 def _emit_claude_deny(_reason: str) -> tuple[int, str]:
@@ -181,6 +187,12 @@ CLAUDE_PROFILE = HarnessProfile(
         "Write": "Write",
     },
     payload_field_renames={},  # Identity: field names match
+    model_alias_map={
+        "haiku": "haiku",
+        "sonnet": "sonnet",
+        "opus": "opus",
+        "inherit": None,
+    },
     verdict_emitter=VerdictEmitter(
         emit_deny=_emit_claude_deny,
         emit_pass=_emit_claude_pass,
@@ -227,18 +239,20 @@ VIBE_PROFILE = HarnessProfile(
     payload_field_renames={
         "agent_name": "agent_type",
     },
+    model_alias_map={
+        "haiku": "forge-haiku",
+        "sonnet": "forge-sonnet",
+        "opus": "forge-opus",
+        "inherit": None,
+    },
     verdict_emitter=VerdictEmitter(
         emit_deny=_emit_vibe_deny,
         emit_pass=_emit_vibe_pass,
         emit_error=_emit_vibe_error,
     ),
-    blocking_events=frozenset(
-        {
-            "pre_tool",
-            "post_tool",
-            "post_agent",
-        }
-    ),
+    # post_agent cannot block in Vibe (deny only injects a retry message,
+    # and strict is forbidden on it).
+    blocking_events=frozenset({"pre_tool", "post_tool"}),
 )
 
 # Registry of all known harness profiles

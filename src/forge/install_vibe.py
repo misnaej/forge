@@ -35,7 +35,11 @@ import logging
 import sys
 from pathlib import Path
 
-from forge.agent_harness import UNENFORCED_VIBE_HOOKS, resolve_hooks_base
+from forge.agent_harness import (
+    UNENFORCED_VIBE_HOOKS,
+    get_harness_profile,
+    resolve_hooks_base,
+)
 from forge.gen_vibe_agents import generate_vibe_agents
 from forge.gen_vibe_hooks import verify_existing_hooks, write_vibe_hooks
 from forge.git_utils import configure_cli_logging
@@ -195,14 +199,20 @@ def _generate_subagent_toml(agent_file: Path) -> tuple[str, str]:
         f'description = "{description}"\n'
         f'system_prompt_id = "{prompt_id}"\n'
     )
-    if model_tier:
-        # Record the forge model tier; pinning it needs an active_model alias
-        # from the user's [[models]] — an unknown alias would reject the whole
-        # agent file, so we never emit active_model unprompted.
+    alias = (
+        get_harness_profile("vibe").model_alias_map.get(model_tier)
+        if model_tier
+        else None
+    )
+    if alias:
+        # Pin the tier to the forge-owned preset alias that
+        # _write_model_presets installs into .vibe/config.toml — the alias
+        # is guaranteed to resolve because we write it ourselves.
+        toml_content += f'active_model = "{alias}"\n'
+    elif model_tier:
         toml_content += (
-            f'# forge model tier: {model_tier} — set active_model = "<alias>" '
-            f"to pin it (alias must exist in Vibe [[models]]);\n"
-            f"# otherwise the subagent inherits the session model.\n"
+            f"# forge model tier: {model_tier} "
+            "(no forge preset; inherits session model)\n"
         )
 
     return toml_content, prompt_id
@@ -401,6 +411,45 @@ def _artifact_snapshot(repo_root: Path) -> dict[str, str]:
     return snapshot
 
 
+_MODEL_PRESETS: tuple[tuple[str, str], ...] = (
+    ("forge-haiku", "ministral-8b-latest"),
+    ("forge-sonnet", "mistral-small-latest"),
+    ("forge-opus", "mistral-large-latest"),
+)
+
+
+def _write_model_presets(repo_root: Path) -> bool:
+    """Write forge-owned [[models]] presets into .vibe/config.toml.
+
+    Appends a preset only when its alias is not already configured, so
+    user/admin models are never clobbered. The presets give generated
+    .vibe/agents/*.toml a guaranteed-resolvable active_model alias (an
+    unknown alias would reject the whole agent file at load).
+
+    Args:
+        repo_root: Repository root.
+
+    Returns:
+        True if the file was created or extended.
+    """
+    config_path = repo_root / ".vibe" / "config.toml"
+    existing = config_path.read_text(encoding="utf-8") if config_path.is_file() else ""
+    additions = [
+        f'\n[[models]]\nname = "{name}"\nalias = "{alias}"\n'
+        for alias, name in _MODEL_PRESETS
+        if f'alias = "{alias}"' not in existing
+    ]
+    if not additions:
+        return False
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    with config_path.open("a", encoding="utf-8") as f:
+        if existing and not existing.endswith("\n"):
+            f.write("\n")
+        f.write("# forge-owned model presets for subagent active_model pins\n")
+        f.writelines(additions)
+    return True
+
+
 def install_vibe(
     repo_root: Path | None = None,
     *,
@@ -460,6 +509,7 @@ def install_vibe(
     # Step 5b: keep the generated artifacts gitignored in consumer repos
     if not check_mode:
         _ensure_gitignored(repo_root)
+        _write_model_presets(repo_root)
 
     # Step 6: Print trust requirement, unenforced protections, restart notice
     changed = _artifact_snapshot(repo_root) != before

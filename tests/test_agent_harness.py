@@ -46,9 +46,9 @@ def test_profiles_are_frozen_and_carry_blocking_events() -> None:
     for profile in (CLAUDE_PROFILE, VIBE_PROFILE):
         with pytest.raises(dataclasses.FrozenInstanceError):
             profile.name = "mutated"  # type: ignore[misc]
-    assert VIBE_PROFILE.blocking_events == frozenset(
-        {"pre_tool", "post_tool", "post_agent"}
-    )
+    # post_agent is excluded: Vibe forbids strict on it and its deny only
+    # injects a retry message — it cannot block.
+    assert VIBE_PROFILE.blocking_events == frozenset({"pre_tool", "post_tool"})
     assert CLAUDE_PROFILE.blocking_events == frozenset(
         {
             "PreToolUse",

@@ -33,6 +33,7 @@ import logging
 import sys
 import tomllib
 from dataclasses import dataclass
+from importlib import resources
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -83,13 +84,9 @@ UNENFORCED_CLAUDE_HOOKS: frozenset[str] = frozenset(UNENFORCED_VIBE_HOOKS)
 # Vibe has no SessionStart, PreCompact, or
 # SubagentStart, so those hooks cannot be enforced. Only pre_tool, post_tool,
 # and post_agent can block.
-BLOCKING_VIBE_EVENTS: frozenset[str] = frozenset(
-    {
-        "pre_tool",
-        "post_tool",
-        "post_agent",
-    }
-)
+# post_agent is deliberately absent: Vibe forbids strict on it, and its
+# deny only injects a retry message (capped 3/turn) — it cannot block.
+BLOCKING_VIBE_EVENTS: frozenset[str] = frozenset({"pre_tool", "post_tool"})
 
 
 @dataclass(frozen=True)
@@ -429,8 +426,6 @@ def _load_extra_vibe_hooks() -> list[dict]:
         Hook entry dicts in Vibe-native shape (type/match/command/timeout),
         emitted verbatim — no strict key (forbidden on post_agent).
     """
-    from importlib import resources
-
     data = resources.files("forge").joinpath("data/vibe-extra-hooks.toml")
     entries = tomllib.loads(data.read_text(encoding="utf-8")).get("hooks", [])
     return [
