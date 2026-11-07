@@ -162,8 +162,6 @@ def test_agents_md_generation_drops_foundation_directive(consumer_repo: Path) ->
 
 def test_model_presets_written_and_idempotent(tmp_path: Path) -> None:
     """Install writes forge-* [[models]] presets once; re-run adds nothing."""
-    import tomllib
-
     root = tmp_path / "c"
     (root / ".claude-plugin").mkdir(parents=True)
     (root / ".claude-plugin" / "plugin.json").write_text('{"hooks": {}}')
@@ -179,8 +177,6 @@ def test_model_presets_written_and_idempotent(tmp_path: Path) -> None:
 
 def test_model_presets_never_clobber_user_alias(tmp_path: Path) -> None:
     """A pre-existing user model with the same alias is left untouched."""
-    import tomllib
-
     root = tmp_path / "c"
     (root / ".vibe").mkdir(parents=True)
     (root / ".claude-plugin").mkdir()
