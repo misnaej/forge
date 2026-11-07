@@ -64,6 +64,10 @@ root `AGENTS.md` — gitignored files git never restores.
 
 `install-forge-vibe` prints the unenforced protections on every run.
 
+## How harness compatibility works
+
+Forge's guards are Claude-shaped at the base with per-harness adapters on top today; the target architecture inverts this to a harness-neutral base contract. See [architecture.md — harness compatibility](architecture.md#harness-compatibility-claude-code-mistral-vibe-future).
+
 ## Checking the install
 
 ```bash

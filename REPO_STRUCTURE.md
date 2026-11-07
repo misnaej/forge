@@ -360,7 +360,7 @@ repos by `install-forge-claude-md` (guarded there by a README notice + the
 
 - api-digest.md: generated public-symbol index (`forge-gen-api-digest`)
 - audit-pack.md: audit suite documentation
-- architecture.md: forge's own generated C4 component diagram (`forge-gen-c4` splices it; `c4.toml` `readme`) + a pointer to the agent architecture
+- architecture.md: forge's own generated C4 component diagram (incl. the harness-compatibility section: adapter-over-guards today, neutral base contract as target) (`forge-gen-c4` splices it; `c4.toml` `readme`) + a pointer to the agent architecture
 - c4-architecture.md: design & rationale for forge-gen-c4 + the /c4 skill (the implemented C4 generator)
 - agent-architecture.md: hand-maintained agent × skill × hook × CLI interaction subviews by workflow phase + a FOUNDATION-enforcers view; gated by the `agent_doc` step, tracked for full drift-check by #163
 - ci-access.md: how a consumer's CI runner pulls forge
