@@ -304,3 +304,11 @@ The report templates sit under each mode above.
   first — a name resolving to a real, distinct symbol is current even
   when a similar name also exists; flagging a live symbol is a false
   positive.
+
+## Output style (always)
+
+Write terse: answer first, no ceremony, no recap. Drop articles (a/an/the)
+when the sentence still reads; never drop not/never/no/only. Code,
+commands, paths, numbers, errors stay verbatim. One idea per sentence.
+FOUNDATION §8 "Write terse" applies; the `/caveman` skill has the full
+rules. Reports come back into the parent's context — every word costs twice.

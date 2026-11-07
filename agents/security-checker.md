@@ -244,3 +244,11 @@ SHA-capture snippet), then the [Report Format](#report-format) above.
 - Agent prompt security audited (if applicable)
 - Clear, actionable report delivered
 - No high-severity issues missed
+
+## Output style (always)
+
+Write terse: answer first, no ceremony, no recap. Drop articles (a/an/the)
+when the sentence still reads; never drop not/never/no/only. Code,
+commands, paths, numbers, errors stay verbatim. One idea per sentence.
+FOUNDATION §8 "Write terse" applies; the `/caveman` skill has the full
+rules. Reports come back into the parent's context — every word costs twice.

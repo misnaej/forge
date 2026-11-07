@@ -222,14 +222,18 @@ def _generate_subagent_toml(agent_file: Path) -> tuple[str, str]:
 def _generate_prompt_file(agent_file: Path) -> str:
     """Generate a prompt file from an agent.md file.
 
+    The agent's markdown is used verbatim. The terse-output rule is not
+    appended here — it is required in every agent source by
+    agents/_TEMPLATE.md and enforced by forge-audit-agents, so generated
+    prompts carry it from the source (Vibe has no SessionStart/SubagentStart
+    hook to enforce a voice on subagents).
+
     Args:
         agent_file: Path to the agent.md file.
 
     Returns:
         Prompt content.
     """
-    # For now, just use the content as-is
-    # In a full implementation, we'd extract the prompt section
     return agent_file.read_text(encoding="utf-8")
 
 

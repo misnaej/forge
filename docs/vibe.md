@@ -71,6 +71,11 @@ Forge's guards are Claude-shaped at the base with per-harness adapters on top to
 
 ## Terse output (caveman)
 
+Every generated subagent prompt (`.vibe/prompts/*.md`) carries an
+always-on terse-output block, because Vibe has no SessionStart/SubagentStart
+hook to enforce a voice on subagents and skills don't inherit into spawned
+subagents — the style rule lives in the prompt itself. On top of that:
+
 The `/caveman`, `/ultracave` and `/megacave` voice skills are vendored into
 `skills/` (Apache-2.0, attribution in `src/forge/data/VENDORED.md`) and
 published to `.agents/skills/`. Vibe has no SessionStart hook, so there is no

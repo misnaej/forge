@@ -249,3 +249,11 @@ The summary is ready for paste into Google Docs.
 - Top-level partition is by repo
 - Output pastes cleanly into Google Docs
 - File written to `.plan/weekly_summary_<start>_to_<end>.md`
+
+## Output style (always)
+
+Write terse: answer first, no ceremony, no recap. Drop articles (a/an/the)
+when the sentence still reads; never drop not/never/no/only. Code,
+commands, paths, numbers, errors stay verbatim. One idea per sentence.
+FOUNDATION §8 "Write terse" applies; the `/caveman` skill has the full
+rules. Reports come back into the parent's context — every word costs twice.

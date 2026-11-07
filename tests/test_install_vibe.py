@@ -9,15 +9,11 @@ from __future__ import annotations
 
 import json
 import tomllib
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
 from forge.install_vibe import install_vibe
-
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 _HOOKS_DIR = "${CLAUDE_PLUGIN_ROOT}/claude-hooks"
@@ -203,3 +199,15 @@ def test_subagent_toml_pins_active_model_from_tier(tmp_path: Path) -> None:
     assert install_vibe(root) == 0
     toml_text = (root / ".vibe" / "agents" / "a.toml").read_text()
     assert 'active_model = "forge-sonnet"' in toml_text
+
+
+def test_agent_sources_carry_terse_block_and_audit_enforces_it() -> None:
+    """Every shipped agent md carries the terse block; the audit requires it."""
+    from forge.audit.agents import REQUIRED_SECTIONS
+
+    assert "Output style (always)" in REQUIRED_SECTIONS
+    root = Path(__file__).parent.parent / "agents"
+    for md in sorted(root.glob("*.md")):
+        if md.name == "_TEMPLATE.md":
+            continue
+        assert "## Output style (always)" in md.read_text(encoding="utf-8"), md.name

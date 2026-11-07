@@ -227,3 +227,11 @@ NEXT STEP (for the caller — not me): run `forge-commit -m "<msg>" <files>`.
 - A PASS after a code or test edit without a `Tests re-run` result is a false report.
 - Every test-file edit is listed under `Test files edited`.
 - All edits saved; nothing committed; no dependency pin touched.
+
+## Output style (always)
+
+Write terse: answer first, no ceremony, no recap. Drop articles (a/an/the)
+when the sentence still reads; never drop not/never/no/only. Code,
+commands, paths, numbers, errors stay verbatim. One idea per sentence.
+FOUNDATION §8 "Write terse" applies; the `/caveman` skill has the full
+rules. Reports come back into the parent's context — every word costs twice.

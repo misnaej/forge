@@ -96,3 +96,11 @@ NEXT: <forge:test-writer to implement | specific fixes for the author>
 - Every finding cites `file:line` and the standard it maps to.
 - No tests written or edited (report-only).
 - Advise output is directly actionable by `forge:test-writer`.
+
+## Output style (always)
+
+Write terse: answer first, no ceremony, no recap. Drop articles (a/an/the)
+when the sentence still reads; never drop not/never/no/only. Code,
+commands, paths, numbers, errors stay verbatim. One idea per sentence.
+FOUNDATION §8 "Write terse" applies; the `/caveman` skill has the full
+rules. Reports come back into the parent's context — every word costs twice.
