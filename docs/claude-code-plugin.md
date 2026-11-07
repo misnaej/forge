@@ -113,8 +113,9 @@ agent writes is re-read on every later request; text people read stays
 plain English (FOUNDATION §8 "Write terse"). The grammar and its levels come from the
 [caveman](https://github.com/JuliusBrussee/caveman) plugin by Julius
 Brussee; forge ships only the instruction, so the plugin is not required.
-Install caveman too if you want its extras (`/caveman` levels, terse
-commit and review skills, `caveman-compress` for memory files). Turn
+The `/caveman`, `/ultracave` and `/megacave` voice skills now ship in
+the plugin (vendored, Apache-2.0 — see `src/forge/data/VENDORED.md`); in
+Mistral Vibe invoke `/caveman` manually, there is no auto-activation hook. Turn
 forge's hook off with `[tool.forge.hooks].caveman = false`; measure the
 effect with `forge-agent-profile --tokens`.
 

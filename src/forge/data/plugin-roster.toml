@@ -9,8 +9,10 @@
 [skills]
 names = [
     "c4",
+    "caveman",
     "commit",
     "fix",
+    "megacave",
     "memory-audit",
     "next",
     "perf",
@@ -23,6 +25,7 @@ names = [
     "smart-test",
     "test",
     "triage",
+    "ultracave",
     "weekly",
 ]
 

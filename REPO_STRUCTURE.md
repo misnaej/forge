@@ -147,6 +147,9 @@ ownership model) — see [FOUNDATION §11](FOUNDATION.md#11-agent-boundary-proto
 Slash-command skills auto-discovered by the Claude Code plugin. Each
 subdirectory holds a single SKILL.md:
 
+- caveman/: vendored terse-voice skill level 1 (Apache-2.0, © 2026 Julius Brussee — src/forge/data/VENDORED.md); /caveman manual in Vibe
+- ultracave/: vendored terse-voice skill level 2 (same provenance)
+- megacave/: vendored terse-voice skill level 3 (same provenance)
 - c4/: build a C4 architecture model — reason out context/containers/components into c4.toml, then run forge-gen-c4
 - commit/: standard commit flow
 - fix/: invoke precommit-fixer to clear all pre-commit failures
