@@ -198,8 +198,13 @@ def test_unenforced_hooks_reported_never_silently_dropped(plugin_repo: Path) -> 
         in unenforced
     )
     assert any("Unenforced hooks" in w for w in warnings)
-    # Both SubagentStop hooks are unenforced, so no post_agent entry survives.
-    assert all(e.get("event") != "post_agent" for e in _entries(toml_content))
+    # SubagentStop hooks are unenforced, but the shipped Vibe-only extra
+    # hooks (post_agent replacements) are merged in as direct entries.
+    post_agent = [e for e in _entries(toml_content) if e.get("event") == "post_agent"]
+    assert {e["name"] for e in post_agent} == {
+        "vibe-session-start",
+        "vibe-continuation-state",
+    }
 
 
 def test_every_entry_routes_through_forge_hook_dispatch_with_roster(
@@ -216,6 +221,12 @@ def test_every_entry_routes_through_forge_hook_dispatch_with_roster(
     assert entries
     for entry in entries:
         command = entry["command"]
+        if entry.get("event") == "post_agent":
+            # post_agent cannot block (strict forbidden); Vibe-only extras
+            # run their script directly, no dispatcher routing.
+            assert not command.startswith("forge-hook-dispatch")
+            assert entry.get("strict") in (None, False)
+            continue
         assert command.startswith("forge-hook-dispatch --harness vibe ")
         assert f"--event {entry['event']} " in command
         assert "--matcher " in command

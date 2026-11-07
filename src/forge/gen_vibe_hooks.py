@@ -422,6 +422,31 @@ def _generate_hooks_toml(grouped_hooks: dict[str, dict[str, list[dict]]]) -> str
     return "\n".join(lines)
 
 
+def _load_extra_vibe_hooks() -> list[dict]:
+    """Load the shipped Vibe-only extra hooks table.
+
+    Returns:
+        Hook entry dicts in Vibe-native shape (type/match/command/timeout),
+        emitted verbatim — no strict key (forbidden on post_agent).
+    """
+    from importlib import resources
+
+    data = resources.files("forge").joinpath("data/vibe-extra-hooks.toml")
+    entries = tomllib.loads(data.read_text(encoding="utf-8")).get("hooks", [])
+    return [
+        {
+            "name": e["name"],
+            "type": e["type"],
+            "event": e["type"],
+            "match": e.get("match"),
+            "command": e["command"],
+            "timeout": e.get("timeout", 10),
+            "strict": False,
+        }
+        for e in entries
+    ]
+
+
 def generate_vibe_hooks(
     repo_root: Path | None = None,
 ) -> tuple[str, list[str], list[str]]:
@@ -455,6 +480,12 @@ def generate_vibe_hooks(
     vibe_hooks, unenforced_hooks = _translate_hooks_to_vibe(
         hooks, hooks_base, repo_root
     )
+
+    # Merge Vibe-only extra hooks (post_agent replacements for events Vibe
+    # lacks). They are already in Vibe-native shape and run directly —
+    # post_agent cannot block, so strict is forbidden and no dispatcher
+    # routing is needed.
+    vibe_hooks.extend(_load_extra_vibe_hooks())
 
     # Group for TOML structure
     grouped = _group_hooks_by_event_and_match(vibe_hooks)

@@ -840,6 +840,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_translate_hooks_to_vibe(hooks: dict, plugin_root: Path, repo_root: Path) -> tuple[list[dict], list[str]]` _(internal)_ — Translate Claude Code hooks to Vibe hooks.toml entries.
 - `_group_hooks_by_event_and_match(hooks: list[dict]) -> dict[str, dict[str, list[dict]]]` _(internal)_ — Group hook entries by event and match for TOML structure.
 - `_generate_hooks_toml(grouped_hooks: dict[str, dict[str, list[dict]]]) -> str` _(internal)_ — Generate the TOML content for .vibe/hooks.toml.
+- `_load_extra_vibe_hooks() -> list[dict]` _(internal)_ — Load the shipped Vibe-only extra hooks table.
 - `generate_vibe_hooks(repo_root: Path | None = None) -> tuple[str, list[str], list[str]]` — Generate .vibe/hooks.toml from .claude-plugin/plugin.json.
 - `write_vibe_hooks(repo_root: Path | None = None, *, check_mode: bool = False) -> int` — Generate and write .vibe/hooks.toml.
 - `verify_existing_hooks(repo_root: Path | None = None) -> int` — Verify an existing .vibe/hooks.toml has strict=true on blocking entries.

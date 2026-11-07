@@ -411,8 +411,14 @@ UNENFORCED_VIBE_HOOKS: Mapping[str, str] = {
         "post_agent fires after the turn and cannot block"
     ),
     "caveman_mode.sh": "SessionStart context injection - Vibe has no SessionStart",
-    "load_continuation.sh": "SessionStart context injection - Vibe has no SessionStart",
-    "keep_continuation_state.sh": "PreCompact state write - Vibe has no PreCompact",
+    "load_continuation.sh": (
+        "SessionStart context injection - Vibe has no SessionStart; "
+        "replaced by post_agent vibe_session_start.sh"
+    ),
+    "keep_continuation_state.sh": (
+        "PreCompact state write - Vibe has no PreCompact; replaced by "
+        "post_agent vibe_continuation_state.sh (every turn)"
+    ),
     "log_agent_timing.sh": (
         "SubagentStart half - Vibe has no SubagentStart; partial at best"
     ),
