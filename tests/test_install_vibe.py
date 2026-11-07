@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from forge.audit.agents import REQUIRED_SECTIONS
 from forge.install_vibe import install_vibe
 
 
@@ -203,8 +204,6 @@ def test_subagent_toml_pins_active_model_from_tier(tmp_path: Path) -> None:
 
 def test_agent_sources_carry_terse_block_and_audit_enforces_it() -> None:
     """Every shipped agent md carries the terse block; the audit requires it."""
-    from forge.audit.agents import REQUIRED_SECTIONS
-
     assert "Output style (always)" in REQUIRED_SECTIONS
     root = Path(__file__).parent.parent / "agents"
     for md in sorted(root.glob("*.md")):
