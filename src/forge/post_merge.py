@@ -45,6 +45,7 @@ from forge._hook_helpers import (
     run_foundation_drift_check,
     run_hook_extensions,
     run_plugin_sync,
+    run_vibe_regen,
 )
 from forge.git_utils import configure_cli_logging
 from forge.next_prep import tag_staleness_warning
@@ -99,6 +100,7 @@ def main(argv: list[str] | None = None) -> int:
     # non-interactive context, CI or a no-tty local shell alike.
     if not is_non_interactive():
         rc = run_foundation_drift_check("post-merge")
+        run_vibe_regen("post-merge")
 
         # Self-refresh — backgrounded + output-redirected. The hook
         # process exits first, then ``install-forge-githooks`` rewrites

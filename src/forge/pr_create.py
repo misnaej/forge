@@ -198,7 +198,7 @@ def _earn_escape(root: Path, base: str, declared: str) -> str | None:
         )
     try:
         mode = classify(root, f"origin/{configured}", None).mode
-    except Exception:
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError):
         logger.warning(
             "classifier failed; refusing the %s escape", declared, exc_info=True
         )

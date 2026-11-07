@@ -25,7 +25,7 @@ import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from forge.config import resolve_model_section
+from forge.config import read_tool_forge_section, resolve_model_section
 from forge.git_utils import configure_cli_logging, repo_root
 from forge.run_context import is_non_interactive
 
@@ -123,6 +123,24 @@ def _gate_c4(root: Path) -> str | None:
     return None
 
 
+def _gate_vibe(root: Path) -> str | None:
+    """Skip Vibe installation unless opted in via ``[tool.forge.vibe]``.
+
+    Ungated, every consumer repo gets .vibe/ and .agents/ written unasked.
+    The opt-in is a dedicated table so a plain ``[tool.forge]`` (common in
+    consumer repos) does not trigger it.
+
+    Args:
+        root: Repo root, scanned for ``[tool.forge.vibe]``.
+
+    Returns:
+        A reason when Vibe is not opted in, or ``None`` when it is.
+    """
+    if not read_tool_forge_section(root, "vibe").get("enabled", False):
+        return "Vibe not opted in ([tool.forge.vibe] enabled is not true)"
+    return None
+
+
 # `--refresh` is mandatory: install-forge-githooks is idempotent and
 # leaves managed hook files alone after the first install, so a forge
 # package upgrade leaves the hook content (and its version marker)
@@ -152,6 +170,12 @@ STEPS: tuple[Step, ...] = (
     Step(slug="api-digest", cli="forge-gen-api-digest", supports_check=True),
     Step(slug="cli-reference", cli="forge-gen-cli-reference", supports_check=True),
     Step(slug="c4", cli="forge-gen-c4", supports_check=True, gate=_gate_c4),
+    Step(
+        slug="vibe",
+        cli="install-forge-vibe",
+        supports_check=True,
+        gate=_gate_vibe,
+    ),
     Step(
         slug="audit-deps",
         cli="forge-audit-deps",

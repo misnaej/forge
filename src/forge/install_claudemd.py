@@ -56,6 +56,7 @@ from forge.git_utils import (
     parse_semver,
     repo_root,
 )
+from forge.instruction_files import foundation_text as _foundation_text
 from forge.run_context import is_non_interactive
 
 
@@ -162,15 +163,6 @@ Forge does not ship any consumer-specific hooks — only the directory
 layout and this convention. The directory is created (empty) by
 `install-forge-claude-md` so the path resolves on day one.
 """
-
-
-def _foundation_text() -> str:
-    """Return the bundled FOUNDATION.md text shipped with the pip package.
-
-    Returns:
-        The full content of ``src/forge/data/FOUNDATION.md`` as a string.
-    """
-    return resources.files("forge").joinpath("data/FOUNDATION.md").read_text()
 
 
 def _build_foundation_file(*, foundation: str) -> str:

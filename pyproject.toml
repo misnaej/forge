@@ -53,6 +53,9 @@ forge-gen-api-digest = "forge.gen_api_digest:main"
 forge-gen-c4 = "forge.gen_c4:main"
 forge-gen-commit-types = "forge.gen_commit_types:main"
 forge-gen-config-doc = "forge.gen_config_doc:main"
+forge-gen-vibe-hooks = "forge.gen_vibe_hooks:main"
+forge-gen-vibe-agents = "forge.gen_vibe_agents:main"
+install-forge-vibe = "forge.install_vibe:main"
 forge-continuation = "forge.continuation:main"
 forge-doctor = "forge.doctor:main"
 forge-next-prep = "forge.next_prep:main"
@@ -87,6 +90,7 @@ forge-telemetry = "forge.telemetry:main"
 forge-agent-profile = "forge.agent_profile:main"
 forge-metrics = "forge.pr_metrics:main"
 forge-commit = "forge.commit:main"
+forge-hook-dispatch = "forge.hook_dispatch:main"
 forge-config = "forge.forge_config:main"
 forge-audit-agents = "forge.audit.agents:main"
 forge-audit-deps = "forge.audit.deps:main"
@@ -138,6 +142,9 @@ markers = [
 [tool.forge]
 # Single-track: every PR targets main; every merge tags.
 base_branch = "main"
+
+[tool.forge.vibe]
+enabled = true
 
 [tool.forge.cli_wiring]
 # Opt-in to the cli_wiring pre-commit step. Forge enables it because

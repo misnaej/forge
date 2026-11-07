@@ -11,6 +11,12 @@ ignore = [
 ]
 
 [lint.per-file-ignores]
+"src/forge/audit/orphans.py" = [
+    "PLC0415",  # guarded optional import (vulture) inside _load_vulture
+]
+"src/forge/telemetry.py" = [
+    "PLC0415",  # guarded optional imports (matplotlib) inside plot helpers
+]
 "src/forge/**/*.py" = [
     "S603",  # subprocess-without-shell: CLIs invoke gh/git/ruff by design
     "S607",  # subprocess-partial-path: same — `gh`, `git` resolved via PATH

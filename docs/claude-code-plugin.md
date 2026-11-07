@@ -1,5 +1,8 @@
 # Claude Code plugin integration (optional)
 
+Running [Mistral Vibe](vibe.md) instead? The same agents, skills and guards
+are generated into `.vibe/` + `.agents/` — see [vibe.md](vibe.md).
+
 The Claude Code plugin is a separate layer. You do NOT need it for the
 pre-commit hook to work.
 

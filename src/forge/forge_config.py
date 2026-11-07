@@ -127,6 +127,13 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "skill dirs and the shipped plugin roster (resolution only).",
     ),
     ConfigKey(
+        ("tool", "forge", "vibe", "enabled"),
+        default=False,
+        description="Opt into the Mistral Vibe integration: install-forge-vibe "
+        "writes .vibe/ hooks+agents, .agents/skills/ and AGENTS.md. Off by "
+        "default so consumer repos are never written unasked.",
+    ),
+    ConfigKey(
         ("tool", "forge", "docstring_coverage", "badge"),
         default=False,
         description="Generate interrogate's coverage badge to "

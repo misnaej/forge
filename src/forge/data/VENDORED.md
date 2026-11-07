@@ -77,3 +77,13 @@ printf 'export { default } from "@mermaid-js/layout-elk";\n' > entry.mjs
 npx esbuild entry.mjs --bundle --format=iife --global-name=elkLayouts \
   --minify --legal-comments=none --outfile=mermaid-layout-elk.iife.min.js
 ```
+
+## Vendored skills / docs (non-`data/` files)
+
+The hash registry above covers binary/JS blobs under `src/forge/data/`
+(checked by the `vendored_integrity` step). Vendored *text* assets such as
+skills live outside `data/`: record provenance in a `##` section here (name,
+license, version, source URL, copyright) and put an attribution footer in
+each vendored file. Apache-2.0 content may be vendored into this MIT repo
+as long as copyright + license notices are retained; trademarks are not
+licensed — nominative reference only, no logos, no implied endorsement.

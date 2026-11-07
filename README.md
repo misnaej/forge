@@ -57,7 +57,7 @@ The model decides what to write; forge decides whether it passes.
 | Adopt forge one layer at a time, upgrade it, or pin a version | [Adopting forge](docs/adopting.md) |
 | Set options and see every key | [Configuration](forge-docs/configuration.md) |
 | Run forge in CI | [CI recipe](forge-docs/ci-recipe.md) |
-| Use the agents, skills and hooks | [Claude Code plugin](docs/claude-code-plugin.md) · [Agent architecture](docs/agent-architecture.md) |
+| Use the agents, skills and hooks | [Claude Code plugin](docs/claude-code-plugin.md) · [Mistral Vibe](docs/vibe.md) · [Agent architecture](docs/agent-architecture.md) |
 | Add my own pre-commit step | [Customising pre-commit](docs/customizing-precommit.md) |
 | Run code-health audits | [Audit pack](docs/audit-pack.md) |
 | Release my own package with forge | [Consumer releases](docs/consumer-release.md) |

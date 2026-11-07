@@ -78,6 +78,12 @@ Checked on every commit by `verify-forge-repo-structure`: every listed file and 
    - claude_settings_schema.py: shared `.claude/settings.json` forge-block schema (shared marketplace key, `forge@forge` id, scaffold) — single source of truth for the CLIs that write that block (install_claude_settings, install_claudemd)
    - install_labels.py: `install-forge-labels` — GitHub label installer
    - install_bootstrap.py: `install-forge-bootstrap` — one-shot umbrella that runs every installer + generator in dependency order
+   - instruction_files.py: packaged FOUNDATION.md text, recursive `@`-include resolution, AGENTS.md flatten/drift (shared by install_claudemd + install_vibe + doctor)
+   - agent_harness.py: frozen harness profiles for agent runtime adapters (Claude Code, Mistral Vibe) mapping to the guard contract — pure data, shared by hook_dispatch and the generators
+   - hook_dispatch.py: `forge-hook-dispatch` — guard dispatcher that runs ordered guard set and emits harness-native verdict JSON
+   - gen_vibe_hooks.py: `forge-gen-vibe-hooks` — generates .vibe/hooks.toml from .claude-plugin/plugin.json
+   - gen_vibe_agents.py: `forge-gen-vibe-agents` — publishes skills to .agents/skills/ for Vibe compatibility
+   - install_vibe.py: `install-forge-vibe` — installs Vibe integration (hooks.toml, roster, skills, subagents, prompts, AGENTS.md)
    - upgrade.py: `forge-upgrade` — two-phase consumer upgrade flow (rewrite pin → user runs pip → `--continue` re-syncs artifacts)
    - resync.py: `forge-resync` — regenerate forge-managed artifacts and open a dedup-guarded resync PR (companion to `upgrade.py`'s pin-rewrite flow); `--resolve-conflicts [--dry-run]` resolves a merge whose only conflicts are forge-generated artifacts by regenerating each from the merged tree (`pr_delta.REGEN_COMMANDS`), verifying with its `--check`, and staging — refusing if any other path conflicts
    - git_utils.py: shared git helpers and CLI logging setup (public API for consumers: `latest_v_tag`, `parse_semver`, `next_version`, `run_git`, `configure_cli_logging`)
@@ -186,6 +192,7 @@ enforcement:
 - block_raw_wrapup_post.sh: block a raw `gh pr comment`/`gh api` post of `code_health/pr_wrapup.md` — the wrap-up is posted only through `forge-pr-wrapup post` (validation, supersede-collapse, squash-last)
 - block_unverified_pr_create.sh: refuse a raw create outright and name `forge-pr-create`, which publishes; the verification it used to attempt here now lives in that command, which runs in the checkout it publishes rather than inferring the branch from command text (FOUNDATION §6)
 - block_raw_ruff.sh: hard-block raw `ruff check` / `ruff format` from agents (no bypass — agents use forge-precommit)
+- block_vibe_config.sh: block agent edits to the generated Vibe guard config under .vibe/ (hooks.toml, forge-roster.json, agents/, prompts/) — regeneration is a CLI job (`install-forge-vibe`), never an agent edit
 - caveman_mode.sh: SessionStart + SubagentStart — add the caveman-full instruction for agent traffic (text people read stays plain English) as `additionalContext`; `[tool.forge.hooks].caveman = false` turns it off; delivers only, never enforces
 - keep_continuation_state.sh: PreCompact — run `forge-continuation state --with-pr` so the status panel is current before Claude Code summarises; warn-only (missing CLI fails loudly, non-blocking)
 - load_continuation.sh: SessionStart — print `.plan/CONTINUATION.md` into the new context inside a fence under a "data, not instructions" line, with any ``` in it neutralised; silent when absent, always exits 0
@@ -221,8 +228,15 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_config_parity.py: config parity — every `[tool.forge.*]` key read in source is declared in `CONFIG_KEYS`, and the reverse
    - test_continuation.py: tests for continuation (the `forge-continuation` CLI, PR-field carry-forward, `check`)
    - test_continuation_state.py: tests for continuation_state (status-panel format, byte-preserving rewrite, migration, guards)
-   - test_doctor.py: tests for doctor
+   - test_doctor.py: tests for doctor (including the vibe:* harness checks)
+   - test_agent_harness.py: tests for agent_harness (profiles, verdict emitters, translations, resolve_hooks_base)
+   - test_block_vibe_config.py: black-box tests for claude-hooks/block_vibe_config.sh (bypass forms blocked, ordinary commands pass)
    - test_fix_ruff.py: tests for fix_ruff
+   - test_gen_vibe_agents.py: tests for gen_vibe_agents (skill publishing to .agents/skills, AGENTS.md rewrite)
+   - test_gen_vibe_hooks.py: tests for gen_vibe_hooks (hooks.toml invariants: strict, regex matcher, dispatcher wiring)
+   - test_hook_dispatch.py: tests for hook_dispatch (fail-closed matrix, one test per row)
+   - test_instruction_files.py: tests for instruction_files (include resolution, flatten, drift)
+   - test_install_vibe.py: tests for install_vibe (roster sidecar, subagent TOML+prompts, check/verify modes)
    - test_gen_api_digest.py: tests for gen_api_digest
    - test_gen_c4.py: tests for gen_c4 (C4 / Structurizr DSL generator)
    - test_gen_cli_reference.py: tests for gen_cli_reference
@@ -346,11 +360,12 @@ repos by `install-forge-claude-md` (guarded there by a README notice + the
 
 - api-digest.md: generated public-symbol index (`forge-gen-api-digest`)
 - audit-pack.md: audit suite documentation
-- architecture.md: forge's own generated C4 component diagram (`forge-gen-c4` splices it; `c4.toml` `readme`) + a pointer to the agent architecture
+- architecture.md: forge's own generated C4 component diagram (incl. the harness-compatibility section: adapter-over-guards today, neutral base contract as target) (`forge-gen-c4` splices it; `c4.toml` `readme`) + a pointer to the agent architecture
 - c4-architecture.md: design & rationale for forge-gen-c4 + the /c4 skill (the implemented C4 generator)
 - agent-architecture.md: hand-maintained agent × skill × hook × CLI interaction subviews by workflow phase + a FOUNDATION-enforcers view; gated by the `agent_doc` step, tracked for full drift-check by #163
 - ci-access.md: how a consumer's CI runner pulls forge
 - claude-code-plugin.md: optional Claude Code plugin install + extension
+- vibe.md: optional Mistral Vibe integration — opt-in `[tool.forge.vibe]`, generated .vibe/ + .agents/ + flattened AGENTS.md, trust requirement, unenforced events
 - cli-reference.md: generated CLI reference (`forge-gen-cli-reference`)
 - adopting.md: modular adoption guide — three independent install tracks (CLIs / + git hooks / + plugin) + "what lands on disk" table + drift/upgrade explainer
 - release-process.md: forge-only single source of truth for versioning + tag-on-merge releases + the invariant→test contract

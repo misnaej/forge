@@ -7,8 +7,9 @@ Checks:
   1. ``forge-scripts`` CLI entry points on PATH (pip package installed).
   2. ``gh`` CLI installed and authenticated (needed by
      ``install-forge-labels`` and any GitHub-aware workflow).
-  3. Plugin checks (``--skip-plugin-checks`` turns them off) — all read
-     this checkout's own install, as Claude Code recorded it:
+  3. Claude Code plugin checks (skipped unless the harness is detected or
+     forced with ``--harness claude``/``all``) — all read this checkout's
+     own install, as Claude Code recorded it:
      a. An install of the plugin is recorded for this checkout (for a
         non-forge ``--plugin-name``, a user-scope install also counts).
      b. ``plugin.json`` and ``marketplace.json`` present and well-formed.
@@ -28,11 +29,25 @@ Checks:
      checkout (``core.hooksPath`` resolved, or git's default), and whether
      a runnable ``pre-commit`` sits there: without one, git commits with
      no forge gate at all.
+  8. Vibe integration (skipped unless Vibe is detected or forced with
+     ``--harness vibe``/``all``; blocking when ``.vibe/`` exists, advisory
+     otherwise) — ``.vibe/hooks.toml`` present
+     and parseable with ``strict = true`` on every entry,
+     ``.vibe/forge-roster.json`` valid, ``.vibe/agents/*.toml`` carrying
+     ``agent_type = "subagent"`` with matching ``.vibe/prompts/*.md``,
+     ``.agents/skills/`` populated, ``AGENTS.md`` present,
+     ``forge-hook-dispatch`` on PATH, and the checkout listed in Vibe's
+     trusted-folders database (without trust, Vibe silently skips every
+     project-local guard).
 
 Usage:
-    forge-doctor                              # human-readable
+    forge-doctor                              # human-readable, auto-detected harnesses
     forge-doctor --json                       # machine-readable
     forge-doctor --plugin-name myrepo         # check a non-forge plugin
+    forge-doctor --harness vibe               # only Vibe registration checks
+    forge-doctor --harness claude             # only Claude Code plugin checks
+    forge-doctor --harness all                # both, even if not detected
+    forge-doctor --skip-plugin-checks         # pip CLIs + Vibe only
 """
 
 import argparse
@@ -43,6 +58,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tomllib
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -57,6 +73,7 @@ from forge.git_utils import (
     parse_semver,
     run_git,
 )
+from forge.instruction_files import flatten_agents_md
 from forge.upgrade import pin_revision_mismatch, pip_command
 from forge.version_surfaces import (
     SKEW_REMEDIATION,
@@ -779,6 +796,285 @@ def _check_under_used_capabilities(repo_root: Path) -> list[CheckResult]:
     return results
 
 
+def _vibe_home() -> Path:
+    """Return Vibe's home directory (``VIBE_HOME`` or ``~/.vibe``).
+
+    Returns:
+        Path to the Vibe home.
+    """
+    return Path(os.environ.get("VIBE_HOME", Path.home() / ".vibe"))
+
+
+def _vibe_hooks_toml_result(vibe_dir: Path) -> CheckResult:
+    """Check ``.vibe/hooks.toml`` exists, parses, and every entry is strict.
+
+    Args:
+        vibe_dir: The checkout's ``.vibe`` directory.
+
+    Returns:
+        The check result for the hooks file.
+    """
+    hooks_toml = vibe_dir / "hooks.toml"
+    if not hooks_toml.is_file():
+        return CheckResult(
+            name="vibe:hooks.toml",
+            passed=False,
+            detail=f"missing {hooks_toml} — run `install-forge-vibe`",
+        )
+    try:
+        hooks_data = tomllib.loads(hooks_toml.read_text(encoding="utf-8"))
+    except (tomllib.TOMLDecodeError, OSError) as exc:
+        return CheckResult(
+            name="vibe:hooks.toml", passed=False, detail=f"unparseable: {exc}"
+        )
+    entries = hooks_data.get("hooks", [])
+    # strict is required on tool hooks (pre_tool/post_tool) — without it a
+    # guard failure is only a warning and the guard is disarmed. Vibe
+    # forbids strict on post_agent, so those entries are exempt.
+    problems = [
+        h.get("name", f"#{i}")
+        for i, h in enumerate(entries)
+        if h.get("type") in ("pre_tool", "post_tool")
+        and (not h.get("strict") or not h.get("name") or not h.get("command"))
+    ]
+    if problems:
+        return CheckResult(
+            name="vibe:hooks.toml",
+            passed=False,
+            detail=(
+                f"{len(problems)}/{len(entries)} tool-hook entries missing "
+                f"strict=true or name/command: {', '.join(problems[:5])}"
+            ),
+        )
+    return CheckResult(
+        name="vibe:hooks.toml",
+        passed=True,
+        detail=f"{len(entries)} hooks, tool hooks all strict=true",
+    )
+
+
+def _vibe_roster_result(vibe_dir: Path) -> CheckResult:
+    """Check the ``.vibe/forge-roster.json`` sidecar exists, parses, and maps events.
+
+    Args:
+        vibe_dir: The checkout's ``.vibe`` directory.
+
+    Returns:
+        The check result for the roster sidecar.
+    """
+    roster_json = vibe_dir / "forge-roster.json"
+    if not roster_json.is_file():
+        return CheckResult(
+            name="vibe:forge-roster.json",
+            passed=False,
+            detail=f"missing {roster_json} — run `install-forge-vibe`",
+        )
+    try:
+        roster = json.loads(roster_json.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        return CheckResult(
+            name="vibe:forge-roster.json", passed=False, detail=f"unparseable: {exc}"
+        )
+    n_events = len(roster.get("events", {}))
+    return CheckResult(
+        name="vibe:forge-roster.json",
+        passed=n_events > 0,
+        detail=f"{n_events} events mapped",
+    )
+
+
+def _vibe_agents_result(vibe_dir: Path) -> CheckResult:
+    """Check subagent TOMLs are valid and each has its prompt pair.
+
+    Args:
+        vibe_dir: The checkout's ``.vibe`` directory.
+
+    Returns:
+        The check result for the subagent TOML + prompt pairs.
+    """
+    agents_dir = vibe_dir / "agents"
+    prompts_dir = vibe_dir / "prompts"
+    tomls = sorted(agents_dir.glob("*.toml")) if agents_dir.is_dir() else []
+    if not tomls:
+        return CheckResult(
+            name="vibe:agents",
+            passed=False,
+            detail=f"no subagent TOMLs in {agents_dir} — run `install-forge-vibe`",
+        )
+    bad: list[str] = []
+    for toml_path in tomls:
+        try:
+            data = tomllib.loads(toml_path.read_text(encoding="utf-8"))
+        except (tomllib.TOMLDecodeError, OSError):
+            bad.append(toml_path.stem)
+            continue
+        if data.get("agent_type") != "subagent" or not data.get("system_prompt_id"):
+            bad.append(toml_path.stem)
+        elif not (prompts_dir / f"{data['system_prompt_id']}.md").is_file():
+            bad.append(f"{toml_path.stem} (no prompt)")
+    return CheckResult(
+        name="vibe:agents",
+        passed=not bad,
+        detail=(
+            f"{len(tomls)} subagents, all valid with prompts"
+            if not bad
+            else f"invalid: {', '.join(bad[:5])}"
+        ),
+    )
+
+
+def _vibe_skills_result(repo_root: Path) -> CheckResult:
+    """Check skills are published under ``.agents/skills/``.
+
+    Args:
+        repo_root: Checkout to inspect.
+
+    Returns:
+        The check result for the published skills.
+    """
+    skills_dir = repo_root / ".agents" / "skills"
+    n_skills = len(list(skills_dir.iterdir())) if skills_dir.is_dir() else 0
+    return CheckResult(
+        name="vibe:skills",
+        passed=n_skills > 0,
+        detail=(
+            f"{n_skills} skills in .agents/skills/"
+            if n_skills
+            else f"missing or empty {skills_dir} — run `install-forge-vibe`"
+        ),
+    )
+
+
+def _vibe_agents_md_result(repo_root: Path) -> CheckResult:
+    """Check ``AGENTS.md`` is present and in sync with its sources.
+
+    Content drift (FOUNDATION.md / CLAUDE.md changed since the last
+    install) fails the check: Vibe loads AGENTS.md verbatim, so a stale
+    file means the session runs stale rules. When the source files are
+    absent (not a forge checkout), presence-only applies.
+
+    Args:
+        repo_root: Checkout to inspect.
+
+    Returns:
+        The check result for AGENTS.md.
+    """
+    agents_md = repo_root / "AGENTS.md"
+    if not agents_md.is_file():
+        return CheckResult(
+            name="vibe:AGENTS.md",
+            passed=False,
+            detail=f"missing {agents_md} — run `install-forge-vibe`",
+        )
+    expected = flatten_agents_md(repo_root)
+    if expected is not None and agents_md.read_text(encoding="utf-8") != expected:
+        return CheckResult(
+            name="vibe:AGENTS.md",
+            passed=False,
+            detail=(
+                "stale vs FOUNDATION.md + CLAUDE.md (or their @-includes) — "
+                "run `install-forge-vibe`, then restart the Vibe session"
+            ),
+        )
+    return CheckResult(
+        name="vibe:AGENTS.md",
+        passed=True,
+        detail=f"{agents_md.stat().st_size} bytes, in sync",
+    )
+
+
+def _vibe_dispatcher_result() -> CheckResult:
+    """Check the ``forge-hook-dispatch`` CLI is on PATH.
+
+    Returns:
+        The check result for the dispatcher CLI.
+    """
+    dispatcher = shutil.which("forge-hook-dispatch")
+    return CheckResult(
+        name="vibe:dispatcher",
+        passed=dispatcher is not None,
+        detail=dispatcher
+        or "forge-hook-dispatch not on PATH — reinstall forge-scripts",
+    )
+
+
+def _vibe_trusted_folder_result(repo_root: Path) -> CheckResult:
+    """Check the checkout is in Vibe's trusted-folders database.
+
+    Args:
+        repo_root: Checkout to inspect.
+
+    Returns:
+        The check result for folder trust.
+    """
+    trusted_file = _vibe_home() / "trusted_folders.toml"
+    trusted = False
+    if trusted_file.is_file():
+        try:
+            trusted_data = tomllib.loads(trusted_file.read_text(encoding="utf-8"))
+            trusted = str(repo_root.resolve()) in [
+                str(Path(p).resolve()) for p in trusted_data.get("trusted", [])
+            ]
+        except (tomllib.TOMLDecodeError, OSError):
+            trusted = False
+    return CheckResult(
+        name="vibe:trusted-folder",
+        passed=trusted,
+        detail=(
+            "checkout is in Vibe's trusted_folders.toml"
+            if trusted
+            else (
+                f"{repo_root} NOT in {_vibe_home()}/trusted_folders.toml — "
+                "Vibe loads no .vibe/ guards or AGENTS.md here. Trust it in "
+                "the Vibe CLI (or `vibe --trust`) to activate the integration."
+            )
+        ),
+    )
+
+
+def _check_vibe_integration(repo_root: Path) -> list[CheckResult]:
+    """Check forge's Mistral Vibe integration artifacts in this checkout.
+
+    Vibe integration is opt-in (``install-forge-vibe``): when ``.vibe/`` is
+    absent the result is a single advisory pointing at the installer, never
+    a failure. When ``.vibe/`` exists the artifacts are the safety layer —
+    hooks.toml without ``strict = true`` silently disarms every guard — so
+    each present-but-broken piece is a blocking failure. Also verifies the
+    checkout is in Vibe's trusted-folders database, because Vibe skips all
+    project-local config in untrusted folders without any on-screen signal.
+
+    Args:
+        repo_root: Checkout to inspect.
+
+    Returns:
+        List of check results (advisory when not installed, blocking when
+        partially installed).
+    """
+    vibe_dir = repo_root / ".vibe"
+    if not vibe_dir.is_dir():
+        return [
+            CheckResult(
+                name="vibe:not-installed",
+                passed=True,
+                detail=(
+                    "no .vibe/ — Vibe integration not installed; "
+                    "run `install-forge-vibe` to enable it"
+                ),
+                info=True,
+            )
+        ]
+
+    return [
+        _vibe_hooks_toml_result(vibe_dir),
+        _vibe_roster_result(vibe_dir),
+        _vibe_agents_result(vibe_dir),
+        _vibe_skills_result(repo_root),
+        _vibe_agents_md_result(repo_root),
+        _vibe_dispatcher_result(),
+        _vibe_trusted_folder_result(repo_root),
+    ]
+
+
 def _print_human(results: list[CheckResult]) -> None:
     """Print a human-readable report, separating blocking and INFO results.
 
@@ -840,17 +1136,58 @@ def main() -> int:
         action="store_true",
         help=(
             "Skip all Claude Code plugin checks entirely. Useful for "
-            "consumers who only adopt the pip CLIs."
+            "consumers who only adopt the pip CLIs. Implies --harness vibe "
+            "when no --harness is given."
+        ),
+    )
+    parser.add_argument(
+        "--harness",
+        choices=["auto", "all", "claude", "vibe"],
+        default=None,
+        help=(
+            "Which agent harness registration layer to check: 'claude' checks "
+            "the Claude Code plugin install, 'vibe' checks .vibe/ + .agents/ "
+            "+ trust, 'all' checks both, 'auto' (default) checks only the "
+            "harnesses detected on this system — a harness that is not "
+            "installed is skipped, never failed. Common checks (CLIs, gh, "
+            "git hooks) always run."
         ),
     )
     args = parser.parse_args()
+
+    if args.harness:
+        harness = args.harness
+    elif args.skip_plugin_checks:
+        harness = "vibe"
+    else:
+        harness = "auto"
+
+    if harness == "auto":
+        detected: set[str] = set()
+        if (
+            shutil.which("vibe")
+            or _vibe_home().is_dir()
+            or (Path.cwd() / ".vibe").is_dir()
+        ):
+            detected.add("vibe")
+        if (
+            resolve_install(Path.cwd(), args.plugin_name) is not None
+            or (Path.cwd() / ".claude-plugin").is_dir()
+            or (Path.home() / ".claude").is_dir()
+        ):
+            detected.add("claude")
+        check_claude = "claude" in detected
+        check_vibe = "vibe" in detected
+    else:
+        check_claude = harness in ("all", "claude")
+        check_vibe = harness in ("all", "vibe")
 
     results: list[CheckResult] = []
     results.extend(_check_clis())
     results.extend(_check_gh())
     results.extend(_check_step_tools(Path.cwd()))
 
-    if not args.skip_plugin_checks:
+    if check_claude:
         install = resolve_install(Path.cwd(), args.plugin_name)
         install_dir = install.install_dir if install is not None else None
         results.append(_check_plugin_install(install, args.plugin_name))
@@ -858,11 +1195,13 @@ def main() -> int:
         results.extend(_check_plugin_contents(install_dir))
 
     results.extend(_check_version_skew(Path.cwd()))
-    if not args.skip_plugin_checks:
+    if check_claude:
         results.extend(_check_checkout_plugin(Path.cwd()))
         results.extend(_check_global_install(Path.cwd()))
     results.extend(_surface_pin_revision(Path.cwd()))
     results.extend(_check_hooks_path(Path.cwd()))
+    if check_vibe:
+        results.extend(_check_vibe_integration(Path.cwd()))
     results.extend(_check_under_used_capabilities(Path.cwd()))
 
     if args.json:
