@@ -9,12 +9,13 @@ Opt in per repo with `[tool.forge.vibe] enabled = true`, then run
 
 | Artifact | Produced by | Notes |
 |---|---|---|
-| `.vibe/hooks.toml` | `forge-gen-vibe-hooks` | One entry per event/matcher, every entry `strict = true`, all commands route through `forge-hook-dispatch --harness vibe --roster <abs path>` |
+| `.vibe/hooks.toml` | `forge-gen-vibe-hooks` | One entry per blocking event/matcher, every one `strict = true`, commands route through `forge-hook-dispatch --harness vibe --roster <abs path>`; the two Vibe-only `post_agent` extras (from `src/forge/data/vibe-extra-hooks.toml`) run directly with no `strict` (Vibe forbids strict on post_agent) |
 | `.vibe/forge-roster.json` | `install-forge-vibe` | Guard roster baked at generation time; dispatcher contains commands to the repo root and denies a roster claiming `project_root` outside its own location |
-| `.vibe/agents/*.toml` + `.vibe/prompts/*.md` | `install-forge-vibe` | The 12 forge subagents in Vibe's schema (`agent_type = "subagent"`, `system_prompt_id`); the forge model tier is recorded as a comment — pin it with `active_model` only after defining the alias in Vibe's `[[models]]` (an unknown alias rejects the whole agent file) |
-| `.agents/skills/*/SKILL.md` | `forge-gen-vibe-agents` | The 16 skills, `CLAUDE.md` references rewritten to `AGENTS.md` |
+| `.vibe/agents/*.toml` + `.vibe/prompts/*.md` | `install-forge-vibe` | The 12 forge subagents in Vibe's schema (`agent_type = "subagent"`, `system_prompt_id`); pinned via `active_model = "forge-<tier>"` using the preset aliases written to `.vibe/config.toml` (an unknown alias would reject the whole agent file, so forge ships the aliases itself) |
+| `.agents/skills/*/SKILL.md` | `forge-gen-vibe-agents` | The 19 skills (incl. vendored `/caveman` levels), `CLAUDE.md` references rewritten to `AGENTS.md` |
 | `AGENTS.md` | `install-forge-vibe` | Flattened from `FOUNDATION.md` + `CLAUDE.md`; see below |
 | `.gitignore` entries | `install-forge-vibe` | Ensures `.vibe/`, `.agents/`, `AGENTS.md` stay untracked |
+| `.vibe/config.toml` | `install-forge-vibe` | Appends forge-owned `[[models]]` presets (`forge-haiku`/`forge-sonnet`/`forge-opus`) when absent — never clobbers user models |
 
 ## AGENTS.md and `@`-includes
 
@@ -44,7 +45,7 @@ check that reports when it is missing.
 
 ## Guards and the dispatcher
 
-The 29 portable guards (Bash/Edit/Write `pre_tool`, bash `post_tool`) run
+The 31 portable guards (Bash/Edit/Write `pre_tool`, bash `post_tool`) run
 through `forge-hook-dispatch`, which re-feeds each guard the original stdin
 bytes and fails closed: malformed stdin, missing/tampered roster, unknown
 event, missing or crashing guard, timeout, or any internal error all emit a
@@ -56,17 +57,24 @@ root `AGENTS.md` — gitignored files git never restores.
 
 | Claude Code event | Status in Vibe | Workaround |
 |---|---|---|
-| `SessionStart` (continuation note, caveman, foundation sync) | no equivalent | a `post_agent` hook matched to `main` can inject a once-per-session reminder; foundation sync is covered by the post-merge drift check |
-| `PreCompact` state write | no equivalent | write the status panel on every `post_agent` instead — always fresh |
+| `SessionStart` (continuation note, caveman, foundation sync) | no equivalent | **shipped**: `post_agent` `vibe_session_start.sh` (match `main`) injects a once-per-session continuation reminder; foundation sync is covered by the post-merge drift check |
+| `PreCompact` state write | no equivalent | **shipped**: `post_agent` `vibe_continuation_state.sh` (match `main`) refreshes the status panel every turn |
 | `SubagentStart` | no equivalent | `post_agent` fires per subagent (`match = config_name`) for timing/logging |
 | `SubagentStop` blocking gate | post-turn, cannot block | not enforceable; listed as an unenforced protection at install |
-| per-agent model tiers | subagents inherit the session model unless `active_model` is set | ship forge-owned `[[models]]` presets first, then set `active_model = "forge-<tier>"` |
+| per-agent model tiers | subagents inherit the session model unless `active_model` is set | **shipped**: forge-owned `[[models]]` presets + `active_model = "forge-<tier>"` in generated agent TOMLs |
 
 `install-forge-vibe` prints the unenforced protections on every run.
 
 ## How harness compatibility works
 
 Forge's guards are Claude-shaped at the base with per-harness adapters on top today; the target architecture inverts this to a harness-neutral base contract. See [architecture.md — harness compatibility](architecture.md#harness-compatibility-claude-code-mistral-vibe-future).
+
+## Terse output (caveman)
+
+The `/caveman`, `/ultracave` and `/megacave` voice skills are vendored into
+`skills/` (Apache-2.0, attribution in `src/forge/data/VENDORED.md`) and
+published to `.agents/skills/`. Vibe has no SessionStart hook, so there is no
+auto-activation — invoke `/caveman` manually per session.
 
 ## Checking the install
 

@@ -15,6 +15,11 @@ AGENT=$(echo "$INPUT" | jq -r '.agent_name // empty')
 [ "$AGENT" = "main" ] || exit 0
 SESSION=$(echo "$INPUT" | jq -r '.session_id // empty')
 [ -n "$SESSION" ] || exit 0
+# session_id is harness-supplied, but validate it as a single path
+# component anyway — never interpolate it raw into a filesystem path.
+case "$SESSION" in
+    */*|*..*|.*) exit 0 ;;
+esac
 MARKERS="${CLAUDE_PROJECT_DIR:-.}/.vibe/.session-markers"
 mkdir -p "$MARKERS"
 MARKER="$MARKERS/$SESSION"

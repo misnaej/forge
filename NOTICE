@@ -1,0 +1,9 @@
+NOTICE
+
+This product includes software vendored from third parties:
+
+- caveman voice skills (skills/caveman, skills/ultracave, skills/megacave),
+  from https://github.com/JuliusBrussee/caveman (release 4.0.1),
+  Copyright 2026 Julius Brussee, licensed under the Apache License 2.0.
+  "Caveman" is a trademark of Julius Brussee; used nominatively, no
+  endorsement implied.

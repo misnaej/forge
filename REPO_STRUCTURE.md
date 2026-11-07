@@ -119,7 +119,7 @@ Checked on every commit by `verify-forge-repo-structure`: every listed file and 
    - mermaid.min.js: vendored Mermaid UMD bundle (MIT, pinned) — copied next to `forge-gen-c4 --format html` output so the diagram renders offline
    - mermaid-layout-elk.iife.min.js: vendored Mermaid v11 ELK layout loader, re-bundled to a classic-script IIFE (esbuild, chunks inlined) so it loads from `file://` where the upstream ESM build can't; the HTML registers it for clean cross-cluster layout with a dagre fallback (MIT, pinned)
    - vibe-extra-hooks.toml: shipped Vibe-only extra hooks (post_agent replacements) merged into .vibe/hooks.toml at generation
-- plugin-roster.toml: shipped roster of forge's plugin skills, hooks and agents, read by `verify-forge-agent-doc` so consumer agent docs can name them and by `forge-metrics export` to keep shipped agent types; regenerated and drift-checked by `tests/test_verify_agent_doc.py`
+   - plugin-roster.toml: shipped roster of forge's plugin skills, hooks and agents, read by `verify-forge-agent-doc` so consumer agent docs can name them and by `forge-metrics export` to keep shipped agent types; regenerated and drift-checked by `tests/test_verify_agent_doc.py`
    - docs/: symlinks to the `forge-docs/` reference pages, shipped so `install-forge-claude-md` can write them into consumer repos
    - VENDORED.md: provenance record (URL, version, SHA-256, rebuild command) for vendored third-party assets in this folder
 

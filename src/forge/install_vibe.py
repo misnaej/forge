@@ -33,6 +33,7 @@ import hashlib
 import json
 import logging
 import sys
+import tomllib
 from pathlib import Path
 
 from forge.agent_harness import (
@@ -434,10 +435,14 @@ def _write_model_presets(repo_root: Path) -> bool:
     """
     config_path = repo_root / ".vibe" / "config.toml"
     existing = config_path.read_text(encoding="utf-8") if config_path.is_file() else ""
+    try:
+        configured = {m.get("alias") for m in tomllib.loads(existing).get("models", [])}
+    except tomllib.TOMLDecodeError:
+        configured = set()
     additions = [
         f'\n[[models]]\nname = "{name}"\nalias = "{alias}"\n'
         for alias, name in _MODEL_PRESETS
-        if f'alias = "{alias}"' not in existing
+        if alias not in configured
     ]
     if not additions:
         return False
@@ -598,7 +603,8 @@ def main() -> int:
             "Install Mistral Vibe integration for forge. Generates .vibe/hooks.toml, "
             ".vibe/forge-roster.json, publishes skills to .agents/skills/, "
             "generates subagent configs, regenerates AGENTS.md (recursive @-includes), "
-            "ensures gitignore entries, and prints trust requirements plus a "
+            "ensures gitignore entries, writes forge-* [[models]] presets to "
+            ".vibe/config.toml, and prints trust requirements plus a "
             "session-restart notice when generated artifacts changed."
         ),
     )

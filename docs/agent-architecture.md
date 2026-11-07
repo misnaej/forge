@@ -448,4 +448,3 @@ JuliusBrussee/caveman v4.0.1 (Apache-2.0, attribution in
 `src/forge/data/VENDORED.md`). They set a terse output voice for the
 session; in Claude Code the `caveman_mode` hook activates them
 automatically, in Mistral Vibe the user invokes the skill manually.
-

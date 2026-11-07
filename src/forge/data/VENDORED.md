@@ -91,11 +91,10 @@ licensed — nominative reference only, no logos, no implied endorsement.
 ## skills/caveman, skills/ultracave, skills/megacave (SKILL.md)
 
 - **Project:** caveman (terse agent voice) — https://github.com/JuliusBrussee/caveman
-- **License:** Apache-2.0 (since v3.0.0), © 2026 Julius Brussee; NOTICE retained in repo
+- **License:** Apache-2.0 (since v3.0.0), © 2026 Julius Brussee; NOTICE file at repo root
 - **Version:** v4.0.1 (pinned)
 - **Trademark:** "Caveman" is a trademark of Julius Brussee — nominative
   reference only; no logos/assets copied; no endorsement implied.
 - **Attribution:** footer appended to each vendored SKILL.md.
 - **Note:** the plugin's SessionStart auto-activation hooks are NOT vendored
   (Claude Code only); in Mistral Vibe invoke /caveman manually.
-
