@@ -481,9 +481,8 @@ Reviewed by `forge:design-checker` (foundation) + per-repo wrappers.
 
 - **Write terse.** Agent-facing prose (agent, skill, reference files,
   comments, intake, agent traffic): drop articles, filler, hedging; fragments OK;
-  names, numbers, commands exact; the `/caveman` skill asks caveman full (the `caveman_mode` hook does it
-  automatically in Claude Code; in harnesses without SessionStart, e.g.
-  Mistral Vibe, invoke the skill manually). People-facing text (PRs, issues, commits,
+  names, numbers, commands exact; `caveman_mode` hook asks caveman full
+  (`[tool.forge.hooks].caveman`). People-facing text (PRs, issues, commits,
   human docs): plain concise English. Config comments, file headers: 1–2
   lines, details referenced; advisory pin's comment = its id; unpinned
   advisory → one line why.
