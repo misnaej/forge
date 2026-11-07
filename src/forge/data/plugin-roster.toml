@@ -9,8 +9,10 @@
 [skills]
 names = [
     "c4",
+    "caveman",
     "commit",
     "fix",
+    "megacave",
     "memory-audit",
     "next",
     "perf",
@@ -23,6 +25,7 @@ names = [
     "smart-test",
     "test",
     "triage",
+    "ultracave",
     "weekly",
 ]
 
@@ -56,6 +59,8 @@ names = [
     "load_continuation",
     "log_agent_timing",
     "require_fixer_verdict",
+    "vibe_continuation_state",
+    "vibe_session_start",
     "warn_generated_conflicts",
     "warn_pr_checks",
     "warn_stale_wrapup",

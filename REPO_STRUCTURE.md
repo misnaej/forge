@@ -118,6 +118,7 @@ Checked on every commit by `verify-forge-repo-structure`: every listed file and 
    - CHANGELOG.md: shipped copy of the changelog (symlink) — read by `forge-upgrade` to surface consumer-action upgrade notes
    - mermaid.min.js: vendored Mermaid UMD bundle (MIT, pinned) — copied next to `forge-gen-c4 --format html` output so the diagram renders offline
    - mermaid-layout-elk.iife.min.js: vendored Mermaid v11 ELK layout loader, re-bundled to a classic-script IIFE (esbuild, chunks inlined) so it loads from `file://` where the upstream ESM build can't; the HTML registers it for clean cross-cluster layout with a dagre fallback (MIT, pinned)
+   - vibe-extra-hooks.toml: shipped Vibe-only extra hooks (post_agent replacements) merged into .vibe/hooks.toml at generation
    - plugin-roster.toml: shipped roster of forge's plugin skills, hooks and agents, read by `verify-forge-agent-doc` so consumer agent docs can name them and by `forge-metrics export` to keep shipped agent types; regenerated and drift-checked by `tests/test_verify_agent_doc.py`
    - docs/: symlinks to the `forge-docs/` reference pages, shipped so `install-forge-claude-md` can write them into consumer repos
    - VENDORED.md: provenance record (URL, version, SHA-256, rebuild command) for vendored third-party assets in this folder
@@ -147,6 +148,9 @@ ownership model) — see [FOUNDATION §11](FOUNDATION.md#11-agent-boundary-proto
 Slash-command skills auto-discovered by the Claude Code plugin. Each
 subdirectory holds a single SKILL.md:
 
+- caveman/: vendored terse-voice skill level 1 (Apache-2.0, © 2026 Julius Brussee — src/forge/data/VENDORED.md); /caveman manual in Vibe
+- ultracave/: vendored terse-voice skill level 2 (same provenance)
+- megacave/: vendored terse-voice skill level 3 (same provenance)
 - c4/: build a C4 architecture model — reason out context/containers/components into c4.toml, then run forge-gen-c4
 - commit/: standard commit flow
 - fix/: invoke precommit-fixer to clear all pre-commit failures
@@ -192,6 +196,8 @@ enforcement:
 - block_raw_wrapup_post.sh: block a raw `gh pr comment`/`gh api` post of `code_health/pr_wrapup.md` — the wrap-up is posted only through `forge-pr-wrapup post` (validation, supersede-collapse, squash-last)
 - block_unverified_pr_create.sh: refuse a raw create outright and name `forge-pr-create`, which publishes; the verification it used to attempt here now lives in that command, which runs in the checkout it publishes rather than inferring the branch from command text (FOUNDATION §6)
 - block_raw_ruff.sh: hard-block raw `ruff check` / `ruff format` from agents (no bypass — agents use forge-precommit)
+- vibe_session_start.sh: Vibe post_agent replacement for SessionStart continuation load (once per session, deny-inject)
+- vibe_continuation_state.sh: Vibe post_agent replacement for PreCompact state write (every main turn)
 - block_vibe_config.sh: block agent edits to the generated Vibe guard config under .vibe/ (hooks.toml, forge-roster.json, agents/, prompts/) — regeneration is a CLI job (`install-forge-vibe`), never an agent edit
 - caveman_mode.sh: SessionStart + SubagentStart — add the caveman-full instruction for agent traffic (text people read stays plain English) as `additionalContext`; `[tool.forge.hooks].caveman = false` turns it off; delivers only, never enforces
 - keep_continuation_state.sh: PreCompact — run `forge-continuation state --with-pr` so the status panel is current before Claude Code summarises; warn-only (missing CLI fails loudly, non-blocking)

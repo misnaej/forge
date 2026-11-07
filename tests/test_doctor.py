@@ -949,6 +949,11 @@ def _vibe_repo(tmp_path: Path) -> Path:
         "strict = true\n",
         encoding="utf-8",
     )
+    (vibe_dir / "config.toml").write_text(
+        '[[models]]\nname = "ministral-8b-latest"\nalias = "forge-haiku"\n'
+        '[[models]]\nname = "mistral-small-latest"\nalias = "forge-sonnet"\n'
+        '[[models]]\nname = "mistral-large-latest"\nalias = "forge-opus"\n'
+    )
     (vibe_dir / "forge-roster.json").write_text(
         json.dumps(
             {
@@ -1089,12 +1094,12 @@ def test_vibe_trusted_folder_via_vibe_home_env(
     assert result.name == "vibe:trusted-folder"
 
 
-def test_vibe_all_seven_checks_pass_and_dispatcher_missing_fails(
+def test_vibe_all_eight_checks_pass_and_dispatcher_missing_fails(
     tmp_path: Path,
     fake_vibe_home: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A complete install passes all seven vibe checks; no dispatcher CLI fails one."""
+    """A complete install passes all eight vibe checks; no dispatcher CLI fails one."""
     repo = _vibe_repo(tmp_path)
     (fake_vibe_home / "trusted_folders.toml").write_text(
         f'trusted = ["{repo}"]\n', encoding="utf-8"
@@ -1114,6 +1119,7 @@ def test_vibe_all_seven_checks_pass_and_dispatcher_missing_fails(
         "vibe:skills",
         "vibe:AGENTS.md",
         "vibe:dispatcher",
+        "vibe:models",
         "vibe:trusted-folder",
     ]
     assert all(r.passed for r in results)

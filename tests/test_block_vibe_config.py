@@ -198,3 +198,63 @@ def test_ordinary_edit_passes(tmp_path: Path) -> None:
     """SCENARIO: Edit on a normal source file. EXPECTED BEHAVIOR: exit 0."""
     result = _run_guard(_edit_payload("src/forge/doctor.py"), tmp_path)
     assert result.returncode == 0
+
+
+def test_session_start_ignores_traversal_session_id(tmp_path: Path) -> None:
+    """SCENARIO: post_agent payload with a path-traversal session_id.
+
+    EXPECTED BEHAVIOR: exit 0, no marker file created outside .vibe/.session-markers.
+    """
+    script = Path(__file__).parent.parent / "claude-hooks" / "vibe_session_start.sh"
+    payload = {
+        "hook_event_name": "post_agent",
+        "session_id": "../../escaped",
+        "agent_name": "main",
+        "cwd": str(tmp_path),
+    }
+    r = subprocess.run(
+        ["bash", str(script)],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        check=False,
+    )
+    assert r.returncode == 0
+    assert not (tmp_path / "escaped").exists()
+
+
+def test_session_start_injects_once_per_session(tmp_path: Path) -> None:
+    """SCENARIO: first main-agent turn of a session with CONTINUATION.md present.
+
+    EXPECTED BEHAVIOR: deny-inject reminder on turn 1, silent on turn 2.
+    """
+    script = Path(__file__).parent.parent / "claude-hooks" / "vibe_session_start.sh"
+    (tmp_path / ".plan").mkdir()
+    (tmp_path / ".plan" / "CONTINUATION.md").write_text("state")
+    payload = {
+        "hook_event_name": "post_agent",
+        "session_id": "s1",
+        "agent_name": "main",
+        "cwd": str(tmp_path),
+    }
+    first = subprocess.run(
+        ["bash", str(script)],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        check=False,
+    )
+    second = subprocess.run(
+        ["bash", str(script)],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        check=False,
+    )
+    assert first.returncode == 0
+    assert '"decision":"deny"' in first.stdout
+    assert second.returncode == 0
+    assert second.stdout.strip() == ""

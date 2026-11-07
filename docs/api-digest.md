@@ -593,6 +593,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_vibe_dispatcher_result() -> CheckResult` _(internal)_ — Check the ``forge-hook-dispatch`` CLI is on PATH.
 - `_vibe_trusted_folder_result(repo_root: Path) -> CheckResult` _(internal)_ — Check the checkout is in Vibe's trusted-folders database.
 - `_check_vibe_integration(repo_root: Path) -> list[CheckResult]` _(internal)_ — Check forge's Mistral Vibe integration artifacts in this checkout.
+- `_vibe_models_result(repo_root: Path) -> CheckResult` _(internal)_ — Check .vibe/config.toml carries the forge model presets that agent pins rely on.
 - `_print_human(results: list[CheckResult]) -> None` _(internal)_ — Print a human-readable report, separating blocking and INFO results.
 - `main() -> int` — Run all forge-doctor checks and print the results.
 
@@ -840,6 +841,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_translate_hooks_to_vibe(hooks: dict, plugin_root: Path, repo_root: Path) -> tuple[list[dict], list[str]]` _(internal)_ — Translate Claude Code hooks to Vibe hooks.toml entries.
 - `_group_hooks_by_event_and_match(hooks: list[dict]) -> dict[str, dict[str, list[dict]]]` _(internal)_ — Group hook entries by event and match for TOML structure.
 - `_generate_hooks_toml(grouped_hooks: dict[str, dict[str, list[dict]]]) -> str` _(internal)_ — Generate the TOML content for .vibe/hooks.toml.
+- `_load_extra_vibe_hooks() -> list[dict]` _(internal)_ — Load the shipped Vibe-only extra hooks table.
 - `generate_vibe_hooks(repo_root: Path | None = None) -> tuple[str, list[str], list[str]]` — Generate .vibe/hooks.toml from .claude-plugin/plugin.json.
 - `write_vibe_hooks(repo_root: Path | None = None, *, check_mode: bool = False) -> int` — Generate and write .vibe/hooks.toml.
 - `verify_existing_hooks(repo_root: Path | None = None) -> int` — Verify an existing .vibe/hooks.toml has strict=true on blocking entries.
@@ -1114,6 +1116,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_install_agents_md(repo_root: Path) -> bool` _(internal)_ — Regenerate AGENTS.md from FOUNDATION.md + CLAUDE.md with includes resolved.
 - `_print_trust_summary(*, restart_needed: bool) -> None` _(internal)_ — Print the trust requirement and unenforced protections to stderr.
 - `_artifact_snapshot(repo_root: Path) -> dict[str, str]` _(internal)_ — Map every generated Vibe artifact path to its content hash.
+- `_write_model_presets(repo_root: Path) -> bool` _(internal)_ — Write forge-owned [[models]] presets into .vibe/config.toml.
 - `install_vibe(repo_root: Path | None = None, *, check_mode: bool = False, verify_mode: bool = False) -> int` — Install Vibe integration for forge.
 - `_missing_artifact_issues(repo_root: Path) -> list[str]` _(internal)_ — Check the required Vibe artifact paths exist and are non-empty.
 - `_verify_vibe_installation(repo_root: Path | None = None) -> int` _(internal)_ — Verify existing Vibe installation.

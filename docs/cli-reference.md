@@ -1198,8 +1198,9 @@ usage: install-forge-vibe [-h] [--check] [--verify] [--repo-root REPO_ROOT]
 Install Mistral Vibe integration for forge. Generates .vibe/hooks.toml,
 .vibe/forge-roster.json, publishes skills to .agents/skills/, generates
 subagent configs, regenerates AGENTS.md (recursive @-includes), ensures
-gitignore entries, and prints trust requirements plus a session-restart notice
-when generated artifacts changed.
+gitignore entries, writes forge-* [[models]] presets to .vibe/config.toml, and
+prints trust requirements plus a session-restart notice when generated
+artifacts changed.
 
 options:
   -h, --help            show this help message and exit

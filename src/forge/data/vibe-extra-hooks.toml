@@ -1,0 +1,22 @@
+# Vibe-only hooks, merged into the generated .vibe/hooks.toml at generation
+# time. These replace Claude events Vibe does not have (SessionStart /
+# PreCompact) with post_agent equivalents, so they run the script directly
+# (post_agent cannot block; strict is forbidden on it) instead of routing
+# through forge-hook-dispatch.
+#
+# Format: [[hooks]] with Vibe-native fields: type, match (agent matcher for
+# post_agent), command, timeout. Commands are repo-relative script paths.
+
+[[hooks]]
+name = "vibe-session-start"
+type = "post_agent"
+match = "main"
+command = "claude-hooks/vibe_session_start.sh"
+timeout = 10
+
+[[hooks]]
+name = "vibe-continuation-state"
+type = "post_agent"
+match = "main"
+command = "claude-hooks/vibe_continuation_state.sh"
+timeout = 15

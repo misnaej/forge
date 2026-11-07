@@ -158,3 +158,48 @@ def test_agents_md_generation_drops_foundation_directive(consumer_repo: Path) ->
     assert "---" in content
     assert all(line.strip() != "@FOUNDATION.md" for line in content.splitlines())
     assert "More rules." in content
+
+
+def test_model_presets_written_and_idempotent(tmp_path: Path) -> None:
+    """Install writes forge-* [[models]] presets once; re-run adds nothing."""
+    root = tmp_path / "c"
+    (root / ".claude-plugin").mkdir(parents=True)
+    (root / ".claude-plugin" / "plugin.json").write_text('{"hooks": {}}')
+    assert install_vibe(root) == 0
+    cfg = root / ".vibe" / "config.toml"
+    data = tomllib.loads(cfg.read_text())
+    aliases = {m["alias"] for m in data["models"]}
+    assert {"forge-haiku", "forge-sonnet", "forge-opus"} <= aliases
+    first = cfg.read_text()
+    assert install_vibe(root) == 0
+    assert cfg.read_text() == first
+
+
+def test_model_presets_never_clobber_user_alias(tmp_path: Path) -> None:
+    """A pre-existing user model with the same alias is left untouched."""
+    root = tmp_path / "c"
+    (root / ".vibe").mkdir(parents=True)
+    (root / ".claude-plugin").mkdir()
+    (root / ".claude-plugin" / "plugin.json").write_text('{"hooks": {}}')
+    (root / ".vibe" / "config.toml").write_text(
+        '[[models]]\nname = "my-own"\nalias = "forge-haiku"\n'
+    )
+    assert install_vibe(root) == 0
+    data = tomllib.loads((root / ".vibe" / "config.toml").read_text())
+    haiku = [m for m in data["models"] if m["alias"] == "forge-haiku"]
+    assert haiku == [{"name": "my-own", "alias": "forge-haiku"}]
+
+
+def test_subagent_toml_pins_active_model_from_tier(tmp_path: Path) -> None:
+    """An agent with model: sonnet gets active_model = forge-sonnet."""
+    root = tmp_path / "c"
+    (root / ".claude-plugin").mkdir(parents=True)
+    (root / ".claude-plugin" / "plugin.json").write_text('{"hooks": {}}')
+    agents = root / "agents"
+    agents.mkdir()
+    (agents / "a.md").write_text(
+        "---\nname: a\ndescription: d\nmodel: sonnet\n---\nbody\n"
+    )
+    assert install_vibe(root) == 0
+    toml_text = (root / ".vibe" / "agents" / "a.toml").read_text()
+    assert 'active_model = "forge-sonnet"' in toml_text
