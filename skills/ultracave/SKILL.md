@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 name: ultracave
 description: >
   Caveman at maximum compression: fragments, one word when one word is enough,

@@ -96,5 +96,7 @@ licensed — nominative reference only, no logos, no implied endorsement.
 - **Trademark:** "Caveman" is a trademark of Julius Brussee — nominative
   reference only; no logos/assets copied; no endorsement implied.
 - **Attribution:** footer appended to each vendored SKILL.md.
+- **Adaptation:** `user-invocable: true` added to each frontmatter (forge
+  requires it on every shipped skill); bodies otherwise verbatim.
 - **Note:** the plugin's SessionStart auto-activation hooks are NOT vendored
   (Claude Code only); in Mistral Vibe invoke /caveman manually.

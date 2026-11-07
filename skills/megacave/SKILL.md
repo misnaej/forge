@@ -1,4 +1,5 @@
 ---
+user-invocable: true
 name: megacave
 description: >
   Caveman in Classical Chinese: 文言文 register, far fewer characters, technical
