@@ -32,7 +32,7 @@ Writes (or updates) **two files** at your repo root:
   ## Repo-specific rules
   ```
 
-  Claude Code's `@FOUNDATION.md` directive inlines the foundation text
+  Claude Code's `@FOUNDATION.md` directive inlines the foundation text; under Mistral Vibe, `install-forge-vibe` resolves `@`-directives recursively at generation time into the flattened AGENTS.md (see [vibe.md](vibe.md))
   at session start, so the agent applies foundation rules without you
   copying them.
 

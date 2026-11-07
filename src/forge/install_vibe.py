@@ -547,7 +547,9 @@ def main() -> int:
         description=(
             "Install Mistral Vibe integration for forge. Generates .vibe/hooks.toml, "
             ".vibe/forge-roster.json, publishes skills to .agents/skills/, "
-            "generates subagent configs, and prints trust requirements."
+            "generates subagent configs, regenerates AGENTS.md (recursive @-includes), "
+            "ensures gitignore entries, and prints trust requirements plus a "
+            "session-restart notice when generated artifacts changed."
         ),
     )
     parser.add_argument(
@@ -558,7 +560,10 @@ def main() -> int:
     parser.add_argument(
         "--verify",
         action="store_true",
-        help="Verify existing Vibe installation.",
+        help=(
+            "Verify existing Vibe installation; exit 1 on missing or stale "
+            "artifacts (including AGENTS.md drift vs FOUNDATION.md + CLAUDE.md)."
+        ),
     )
     parser.add_argument(
         "--repo-root",
