@@ -442,7 +442,8 @@ def test_check_required_sections_heading_inside_fence_counts_missing() -> None:
         "## Workflow\nstep\n\n"
         "## Scope Boundaries\ntext\n\n"
         "```\n## Output\nfenced content\n```\n\n"
-        "## Success Criteria\ntext\n"
+        "## Success Criteria\ntext\n\n"
+        "## Output style (always)\nterse\n"
     )
     doc = audit_agents.AgentDoc(
         path="agents/fenced.md",
@@ -821,7 +822,8 @@ def test_run_writes_log_and_returns_zero(
         "## Workflow\nstep\n\n"
         "## Scope Boundaries\n\n### I WILL\n- x\n\n"
         "## Output\nok\n\n"
-        "## Success Criteria\n- pass\n"
+        "## Success Criteria\n- pass\n\n"
+        "## Output style (always)\nterse\n"
     )
     (agents_dir / "_TEMPLATE.md").write_text("# Template — should be skipped\n")
     monkeypatch.setattr("forge.audit.agents.repo_root", lambda: tmp_path)

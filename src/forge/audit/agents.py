@@ -554,8 +554,8 @@ def _check_required_sections(agent: AgentDoc) -> list[Finding]:
             message=f"missing canonical section '## {section}' (see _TEMPLATE.md)",
         )
         for section in REQUIRED_SECTIONS
-        if f"\n## {section}" not in agent.body_no_code
-        and not agent.body_no_code.startswith(f"## {section}")
+        # line-anchored: "## Output" must not match "## Output style (always)"
+        if not re.search(rf"(?m)^## {re.escape(section)}$", agent.body_no_code)
     ]
 
 
