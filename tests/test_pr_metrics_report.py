@@ -7,6 +7,7 @@ import sqlite3
 
 from forge import pr_metrics
 from forge.agent_profile_tokens import TokenUsage
+from forge.pr_metrics_charts import Change
 from forge.pr_metrics_report import (
     UNKNOWN_VERSION,
     PrRow,
@@ -14,6 +15,7 @@ from forge.pr_metrics_report import (
     load_rows,
     render_html,
     render_report,
+    version_changes,
     version_order,
     version_stats,
 )
@@ -192,3 +194,10 @@ def test_version_charts_are_inline_self_contained_and_escaped() -> None:
     assert "&lt;script&gt;v&lt;/script&gt;" in page
     for external in ("http://", "https://", "<link", "src="):
         assert external not in page
+
+
+def test_version_changes_mark_each_repo_move_skipping_unknown() -> None:
+    """Behavior: a move is a recorded version differing from the repo's previous one."""
+    assert version_changes(_fixture_rows()) == [
+        Change("2026-09-10", "aaaaaa", "1.2.0", "1.10.0")
+    ]

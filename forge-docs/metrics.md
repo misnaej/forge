@@ -118,6 +118,7 @@ every transcript once and splits it across the PRs it records.
   fetches), adding medians per forge version and repo id (new tokens per
   line, active minutes, review rounds), new tokens per PR over time and a
   version × repo table; PRs without token data are gaps, never zeros.
+  The page covers every recorded PR whatever `--last` says.
 - `forge-metrics export [--out PATH]` — the stored rows as JSON, plus the
   database schema version, for sharing with forge.
 
