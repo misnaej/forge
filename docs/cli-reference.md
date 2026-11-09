@@ -641,11 +641,11 @@ positional arguments:
     record              Record one merged PR (replaces its rows).
     backfill            Record merged PRs not yet recorded.
     report              Print per-PR cost and the trend.
-    export              Write figures-only JSON for sharing.
+    export              Write the anonymised rows as JSON.
 
 options:
   -h, --help            show this help message and exit
-  --db DB               Database file (default: per repo).
+  --db DB               Database file (default: one per machine).
   --transcripts TRANSCRIPTS
                         Transcript directory to read instead of every
                         checkout's (repeatable).

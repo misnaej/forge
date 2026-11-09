@@ -21,6 +21,7 @@ imports it: records arrive as already-parsed dicts.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field, fields
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Final, NamedTuple
@@ -325,6 +326,8 @@ class BranchEvent(NamedTuple):
     usage: TokenUsage | None
     precommit_runs: int
     test_runs: int
+    #: The model that answered, when the record is a request.
+    model: str | None = None
 
 
 @dataclass
@@ -339,6 +342,8 @@ class BranchSummary:
     precommit_runs: int = 0
     #: ``Bash`` calls running ``forge-smart-test``.
     test_runs: int = 0
+    #: The model answering most main-session requests; ``None`` if unknown.
+    model: str | None = None
 
 
 def _bash_counts(record: dict[str, Any]) -> tuple[int, int]:
@@ -362,6 +367,22 @@ def _bash_counts(record: dict[str, Any]) -> tuple[int, int]:
             precommit += bool(_PRECOMMIT_CALL.search(command))
             tests += bool(_TEST_CALL.search(command))
     return precommit, tests
+
+
+def _model(record: dict[str, Any]) -> str | None:
+    """The model an assistant record names; ``None`` for synthetic or absent.
+
+    Args:
+        record: One assistant record.
+
+    Returns:
+        The printable model id.
+    """
+    message = record.get("message")
+    model = message.get("model") if isinstance(message, dict) else None
+    if not isinstance(model, str) or not model or model.startswith("<"):
+        return None
+    return _printable(model)
 
 
 def _in_window(
@@ -415,11 +436,12 @@ class BranchUsageTally:
                 continue
             if kind not in {"assistant", "user"}:
                 continue
-            usage = precommit = tests = None
+            usage = precommit = tests = model = None
             if kind == "assistant":
                 request = UsageTally(self._seen)
                 usage = request.usage if request.add_record(record) else None
                 precommit, tests = _bash_counts(record)
+                model = _model(record) if usage is not None else None
             self.events.setdefault(_printable(branch), []).append(
                 BranchEvent(
                     parse_ts(record.get("timestamp")),
@@ -428,6 +450,7 @@ class BranchUsageTally:
                     usage,
                     precommit or 0,
                     tests or 0,
+                    model,
                 )
             )
 
@@ -468,6 +491,7 @@ class BranchUsageTally:
             return None
         out = BranchSummary()
         run_ids: dict[str, set[str]] = {}
+        models: Counter[str] = Counter()
         for event in picked:
             if event.time is not None:
                 out.timestamps.append(event.time)
@@ -476,7 +500,10 @@ class BranchUsageTally:
             if event.usage is not None:
                 out.tokens.setdefault(event.agent_type, TokenUsage()).add(event.usage)
                 run_ids.setdefault(event.agent_type, set()).add(event.run)
+            if event.model and event.agent_type == MAIN_AGENT:
+                models[event.model] += 1
         out.runs = {agent: len(ids) for agent, ids in run_ids.items()}
+        out.model = models.most_common(1)[0][0] if models else None
         return out
 
     def daily(self, branch: str) -> dict[tuple[str, str], TokenUsage]:

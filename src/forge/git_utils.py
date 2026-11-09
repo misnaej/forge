@@ -550,23 +550,19 @@ def forge_cache_dir() -> Path:
     return Path(base) / "forge"
 
 
-def forge_data_dir(slug: str) -> Path:
-    """Return the per-user directory forge keeps one repo's lasting data in.
+def forge_data_dir() -> Path:
+    """Return the per-user directory forge keeps machine-wide lasting data in.
 
-    Keyed by GitHub ``owner/repo`` rather than checkout path, so every
-    clone of one repo on the machine shares it.
-
-    Args:
-        slug: The repo's ``owner/repo``, as :func:`github_slug` returns it.
+    One directory per machine user, shared by every repo and checkout:
+    lasting data (unlike :func:`forge_cache_dir`) that must survive a
+    cache wipe.
 
     Returns:
-        ``$XDG_DATA_HOME/forge/<owner>/<repo>``, or
-        ``~/.local/share/forge/<owner>/<repo>`` when the variable is unset
-        or empty.
+        ``$XDG_DATA_HOME/forge``, or ``~/.local/share/forge`` when the
+        variable is unset or empty.
     """
     base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
-    owner, _, repo = slug.partition("/")
-    return Path(base) / "forge" / owner / repo
+    return Path(base) / "forge"
 
 
 def github_slug(root: Path) -> str | None:

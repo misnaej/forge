@@ -168,7 +168,7 @@ class DocstringVerifier(ast.NodeVisitor):
         self.current_class: str | None = None
         self._all_fixtures: frozenset[str] = self.PYTEST_FIXTURES
 
-    def visit_Module(self, node: ast.Module) -> None:  # noqa: N802
+    def visit_Module(self, node: ast.Module) -> None:
         """Check module-level docstring.
 
         Args:
@@ -193,7 +193,7 @@ class DocstringVerifier(ast.NodeVisitor):
             )
         self.generic_visit(node)
 
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:  # noqa: N802
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
         """Check class docstring.
 
         Args:
@@ -217,7 +217,7 @@ class DocstringVerifier(ast.NodeVisitor):
         self.generic_visit(node)
         self.current_class = old_class
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         """Check function/method docstring.
 
         Args:
@@ -226,7 +226,7 @@ class DocstringVerifier(ast.NodeVisitor):
         self._check_function(node)
         self.generic_visit(node)
 
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:  # noqa: N802
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
         """Check async function/method docstring.
 
         Args:

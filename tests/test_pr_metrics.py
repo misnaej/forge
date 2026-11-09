@@ -2,8 +2,10 @@
 
 # MOCKING STRATEGY: GitHub is the only fake. ``gh_api`` is replaced by
 # :class:`FakeGitHub`, which answers the three endpoints the CLI calls from
-# an in-memory dict; ``require_cli`` is a no-op. The database is a real
-# SQLite file under ``tmp_path`` and transcripts are real JSONL files.
+# an in-memory dict; ``require_cli`` is a no-op and the origin slug is
+# fixed to ``acme/widget``. ``XDG_DATA_HOME`` points under ``tmp_path``, so
+# the database, the repo-id map and legacy files are real files there;
+# transcripts are real JSONL files.
 """
 
 from __future__ import annotations
@@ -23,6 +25,9 @@ from tests.test_agent_profile_tokens import _at, _request, on_branch
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+SLUG = "acme/widget"
 
 
 class FakeGitHub:
@@ -91,14 +96,32 @@ class FakeGitHub:
 def github(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeGitHub:
     """A fake GitHub wired into the CLI; repo root is *tmp_path*.
 
+    Machine data lives under ``tmp_path / "data"``.
+
     Returns:
         The fake, for registering PRs.
     """
     fake = FakeGitHub()
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     monkeypatch.setattr(pr_metrics, "gh_api", fake)
     monkeypatch.setattr(pr_metrics, "require_cli", lambda *_a, **_k: None)
     monkeypatch.setattr(pr_metrics, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(pr_metrics, "github_slug", lambda _root: SLUG)
     return fake
+
+
+def _key(pr: int) -> str:
+    """The stored key of *pr* in ``acme/widget``.
+
+    Args:
+        pr: PR number.
+
+    Returns:
+        Its ``pr_key``.
+    """
+    repo_id = pr_metrics.lookup_repo_id(SLUG)
+    assert repo_id is not None
+    return pr_metrics.pr_key(repo_id, pr)
 
 
 @pytest.fixture
@@ -109,10 +132,14 @@ def transcripts(tmp_path: Path) -> Path:
         The directory.
     """
     root = tmp_path / "projects" / "checkout"
+    first = _request(0, "a1", usage=(100, 0, 0, 10))
+    message = first["message"]
+    assert isinstance(message, dict)
+    first["message"] = {**message, "model": "claude-test-1"}
     _write_jsonl(
         root / "s1.jsonl",
         [
-            on_branch("feat/a", _request(0, "a1", usage=(100, 0, 0, 10))),
+            on_branch("feat/a", first),
             on_branch("feat/a", _request(60, "a2", usage=(100, 0, 0, 10))),
             on_branch("feat/b", _request(200, "b1", usage=(5, 0, 0, 0))),
             on_branch("main", _request(300, "m1", usage=(40, 0, 0, 0))),
@@ -163,7 +190,7 @@ def _tokens(db: Path, pr: int) -> dict[str, int]:
     """
     with sqlite3.connect(db) as conn:
         rows = conn.execute(
-            "SELECT agent_type, input FROM pr_tokens WHERE pr = ?", (pr,)
+            "SELECT agent_type, input FROM pr_tokens WHERE pr_key = ?", (_key(pr),)
         )
         return dict(rows.fetchall())
 
@@ -173,7 +200,8 @@ def test_record_attributes_tokens_by_head_branch(
 ) -> None:
     """Behavior: only head-branch usage is charged; rounds = busiest reporter's runs.
 
-    Wrap-ups posted are kept apart from review rounds.
+    Wrap-ups posted are kept apart from review rounds; the repo's own
+    agent type is stored as ``other``; the main session's model is kept.
     """
     github.add(1, "feat/a")
     github.wrapups[1] = 1
@@ -183,16 +211,36 @@ def test_record_attributes_tokens_by_head_branch(
 
     assert _tokens(db, 1) == {
         "main": 200,
-        "design-checker-acme": 50,
+        "other": 50,
         "forge:design-checker": 0,
         "forge:security-checker": 0,
     }
     with sqlite3.connect(db) as conn:
         row = conn.execute(
-            "SELECT head_branch, review_rounds, wrapups_posted, files, wall_s, "
-            "precommit_runs FROM prs WHERE pr = 1"
+            "SELECT merged_on, tool, model, review_rounds, wrapups_posted, files, "
+            "wall_s, precommit_runs FROM prs WHERE pr_key = ?",
+            (_key(1),),
         ).fetchone()
-    assert row == ("feat/a", 2, 1, 2, 60.0, 0)
+    assert row == ("2026-09-30", "claude-code", "claude-test-1", 2, 1, 2, 60.0, 0)
+
+
+def test_database_holds_no_repo_pr_or_branch_name(
+    tmp_path: Path, github: FakeGitHub, transcripts: Path
+) -> None:
+    """Behavior: after record, no title, branch, slug or PR number is in the file.
+
+    The repo-id map is the one file naming the repo.
+    """
+    github.add(9876543, "feat/a", title="Secret Title", merged_at=_iso(_at(3600)))
+    db = tmp_path / "m.sqlite"
+
+    assert _run(db, transcripts, "record", "--pr", "9876543") == 0
+
+    data = db.read_bytes()
+    for leak in (b"Secret", b"feat/a", b"acme", b"widget", b"9876543", b"checkout"):
+        assert leak not in data
+    ids = json.loads((tmp_path / "data" / "forge" / "repo-ids.json").read_text())
+    assert list(ids) == [SLUG]
 
 
 def test_reused_branch_name_splits_usage_at_each_merge(
@@ -212,7 +260,7 @@ def test_reused_branch_name_splits_usage_at_each_merge(
 
     assert _tokens(db, 1) == {
         "main": 100,
-        "design-checker-acme": 50,
+        "other": 50,
         "forge:design-checker": 0,
     }
     assert _tokens(db, 2) == {
@@ -225,7 +273,7 @@ def test_reused_branch_name_splits_usage_at_each_merge(
 def test_record_replaces_previous_rows(
     tmp_path: Path, github: FakeGitHub, transcripts: Path
 ) -> None:
-    """Behavior: recording a PR again leaves one row set, the latest."""
+    """Behavior: recording a PR again leaves one row set, the latest, by pr_key."""
     github.add(1, "feat/a")
     db = tmp_path / "m.sqlite"
     _run(db, transcripts, "record", "--pr", "1")
@@ -235,7 +283,8 @@ def test_record_replaces_previous_rows(
 
     assert _tokens(db, 1) == {"main": 5}
     with sqlite3.connect(db) as conn:
-        assert conn.execute("SELECT pr, additions FROM prs").fetchall() == [(1, 99)]
+        rows = conn.execute("SELECT pr_key, additions FROM prs").fetchall()
+    assert rows == [(_key(1), 99)]
 
 
 def test_base_branch_usage_lands_in_unattributed_and_never_shrinks(
@@ -255,8 +304,10 @@ def test_base_branch_usage_lands_in_unattributed_and_never_shrinks(
     _run(db, empty, "record", "--pr", "1")
 
     with sqlite3.connect(db) as conn:
-        rows = conn.execute("SELECT agent_type, input FROM unattributed").fetchall()
-    assert rows == [("main", 40)]
+        rows = conn.execute(
+            "SELECT repo_id, agent_type, input FROM unattributed"
+        ).fetchall()
+    assert rows == [(pr_metrics.lookup_repo_id(SLUG), "main", 40)]
 
 
 def test_backfill_skips_recorded_prs_and_branches_without_usage(
@@ -274,7 +325,8 @@ def test_backfill_skips_recorded_prs_and_branches_without_usage(
 
     assert github.fetched == [2]
     with sqlite3.connect(db) as conn:
-        assert [r[0] for r in conn.execute("SELECT pr FROM prs ORDER BY pr")] == [1, 2]
+        keys = {r[0] for r in conn.execute("SELECT pr_key FROM prs")}
+    assert keys == {_key(1), _key(2)}
 
 
 def test_record_fails_when_github_cannot_be_read(
@@ -331,3 +383,93 @@ def test_record_parses_only_files_that_can_hold_the_pr(
     assert "other.jsonl" not in parsed
     assert "s1.jsonl" in parsed
     assert _tokens(db, 1)["main"] == 200
+
+
+_LEGACY_SCHEMA = """
+CREATE TABLE prs (pr INTEGER PRIMARY KEY, title TEXT, head_branch TEXT,
+    merged_at TEXT, files INTEGER, additions INTEGER, deletions INTEGER,
+    commits INTEGER, review_rounds INTEGER, wrapups_posted INTEGER,
+    precommit_runs INTEGER, test_runs INTEGER, active_s REAL, wall_s REAL,
+    recorded_at TEXT, forge_version TEXT);
+CREATE TABLE pr_tokens (pr INTEGER NOT NULL, agent_type TEXT NOT NULL,
+    requests INTEGER, input INTEGER, cache_write INTEGER, cache_read INTEGER,
+    output INTEGER, PRIMARY KEY (pr, agent_type));
+CREATE TABLE unattributed (date TEXT NOT NULL, agent_type TEXT NOT NULL,
+    requests INTEGER, input INTEGER, cache_write INTEGER, cache_read INTEGER,
+    output INTEGER, PRIMARY KEY (date, agent_type));
+INSERT INTO prs VALUES (9876543, 'Secret Title', 'feat/secret-branch',
+    '2026-08-01T10:00:00Z', 2, 30, 10, 3, 1, 1, 2, 1, 60.0, 120.0,
+    '2026-08-01T11:00:00+00:00', '11.0.0');
+INSERT INTO pr_tokens VALUES (9876543, 'main', 1, 100, 0, 0, 5);
+INSERT INTO pr_tokens VALUES (9876543, 'reviewer-acme', 1, 7, 0, 0, 0);
+INSERT INTO unattributed VALUES ('2026-08-01', 'main', 1, 40, 0, 0, 0);
+"""
+
+
+def test_legacy_per_repo_database_moves_into_machine_database(
+    tmp_path: Path, github: FakeGitHub
+) -> None:
+    """Behavior: an old per-repo file is imported without names, then deleted.
+
+    Running again changes nothing (idempotent).
+    """
+    del github  # wires XDG, slug and repo root
+    legacy = tmp_path / "data" / "forge" / "acme" / "widget" / "metrics.sqlite"
+    legacy.parent.mkdir(parents=True)
+    with sqlite3.connect(legacy) as conn:
+        conn.executescript(_LEGACY_SCHEMA)
+    conn.close()
+
+    assert pr_metrics.main(["report"]) == 0
+    assert pr_metrics.main(["report"]) == 0
+
+    assert not (tmp_path / "data" / "forge" / "acme").exists()
+    db = tmp_path / "data" / "forge" / "metrics.sqlite"
+    assert _tokens(db, 9876543) == {"main": 100, "other": 7}
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("SELECT merged_on, tool FROM prs").fetchall() == [
+            ("2026-08-01", "claude-code")
+        ]
+        assert conn.execute("SELECT input FROM unattributed").fetchall() == [(40,)]
+    data = db.read_bytes()
+    for leak in (b"Secret", b"secret-branch", b"acme", b"widget", b"9876543"):
+        assert leak not in data
+
+
+def test_export_equals_stored_rows(
+    tmp_path: Path, github: FakeGitHub, transcripts: Path
+) -> None:
+    """Behavior: export writes each stored row as it is, with the schema version."""
+    github.add(1, "feat/a")
+    db = tmp_path / "m.sqlite"
+    out = tmp_path / "export.json"
+    _run(db, transcripts, "record", "--pr", "1")
+
+    assert _run(db, transcripts, "export", "--out", str(out)) == 0
+
+    payload = json.loads(out.read_text())
+    assert payload["schema"] == pr_metrics.SCHEMA_VERSION
+    [pr] = payload["prs"]
+    with sqlite3.connect(db) as conn:
+        conn.row_factory = sqlite3.Row
+        stored = dict(conn.execute("SELECT * FROM prs").fetchone())
+    assert {k: v for k, v in pr.items() if k != "tokens"} == stored
+    assert {t: c["input"] for t, c in pr["tokens"].items()} == _tokens(db, 1)
+
+
+def test_report_repo_filter_resolves_current_repo_and_rejects_unknown(
+    tmp_path: Path,
+    github: FakeGitHub,
+    transcripts: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Behavior: ``--repo .`` shows this repo; a repo never recorded exits 2."""
+    github.add(1, "feat/a")
+    db = tmp_path / "m.sqlite"
+    _run(db, transcripts, "record", "--pr", "1")
+    capsys.readouterr()
+
+    assert _run(db, transcripts, "report", "--repo", ".") == 0
+    short = (pr_metrics.lookup_repo_id(SLUG) or "")[:6]
+    assert f"2026-09-30 {short}#1" in capsys.readouterr().out
+    assert _run(db, transcripts, "report", "--repo", "acme/other") == 2
