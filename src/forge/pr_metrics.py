@@ -1440,7 +1440,10 @@ def _read(conn: sqlite3.Connection, root: Path, args: argparse.Namespace) -> int
         rows = load_rows(conn, last=args.last, repo_prefix=prefix)
         emit(render_report(rows))
         if args.html:
-            args.html.write_text(render_html(rows), encoding="utf-8")
+            # The page charts versions over all recorded PRs; `--last` only
+            # trims the terminal table.
+            every = load_rows(conn, repo_prefix=prefix)
+            args.html.write_text(render_html(every), encoding="utf-8")
             emit(f"Wrote {args.html}")
         return 0
     payload = export_payload(load_rows(conn), schema=SCHEMA_VERSION)

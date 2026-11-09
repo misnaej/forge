@@ -468,6 +468,32 @@ def test_export_equals_stored_rows(
     assert {t: c["input"] for t, c in pr["tokens"].items()} == _tokens(db, 1)
 
 
+def test_report_html_covers_every_pr_whatever_last(
+    tmp_path: Path,
+    github: FakeGitHub,
+    transcripts: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Behavior: ``--last`` trims the terminal table, never the HTML page."""
+    github.add(1, "feat/a")
+    github.add(2, "feat/b")
+    db = tmp_path / "m.sqlite"
+    _run(db, transcripts, "record", "--pr", "1")
+    _run(db, transcripts, "record", "--pr", "2")
+    capsys.readouterr()
+    page = tmp_path / "page.html"
+
+    assert _run(db, transcripts, "report", "--last", "1", "--html", str(page)) == 0
+
+    short = (pr_metrics.lookup_repo_id(SLUG) or "")[:6]
+    out = capsys.readouterr().out
+    assert f"{short}#1" not in out
+    assert f"{short}#2" in out
+    html_text = page.read_text(encoding="utf-8")
+    assert f"{short}#1" in html_text
+    assert f"{short}#2" in html_text
+
+
 def test_report_repo_filter_resolves_current_repo_and_rejects_unknown(
     tmp_path: Path,
     github: FakeGitHub,

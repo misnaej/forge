@@ -15,11 +15,22 @@ from typing import TYPE_CHECKING, Any, Final
 
 from forge.agent_profile_tokens import MAIN_AGENT, TokenUsage, fmt_tokens
 from forge.git_utils import parse_semver
+from forge.pr_metrics_charts import (
+    COMPACT_FROM,
+    Change,
+    Dot,
+    Series,
+    category_chart,
+    fmt_number,
+    series_class,
+    time_chart,
+)
 from forge.regen_docs import forge_version
 
 
 if TYPE_CHECKING:
     import sqlite3
+    from collections.abc import Callable
 
 
 #: Token table columns, in storage order.
@@ -29,8 +40,6 @@ _SHARED_PREFIX: Final = "forge:"
 SHORT_ID: Final = 6
 #: Fewest PRs with tokens a trend compares (two per half).
 TREND_MIN_PRS: Final = 4
-#: Medians below this print with a decimal, not as compact token counts.
-_SMALL_MEDIAN: Final = 1_000
 _CHART_W: Final = 640
 _CHART_H: Final = 160
 
@@ -250,7 +259,7 @@ def _fmt_median(value: float) -> str:
     Returns:
         ``42k`` / ``3.1M`` style at a thousand and above, else ``1.5``.
     """
-    return fmt_tokens(round(value)) if value >= _SMALL_MEDIAN else f"{value:.1f}"
+    return fmt_tokens(round(value)) if value >= COMPACT_FROM else f"{value:.1f}"
 
 
 def render_report(rows: list[PrRow]) -> str:
@@ -336,26 +345,348 @@ def _bar_chart(rows: list[PrRow]) -> str:
     )
 
 
+# --- by forge version --------------------------------------------------------
+
+#: Bucket for PRs recorded without a forge version; always sorts last.
+UNKNOWN_VERSION: Final = "unknown"
+
+
+@dataclass(frozen=True)
+class VersionStats:
+    """Medians for one (forge version, repo) group of PRs.
+
+    Token medians count only PRs carrying token data, so a PR whose
+    transcripts were not found never drags a median to zero.
+    """
+
+    prs: int
+    with_tokens: int
+    new_tokens: float | None
+    per_line: float | None
+    active_min: float | None
+    rounds: float | None
+
+
+def _version_name(row: PrRow) -> str:
+    """The row's forge version, :data:`UNKNOWN_VERSION` when not recorded.
+
+    Args:
+        row: The PR.
+
+    Returns:
+        The bucket name.
+    """
+    return row.forge_version or UNKNOWN_VERSION
+
+
+def version_order(rows: list[PrRow]) -> list[str]:
+    """The versions in *rows*, release order, :data:`UNKNOWN_VERSION` last.
+
+    Args:
+        rows: PRs.
+
+    Returns:
+        The version names.
+    """
+    names = {_version_name(row) for row in rows}
+    known = sorted(names - {UNKNOWN_VERSION}, key=lambda v: (_version_key(v), v))
+    return known + [UNKNOWN_VERSION] * (UNKNOWN_VERSION in names)
+
+
+def repo_order(rows: list[PrRow]) -> list[str]:
+    """Repo ids by first recorded PR: fixes each repo's colour.
+
+    Args:
+        rows: PRs, oldest first.
+
+    Returns:
+        The repo ids.
+    """
+    return list(dict.fromkeys(row.repo_id for row in rows))
+
+
+def _group_stats(group: list[PrRow]) -> VersionStats:
+    """Medians for one group; token medians over PRs with token data only.
+
+    Args:
+        group: The group's PRs.
+
+    Returns:
+        The stats.
+    """
+    costed = [row for row in group if row.new_tokens]
+    return VersionStats(
+        prs=len(group),
+        with_tokens=len(costed),
+        new_tokens=_median([row.new_tokens for row in costed]),
+        per_line=_median([_per_line(row) for row in costed]),
+        active_min=_median(
+            [None if row.active_s is None else row.active_s / 60 for row in group]
+        ),
+        rounds=_median([row.review_rounds for row in group]),
+    )
+
+
+def version_stats(rows: list[PrRow]) -> dict[tuple[str, str], VersionStats]:
+    """Medians per (forge version, repo id).
+
+    Args:
+        rows: PRs.
+
+    Returns:
+        ``(version, repo_id)`` → stats, for every group with a PR.
+    """
+    groups: dict[tuple[str, str], list[PrRow]] = {}
+    for row in rows:
+        groups.setdefault((_version_name(row), row.repo_id), []).append(row)
+    return {key: _group_stats(group) for key, group in groups.items()}
+
+
+def _version_chart(
+    rows: list[PrRow],
+    stats: dict[tuple[str, str], VersionStats],
+    metric: Callable[[VersionStats], float | None],
+    *,
+    label: str,
+    y_title: str,
+) -> str:
+    """A per-version line chart, one series per repo.
+
+    Args:
+        rows: PRs, oldest first.
+        stats: :func:`version_stats` of *rows*.
+        metric: The plotted median, ``None`` where unknown.
+        label: Accessible name.
+        y_title: Y-axis title.
+
+    Returns:
+        The ``<svg>``.
+    """
+    versions = version_order(rows)
+    series = []
+    for repo_id in repo_order(rows):
+        cells = [stats.get((version, repo_id)) for version in versions]
+        series.append(
+            Series(
+                repo_id[:SHORT_ID],
+                [metric(cell) if cell else None for cell in cells],
+            )
+        )
+    return category_chart(versions, series, label=label, y_title=y_title)
+
+
+def version_changes(rows: list[PrRow]) -> list[Change]:
+    """Days a repo's merged PRs moved to a different forge version.
+
+    PRs with no recorded version or merge day neither start nor end a move.
+
+    Args:
+        rows: PRs, oldest first.
+
+    Returns:
+        The moves, in row order.
+    """
+    changes = []
+    last: dict[str, str] = {}
+    for row in rows:
+        if row.forge_version is None or row.merged_on is None:
+            continue
+        before = last.get(row.repo_id)
+        last[row.repo_id] = row.forge_version
+        if before is not None and before != row.forge_version:
+            changes.append(
+                Change(row.merged_on, row.repo_id[:SHORT_ID], before, row.forge_version)
+            )
+    return changes
+
+
+def _time_chart(rows: list[PrRow]) -> str:
+    """New tokens per PR by merge day, one dot per PR, version changes marked.
+
+    Args:
+        rows: PRs, oldest first.
+
+    Returns:
+        The ``<svg>``.
+    """
+    slot = {repo_id: i for i, repo_id in enumerate(repo_order(rows))}
+    dots = [
+        Dot(
+            slot[row.repo_id],
+            row.repo_id[:SHORT_ID],
+            row.merged_on,
+            float(row.new_tokens),
+            f"#{row.ordinal} {row.merged_on} {_version_name(row)}: "
+            f"{fmt_tokens(row.new_tokens)}",
+        )
+        for row in rows
+        if row.merged_on and row.new_tokens
+    ]
+    return time_chart(
+        dots,
+        version_changes(rows),
+        label="New tokens per PR over time, one dot per PR",
+        y_title="new tokens",
+    )
+
+
+def _fmt_cell(value: float | None, fmt: Callable[[float], str]) -> str:
+    """A table median, ``-`` when unknown.
+
+    Args:
+        value: The median.
+        fmt: Formatter for a known value.
+
+    Returns:
+        The cell text.
+    """
+    return "-" if value is None else fmt(value)
+
+
+def _version_table(
+    rows: list[PrRow], stats: dict[tuple[str, str], VersionStats]
+) -> str:
+    """Version by repo table of counts and medians.
+
+    Args:
+        rows: PRs, oldest first.
+        stats: :func:`version_stats` of *rows*.
+
+    Returns:
+        The ``<table>``.
+    """
+    esc = html.escape
+    body = []
+    for version in version_order(rows):
+        for repo_id in repo_order(rows):
+            cell = stats.get((version, repo_id))
+            if cell is None:
+                continue
+            values = (
+                str(cell.prs),
+                str(cell.with_tokens),
+                _fmt_cell(cell.new_tokens, fmt_number),
+                _fmt_cell(cell.per_line, lambda v: f"{v:,.0f}"),
+                _fmt_cell(cell.active_min, lambda v: f"{v:.0f}"),
+                _fmt_cell(cell.rounds, lambda v: f"{v:.1f}"),
+            )
+            body.append(
+                f"<tr><td>{esc(version)}</td><td>{esc(repo_id[:SHORT_ID])}</td>"
+                + "".join(f"<td>{esc(v)}</td>" for v in values)
+                + "</tr>"
+            )
+    return (
+        '<table class="by-version"><thead><tr><th>version</th><th>repo</th>'
+        "<th>PRs</th><th>with tokens</th><th>median new</th>"
+        "<th>median new/line</th><th>median active min</th>"
+        f"<th>median rounds</th></tr></thead><tbody>{''.join(body)}</tbody></table>"
+    )
+
+
+def _repo_legend(rows: list[PrRow]) -> str:
+    """Legend naming each repo's colour by short id.
+
+    Args:
+        rows: PRs, oldest first.
+
+    Returns:
+        A ``<p>``.
+    """
+    items = "".join(
+        f'<span class="swatch {series_class(i)}"></span>{html.escape(r[:SHORT_ID])}'
+        for i, r in enumerate(repo_order(rows))
+    )
+    return f'<p class="legend">repo:{items}</p>'
+
+
+def _version_section(rows: list[PrRow]) -> str:
+    """The by-version charts and table.
+
+    Args:
+        rows: PRs, oldest first.
+
+    Returns:
+        HTML.
+    """
+    stats = version_stats(rows)
+
+    def by_version(
+        title: str, y_title: str, metric: Callable[[VersionStats], float | None]
+    ) -> str:
+        svg = _version_chart(rows, stats, metric, label=title, y_title=y_title)
+        return f'<h3>{html.escape(title)}</h3><div class="wrap">{svg}</div>'
+
+    return "".join(
+        (
+            "<h2>By forge version</h2>",
+            (
+                '<p class="muted">Medians per version and repo. PRs without token '
+                "data are left out of token medians and show as gaps, never zeros; "
+                f"PRs with no recorded version are grouped as {UNKNOWN_VERSION}, "
+                "last.</p>"
+            ),
+            _repo_legend(rows),
+            by_version(
+                "New tokens per changed line by forge version (median)",
+                "new tokens / line",
+                lambda s: s.per_line,
+            ),
+            (
+                "<h3>New tokens per PR over time</h3>"
+                '<p class="muted">One dot per PR with token data. Dashed lines: a '
+                "repo moved to a new forge version.</p>"
+                f'<div class="wrap">{_time_chart(rows)}</div>'
+            ),
+            by_version(
+                "Active minutes per PR by forge version (median)",
+                "active minutes",
+                lambda s: s.active_min,
+            ),
+            by_version(
+                "Review rounds by forge version (median)",
+                "review rounds",
+                lambda s: s.rounds,
+            ),
+            f'<div class="wrap">{_version_table(rows, stats)}</div>',
+        )
+    )
+
+
 _HTML_STYLE = """
 :root { --bg: #fff; --fg: #1f2328; --muted: #656d76; --main: #2f6fde;
-  --helper: #9ab8ee; --rule: #d0d7de; }
+  --helper: #9ab8ee; --rule: #d0d7de;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  --s5: #e87ba4; --s6: #008300; --s7: #6250d6; --s8: #e34948; }
 @media (prefers-color-scheme: dark) { :root { --bg: #0d1117; --fg: #e6edf3;
-  --muted: #8d96a0; --main: #4c8df6; --helper: #2a4a80; --rule: #30363d; } }
+  --muted: #8d96a0; --main: #4c8df6; --helper: #2a4a80; --rule: #30363d;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+  --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767; } }
 body { background: var(--bg); color: var(--fg); margin: 0 auto; max-width: 960px;
   padding: 16px; font: 14px/1.5 system-ui, sans-serif; }
 svg { width: 100%; height: auto; border-bottom: 1px solid var(--rule); }
+svg.chart { min-width: 560px; border: 0; }
 .main { fill: var(--main); } .helper { fill: var(--helper); }
 .legend span { display: inline-block; width: 10px; height: 10px; margin: 0 4px 0 12px; }
+.s1 { color: var(--s1); } .s2 { color: var(--s2); } .s3 { color: var(--s3); }
+.s4 { color: var(--s4); } .s5 { color: var(--s5); } .s6 { color: var(--s6); }
+.s7 { color: var(--s7); } .s8 { color: var(--s8); } .other { color: var(--muted); }
+.swatch { background: currentColor; border-radius: 50%; }
+.series path { fill: none; stroke: currentColor; stroke-width: 2; }
+.series circle { fill: currentColor; stroke: var(--bg); stroke-width: 2; }
+.grid { stroke: var(--rule); stroke-width: 1; } .axis { stroke: var(--muted); }
+.mark { stroke: var(--muted); stroke-dasharray: 3 3; }
+.tick, .axis-title, .mark-label { fill: var(--muted); font-size: 11px; }
 table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
 th, td { padding: 4px 8px; border-bottom: 1px solid var(--rule); text-align: right; }
 th:nth-child(-n+2), td:nth-child(-n+2), td:last-child, th:last-child {
   text-align: left; }
+.by-version td:last-child, .by-version th:last-child { text-align: right; }
 .wrap { overflow-x: auto; } p.muted { color: var(--muted); }
 """
 
 
 def render_html(rows: list[PrRow]) -> str:
-    """One self-contained HTML page: chart, table and trend, nothing fetched.
+    """One self-contained HTML page: charts, tables and trend, nothing fetched.
 
     Args:
         rows: PRs, oldest first.
@@ -383,7 +714,8 @@ def render_html(rows: list[PrRow]) -> str:
         '<p class="legend"><span class="main" style="background:var(--main)">'
         '</span>main session<span style="background:var(--helper)"></span>'
         "helpers</p>"
-        f'{trend}<div class="wrap"><table><thead><tr><th>PR</th><th>model</th>'
+        f"{trend}{_version_section(rows)}<h2>Per PR</h2>"
+        '<div class="wrap"><table><thead><tr><th>PR</th><th>model</th>'
         "<th>tokens</th><th>new</th><th>cache%</th><th>new/line</th>"
         "<th>rounds</th><th>wall</th><th>active</th><th>lines</th>"
         "<th>top helpers (new)</th></tr></thead>"
