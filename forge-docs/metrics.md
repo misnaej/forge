@@ -33,7 +33,9 @@ One row per merged PR:
 
 Tokens, time and runs come from Claude Code's transcripts
 (`~/.claude/projects/`), whose every record names the git branch it ran
-on. A PR's figures are everything recorded on its head branch, in every
+on, and — under Mistral Vibe, where the timing hook has no equivalent —
+from Vibe session journals (`~/.vibe/logs/session/unified/`) read by
+`forge-agent-profile` (`vibe_sessions.py`). A PR's figures are everything recorded on its head branch, in every
 checkout of the repo on this machine, up to its merge — and after the
 merge of any earlier PR with the same branch name, so a reused name is
 not charged twice. Work on the base branch goes to an

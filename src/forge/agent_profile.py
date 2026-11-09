@@ -28,6 +28,11 @@ Three inputs, one primary and two best-effort:
   enriches a run with turn counts, repeated-call detection, and
   precommit-run counts. Claude Code deletes transcripts after
   ``cleanupPeriodDays`` (30 by default).
+- Mistral Vibe session journals (``…/logs/session/unified/child-*/journal``),
+  located through ``--vibe-sessions`` or the active Vibe home. Under Vibe
+  the ``log_agent_timing`` hook has no equivalent, so these journals are
+  the only record of subagent runs; they are keyed ``vibe:<session_id>``
+  so they never collide with ledger or Claude runs.
 - ``code_health/agent_transcript_digest.jsonl`` — this reporter's own
   per-run digest of what it read from each transcript, one JSON line
   per new or changed run, kept beside the ledger. A live transcript
@@ -46,6 +51,7 @@ Usage:
 - ``forge-agent-profile`` — report from the workspace ledger.
 - ``forge-agent-profile --agent-type forge:precommit-fixer --last 20``
 - ``forge-agent-profile --transcripts ~/.claude/projects/<proj>``
+- ``forge-agent-profile --vibe-sessions ~/.vibe/logs/session/unified``
 - ``forge-agent-profile --json`` — machine-readable runs + summary.
 - ``forge-agent-profile --history`` — render the append-only ledger.
 - ``forge-agent-profile --edits`` — which uncommitted files a subagent wrote.
@@ -95,6 +101,8 @@ from forge.git_utils import (
 )
 from forge.ledger import append_jsonl_record, append_ledger_line, parse_ledger
 from forge.text_clip import truncate
+from forge.vibe_metadata import default_sessions_dir
+from forge.vibe_sessions import VibeRun, runs_from_vibe_sessions
 
 
 if TYPE_CHECKING:
@@ -1419,9 +1427,14 @@ def _record_digest(
 
 
 def collect_runs(
-    ledger_path: Path, transcripts_root: Path | None, *, record_digest: bool = True
+    ledger_path: Path,
+    transcripts_root: Path | None,
+    *,
+    record_digest: bool = True,
+    root: Path | None = None,
+    vibe_sessions_dir: Path | None = None,
 ) -> list[AgentRun]:
-    """Assemble every known run: ledger first, transcripts as enrichment or backfill.
+    """Assemble every known run: ledger first, other sources as backfill.
 
     A live transcript is always preferred — a resumed agent's keeps
     growing — and the digest beside the ledger
@@ -1435,27 +1448,19 @@ def collect_runs(
         transcripts_root: Optional project directory to scan for
             transcripts the ledger does not name.
         record_digest: Append changed transcript stats to the digest.
+        root: The checkout asking; required for Vibe session ingestion.
+        vibe_sessions_dir: Optional Vibe unified store to scan for
+            subagent runs the ledger does not name (Vibe's
+            ``log_agent_timing`` hook equivalent does not exist).
 
     Returns:
         Runs ordered by start time, oldest first.
     """
     runs = runs_from_ledger(_iter_jsonl(ledger_path)) if ledger_path.is_file() else {}
-    for run in runs.values():
-        transcript = _resolve_subagent_transcript(
-            run.transcript_path, session_id=run.session_id, agent_id=run.agent_id
-        )
-        if transcript is not None:
-            run.stats = parse_transcript(transcript)
-    if transcripts_root is not None:
-        for agent_id, scanned in runs_from_transcripts(transcripts_root).items():
-            known = runs.get(agent_id)
-            if known is None:
-                runs[agent_id] = scanned
-            elif known.stats is None:
-                # A ledger run whose transcript the ledger misnamed keeps its
-                # timings; only the transcript half was missing.
-                known.stats = scanned.stats
-                known.transcript_path = scanned.transcript_path
+    _attach_transcripts(runs)
+    merge_transcript_runs(runs, transcripts_root)
+    if root is not None:
+        merge_vibe_runs(runs, root, vibe_sessions_dir)
     digest_path = ledger_path.parent / DIGEST_NAME
     digest = _load_digest(digest_path)
     for run in runs.values():
@@ -1464,6 +1469,90 @@ def collect_runs(
     if record_digest:
         _record_digest(digest_path, runs.values(), digest)
     return sorted(runs.values(), key=_start_of)
+
+
+def _attach_transcripts(runs: dict[str, AgentRun]) -> None:
+    """Fill each ledger run's stats from its transcript when it resolves.
+
+    Args:
+        runs: Runs keyed by agent id, updated in place.
+    """
+    for run in runs.values():
+        transcript = _resolve_subagent_transcript(
+            run.transcript_path, session_id=run.session_id, agent_id=run.agent_id
+        )
+        if transcript is not None:
+            run.stats = parse_transcript(transcript)
+
+
+def merge_transcript_runs(
+    runs: dict[str, AgentRun], transcripts_root: Path | None
+) -> None:
+    """Backfill runs from a scanned Claude transcripts directory.
+
+    Args:
+        runs: Runs keyed by agent id, updated in place.
+        transcripts_root: Optional project directory to scan.
+    """
+    if transcripts_root is None:
+        return
+    for agent_id, scanned in runs_from_transcripts(transcripts_root).items():
+        known = runs.get(agent_id)
+        if known is None:
+            runs[agent_id] = scanned
+        elif known.stats is None:
+            # A ledger run whose transcript the ledger misnamed keeps its
+            # timings; only the transcript half was missing.
+            known.stats = scanned.stats
+            known.transcript_path = scanned.transcript_path
+
+
+def merge_vibe_runs(
+    runs: dict[str, AgentRun], root: Path, sessions_dir: Path | None
+) -> None:
+    """Merge Vibe subagent sessions that no ledger run covers.
+
+    Args:
+        runs: Runs keyed by agent id, updated in place.
+        root: The checkout whose sessions to ingest.
+        sessions_dir: The unified store to scan; the active Vibe home's
+            when omitted.
+    """
+    for key, vibe_run in runs_from_vibe_sessions(root, sessions_dir).items():
+        if key not in runs:
+            runs[key] = _vibe_run_to_agent_run(key, vibe_run)
+
+
+def _vibe_run_to_agent_run(key: str, vibe_run: VibeRun) -> AgentRun:
+    """Convert one Vibe run into an :class:`AgentRun`.
+
+    Args:
+        key: The run's ``vibe:<session_id>`` key, which keeps the digest
+            clear of ledger and Claude transcript ids.
+        vibe_run: The parsed Vibe session.
+
+    Returns:
+        The run, with the journal-derived signals in ``stats``.
+    """
+    stats = TranscriptStats(
+        started=vibe_run.started,
+        ended=vibe_run.ended,
+        active_s=vibe_run.active_s,
+        turns=vibe_run.turns,
+        tool_calls=vibe_run.tool_calls,
+        max_repeat=vibe_run.max_repeat,
+        repeated_call=vibe_run.repeated_call,
+        output_tokens=vibe_run.tokens.output_tokens,
+        tokens=vibe_run.tokens,
+    )
+    return AgentRun(
+        agent_id=key,
+        agent_type=vibe_run.agent_type,
+        session_id=vibe_run.session_id,
+        started=vibe_run.started,
+        ended=vibe_run.ended,
+        stats=stats,
+    )
 
 
 def _start_of(run: AgentRun) -> datetime:
@@ -2048,6 +2137,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "Code still keeps.",
     )
     parser.add_argument(
+        "--vibe-sessions",
+        type=Path,
+        help="Vibe unified session store to scan for subagent runs the ledger "
+        "does not name (default: $VIBE_HOME/logs/session/unified, else "
+        "~/.vibe/logs/session/unified, when it exists).",
+    )
+    parser.add_argument(
         "--agent-type",
         help="Only runs of this agent type (e.g. forge:precommit-fixer).",
     )
@@ -2149,7 +2245,13 @@ def main() -> int:
     if args.tokens and transcripts is None:
         transcripts = default_transcripts_dir(root)
     runs = filter_runs(
-        collect_runs(ledger_path, transcripts, record_digest=not args.no_history),
+        collect_runs(
+            ledger_path,
+            transcripts,
+            record_digest=not args.no_history,
+            root=root,
+            vibe_sessions_dir=args.vibe_sessions or default_sessions_dir(),
+        ),
         agent_type=args.agent_type,
         since=since,
         last=args.last,

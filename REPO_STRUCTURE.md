@@ -32,7 +32,7 @@ Checked on every commit by `verify-forge-repo-structure`: every listed file and 
    - pr_evidence.py: the review evidence pack `forge-pr-plan --evidence` writes to `code_health/pr_evidence.log` — PR identity and diff, log freshness and pre-commit step markers, dup/layering findings at changed scope plus other audit logs' freshness, generated-artifact checks, api-digest changes, closing keywords and fragment presence; each item rendered `unavailable` on failure, the audits and generated-artifact checks under a timeout
    - slow_tests_report.py: `forge-slow-tests-report` — parses pytest `--durations` sections from a log (or stdin), merges across batches, prints the slowest tests; `--baseline`/`--update-baseline` compare against the committed `.forge-test-durations.json` (WARN-shaped, never gates; absent or malformed baseline = one skip line, not a wall of new-slow); `--coverage-json` ranks test functions by unique covered statements per second from a `coverage json --show-contexts` export; wired via the `/perf` skill
    - telemetry.py: `forge-telemetry` — process-tree RSS + host CPU sampler around a wrapped command; per-run log/plot artifacts, append-only `code_health/telemetry_history.log`, `--history` trend reader
-   - agent_profile.py: `forge-agent-profile` — where agent and subagent time goes: pairs the `log_agent_timing` hook ledger (`code_health/agent_timing.jsonl`) with the subagent transcripts it names into per-agent-type wall/active time, slowest runs, per-tool cost, loop suspects, and `forge:precommit-fixer` cap breaches; append-only `code_health/agent_profile_history.log` and `code_health/agent_transcript_digest.jsonl` (per-run transcript signals that outlive Claude Code's transcript sweep); wired via `/perf` and `/report-to-forge`
+   - agent_profile.py: `forge-agent-profile` — where agent and subagent time goes: pairs the `log_agent_timing` hook ledger (`code_health/agent_timing.jsonl`) with the subagent transcripts it names into per-agent-type wall/active time, slowest runs, per-tool cost, loop suspects, and `forge:precommit-fixer` cap breaches; also ingests Vibe session journals via `vibe_sessions.py` (`--vibe-sessions`, keyed `vibe:<session_id>`) since Vibe has no `log_agent_timing` hook; append-only `code_health/agent_profile_history.log` and `code_health/agent_transcript_digest.jsonl` (per-run transcript signals that outlive Claude Code's transcript sweep); wired via `/perf` and `/report-to-forge`
    - agent_profile_tokens.py: token accounting behind `forge-agent-profile --tokens` — per-request usage deduped by message id, fixed context vs work, main-session tokens per active skill, delegation brief and hand-back sizes, ranked rows and the token report renderer; `BranchUsageTally` — usage and activity per (git branch, agent type, day) for `forge-metrics`
    - pr_metrics.py: `forge-metrics` — per-merged-PR cost database (one anonymised SQLite per machine under the per-user data dir: rows keyed by random `repo_id` and HMAC `pr_key`, names and key secret only in the local repo-id map under the per-user data dir; unshipped agent types and odd model ids stored as `other`; schema-version check, schema-2 rekey; legacy per-repo files imported and deleted): schema, `record` (parses only transcripts that can hold the PR), `backfill` (one transcript walk for all PRs), GitHub reads; tokens per agent type attributed by transcript `gitBranch` within the PR's merge window, active/wall time, size, review rounds, wrap-ups, pre-commit/test runs; base-branch usage as `unattributed`; wired via `/next` cleanup and the `/pr` merge handling
    - pr_metrics_report.py: reading the `forge-metrics` database back — terminal report with trend (PRs labelled by merge day, short repo id, ordinal), self-contained HTML page (inline SVG), `export` of the stored rows
@@ -84,6 +84,8 @@ Checked on every commit by `verify-forge-repo-structure`: every listed file and 
    - gen_vibe_hooks.py: `forge-gen-vibe-hooks` — generates .vibe/hooks.toml from .claude-plugin/plugin.json
    - gen_vibe_agents.py: `forge-gen-vibe-agents` — publishes skills to .agents/skills/ for Vibe compatibility
    - install_vibe.py: `install-forge-vibe` — installs Vibe integration (hooks.toml, roster, skills, subagents, prompts, AGENTS.md)
+   - vibe_metadata.py: identity of one Vibe unified session store entry (CURRENT → latest generation's runtime-state.json, meta.json fallback) — kind, parent, cwd, agent name/model from the profile frontmatter; tolerant of corrupt files
+   - vibe_sessions.py: folds Vibe session journals (`child-*/journal/*.jsonl`) into per-subagent runs for `forge-agent-profile` (turns, tool calls, token usage, wall/active time), repo-matched by cwd like `repo_transcript_dirs`; keyed `vibe:<session_id>`
    - upgrade.py: `forge-upgrade` — two-phase consumer upgrade flow (rewrite pin → user runs pip → `--continue` re-syncs artifacts)
    - resync.py: `forge-resync` — regenerate forge-managed artifacts and open a dedup-guarded resync PR (companion to `upgrade.py`'s pin-rewrite flow); `--resolve-conflicts [--dry-run]` resolves a merge whose only conflicts are forge-generated artifacts by regenerating each from the merged tree (`pr_delta.REGEN_COMMANDS`), verifying with its `--check`, and staging — refusing if any other path conflicts
    - git_utils.py: shared git helpers and CLI logging setup (public API for consumers: `latest_v_tag`, `parse_semver`, `next_version`, `run_git`, `configure_cli_logging`)
@@ -227,6 +229,10 @@ enforcement:
 Pytest suite mirroring the `src/forge/` layout:
 
 1. **Package Tests**
+
+
+
+
    - conftest.py: shared pytest fixtures
    - _plan_fakes.py: `forge-plan-check` fakes and builders (a fake GitHub, history and merge-probe stand-ins), imported explicitly by the plan_staleness, plan_tracks and plan_check_cli suites
    - test_commit.py: tests for commit (the `forge-commit` guards, staging/commit file checks, push retry and exit codes)
@@ -296,6 +302,9 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_verify_test_naming.py: tests for verify_test_naming
    - test_agent_profile.py: tests for agent_profile (where agent and subagent time goes)
    - test_agent_profile_tokens.py: tests for agent_profile_tokens and the `--tokens` view (deduped usage, fixed context, session split, waste flags, digest compatibility)
+   - test_agent_profile_vibe_merge.py: tests for the Vibe-session merge into agent_profile runs (`vibe:`-prefixed keys, ledger-wins on collision)
+   - test_vibe_metadata.py: tests for vibe_metadata (session identity, frontmatter agent name/model, corrupt-file tolerance, VIBE_HOME)
+   - test_vibe_sessions.py: tests for vibe_sessions (journal parsing, repo matching, run extraction)
    - test_pr_metrics.py: tests for pr_metrics (`forge-metrics` record/backfill against a real SQLite file and transcript fixtures)
    - test_pr_metrics_report.py: tests for pr_metrics_report (report cells, self-contained HTML, figures-only export)
    - test_changelog_fragments.py: tests for changelog_fragments (fragment validation, discovery, assembly, and the `forge-changelog` CLI)

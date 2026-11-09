@@ -26,6 +26,7 @@ options:
 
 ```text
 usage: forge-agent-profile [-h] [--ledger LEDGER] [--transcripts TRANSCRIPTS]
+                           [--vibe-sessions VIBE_SESSIONS]
                            [--agent-type AGENT_TYPE] [--since SINCE]
                            [--last LAST] [--top TOP] [--label LABEL] [--json]
                            [--history] [--edits] [--session SESSION]
@@ -43,6 +44,11 @@ options:
                         Transcripts directory (~/.claude/projects/<encoded-
                         cwd>) to scan for runs the ledger does not name; it
                         backfills only what Claude Code still keeps.
+  --vibe-sessions VIBE_SESSIONS
+                        Vibe unified session store to scan for subagent runs
+                        the ledger does not name (default:
+                        $VIBE_HOME/logs/session/unified, else
+                        ~/.vibe/logs/session/unified, when it exists).
   --agent-type AGENT_TYPE
                         Only runs of this agent type (e.g. forge:precommit-
                         fixer).
