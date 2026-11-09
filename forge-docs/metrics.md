@@ -29,7 +29,13 @@ One row per merged PR:
 - **Time**: wall (first to last transcript record on the branch) and
   active (gaps over 5 minutes left out).
 - **Runs**: `forge-precommit` and `forge-smart-test` calls on the branch.
-- The forge version that recorded it.
+- **Forge version** the PR was built with, as a release `X.Y.Z`, read
+  from its merge commit (fetched once when missing locally): in forge
+  itself the newest release tag the merge contains; in a consumer the
+  forge-scripts pin in `pyproject.toml` at that commit (`==X.Y.Z` or a
+  git URL `@vX.Y.Z`; dev suffixes dropped). Empty when it cannot be told
+  (branch pin, commit unreachable) — never the version installed when
+  recording.
 
 Tokens, time and runs come from Claude Code's transcripts
 (`~/.claude/projects/`), whose every record names the git branch it ran
@@ -47,9 +53,11 @@ not charged twice. Work on the base branch goes to an
 - `forge-metrics record --pr <N>` — after merge: the `/next` cleanup and
   the PR monitor's merge handling run it. Re-recording replaces the PR's
   rows.
-- `forge-metrics backfill [--limit N]` — merged PRs not yet recorded whose
-  branch still has transcripts. Claude Code purges transcripts after about
-  30 days; older PRs cannot be recovered.
+- `forge-metrics backfill [--limit N] [--refresh]` — merged PRs not yet
+  recorded whose branch still has transcripts. Claude Code purges
+  transcripts after about 30 days; older PRs cannot be recovered.
+  `--refresh` also rewrites the forge version of PRs already recorded
+  (among GitHub's newest 100 merged), leaving their other figures alone.
 
 ## Where
 
@@ -88,9 +96,10 @@ and key; `report --repo` reads it to resolve a name to an id. Nothing
 database stays readable but unattributable: a repo recorded again gets a
 new id, and a re-recorded PR a new key (a second row).
 
-A database of the previous layout (schema 2, plain `sha256` keys) is
-rekeyed on open. Any other schema version is refused with the expected
-and found versions named.
+A database of an earlier layout is upgraded on open: schema 2 (plain
+`sha256` keys) is rekeyed, and schema 2 or 3 gains the bench tables. Any
+other schema version is refused with the expected and found versions
+named.
 
 `record` parses only transcript files written since the day before the
 PR was opened that name its branch or the base branch; `backfill` reads
@@ -107,10 +116,45 @@ every transcript once and splits it across the PRs it records.
   `n` = its place among that repo's recorded PRs (1 = oldest). All repos
   by default; `--repo .` (this checkout's repo), `--repo owner/repo`
   (resolved through `repo-ids.json`) or `--repo <id prefix>` narrows it.
-  `--html` writes one self-contained page (inline chart, no network
-  fetches).
+  `--html` writes one self-contained page (inline charts, no network
+  fetches), adding medians per forge version and repo id (new tokens per
+  line, active minutes, review rounds), new tokens per PR over time and a
+  version × repo table; PRs without token data are gaps, never zeros.
+  The page covers every recorded PR whatever `--last` says.
 - `forge-metrics export [--out PATH]` — the stored rows as JSON, plus the
   database schema version, for sharing with forge.
+
+## Publishing a public page
+
+`forge-metrics publish --repo OWNER/NAME` pushes a public variant of the
+page to a dedicated repo served by GitHub Pages: `index.html` and
+`metrics.json` (same rows as data, with the schema version), plus a short
+`README.md` and `.nojekyll`. While metrics publishing is an experiment,
+only forge's maintainer may publish: it refuses any other `gh` user, and
+any target repo outside the maintainer's account (`--dry-run` stays open
+to everyone). The public variant has no dates at all (no over-time chart,
+no merge days), no PR keys, no names and no repo ids: forge's own repo
+shows as `forge` and every other repo merges into one `external` series.
+PRs are grouped by forge version and put in an order fixed by a hash of each PR's key, so their
+order dates nothing and an unchanged database republishes identical files
+(nothing is pushed). It keeps forge version, tool, model, and the token,
+time, review-round and size numbers. The page repo's commit history still
+shows roughly when rows were added (no names), and each commit carries the
+publisher's git identity.
+
+Before writing anything it checks the target exists, is public (Pages
+needs that), and that you have admin rights on it; then it clones it to a
+temporary directory and refuses unless it tracks nothing but those four
+files (an empty repo is fine). It never force-pushes and touches no other
+repo. `--dry-run DIR` writes `index.html` and `metrics.json` to `DIR`
+without any network call, for a look first.
+
+One-time setup by the owner:
+
+1. `gh repo create OWNER/forge-metrics --public`
+2. `forge-metrics publish --repo OWNER/forge-metrics`
+3. If it says Pages is off, run the `gh api -X POST repos/OWNER/forge-metrics/pages ...`
+   command it prints. The page then lives at `https://OWNER.github.io/forge-metrics/`.
 
 ## Privacy of `export`
 
@@ -119,3 +163,98 @@ database holds (see "What is not stored"): `repo_id`, `pr_key`, merge
 day, tool, model, forge version, figures and tokens per agent type. The
 `repo_id` lets rows of one repo be grouped without naming it. Read the
 file before sending it.
+
+## Comparing versions (`forge-metrics bench`)
+
+Real PRs differ too much to tell whether a forge version made the same
+work cheaper. `bench` gives five fixed tasks and a private sandbox repo to
+run them in, by hand, so versions can be compared on equal work.
+
+> **Cost.** Each run is a real session taken through the full forge
+> workflow to a posted PR wrap-up: about one PR's worth of tokens. Run
+> the tasks for a version you want to measure; nothing runs them
+> automatically.
+
+- `forge-metrics bench init --repo <owner>/<name>` — create the repo on
+  GitHub first, **private and empty** (no README); `init` refuses a repo
+  that is public, not yours (no admin rights) or has a branch. It fills
+  it with a small sample project shipped in forge, sets it up as a forge
+  consumer with the running forge, pushes `main` and tags it
+  `bench-base-1`. Pushing `main` from a CLI is allowed here only because
+  it is the first commit of a sandbox nobody else uses, checked just
+  before, through forge's no-force push seam. The repo name is kept in
+  `<data dir>/bench.json` (local only, never in the database). Every
+  later command checks again that the sandbox is private and yours.
+- `forge-metrics bench start <task> [--clone DIR]` — in your local clone
+  of the sandbox (default `<data dir>/bench/sandbox`, cloned on first
+  use): fetch, then, **only if the working tree is clean** (a dirty clone
+  is refused, nothing is discarded), create branch `bench/<task>-<n>` at
+  the base tag and write the task's setup files. It prints the line to
+  start a session (`cd <clone> && claude`) and the prompt to paste. The
+  run in progress is kept in `<data dir>/bench-run.json`; one at a time.
+- Run the prompt in that session. Install the forge version you want to
+  measure in the clone's `.venv` first (and its plugin, as for any
+  consumer); the prompt asks for the normal workflow up to a posted
+  wrap-up, without questions.
+- `forge-metrics bench finish [--clone DIR]` — records the run, closes
+  its PR unmerged, deletes its branch on GitHub (lease-pinned, never the
+  base branch; the local branch is kept) and clears the run file. Then
+  it shares the results with the sandbox (below).
+- `forge-metrics bench report [--task T] [--from-sandbox [--clone DIR]]`
+  — per task, one line per forge version (release order): median new
+  tokens, cache %, active and wall time, review rounds and lines changed,
+  then counts of runs where each fact held. No pass/fail verdict: the
+  figures inform decisions. `--from-sandbox` reads every machine's runs
+  from the sandbox's `results/benchmarks.json` (after a fetch) instead of
+  this machine's database.
+
+### Results in the sandbox
+
+So it does not matter which machine runs the benchmark, `bench finish`
+also commits the results to the sandbox's `main`:
+
+- `results/benchmarks.json` — `{"schema": 1, "runs": {<run_id>: {...}}}`.
+  Each entry: forge version, task, run number, model, base tag, the day
+  it was recorded, tokens per agent type (requests, input, cache write,
+  cache read, output), active and wall time, review rounds, lines added
+  and removed, and the outcome facts. No host, user, path or branch.
+  Every run in this machine's database is merged in, keyed by run id:
+  the same run shared again replaces its entry, never duplicates it, and
+  other machines' runs are kept as they are. A file of a newer schema is
+  refused, not rewritten.
+- `results/index.html` — the bench report regenerated from the merged
+  file: one self-contained page, every value escaped, nothing fetched.
+
+The commit is made on `main` in the clone itself, through the sandbox's
+own hooks: `finish` needs the clone's working tree clean (a dirty clone
+is refused and nothing is discarded; the results stay local), switches
+to `main`, fast-forwards it to the sandbox's (a diverged `main` is
+refused), commits and pushes, and leaves the clone on `main` — the next
+`start` branches from the base tag anyway. The bench branch's commits
+are not touched. A push rejected
+because another machine pushed first is retried after merging the new
+`main` (results files are rewritten from both sides' runs), up to 3
+times; then the results stay in the local database, `finish` says so,
+and the next `finish` shares them. Pushing the sandbox's `main` from a
+CLI is allowed only here: a private sandbox nobody else uses, checked
+just before, through forge's no-force push seam. Runs keep starting
+from the `bench-base` tag, so results never change what a run sees.
+
+Tasks: `add-command` (new CLI subcommand with tests), `fix-bug` (a planted
+bug and its failing test), `docs` (a README section), `refactor` (extract
+a helper, behaviour unchanged), `review` (review a provided diff and fix
+its findings). Each states its request in full, asks for no questions and
+a stop after the wrap-up, and carries outcome checks (test files added
+only while `finish` checks, a symbol or text that must exist).
+
+Stored per run, in `bench_runs` and `bench_tokens` (keyed by a random
+`run_id`): the forge version measured (forge-scripts in the clone's
+`.venv`, else the clone's pin; empty when neither tells), task, run
+number, model, base tag, start and finish time, PR opened, wrap-ups
+posted, sandbox tests green, task checks held / total,
+`forge-precommit --verdict`, files and lines changed and commits since
+the base tag, review rounds, pre-commit and smart-test runs, active and
+wall time, and tokens per agent type (folded as for PRs). Tokens and
+time are the run's branch in the clone's transcripts since `start`. No
+sandbox name, branch or path is stored. `export` does not include bench
+runs.

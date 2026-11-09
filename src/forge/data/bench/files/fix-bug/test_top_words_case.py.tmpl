@@ -1,0 +1,10 @@
+"""Regression: ``top_words`` ignores case."""
+
+from __future__ import annotations
+
+from tally.core import top_words
+
+
+def test_top_words_ignores_case() -> None:
+    """Behavior: ``The`` and ``the`` count as one word."""
+    assert top_words("The the cat", 1) == [("the", 2)]

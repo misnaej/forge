@@ -1,0 +1,33 @@
+"""Benchmark check: ``tally top`` prints the most frequent words."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from tally.cli import main
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import pytest
+
+
+def test_top_prints_word_and_count(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Behavior: ``<word> <count>`` lines, most frequent first."""
+    path = tmp_path / "text.txt"
+    path.write_text("b a c b a b\n", encoding="utf-8")
+    assert main(["top", str(path), "--n", "2"]) == 0
+    assert capsys.readouterr().out == "b 3\na 2\n"
+
+
+def test_top_defaults_to_three(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Behavior: without ``--n`` three words are printed."""
+    path = tmp_path / "text.txt"
+    path.write_text("d c c b b b a a a a\n", encoding="utf-8")
+    assert main(["top", str(path)]) == 0
+    assert capsys.readouterr().out.splitlines() == ["a 4", "b 3", "c 2"]

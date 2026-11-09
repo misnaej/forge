@@ -887,6 +887,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `emit(msg: str) -> None` — Write *msg* to stdout with a trailing newline.
 - `pad_semver(text: str) -> tuple[int, int, int] | None` — Return *text* as a three-part version, padding what it omits.
 - `parse_semver(version: str) -> tuple[int, int, int] | None` — Parse the leading ``X.Y.Z`` (optional ``v`` prefix) of a version string.
+- `release_of(version: str | None) -> str | None` — *version* as the release ``X.Y.Z`` it belongs to; ``None`` if none.
 - `next_version(latest_tag: str | None, bump: str) -> str` — Return the ``vX.Y.Z`` tag that follows *latest_tag* for a semver *bump*.
 - `classify_bump(old: tuple[int, int, int] | None, new: tuple[int, int, int] | None) -> str | None` — Classify the semver increment from *old* to *new*.
 - `latest_v_tag(root: Path) -> str | None` — Return the highest ``v*`` git tag by semver sort, or ``None`` if none.
@@ -1504,10 +1505,11 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `pr_summary(tally: BranchUsageTally, facts: PrFacts) -> BranchSummary | None` — The PR's share of its head branch's transcript records.
 - `review_rounds(summary: BranchSummary) -> int` — Review rounds on the PR, from reporter runs.
 - `_write_pr(conn: sqlite3.Connection, key: str, repo_id: str, values: dict[str, Any], tokens: dict[str, TokenUsage]) -> None` _(internal)_ — Upsert one ``prs`` row and replace its ``pr_tokens`` rows.
-- `record_pr(conn: sqlite3.Connection, repo: RepoKeys, facts: PrFacts, tally: BranchUsageTally) -> None` — Replace *facts*' PR row with what GitHub and the transcripts say now.
+- `record_pr(conn: sqlite3.Connection, repo: RepoKeys, facts: PrFacts, tally: BranchUsageTally, *, version: str | None) -> None` — Replace *facts*' PR row with what GitHub and the transcripts say now.
 - `_unattributed_rows(repo_id: str, days: dict[tuple[str, str], TokenUsage]) -> list[tuple[Any, ...]]` _(internal)_ — Per-day base-branch usage as ``unattributed`` rows, agent types folded.
 - `_keep_unattributed(conn: sqlite3.Connection, repo_id: str, days: dict[tuple[str, str], TokenUsage]) -> None` _(internal)_ — Upsert per-day base-branch usage, never shrinking, never adding.
 - `record_unattributed(conn: sqlite3.Connection, repo_id: str, tally: BranchUsageTally, base_branch: str) -> None` — Keep base-branch usage per day and agent type.
+- `record_bench_run(conn: sqlite3.Connection, outcome: BenchOutcome) -> None` — Store one benchmark run and its tokens per agent type.
 - `_legacy_rows(old: sqlite3.Connection, repo: RepoKeys) -> list[tuple[str, dict[str, Any]]]` _(internal)_ — A per-repo database's PRs as ``(pr_key, values)``, names dropped.
 - `_legacy_tokens(old: sqlite3.Connection, query: str) -> dict[Any, dict[str, TokenUsage]]` _(internal)_ — Usage per key (PR number or day) per agent type from a legacy table.
 - `_import_legacy(conn: sqlite3.Connection, path: Path, repo: RepoKeys) -> int` _(internal)_ — Copy one per-repo database into *conn*, anonymised, in one transaction.
@@ -1516,23 +1518,153 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_int(value: object) -> int` _(internal)_ — A JSON count as int, ``0`` for anything else.
 - `facts_from_api(pull: dict[str, Any], wrapups: int, same_head_merges: Iterable[str] = ()) -> PrFacts | None` — Build :class:`PrFacts` from a ``GET /pulls/N`` response.
 - `fetch_facts(number: int) -> PrFacts | None` — Read PR *number* and count its wrap-ups through ``gh api``.
-- `merged_prs() -> list[tuple[int, str]]` — The newest merged PRs, as ``(number, head branch)``.
-- `backfill(conn: sqlite3.Connection, repo: RepoKeys, merged: Iterable[tuple[int, str]], tally: BranchUsageTally, *, limit: int) -> list[int]` — Record merged PRs not yet in the database whose branch has usage.
+- `class MergedPr` — One merged PR from GitHub's closed-PR list.
+- `merged_prs() -> list[MergedPr]` — The newest merged PRs.
+- `_is_sha(value: object) -> bool` _(internal)_ — Whether *value* is a full hex commit id (safe to hand to git).
+- `_git(root: Path, *args: str, timeout: float = _GIT_TIMEOUT_S) -> str | None` _(internal)_ — Run a read-only git command in *root*; ``None`` when it fails.
+- `version_at_merge(root: Path, merge_sha: str | None) -> str | None` — The forge release a PR was built with, read from its merge commit.
+- `pending_prs(conn: sqlite3.Connection, repo: RepoKeys, merged: Iterable[MergedPr], tally: BranchUsageTally, *, limit: int) -> list[int]` — The merged PRs backfill would record: not yet in the database, with usage.
+- `backfill(conn: sqlite3.Connection, root: Path, repo: RepoKeys, tally: BranchUsageTally, numbers: Iterable[int]) -> list[int]` — Record the given merged PRs, skipping any that cannot be read.
+- `refresh_versions(conn: sqlite3.Connection, root: Path, repo: RepoKeys, merged: Iterable[MergedPr]) -> int` — Rewrite the forge version of PRs already recorded, nothing else.
 - `default_db_path() -> Path` — Where the machine's metrics database lives.
 - `_scan(root: Path, explicit: list[Path] | None, keep: TranscriptFilter | None = None) -> BranchUsageTally` _(internal)_ — Read the transcripts of every checkout of the repo (or *explicit*).
 - `pr_filter(facts: PrFacts, base_branch: str) -> TranscriptFilter` — The transcript files one PR's record needs.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — The ``forge-metrics`` argument parser.
+- `_add_bench_commands(bench: argparse.ArgumentParser) -> None` _(internal)_ — Add ``bench``'s subcommands.
 - `_record(conn: sqlite3.Connection, root: Path, repo: RepoKeys, args: argparse.Namespace) -> int` _(internal)_ — Run ``record`` or ``backfill``.
 - `_repo_prefix(root: Path, wanted: str | None) -> str | None` _(internal)_ — The repo id prefix ``report --repo`` selects.
 - `_read(conn: sqlite3.Connection, root: Path, args: argparse.Namespace) -> int` _(internal)_ — Run ``report`` or ``export``.
-- `_refuse(exc: MetricsError) -> int` _(internal)_ — Report a refusal the user can act on, without a traceback.
+- `_next_run_n(conn: sqlite3.Connection, task_id: str) -> int` _(internal)_ — One past the highest recorded run number of *task_id*.
+- `_bench_start(conn: sqlite3.Connection, data: Path, args: argparse.Namespace) -> int` _(internal)_ — Run ``bench start``: prepare the clone, print the prompt and the command.
+- `_share(conn: sqlite3.Connection, clone: Path) -> None` _(internal)_ — Share every local benchmark run to the sandbox's results files.
+- `_bench(conn: sqlite3.Connection, args: argparse.Namespace) -> int` _(internal)_ — Run ``bench init``, ``start``, ``finish`` or ``report``.
+- `_publish(conn: sqlite3.Connection, args: argparse.Namespace) -> int` _(internal)_ — Run ``publish``: write the public files locally, or push them.
+- `_refuse(exc: MetricsError | BenchError | PublishError) -> int` _(internal)_ — Report a refusal the user can act on, without a traceback.
+- `_run_subcommand(conn: sqlite3.Connection, root: Path, secret: str, args: argparse.Namespace) -> int` _(internal)_ — Run the subcommand *args* names against the open database.
 - `main(argv: list[str] | None = None) -> int` — Entry point for ``forge-metrics``.
+
+## `forge.pr_metrics_bench`
+
+> _``forge-metrics bench``: fixed tasks, run by hand, to compare forge versions._
+
+- `class BenchError` — The sandbox, the clone or the run marker is not usable; the user can act.
+- `class Completed` — What one external command did.
+  - `ok(self) -> bool` — Whether it exited 0.
+- `class Runner` — Runs one external command; the seam tests replace.
+- `run_command(argv: Sequence[str], *, cwd: Path, timeout: float | None = None) -> Completed` — Run *argv* without a terminal, bounded by *timeout*.
+- `_tail(result: Completed) -> str` _(internal)_ — The end of a failed command's output, for a message.
+- `class Check` — One outcome check of a task, run in the clone at ``finish``.
+- `class Task` — One benchmark task.
+  - `data_files(self) -> list[str]` — Every ``files/`` data path the task names.
+- `bench_data() -> contextlib.AbstractContextManager[Path]` — The bench package data as a directory on disk.
+- `load_tasks(data: Path) -> dict[str, Task]` — The shipped tasks, by id.
+- `task_prompt(task: Task, data: Path, branch: str) -> str` — The full prompt of *task*: its request, then the shared workflow rules.
+- `_target_name(name: str) -> str` _(internal)_ — The name a shipped data file takes in a checkout.
+- `install_file(src: Path, dest: Path) -> None` — Copy one data file into a checkout, creating its directory.
+- `materialise_sample(sample: Path, dest: Path) -> list[Path]` — Copy the sample project into *dest*, data names turned into real ones.
+- `class Sandbox` — The private repo benchmark runs use, and the tag they start from.
+- `_write_private(path: Path, payload: Mapping[str, object]) -> None` _(internal)_ — Write *payload* as JSON, readable by the owner only.
+- `_read_json(path: Path) -> dict[str, object] | None` _(internal)_ — A JSON object file, ``None`` when absent or unreadable.
+- `valid_slug(slug: str) -> bool` — Whether *slug* is a plain ``owner/name``.
+- `read_sandbox() -> Sandbox | None` — The sandbox ``init`` recorded, if any.
+- `write_sandbox(sandbox: Sandbox) -> None` — Save *sandbox* to ``bench.json``.
+- `class Marker` — The run between ``start`` and ``finish`` (local only).
+- `marker_path() -> Path` — The local ``bench-run.json``.
+- `read_marker() -> Marker | None` — The run in progress, if any.
+- `default_clone_dir() -> Path` — Where ``start`` keeps the sandbox clone unless told otherwise.
+- `check_access(slug: str, runner: Runner, cwd: Path) -> None` — Refuse a sandbox that is not private or that the user does not own.
+- `check_empty(slug: str, runner: Runner, cwd: Path) -> None` — Refuse a repo with any branch.
+- `_seed(clone: Path, data: Path, runner: Runner) -> None` _(internal)_ — Fill *clone* with the sample project set up by the running forge, commit.
+- `init_sandbox(slug: str, *, data: Path, runner: Runner = run_command, workdir: Path | None = None) -> Sandbox` — Fill the empty private repo *slug* and tag its starting point.
+- `_now() -> str` _(internal)_ — The current UTC time, to the second.
+- `_require_sandbox() -> Sandbox` _(internal)_ — The recorded sandbox.
+- `sync_clone(sandbox: Sandbox, clone: Path, seams: Seams) -> None` — Make sure *clone* is a fetched clone of the sandbox, cloning on first use.
+- `_ready_clone(sandbox: Sandbox, clone: Path, seams: Seams) -> None` _(internal)_ — Make sure *clone* is a clean, fetched clone of the sandbox.
+- `_free_branch(clone: Path, task_id: str, first_n: int) -> tuple[str, int]` _(internal)_ — The first ``bench/<task>-<n>`` branch name not taken locally or on origin.
+- `class Seams` — The external-command seams a run uses; tests replace them.
+- `start_run(task: Task, *, data: Path, first_n: int, clone: Path | None = None, seams: Seams = DEFAULT_SEAMS) -> tuple[Marker, str]` — Put the sandbox clone on a fresh branch for *task* and record the marker.
+- `session_line(marker: Marker) -> str` — The command to paste to start the session.
+- `class BenchOutcome` — What one run measured, as the database writer stores it.
+- `clone_forge_version(clone: Path) -> str | None` — The forge release the clone runs: its ``.venv``'s, else its pin.
+- `_clone_tool(clone: Path, name: str) -> list[str]` _(internal)_ — Argv running *name* from the clone's ``.venv``, else the running forge.
+- `_pytest(clone: Path) -> list[str]` _(internal)_ — Argv running the clone's tests quietly, writing no cache into it.
+- `_numstat(clone: Path, base: str) -> tuple[int, int, int]` _(internal)_ — Files, lines added and removed since *base*, uncommitted work included.
+- `run_check(check: Check, index: int, clone: Path, data: Path, runner: Runner) -> bool` — Run one outcome check in the clone; a hidden test file is removed after.
+- `_find_pr(slug: str, branch: str, runner: Runner, cwd: Path) -> int | None` _(internal)_ — The PR opened from *branch* in the sandbox, if any.
+- `_wrapups(slug: str, number: int, runner: Runner, cwd: Path) -> int` _(internal)_ — Wrap-ups posted on the PR: comments opening with ``verified-at:``.
+- `collect(outcome: BenchOutcome, marker: Marker, task: Task, data: Path, runner: Runner) -> None` — Fill *outcome* with what the clone and its transcripts show.
+- `close_out(outcome: BenchOutcome, marker: Marker, slug: str, runner: Runner) -> None` — Record the PR facts, close the PR unmerged and delete the run's branch.
+- `finish_run(*, data: Path, record: Callable[[BenchOutcome], None], clone: Path | None = None, seams: Seams = DEFAULT_SEAMS, share: Callable[[Path], None] | None = None) -> BenchOutcome` — Record the started run, close its PR, delete its branch, clear the marker.
+
+## `forge.pr_metrics_bench_results`
+
+> _Benchmark results kept in the sandbox repo, so any machine can run the bench._
+
+- `parse_results(text: str | None) -> dict[str, dict[str, Any]]` — The run entries of a ``benchmarks.json`` text, by run id.
+- `merge_results(existing: dict[str, dict[str, Any]], rows: list[BenchRow]) -> dict[str, dict[str, Any]]` — *existing* entries with *rows* added; a run already there is replaced.
+- `results_rows(entries: dict[str, dict[str, Any]]) -> list[BenchRow]` — Entries as report rows, oldest recorded first.
+- `results_files(entries: dict[str, dict[str, Any]]) -> dict[str, str]` — The two results files for *entries*, in a stable form.
+- `read_remote_results(clone: Path) -> dict[str, dict[str, Any]]` — The entries on the sandbox's ``main`` as last fetched into *clone*.
+- `_fetch(repo: Path) -> None` _(internal)_ — Fetch the sandbox's ``main``.
+- `_merge_main(tree: Path) -> bool` _(internal)_ — Bring ``origin/main`` into the clone's ``main``, results conflicts allowed.
+- `_write_and_commit(tree: Path, rows: list[BenchRow]) -> None` _(internal)_ — Write the merged results into the clone and commit them.
+- `_check_origin(tree: Path, slug: str, seams: Seams) -> None` _(internal)_ — Refuse to push unless the clone's ``origin`` is still the sandbox.
+- `_push_results(tree: Path, rows: list[BenchRow], slug: str, seams: Seams) -> bool` _(internal)_ — Merge, write, commit and push, retrying after a rejected push.
+- `_onto_main(clone: Path) -> None` _(internal)_ — Switch the clean clone to ``main``, fast-forwarded to the sandbox's.
+- `share_results(clone: Path, rows: list[BenchRow], *, slug: str, seams: Seams = DEFAULT_SEAMS) -> bool` — Put *rows* into the sandbox's results files, committed on ``main``.
+- `sandbox_rows(clone: Path | None = None, *, task: str | None = None, seams: Seams = DEFAULT_SEAMS) -> list[BenchRow]` — Every run in the sandbox's results file, from any machine.
+
+## `forge.pr_metrics_charts`
+
+> _Inline SVG charts for the ``forge-metrics`` HTML page._
+
+- `class Series` — One named line: a value per chart column, ``None`` for a gap.
+- `class Dot` — One point of a time chart.
+- `class Change` — A series moving from one version to the next on *day*.
+- `class Scale` — A y scale over ``lo``..``hi``, linear or log10.
+  - `y(self, value: float) -> float` — Chart y of *value*.
+  - `ticks(self) -> list[float]` — Tick values: powers of ten when log, else evenly spaced.
+- `fit_scale(values: list[float], *, allow_log: bool = False) -> Scale` — A scale fitted to the data's actual range.
+- `_nice_step(span: float) -> float` _(internal)_ — A 1, 2 or 5 times 10^k tick step giving about four ticks over *span*.
+- `fmt_number(value: float) -> str` — An axis, tooltip or table number: compact from 1000, else short decimal.
+- `series_class(index: int) -> str` — CSS class of the *index*-th series: a fixed slot, never cycled.
+- `_svg(label: str, y_title: str, body: str) -> str` _(internal)_ — Wrap chart *body* in an ``<svg>`` with plot frame and y-axis title.
+- `_y_axis(scale: Scale) -> str` _(internal)_ — Grid lines and tick labels for *scale*, noting a log scale.
+- `_plot(label: str, y_title: str, values: list[float], layers: Callable[[Scale], list[str]], *, allow_log: bool = False) -> str` _(internal)_ — One chart: fit its single scale, draw the axis, then *layers*.
+- `_x_label(x: float, text: str) -> str` _(internal)_ — One slanted x-axis label under the plot.
+- `_series(index: int, name: str, points: list[tuple[float, float | None, str]], scale: Scale, *, joined: bool) -> str` _(internal)_ — One series' marks; ``None`` values break the line (a gap, never zero).
+- `category_chart(columns: list[str], series: list[Series], *, label: str, y_title: str) -> str` — A line chart over named columns, one line per series.
+- `_change_marks(changes: list[Change], x_of: Callable[[str], float]) -> str` _(internal)_ — Dashed lines on days a series moved version; tooltips list each move.
+- `time_chart(dots: list[Dot], changes: list[Change], *, label: str, y_title: str) -> str` — Dots by day, version changes marked; log scale past a 100x range.
+- `_iso(ordinal: int) -> str` _(internal)_ — An ordinal day as ISO text.
+
+## `forge.pr_metrics_publish`
+
+> _``forge-metrics publish``: the public metrics page, pushed to a page repo._
+
+- `class PublishError` — The target repo is refused, or cloning or pushing failed.
+- `class Published` — What a publish did.
+- `_scatter_key(row: PrRow) -> str` _(internal)_ — A stable, merge-order-free sort key: a hash of the row's own PR key.
+- `public_order(rows: list[PrRow]) -> list[PrRow]` — *rows* grouped by forge version (release order), scattered in each group.
+- `public_rows(rows: list[PrRow], forge_repo_id: str | None) -> list[PrRow]` — *rows* relabelled ``forge`` / ``external`` and in :func:`public_order`.
+- `render_public_html(rows: list[PrRow]) -> str` — The public page: by-version charts and per-PR numbers, no dates.
+- `public_payload(rows: list[PrRow], *, schema: int) -> dict[str, Any]` — The public page's rows as JSON: no keys, names or dates.
+- `public_files(rows: list[PrRow], *, schema: int, forge_repo_id: str | None) -> dict[str, str]` — The public page and data, in one shared scrambled order.
+- `write_files(files: Mapping[str, str], dest: Path) -> list[Path]` — Write *files* into *dest*, creating it.
+- `pages_url(slug: str) -> str` — Where GitHub Pages serves a project repo.
+- `enable_pages_command(slug: str) -> str` — The one-time ``gh`` command serving *slug*'s ``main`` with Pages.
+- `check_maintainer(slug: str, runner: Runner, cwd: Path) -> None` — Refuse anyone but forge's maintainer, and any repo they do not own.
+- `check_target(slug: str, runner: Runner, cwd: Path) -> None` — Refuse a repo that is private or not administered by the ``gh`` user.
+- `check_tracked(clone: Path) -> None` — Refuse a clone tracking any file publish does not write, or off ``main``.
+- `_commit_and_push(clone: Path, files: Mapping[str, str]) -> bool` _(internal)_ — Write the page files into *clone*, commit and push when anything changed.
+- `publish(slug: str, files: Mapping[str, str], *, runner: Runner = run_command, workdir: Path | None = None) -> Published` — Check *slug*, then push *files* to its ``main``.
 
 ## `forge.pr_metrics_report`
 
 > _Reading the ``forge-metrics`` database back: report, HTML page, export._
 
 - `usage_values(usage: TokenUsage) -> tuple[int, ...]` — *usage* in :data:`TOKEN_COLUMNS` order.
+- `short_repo(repo_id: str) -> str` — How a repo shows: an id cut to :data:`SHORT_ID`, a word label whole.
 - `class PrRow` — One recorded PR with its tokens, as the report and export read it.
   - `total_tokens(self) -> int` — Every agent's tokens summed, cache reads included.
   - `new_tokens(self) -> int` — Every agent's tokens not served from cache.
@@ -1548,8 +1680,39 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `render_report(rows: list[PrRow]) -> str` — The terminal report: one line per PR, then the trend.
 - `_cells(row: PrRow) -> dict[str, str]` _(internal)_ — One PR's report cells, shared by the terminal table and the page.
 - `_bar_chart(rows: list[PrRow]) -> str` _(internal)_ — An inline SVG bar chart of new tokens per PR, main session vs helpers.
-- `render_html(rows: list[PrRow]) -> str` — One self-contained HTML page: chart, table and trend, nothing fetched.
+- `class VersionStats` — Medians for one (forge version, repo) group of PRs.
+- `version_name(row: PrRow) -> str` — The row's forge version, :data:`UNKNOWN_VERSION` when not recorded.
+- `version_order(rows: list[PrRow]) -> list[str]` — The versions in *rows*, release order, :data:`UNKNOWN_VERSION` last.
+- `repo_order(rows: list[PrRow]) -> list[str]` — Repo ids by first recorded PR: fixes each repo's colour.
+- `_group_stats(group: list[PrRow]) -> VersionStats` _(internal)_ — Medians for one group; token medians over PRs with token data only.
+- `version_stats(rows: list[PrRow]) -> dict[tuple[str, str], VersionStats]` — Medians per (forge version, repo id).
+- `_version_chart(rows: list[PrRow], stats: dict[tuple[str, str], VersionStats], metric: Callable[[VersionStats], float | None], *, label: str, y_title: str) -> str` _(internal)_ — A per-version line chart, one series per repo.
+- `version_changes(rows: list[PrRow]) -> list[Change]` — Days a repo's merged PRs moved to a different forge version.
+- `_time_chart(rows: list[PrRow]) -> str` _(internal)_ — New tokens per PR by merge day, one dot per PR, version changes marked.
+- `_fmt_cell(value: float | None, fmt: Callable[[float], str]) -> str` _(internal)_ — A table median, ``-`` when unknown.
+- `_version_table(rows: list[PrRow], stats: dict[tuple[str, str], VersionStats]) -> str` _(internal)_ — Version by repo table of counts and medians.
+- `_repo_legend(rows: list[PrRow]) -> str` _(internal)_ — Legend naming each repo's colour by short id.
+- `version_section(rows: list[PrRow], *, over_time: bool = True) -> str` — The by-version charts and table.
+- `pr_cells(row: PrRow) -> str` — One PR's number cells, from ``tokens`` to top helpers.
+- `html_page(title: str, intro: str, body: str) -> str` — The self-contained page shell: inline style, nothing fetched.
+- `render_html(rows: list[PrRow]) -> str` — One self-contained HTML page: charts, tables and trend, nothing fetched.
+- `token_dict(row: PrRow) -> dict[str, dict[str, int]]` — *row*'s tokens as ``agent type → column → count``.
 - `export_payload(rows: list[PrRow], *, schema: int) -> dict[str, Any]` — The stored rows as they are: already anonymised, so nothing is dropped.
+- `class BenchRow` — One recorded benchmark run with its tokens.
+  - `new_tokens(self) -> int` — Every agent's tokens not served from cache.
+  - `cache_share(self) -> float | None` — Cache reads as a share of all tokens; ``None`` with no tokens.
+- `_fact(value: int | None) -> bool | None` _(internal)_ — A stored ``0`` / ``1`` fact as a bool.
+- `load_bench_rows(conn: sqlite3.Connection, *, task: str | None = None) -> list[BenchRow]` — Recorded benchmark runs, oldest first.
+- `bench_row_json(row: BenchRow) -> dict[str, Any]` — *row* as a results-file entry: its fields, tokens per agent type.
+- `_json_int(value: object) -> int` _(internal)_ — A JSON count as int, ``0`` for anything else.
+- `_json_opt(value: object, kind: type[_JsonT]) -> _JsonT | None` _(internal)_ — *value* when it is of *kind* (a bool is never an int or float), else None.
+- `bench_row_from_json(run_id: str, entry: dict[str, Any]) -> BenchRow` — A results-file entry back as a :class:`BenchRow`; bad values dropped.
+- `_median(values: list[float | None]) -> float | None` _(internal)_ — The median of the known values.
+- `_count(values: list[bool | None]) -> str` _(internal)_ — ``true/known`` for one fact across runs.
+- `_version_key(version: str) -> tuple[int, int, int] | tuple[float]` _(internal)_ — Sort key putting versions in release order, unknown shapes last.
+- `_bench_line(version: str, runs: list[BenchRow]) -> str` _(internal)_ — One version's medians and fact counts for one task.
+- `render_bench_report(rows: list[BenchRow]) -> str` — Per task, each version's runs side by side: medians and fact counts.
+- `render_bench_html(rows: list[BenchRow]) -> str` — The bench report as one self-contained page, every value escaped.
 
 ## `forge.pr_plan`
 
@@ -2042,6 +2205,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `class Pin` — A forge-scripts pin parsed from a consumer's pin-carrying file.
 - `_pin_regex_for(path: Path) -> re.Pattern[str]` _(internal)_ — Return the pin regex matching *path*'s syntax.
 - `_pin_candidate_files(repo_root: Path) -> list[Path]` _(internal)_ — Return pin-carrying candidate files in search-priority order.
+- `pinned_ref(pyproject_text: str) -> str | None` — The forge-scripts ref a ``pyproject.toml``'s text pins, if any.
 - `find_pin(repo_root: Path) -> Pin | None` — Locate the ``forge-scripts`` pin in *repo_root*'s dependency files.
 - `_rewrite_pin(pin: Pin, new_ref: str) -> str` _(internal)_ — Return the file content with *pin*'s line rewritten to *new_ref*.
 - `_git_url_for(auth_mode: AuthMode, ref: str) -> str` _(internal)_ — Return the ``git+...`` URL pip should resolve for *ref* under *auth_mode*.

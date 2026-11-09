@@ -1,0 +1,19 @@
+id = "fix-bug"
+summary = "Fix a planted bug its failing test exposes."
+prompt = """
+A user reports that `tally.core.top_words` counts `The` and `the` as two
+different words, although its docstring says case is ignored. The new test
+tests/test_top_words_case.py reproduces it and fails. Fix the bug so that
+test passes without changing what the other functions do; keep the test.
+"""
+
+[setup]
+"tests/test_top_words_case.py" = "fix-bug/test_top_words_case.py.tmpl"
+
+[[checks]]
+kind = "pytest"
+nodes = ["tests/test_top_words_case.py"]
+
+[[checks]]
+kind = "pytest"
+hidden = "fix-bug/test_bench_case.py.tmpl"
