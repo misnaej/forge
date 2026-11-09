@@ -114,8 +114,10 @@ every transcript once and splits it across the PRs it records.
   `n` = its place among that repo's recorded PRs (1 = oldest). All repos
   by default; `--repo .` (this checkout's repo), `--repo owner/repo`
   (resolved through `repo-ids.json`) or `--repo <id prefix>` narrows it.
-  `--html` writes one self-contained page (inline chart, no network
-  fetches).
+  `--html` writes one self-contained page (inline charts, no network
+  fetches), adding medians per forge version and repo id (new tokens per
+  line, active minutes, review rounds), new tokens per PR over time and a
+  version × repo table; PRs without token data are gaps, never zeros.
 - `forge-metrics export [--out PATH]` — the stored rows as JSON, plus the
   database schema version, for sharing with forge.
 

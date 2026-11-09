@@ -1608,7 +1608,32 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `render_report(rows: list[PrRow]) -> str` — The terminal report: one line per PR, then the trend.
 - `_cells(row: PrRow) -> dict[str, str]` _(internal)_ — One PR's report cells, shared by the terminal table and the page.
 - `_bar_chart(rows: list[PrRow]) -> str` _(internal)_ — An inline SVG bar chart of new tokens per PR, main session vs helpers.
-- `render_html(rows: list[PrRow]) -> str` — One self-contained HTML page: chart, table and trend, nothing fetched.
+- `class VersionStats` — Medians for one (forge version, repo) group of PRs.
+- `_version_name(row: PrRow) -> str` _(internal)_ — The row's forge version, :data:`UNKNOWN_VERSION` when not recorded.
+- `version_order(rows: list[PrRow]) -> list[str]` — The versions in *rows*, release order, :data:`UNKNOWN_VERSION` last.
+- `repo_order(rows: list[PrRow]) -> list[str]` — Repo ids by first recorded PR: fixes each repo's colour.
+- `_group_stats(group: list[PrRow]) -> VersionStats` _(internal)_ — Medians for one group; token medians over PRs with token data only.
+- `version_stats(rows: list[PrRow]) -> dict[tuple[str, str], VersionStats]` — Medians per (forge version, repo id).
+- `class _Scale` _(internal)_ — A y scale over ``lo``..``hi``, linear or log10.
+  - `y(self, value: float) -> float` — Chart y of *value*.
+  - `ticks(self) -> list[float]` — Tick values: powers of ten when log, else evenly spaced.
+- `_scale(values: list[float], *, allow_log: bool = False) -> _Scale` _(internal)_ — A scale fitted to the data's actual range.
+- `_nice_step(span: float) -> float` _(internal)_ — A 1, 2 or 5 times 10^k tick step giving about four ticks over *span*.
+- `_fmt_axis(value: float) -> str` _(internal)_ — An axis or tooltip number: compact tokens from 1000, else short decimal.
+- `_series_class(index: int) -> str` _(internal)_ — CSS class of the *index*-th repo: a fixed slot, never cycled.
+- `_svg(label: str, y_title: str, body: str) -> str` _(internal)_ — Wrap chart *body* in an ``<svg>`` with plot frame and y-axis title.
+- `_no_data() -> str` _(internal)_ — Centered "no data" text for an empty chart.
+- `_y_axis(scale: _Scale, *, log_note: bool = False) -> str` _(internal)_ — Grid lines and tick labels for *scale*.
+- `_x_label(x: float, text: str) -> str` _(internal)_ — One slanted x-axis label under the plot.
+- `_series(index: int, repo_id: str, points: list[tuple[float, float | None, str]], scale: _Scale, *, joined: bool) -> str` _(internal)_ — One repo's marks; ``None`` values break the line (a gap, never zero).
+- `_version_chart(rows: list[PrRow], stats: dict[tuple[str, str], VersionStats], metric: Callable[[VersionStats], float | None], *, label: str, y_title: str) -> str` _(internal)_ — A per-version line chart, one series per repo.
+- `_version_marks(rows: list[PrRow], x_of: Callable[[str], float]) -> str` _(internal)_ — Dashed lines where a repo's PRs move to a new forge version.
+- `_time_chart(rows: list[PrRow]) -> str` _(internal)_ — New tokens per PR by merge day, one dot per PR, version changes marked.
+- `_fmt_cell(value: float | None, fmt: Callable[[float], str]) -> str` _(internal)_ — A table median, ``-`` when unknown.
+- `_version_table(rows: list[PrRow], stats: dict[tuple[str, str], VersionStats]) -> str` _(internal)_ — Version by repo table of counts and medians.
+- `_repo_legend(rows: list[PrRow]) -> str` _(internal)_ — Legend naming each repo's colour by short id.
+- `_version_section(rows: list[PrRow]) -> str` _(internal)_ — The by-version charts and table.
+- `render_html(rows: list[PrRow]) -> str` — One self-contained HTML page: charts, tables and trend, nothing fetched.
 - `export_payload(rows: list[PrRow], *, schema: int) -> dict[str, Any]` — The stored rows as they are: already anonymised, so nothing is dropped.
 - `class BenchRow` — One recorded benchmark run with its tokens.
   - `new_tokens(self) -> int` — Every agent's tokens not served from cache.

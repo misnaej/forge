@@ -9,8 +9,10 @@ PR is labelled by merge day, short repo id and its ordinal in that repo.
 from __future__ import annotations
 
 import html
+import math
 import statistics
 from dataclasses import dataclass
+from datetime import date
 from typing import TYPE_CHECKING, Any, Final
 
 from forge.agent_profile_tokens import MAIN_AGENT, TokenUsage, fmt_tokens
@@ -20,6 +22,7 @@ from forge.regen_docs import forge_version
 
 if TYPE_CHECKING:
     import sqlite3
+    from collections.abc import Callable
 
 
 #: Token table columns, in storage order.
@@ -336,26 +339,619 @@ def _bar_chart(rows: list[PrRow]) -> str:
     )
 
 
+# --- by forge version --------------------------------------------------------
+
+#: Bucket for PRs recorded without a forge version; always sorts last.
+UNKNOWN_VERSION: Final = "unknown"
+#: Distinct series colours; repos past this share the muted "other" colour.
+_SERIES_SLOTS: Final = 8
+#: Max / min ratio above which the per-PR chart switches to a log scale.
+_LOG_SPAN: Final = 100
+_VW: Final = 640
+_VH: Final = 250
+_ML: Final = 56
+_MR: Final = 12
+_MT: Final = 16
+_MB: Final = 64
+_PLOT_W: Final = _VW - _ML - _MR
+_PLOT_H: Final = _VH - _MT - _MB
+_LINEAR_TICKS: Final = 4
+#: Closest two version-change labels may sit, in chart units.
+_MARK_LABEL_GAP: Final = 40
+
+
+@dataclass(frozen=True)
+class VersionStats:
+    """Medians for one (forge version, repo) group of PRs.
+
+    Token medians count only PRs carrying token data, so a PR whose
+    transcripts were not found never drags a median to zero.
+    """
+
+    prs: int
+    with_tokens: int
+    new_tokens: float | None
+    per_line: float | None
+    active_min: float | None
+    rounds: float | None
+
+
+def _version_name(row: PrRow) -> str:
+    """The row's forge version, :data:`UNKNOWN_VERSION` when not recorded.
+
+    Args:
+        row: The PR.
+
+    Returns:
+        The bucket name.
+    """
+    return row.forge_version or UNKNOWN_VERSION
+
+
+def version_order(rows: list[PrRow]) -> list[str]:
+    """The versions in *rows*, release order, :data:`UNKNOWN_VERSION` last.
+
+    Args:
+        rows: PRs.
+
+    Returns:
+        The version names.
+    """
+    names = {_version_name(row) for row in rows}
+    known = sorted(names - {UNKNOWN_VERSION}, key=lambda v: (_version_key(v), v))
+    return known + [UNKNOWN_VERSION] * (UNKNOWN_VERSION in names)
+
+
+def repo_order(rows: list[PrRow]) -> list[str]:
+    """Repo ids by first recorded PR: fixes each repo's colour.
+
+    Args:
+        rows: PRs, oldest first.
+
+    Returns:
+        The repo ids.
+    """
+    return list(dict.fromkeys(row.repo_id for row in rows))
+
+
+def _group_stats(group: list[PrRow]) -> VersionStats:
+    """Medians for one group; token medians over PRs with token data only.
+
+    Args:
+        group: The group's PRs.
+
+    Returns:
+        The stats.
+    """
+    costed = [row for row in group if row.new_tokens]
+    return VersionStats(
+        prs=len(group),
+        with_tokens=len(costed),
+        new_tokens=_median([row.new_tokens for row in costed]),
+        per_line=_median([_per_line(row) for row in costed]),
+        active_min=_median(
+            [None if row.active_s is None else row.active_s / 60 for row in group]
+        ),
+        rounds=_median([row.review_rounds for row in group]),
+    )
+
+
+def version_stats(rows: list[PrRow]) -> dict[tuple[str, str], VersionStats]:
+    """Medians per (forge version, repo id).
+
+    Args:
+        rows: PRs.
+
+    Returns:
+        ``(version, repo_id)`` → stats, for every group with a PR.
+    """
+    groups: dict[tuple[str, str], list[PrRow]] = {}
+    for row in rows:
+        groups.setdefault((_version_name(row), row.repo_id), []).append(row)
+    return {key: _group_stats(group) for key, group in groups.items()}
+
+
+@dataclass(frozen=True)
+class _Scale:
+    """A y scale over ``lo``..``hi``, linear or log10."""
+
+    lo: float
+    hi: float
+    log: bool
+    #: Linear tick spacing; unused when ``log``.
+    step: float = 1.0
+
+    def y(self, value: float) -> float:
+        """Chart y of *value*.
+
+        Args:
+            value: A data value inside the scale.
+
+        Returns:
+            The y coordinate, top of the plot = ``hi``.
+        """
+        if self.log:
+            low, high = math.log10(self.lo), math.log10(self.hi)
+            share = (math.log10(value) - low) / (high - low)
+        else:
+            share = (value - self.lo) / (self.hi - self.lo)
+        return _MT + (1 - share) * _PLOT_H
+
+    def ticks(self) -> list[float]:
+        """Tick values: powers of ten when log, else evenly spaced.
+
+        Returns:
+            The values.
+        """
+        if self.log:
+            low, high = round(math.log10(self.lo)), round(math.log10(self.hi))
+            return [10.0**e for e in range(low, high + 1)]
+        count = round((self.hi - self.lo) / self.step)
+        return [self.lo + i * self.step for i in range(count + 1)]
+
+
+def _scale(values: list[float], *, allow_log: bool = False) -> _Scale:
+    """A scale fitted to the data's actual range.
+
+    Args:
+        values: The plotted values; at least one.
+        allow_log: Switch to log10 when the range spans over 100x.
+
+    Returns:
+        The scale.
+    """
+    lo, hi = min(values), max(values)
+    if allow_log and lo > 0 and hi / lo > _LOG_SPAN:
+        return _Scale(
+            10.0 ** math.floor(math.log10(lo)),
+            10.0 ** math.ceil(math.log10(hi)),
+            log=True,
+        )
+    step = _nice_step((hi - lo) or abs(hi) or 1.0)
+    low = math.floor(lo / step) * step
+    high = math.ceil(hi / step) * step
+    return _Scale(low, high if high > low else low + step, log=False, step=step)
+
+
+def _nice_step(span: float) -> float:
+    """A 1, 2 or 5 times 10^k tick step giving about four ticks over *span*.
+
+    Args:
+        span: The data range; positive.
+
+    Returns:
+        The step.
+    """
+    raw = span / _LINEAR_TICKS
+    magnitude = 10.0 ** math.floor(math.log10(raw))
+    return next(m * magnitude for m in (1, 2, 5, 10) if m * magnitude >= raw)
+
+
+def _fmt_axis(value: float) -> str:
+    """An axis or tooltip number: compact tokens from 1000, else short decimal.
+
+    Args:
+        value: The number.
+
+    Returns:
+        The text.
+    """
+    return fmt_tokens(round(value)) if abs(value) >= _SMALL_MEDIAN else f"{value:.3g}"
+
+
+def _series_class(index: int) -> str:
+    """CSS class of the *index*-th repo: a fixed slot, never cycled.
+
+    Args:
+        index: The repo's place in :func:`repo_order`.
+
+    Returns:
+        ``s1``..``s8``, or ``other`` past the eighth repo.
+    """
+    return f"s{index + 1}" if index < _SERIES_SLOTS else "other"
+
+
+def _svg(label: str, y_title: str, body: str) -> str:
+    """Wrap chart *body* in an ``<svg>`` with plot frame and y-axis title.
+
+    Args:
+        label: Accessible name.
+        y_title: The y-axis title.
+        body: Inner SVG markup, already escaped.
+
+    Returns:
+        The element.
+    """
+    esc = html.escape
+    mid = _MT + _PLOT_H / 2
+    base = _MT + _PLOT_H
+    return (
+        f'<svg class="chart" viewBox="0 0 {_VW} {_VH}" role="img" '
+        f'aria-label="{esc(label)}">'
+        f'<text class="axis-title" x="12" y="{mid:.0f}" text-anchor="middle" '
+        f'transform="rotate(-90 12 {mid:.0f})">{esc(y_title)}</text>'
+        f'<line class="axis" x1="{_ML}" x2="{_VW - _MR}" y1="{base}" y2="{base}"/>'
+        f"{body}</svg>"
+    )
+
+
+def _no_data() -> str:
+    """Centered "no data" text for an empty chart.
+
+    Returns:
+        SVG markup.
+    """
+    return (
+        f'<text class="tick" x="{_ML + _PLOT_W / 2:.0f}" y="{_MT + _PLOT_H / 2:.0f}" '
+        'text-anchor="middle">no data</text>'
+    )
+
+
+def _y_axis(scale: _Scale, *, log_note: bool = False) -> str:
+    """Grid lines and tick labels for *scale*.
+
+    Args:
+        scale: The y scale.
+        log_note: Label the axis as logarithmic.
+
+    Returns:
+        SVG markup.
+    """
+    parts = []
+    for tick in scale.ticks():
+        y = scale.y(tick)
+        parts.append(
+            f'<line class="grid" x1="{_ML}" x2="{_VW - _MR}" y1="{y:.1f}" '
+            f'y2="{y:.1f}"/><text class="tick" x="{_ML - 6}" y="{y + 4:.1f}" '
+            f'text-anchor="end">{html.escape(_fmt_axis(tick))}</text>'
+        )
+    if log_note:
+        parts.append(
+            f'<text class="tick" x="{_ML + 4}" y="{_MT + 10}">log scale</text>'
+        )
+    return "".join(parts)
+
+
+def _x_label(x: float, text: str) -> str:
+    """One slanted x-axis label under the plot.
+
+    Args:
+        x: Its x coordinate.
+        text: Unescaped label.
+
+    Returns:
+        SVG markup.
+    """
+    y = _MT + _PLOT_H + 14
+    return (
+        f'<text class="tick" text-anchor="end" '
+        f'transform="translate({x:.1f} {y}) rotate(-35)">{html.escape(text)}</text>'
+    )
+
+
+def _series(
+    index: int,
+    repo_id: str,
+    points: list[tuple[float, float | None, str]],
+    scale: _Scale,
+    *,
+    joined: bool,
+) -> str:
+    """One repo's marks; ``None`` values break the line (a gap, never zero).
+
+    Args:
+        index: The repo's colour slot.
+        repo_id: The repo id; only its short form is shown.
+        points: ``(x, value or None, tooltip)`` in x order.
+        scale: The y scale.
+        joined: Draw a line through consecutive known points.
+
+    Returns:
+        SVG markup.
+    """
+    esc = html.escape
+    name = repo_id[:SHORT_ID]
+    path: list[str] = []
+    dots: list[str] = []
+    pen = "M"
+    for x, value, tip in points:
+        if value is None:
+            pen = "M"
+            continue
+        y = scale.y(value)
+        path.append(f"{pen}{x:.1f},{y:.1f}")
+        pen = "L"
+        dots.append(
+            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="4">'
+            f"<title>{esc(name)} {esc(tip)}</title></circle>"
+        )
+    line = f'<path d="{" ".join(path)}"/>' if joined and path else ""
+    return f'<g class="series {_series_class(index)}">{line}{"".join(dots)}</g>'
+
+
+def _version_chart(
+    rows: list[PrRow],
+    stats: dict[tuple[str, str], VersionStats],
+    metric: Callable[[VersionStats], float | None],
+    *,
+    label: str,
+    y_title: str,
+) -> str:
+    """A per-version line chart, one series per repo.
+
+    Args:
+        rows: PRs, oldest first.
+        stats: :func:`version_stats` of *rows*.
+        metric: The plotted median, ``None`` where unknown.
+        label: Accessible name.
+        y_title: Y-axis title.
+
+    Returns:
+        The ``<svg>``.
+    """
+    values = [v for s in stats.values() if (v := metric(s)) is not None]
+    if not values:
+        return _svg(label, y_title, _no_data())
+    scale = _scale(values)
+    versions = version_order(rows)
+    step = _PLOT_W / len(versions)
+    xs = {v: _ML + (i + 0.5) * step for i, v in enumerate(versions)}
+    body = [_y_axis(scale), *(_x_label(x, v) for v, x in xs.items())]
+    for index, repo_id in enumerate(repo_order(rows)):
+        points: list[tuple[float, float | None, str]] = []
+        for version, x in xs.items():
+            cell = stats.get((version, repo_id))
+            value = metric(cell) if cell else None
+            tip = f"{version}: {_fmt_axis(value) if value is not None else '-'}"
+            points.append((x, value, tip))
+        body.append(_series(index, repo_id, points, scale, joined=True))
+    return _svg(label, y_title, "".join(body))
+
+
+def _version_marks(rows: list[PrRow], x_of: Callable[[str], float]) -> str:
+    """Dashed lines where a repo's PRs move to a new forge version.
+
+    Args:
+        rows: PRs, oldest first.
+        x_of: Merge day → chart x.
+
+    Returns:
+        SVG markup.
+    """
+    esc = html.escape
+    changes: dict[str, list[str]] = {}
+    last: dict[str, str] = {}
+    for row in rows:
+        if row.forge_version is None or row.merged_on is None:
+            continue
+        before = last.get(row.repo_id)
+        last[row.repo_id] = row.forge_version
+        if before is not None and before != row.forge_version:
+            changes.setdefault(row.merged_on, []).append(
+                f"{row.repo_id[:SHORT_ID]} {before} → {row.forge_version}"
+            )
+    parts = []
+    labelled = -math.inf
+    for day in sorted(changes):
+        x = x_of(day)
+        tip = "; ".join(changes[day])
+        parts.append(
+            f'<line class="mark" x1="{x:.1f}" x2="{x:.1f}" y1="{_MT}" '
+            f'y2="{_MT + _PLOT_H}"><title>{esc(day)}: {esc(tip)}</title></line>'
+        )
+        if x - labelled >= _MARK_LABEL_GAP:
+            labelled = x
+            version = changes[day][0].rsplit(" ", 1)[-1]
+            parts.append(
+                f'<text class="mark-label" x="{x - 2:.1f}" y="{_MT - 4}" '
+                'text-anchor="end">'
+                f"{esc(version)}</text>"
+            )
+    return "".join(parts)
+
+
+def _time_chart(rows: list[PrRow]) -> str:
+    """New tokens per PR by merge day, one dot per PR, version changes marked.
+
+    Args:
+        rows: PRs, oldest first.
+
+    Returns:
+        The ``<svg>``.
+    """
+    label = "New tokens per PR over time, one dot per PR"
+    y_title = "new tokens"
+    dated = [row for row in rows if row.merged_on and row.new_tokens]
+    if not dated:
+        return _svg(label, y_title, _no_data())
+    days = [date.fromisoformat(row.merged_on or "").toordinal() for row in dated]
+    first, span = min(days), (max(days) - min(days)) or 1
+
+    def x_of(day: str) -> float:
+        return _ML + (date.fromisoformat(day).toordinal() - first) / span * _PLOT_W
+
+    scale = _scale([float(row.new_tokens) for row in dated], allow_log=True)
+    tick_days = {first, first + span // 2, max(days)}
+    ticks = [date.fromordinal(d).isoformat() for d in tick_days]
+    body = [
+        _y_axis(scale, log_note=scale.log),
+        *(_x_label(x_of(day), day) for day in sorted(ticks)),
+        _version_marks(rows, x_of),
+    ]
+    for index, repo_id in enumerate(repo_order(rows)):
+        points: list[tuple[float, float | None, str]] = [
+            (
+                x_of(row.merged_on or ""),
+                float(row.new_tokens),
+                (
+                    f"#{row.ordinal} {row.merged_on} {_version_name(row)}: "
+                    f"{fmt_tokens(row.new_tokens)}"
+                ),
+            )
+            for row in dated
+            if row.repo_id == repo_id
+        ]
+        body.append(_series(index, repo_id, points, scale, joined=False))
+    return _svg(label, y_title, "".join(body))
+
+
+def _fmt_cell(value: float | None, fmt: Callable[[float], str]) -> str:
+    """A table median, ``-`` when unknown.
+
+    Args:
+        value: The median.
+        fmt: Formatter for a known value.
+
+    Returns:
+        The cell text.
+    """
+    return "-" if value is None else fmt(value)
+
+
+def _version_table(
+    rows: list[PrRow], stats: dict[tuple[str, str], VersionStats]
+) -> str:
+    """Version by repo table of counts and medians.
+
+    Args:
+        rows: PRs, oldest first.
+        stats: :func:`version_stats` of *rows*.
+
+    Returns:
+        The ``<table>``.
+    """
+    esc = html.escape
+    body = []
+    for version in version_order(rows):
+        for repo_id in repo_order(rows):
+            cell = stats.get((version, repo_id))
+            if cell is None:
+                continue
+            values = (
+                str(cell.prs),
+                str(cell.with_tokens),
+                _fmt_cell(cell.new_tokens, _fmt_axis),
+                _fmt_cell(cell.per_line, lambda v: f"{v:,.0f}"),
+                _fmt_cell(cell.active_min, lambda v: f"{v:.0f}"),
+                _fmt_cell(cell.rounds, lambda v: f"{v:.1f}"),
+            )
+            body.append(
+                f"<tr><td>{esc(version)}</td><td>{esc(repo_id[:SHORT_ID])}</td>"
+                + "".join(f"<td>{esc(v)}</td>" for v in values)
+                + "</tr>"
+            )
+    return (
+        '<table class="by-version"><thead><tr><th>version</th><th>repo</th>'
+        "<th>PRs</th><th>with tokens</th><th>median new</th>"
+        "<th>median new/line</th><th>median active min</th>"
+        f"<th>median rounds</th></tr></thead><tbody>{''.join(body)}</tbody></table>"
+    )
+
+
+def _repo_legend(rows: list[PrRow]) -> str:
+    """Legend naming each repo's colour by short id.
+
+    Args:
+        rows: PRs, oldest first.
+
+    Returns:
+        A ``<p>``.
+    """
+    items = "".join(
+        f'<span class="swatch {_series_class(i)}"></span>{html.escape(r[:SHORT_ID])}'
+        for i, r in enumerate(repo_order(rows))
+    )
+    return f'<p class="legend">repo:{items}</p>'
+
+
+def _version_section(rows: list[PrRow]) -> str:
+    """The by-version charts and table.
+
+    Args:
+        rows: PRs, oldest first.
+
+    Returns:
+        HTML.
+    """
+    stats = version_stats(rows)
+
+    def by_version(
+        title: str, y_title: str, metric: Callable[[VersionStats], float | None]
+    ) -> str:
+        svg = _version_chart(rows, stats, metric, label=title, y_title=y_title)
+        return f'<h3>{html.escape(title)}</h3><div class="wrap">{svg}</div>'
+
+    return "".join(
+        (
+            "<h2>By forge version</h2>",
+            (
+                '<p class="muted">Medians per version and repo. PRs without token '
+                "data are left out of token medians and show as gaps, never zeros; "
+                f"PRs with no recorded version are grouped as {UNKNOWN_VERSION}, "
+                "last.</p>"
+            ),
+            _repo_legend(rows),
+            by_version(
+                "New tokens per changed line by forge version (median)",
+                "new tokens / line",
+                lambda s: s.per_line,
+            ),
+            (
+                "<h3>New tokens per PR over time</h3>"
+                '<p class="muted">One dot per PR with token data. Dashed lines: a '
+                "repo moved to a new forge version.</p>"
+                f'<div class="wrap">{_time_chart(rows)}</div>'
+            ),
+            by_version(
+                "Active minutes per PR by forge version (median)",
+                "active minutes",
+                lambda s: s.active_min,
+            ),
+            by_version(
+                "Review rounds by forge version (median)",
+                "review rounds",
+                lambda s: s.rounds,
+            ),
+            f'<div class="wrap">{_version_table(rows, stats)}</div>',
+        )
+    )
+
+
 _HTML_STYLE = """
 :root { --bg: #fff; --fg: #1f2328; --muted: #656d76; --main: #2f6fde;
-  --helper: #9ab8ee; --rule: #d0d7de; }
+  --helper: #9ab8ee; --rule: #d0d7de;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  --s5: #e87ba4; --s6: #008300; --s7: #6250d6; --s8: #e34948; }
 @media (prefers-color-scheme: dark) { :root { --bg: #0d1117; --fg: #e6edf3;
-  --muted: #8d96a0; --main: #4c8df6; --helper: #2a4a80; --rule: #30363d; } }
+  --muted: #8d96a0; --main: #4c8df6; --helper: #2a4a80; --rule: #30363d;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+  --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767; } }
 body { background: var(--bg); color: var(--fg); margin: 0 auto; max-width: 960px;
   padding: 16px; font: 14px/1.5 system-ui, sans-serif; }
 svg { width: 100%; height: auto; border-bottom: 1px solid var(--rule); }
+svg.chart { min-width: 560px; border: 0; }
 .main { fill: var(--main); } .helper { fill: var(--helper); }
 .legend span { display: inline-block; width: 10px; height: 10px; margin: 0 4px 0 12px; }
+.s1 { color: var(--s1); } .s2 { color: var(--s2); } .s3 { color: var(--s3); }
+.s4 { color: var(--s4); } .s5 { color: var(--s5); } .s6 { color: var(--s6); }
+.s7 { color: var(--s7); } .s8 { color: var(--s8); } .other { color: var(--muted); }
+.swatch { background: currentColor; border-radius: 50%; }
+.series path { fill: none; stroke: currentColor; stroke-width: 2; }
+.series circle { fill: currentColor; stroke: var(--bg); stroke-width: 2; }
+.grid { stroke: var(--rule); stroke-width: 1; } .axis { stroke: var(--muted); }
+.mark { stroke: var(--muted); stroke-dasharray: 3 3; }
+.tick, .axis-title, .mark-label { fill: var(--muted); font-size: 11px; }
 table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
 th, td { padding: 4px 8px; border-bottom: 1px solid var(--rule); text-align: right; }
 th:nth-child(-n+2), td:nth-child(-n+2), td:last-child, th:last-child {
   text-align: left; }
+.by-version td:last-child, .by-version th:last-child { text-align: right; }
 .wrap { overflow-x: auto; } p.muted { color: var(--muted); }
 """
 
 
 def render_html(rows: list[PrRow]) -> str:
-    """One self-contained HTML page: chart, table and trend, nothing fetched.
+    """One self-contained HTML page: charts, tables and trend, nothing fetched.
 
     Args:
         rows: PRs, oldest first.
@@ -383,7 +979,8 @@ def render_html(rows: list[PrRow]) -> str:
         '<p class="legend"><span class="main" style="background:var(--main)">'
         '</span>main session<span style="background:var(--helper)"></span>'
         "helpers</p>"
-        f'{trend}<div class="wrap"><table><thead><tr><th>PR</th><th>model</th>'
+        f"{trend}{_version_section(rows)}<h2>Per PR</h2>"
+        '<div class="wrap"><table><thead><tr><th>PR</th><th>model</th>'
         "<th>tokens</th><th>new</th><th>cache%</th><th>new/line</th>"
         "<th>rounds</th><th>wall</th><th>active</th><th>lines</th>"
         "<th>top helpers (new)</th></tr></thead>"
