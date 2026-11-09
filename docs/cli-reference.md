@@ -632,16 +632,18 @@ options:
 
 ```text
 usage: forge-metrics [-h] [--db DB] [--transcripts TRANSCRIPTS]
-                     {record,backfill,report,export,bench} ...
+                     {record,backfill,report,export,publish,bench} ...
 
 Per-PR cost metrics (tokens, time, size) in a local database.
 
 positional arguments:
-  {record,backfill,report,export,bench}
+  {record,backfill,report,export,publish,bench}
     record              Record one merged PR (replaces its rows).
     backfill            Record merged PRs not yet recorded.
     report              Print per-PR cost and the trend.
     export              Write the anonymised rows as JSON.
+    publish             Push the public page (no names, no dates) to a
+                        dedicated Pages repo.
     bench               Run fixed tasks by hand in a sandbox repo to compare
                         forge versions.
 

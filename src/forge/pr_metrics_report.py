@@ -9,6 +9,7 @@ PR is labelled by merge day, short repo id and its ordinal in that repo.
 from __future__ import annotations
 
 import html
+import re
 import statistics
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final
@@ -38,6 +39,8 @@ TOKEN_COLUMNS: Final = ("requests", "input", "cache_write", "cache_read", "outpu
 _SHARED_PREFIX: Final = "forge:"
 #: Characters of the repo id shown in PR labels.
 SHORT_ID: Final = 6
+#: What a stored repo id looks like (hex uuid); anything else is a label.
+_REPO_ID_RE: Final = re.compile(r"[0-9a-f-]+")
 #: Fewest PRs with tokens a trend compares (two per half).
 TREND_MIN_PRS: Final = 4
 _CHART_W: Final = 640
@@ -60,6 +63,21 @@ def usage_values(usage: TokenUsage) -> tuple[int, ...]:
         usage.cache_read_tokens,
         usage.output_tokens,
     )
+
+
+def short_repo(repo_id: str) -> str:
+    """How a repo shows: an id cut to :data:`SHORT_ID`, a word label whole.
+
+    Stored ids are hex uuids; the public page swaps them for word labels
+    (``forge`` / ``external``), which must not be cut.
+
+    Args:
+        repo_id: A stored id or a label.
+
+    Returns:
+        The shown form.
+    """
+    return repo_id[:SHORT_ID] if _REPO_ID_RE.fullmatch(repo_id) else repo_id
 
 
 @dataclass(frozen=True)
@@ -111,7 +129,7 @@ class PrRow:
     @property
     def label(self) -> str:
         """``<merge day> <short repo id>#<ordinal>``: names the PR without names."""
-        return f"{self.merged_on or '?'} {self.repo_id[:SHORT_ID]}#{self.ordinal}"
+        return f"{self.merged_on or '?'} {short_repo(self.repo_id)}#{self.ordinal}"
 
 
 def load_rows(
@@ -367,7 +385,7 @@ class VersionStats:
     rounds: float | None
 
 
-def _version_name(row: PrRow) -> str:
+def version_name(row: PrRow) -> str:
     """The row's forge version, :data:`UNKNOWN_VERSION` when not recorded.
 
     Args:
@@ -388,7 +406,7 @@ def version_order(rows: list[PrRow]) -> list[str]:
     Returns:
         The version names.
     """
-    names = {_version_name(row) for row in rows}
+    names = {version_name(row) for row in rows}
     known = sorted(names - {UNKNOWN_VERSION}, key=lambda v: (_version_key(v), v))
     return known + [UNKNOWN_VERSION] * (UNKNOWN_VERSION in names)
 
@@ -438,7 +456,7 @@ def version_stats(rows: list[PrRow]) -> dict[tuple[str, str], VersionStats]:
     """
     groups: dict[tuple[str, str], list[PrRow]] = {}
     for row in rows:
-        groups.setdefault((_version_name(row), row.repo_id), []).append(row)
+        groups.setdefault((version_name(row), row.repo_id), []).append(row)
     return {key: _group_stats(group) for key, group in groups.items()}
 
 
@@ -468,7 +486,7 @@ def _version_chart(
         cells = [stats.get((version, repo_id)) for version in versions]
         series.append(
             Series(
-                repo_id[:SHORT_ID],
+                short_repo(repo_id),
                 [metric(cell) if cell else None for cell in cells],
             )
         )
@@ -495,7 +513,9 @@ def version_changes(rows: list[PrRow]) -> list[Change]:
         last[row.repo_id] = row.forge_version
         if before is not None and before != row.forge_version:
             changes.append(
-                Change(row.merged_on, row.repo_id[:SHORT_ID], before, row.forge_version)
+                Change(
+                    row.merged_on, short_repo(row.repo_id), before, row.forge_version
+                )
             )
     return changes
 
@@ -513,10 +533,10 @@ def _time_chart(rows: list[PrRow]) -> str:
     dots = [
         Dot(
             slot[row.repo_id],
-            row.repo_id[:SHORT_ID],
+            short_repo(row.repo_id),
             row.merged_on,
             float(row.new_tokens),
-            f"#{row.ordinal} {row.merged_on} {_version_name(row)}: "
+            f"#{row.ordinal} {row.merged_on} {version_name(row)}: "
             f"{fmt_tokens(row.new_tokens)}",
         )
         for row in rows
@@ -571,7 +591,7 @@ def _version_table(
                 _fmt_cell(cell.rounds, lambda v: f"{v:.1f}"),
             )
             body.append(
-                f"<tr><td>{esc(version)}</td><td>{esc(repo_id[:SHORT_ID])}</td>"
+                f"<tr><td>{esc(version)}</td><td>{esc(short_repo(repo_id))}</td>"
                 + "".join(f"<td>{esc(v)}</td>" for v in values)
                 + "</tr>"
             )
@@ -593,22 +613,32 @@ def _repo_legend(rows: list[PrRow]) -> str:
         A ``<p>``.
     """
     items = "".join(
-        f'<span class="swatch {series_class(i)}"></span>{html.escape(r[:SHORT_ID])}'
+        f'<span class="swatch {series_class(i)}"></span>{html.escape(short_repo(r))}'
         for i, r in enumerate(repo_order(rows))
     )
     return f'<p class="legend">repo:{items}</p>'
 
 
-def _version_section(rows: list[PrRow]) -> str:
+def version_section(rows: list[PrRow], *, over_time: bool = True) -> str:
     """The by-version charts and table.
 
     Args:
         rows: PRs, oldest first.
+        over_time: Include the per-PR chart by merge day; the public page,
+            which carries no dates, leaves it out.
 
     Returns:
         HTML.
     """
     stats = version_stats(rows)
+    over_time_chart = (
+        "<h3>New tokens per PR over time</h3>"
+        '<p class="muted">One dot per PR with token data. Dashed lines: a '
+        "repo moved to a new forge version.</p>"
+        f'<div class="wrap">{_time_chart(rows)}</div>'
+        if over_time
+        else ""
+    )
 
     def by_version(
         title: str, y_title: str, metric: Callable[[VersionStats], float | None]
@@ -631,12 +661,7 @@ def _version_section(rows: list[PrRow]) -> str:
                 "new tokens / line",
                 lambda s: s.per_line,
             ),
-            (
-                "<h3>New tokens per PR over time</h3>"
-                '<p class="muted">One dot per PR with token data. Dashed lines: a '
-                "repo moved to a new forge version.</p>"
-                f'<div class="wrap">{_time_chart(rows)}</div>'
-            ),
+            over_time_chart,
             by_version(
                 "Active minutes per PR by forge version (median)",
                 "active minutes",
@@ -681,8 +706,53 @@ th, td { padding: 4px 8px; border-bottom: 1px solid var(--rule); text-align: rig
 th:nth-child(-n+2), td:nth-child(-n+2), td:last-child, th:last-child {
   text-align: left; }
 .by-version td:last-child, .by-version th:last-child { text-align: right; }
+.public td:nth-child(-n+4), .public th:nth-child(-n+4) { text-align: left; }
 .wrap { overflow-x: auto; } p.muted { color: var(--muted); }
 """
+_PR_COLUMNS: Final = ("tokens", "new", "cache", "per_line", "rounds", "wall", "active")
+PR_HEADER: Final = (
+    "<th>tokens</th><th>new</th><th>cache%</th><th>new/line</th>"
+    "<th>rounds</th><th>wall</th><th>active</th><th>lines</th>"
+    "<th>top helpers (new)</th>"
+)
+
+
+def pr_cells(row: PrRow) -> str:
+    """One PR's number cells, from ``tokens`` to top helpers.
+
+    Args:
+        row: The PR.
+
+    Returns:
+        The ``<td>`` run.
+    """
+    esc = html.escape
+    cells = _cells(row)
+    return (
+        "".join(f"<td>{esc(cells[c])}</td>" for c in _PR_COLUMNS)
+        + f"<td>{row.changed_lines}</td><td>{esc(cells['helpers'])}</td>"
+    )
+
+
+def html_page(title: str, intro: str, body: str) -> str:
+    """The self-contained page shell: inline style, nothing fetched.
+
+    Args:
+        title: Page title, unescaped.
+        intro: Line under the title, unescaped.
+        body: Page content, already escaped.
+
+    Returns:
+        The page.
+    """
+    esc = html.escape
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        f"<title>{esc(title)}</title><style>{_HTML_STYLE}</style></head><body>"
+        f'<h1>{esc(title)}</h1><p class="muted">{esc(intro)}</p>'
+        f"{body}</body></html>\n"
+    )
 
 
 def render_html(rows: list[PrRow]) -> str:
@@ -695,32 +765,39 @@ def render_html(rows: list[PrRow]) -> str:
         The page.
     """
     esc = html.escape
-    columns = ("tokens", "new", "cache", "per_line", "rounds", "wall", "active")
     body_rows = "".join(
         f"<tr><td>{esc(row.label)}</td><td>{esc(row.model or '-')}</td>"
-        + "".join(f"<td>{esc(cells[c])}</td>" for c in columns)
-        + f"<td>{row.changed_lines}</td><td>{esc(cells['helpers'])}</td></tr>"
+        f"{pr_cells(row)}</tr>"
         for row in reversed(rows)
-        for cells in (_cells(row),)
     )
     trend = "".join(f"<p>{esc(line)}</p>" for line in trend_lines(rows))
-    return (
-        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
-        '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        f"<title>PR metrics</title><style>{_HTML_STYLE}</style></head><body>"
-        f'<h1>PR metrics</h1><p class="muted">{len(rows)} merged PRs, '
-        "oldest left. Generated by forge-metrics.</p>"
+    body = (
         f"{_bar_chart(rows)}"
         '<p class="legend"><span class="main" style="background:var(--main)">'
         '</span>main session<span style="background:var(--helper)"></span>'
         "helpers</p>"
-        f"{trend}{_version_section(rows)}<h2>Per PR</h2>"
+        f"{trend}{version_section(rows)}<h2>Per PR</h2>"
         '<div class="wrap"><table><thead><tr><th>PR</th><th>model</th>'
-        "<th>tokens</th><th>new</th><th>cache%</th><th>new/line</th>"
-        "<th>rounds</th><th>wall</th><th>active</th><th>lines</th>"
-        "<th>top helpers (new)</th></tr></thead>"
-        f"<tbody>{body_rows}</tbody></table></div></body></html>\n"
+        f"{PR_HEADER}</tr></thead>"
+        f"<tbody>{body_rows}</tbody></table></div>"
     )
+    intro = f"{len(rows)} merged PRs, oldest left. Generated by forge-metrics."
+    return html_page("PR metrics", intro, body)
+
+
+def token_dict(row: PrRow) -> dict[str, dict[str, int]]:
+    """*row*'s tokens as ``agent type → column → count``.
+
+    Args:
+        row: The PR.
+
+    Returns:
+        The mapping, agent types sorted.
+    """
+    return {
+        agent_type: dict(zip(TOKEN_COLUMNS, usage_values(usage), strict=True))
+        for agent_type, usage in sorted(row.tokens.items())
+    }
 
 
 def export_payload(rows: list[PrRow], *, schema: int) -> dict[str, Any]:
@@ -754,12 +831,7 @@ def export_payload(rows: list[PrRow], *, schema: int) -> dict[str, Any]:
                 "test_runs": row.test_runs,
                 "active_s": row.active_s,
                 "wall_s": row.wall_s,
-                "tokens": {
-                    agent_type: dict(
-                        zip(TOKEN_COLUMNS, usage_values(usage), strict=True)
-                    )
-                    for agent_type, usage in sorted(row.tokens.items())
-                },
+                "tokens": token_dict(row),
             }
             for row in rows
         ],

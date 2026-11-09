@@ -65,6 +65,7 @@ from forge.agent_profile import (
 from forge.agent_profile_tokens import MAIN_AGENT, TokenUsage, fmt_tokens, parse_ts
 from forge.config import load_config
 from forge.git_utils import (
+    _FORGE_GITHUB_REPO,
     configure_cli_logging,
     emit,
     forge_data_dir,
@@ -83,6 +84,13 @@ from forge.pr_metrics_bench import (
     load_tasks,
     session_line,
     start_run,
+)
+from forge.pr_metrics_publish import (
+    PublishError,
+    enable_pages_command,
+    public_files,
+    publish,
+    write_files,
 )
 from forge.pr_metrics_report import (
     export_payload,
@@ -1323,6 +1331,19 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     export = sub.add_parser("export", help="Write the anonymised rows as JSON.")
     export.add_argument("--out", type=Path, help="File to write (default: stdout).")
+    page = sub.add_parser(
+        "publish",
+        help="Push the public page (no names, no dates) to a dedicated Pages repo.",
+    )
+    page.add_argument(
+        "--repo", required=True, help="owner/name of a public repo you administer."
+    )
+    page.add_argument(
+        "--dry-run",
+        type=Path,
+        metavar="DIR",
+        help="Write index.html and metrics.json to DIR instead; no network.",
+    )
     bench = sub.add_parser(
         "bench",
         help="Run fixed tasks by hand in a sandbox repo to compare forge versions.",
@@ -1535,7 +1556,41 @@ def _bench(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
     return 0
 
 
-def _refuse(exc: MetricsError | BenchError) -> int:
+def _publish(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
+    """Run ``publish``: write the public files locally, or push them.
+
+    Args:
+        conn: The metrics database.
+        args: Parsed arguments.
+
+    Returns:
+        Exit code.
+    """
+    # Read the local mapping only to tell forge's own repo apart; neither the
+    # slug nor any per-repo id reaches the public files.
+    files = public_files(
+        load_rows(conn),
+        schema=SCHEMA_VERSION,
+        forge_repo_id=lookup_repo_id(_FORGE_GITHUB_REPO),
+    )
+    if args.dry_run:
+        for path in write_files(files, args.dry_run):
+            emit(f"Wrote {path}")
+        return 0
+    require_cli("gh", caller="forge-metrics", hint="Install GitHub CLI (gh).")
+    try:
+        published = publish(args.repo, files)
+    except PublishError as exc:
+        return _refuse(exc)
+    state = "published" if published.changed else "unchanged, nothing pushed"
+    emit(f"forge-metrics publish: {args.repo} {state}; page: {published.url}")
+    if not published.pages_on:
+        emit(f"GitHub Pages is off for {args.repo}; turn it on once with:")
+        emit(f"  {enable_pages_command(args.repo)}")
+    return 0
+
+
+def _refuse(exc: MetricsError | BenchError | PublishError) -> int:
     """Report a refusal the user can act on, without a traceback.
 
     Called from ``except`` blocks so the message is logged as a plain error:
@@ -1549,6 +1604,36 @@ def _refuse(exc: MetricsError | BenchError) -> int:
     """
     logger.error("%s", exc)
     return 2
+
+
+def _run_subcommand(
+    conn: sqlite3.Connection,
+    root: Path,
+    secret: str,
+    args: argparse.Namespace,
+) -> int:
+    """Run the subcommand *args* names against the open database.
+
+    Args:
+        conn: The metrics database.
+        root: Repo root the command reads.
+        secret: The machine secret keying repo and PR identifiers.
+        args: Parsed arguments.
+
+    Returns:
+        Exit code.
+    """
+    if args.command == "bench":
+        return _bench(conn, args)
+    if args.command == "publish":
+        return _publish(conn, args)
+    if args.command not in {"record", "backfill"}:
+        return _read(conn, root, args)
+    slug = github_slug(root)
+    if slug is None:
+        logger.error("forge-metrics: no GitHub origin remote to record PRs for")
+        return 2
+    return _record(conn, root, RepoKeys(ensure_repo_id(slug), secret), args)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1572,15 +1657,7 @@ def main(argv: list[str] | None = None) -> int:
         legacy = legacy_paths(forge_data_dir()) if args.db is None else []
         if legacy:
             migrate_legacy(conn, legacy, secret)
-        if args.command == "bench":
-            return _bench(conn, args)
-        if args.command not in {"record", "backfill"}:
-            return _read(conn, root, args)
-        slug = github_slug(root)
-        if slug is None:
-            logger.error("forge-metrics: no GitHub origin remote to record PRs for")
-            return 2
-        return _record(conn, root, RepoKeys(ensure_repo_id(slug), secret), args)
+        return _run_subcommand(conn, root, secret, args)
     except MetricsError as exc:
         return _refuse(exc)
     finally:
