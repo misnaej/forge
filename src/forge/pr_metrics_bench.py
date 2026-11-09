@@ -51,10 +51,10 @@ from forge.git_utils import (
     forge_data_dir,
     github_slug,
     network_git_env,
-    parse_semver,
     push_branch,
     push_tag,
     ref_exists,
+    release_of,
     run_git,
 )
 from forge.upgrade import pinned_ref
@@ -801,16 +801,14 @@ def clone_forge_version(clone: Path) -> str | None:
     """
     for info in sorted(clone.glob(".venv/lib/python*/site-packages/*.dist-info")):
         match = _DIST_INFO.fullmatch(info.name)
-        parsed = parse_semver(match.group("version")) if match else None
-        if parsed:
-            return ".".join(map(str, parsed))
+        release = release_of(match.group("version")) if match else None
+        if release:
+            return release
     try:
         text = (clone / "pyproject.toml").read_text(encoding="utf-8")
     except OSError:
         return None
-    ref = pinned_ref(text)
-    parsed = parse_semver(ref) if ref else None
-    return ".".join(map(str, parsed)) if parsed else None
+    return release_of(pinned_ref(text))
 
 
 def _clone_tool(clone: Path, name: str) -> list[str]:
@@ -1058,22 +1056,28 @@ def finish_run(
     data: Path,
     record: Callable[[BenchOutcome], None],
     clone: Path | None = None,
-    runner: Runner = run_command,
+    seams: Seams = DEFAULT_SEAMS,
 ) -> BenchOutcome:
     """Record the started run, close its PR, delete its branch, clear the marker.
+
+    The clone's ``origin`` must be the sandbox before anything is recorded,
+    closed or deleted: ``--clone`` could otherwise point the PR close and
+    branch delete at another repo.
 
     Args:
         data: The bench data directory.
         record: Stores the outcome (the database writer).
         clone: The local clone; the marker's when ``None``.
-        runner: Command runner.
+        seams: Command runner and origin reader.
 
     Returns:
         What the run measured.
 
     Raises:
-        BenchError: No run started, its task unknown, or the sandbox refused.
+        BenchError: No run started, its task unknown, the sandbox refused,
+            or the clone is not a clone of the sandbox.
     """
+    runner = seams.runner
     marker = read_marker()
     if marker is None:
         msg = "forge-metrics bench: no run started; `bench start <task>` first"
@@ -1085,6 +1089,9 @@ def finish_run(
         msg = f"forge-metrics bench: unknown task {marker.task_id!r} in the marker"
         raise BenchError(msg)
     sandbox = _require_sandbox()
+    if seams.origin_slug(Path(marker.clone)) != sandbox.slug:
+        msg = f"forge-metrics bench: {marker.clone} is not a clone of the sandbox"
+        raise BenchError(msg)
     check_access(sandbox.slug, runner, Path(marker.clone))
     outcome = BenchOutcome(
         run_id=uuid.uuid4().hex,

@@ -70,7 +70,7 @@ from forge.git_utils import (
     forge_data_dir,
     gh_api,
     github_slug,
-    parse_semver,
+    release_of,
     repo_root,
     require_cli,
     run_git,
@@ -1112,20 +1112,6 @@ def _git(root: Path, *args: str, timeout: float = _GIT_TIMEOUT_S) -> str | None:
         return None
 
 
-def _release(version: str | None) -> str | None:
-    """*version* as the release ``X.Y.Z`` it belongs to; ``None`` if none.
-
-    Args:
-        version: A tag, pin ref or version string (``v11.1.0``,
-            ``11.1.0.dev3+g1234``, ``main``).
-
-    Returns:
-        ``X.Y.Z``, or ``None`` when *version* names no release.
-    """
-    parsed = parse_semver(version) if version else None
-    return ".".join(map(str, parsed)) if parsed else None
-
-
 def version_at_merge(root: Path, merge_sha: str | None) -> str | None:
     """The forge release a PR was built with, read from its merge commit.
 
@@ -1148,9 +1134,9 @@ def version_at_merge(root: Path, merge_sha: str | None) -> str | None:
         _git(root, "fetch", "--quiet", "origin", sha, timeout=_FETCH_TIMEOUT_S)
     if is_forge_repo(root):
         tag = _git(root, "describe", "--tags", "--abbrev=0", "--match", "v[0-9]*", sha)
-        return _release(tag)
+        return release_of(tag)
     text = _git(root, "show", f"{sha}:pyproject.toml")
-    return _release(pinned_ref(text)) if text else None
+    return release_of(pinned_ref(text)) if text else None
 
 
 def pending_prs(

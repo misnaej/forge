@@ -350,7 +350,9 @@ def test_finish_records_closes_the_pr_and_deletes_the_branch(
     db = tmp_path / "m.sqlite"
     conn = pr_metrics.open_db(db, "00" * 32)
     outcome = finish_run(
-        data=data, record=lambda o: pr_metrics.record_bench_run(conn, o), runner=runner
+        data=data,
+        record=lambda o: pr_metrics.record_bench_run(conn, o),
+        seams=Seams(runner, lambda _p: SLUG),
     )
     assert outcome.version == "11.2.0"
     assert (outcome.pr_opened, outcome.wrapups_posted) == (True, 1)
@@ -368,6 +370,27 @@ def test_finish_records_closes_the_pr_and_deletes_the_branch(
     dump = "\n".join(conn.iterdump())
     for name in (SLUG, "someone", "bench-sandbox", marker.branch, str(tmp_path)):
         assert name not in dump
+
+
+def test_finish_refuses_a_clone_of_another_repo(
+    seeded_origin: Path, data: Path, tmp_path: Path
+) -> None:
+    """Behavior: --clone pointing elsewhere records, closes and deletes nothing."""
+    _start(data, _owned(seeded_origin), tmp_path / "clone")
+    other = tmp_path / "other"
+    other.mkdir()
+    runner = _owned(seeded_origin, (("gh", "pr", "list"), Completed(0, "7\n")))
+    recorded: list[BenchOutcome] = []
+    with pytest.raises(BenchError, match="not a clone of the sandbox"):
+        finish_run(
+            data=data,
+            record=recorded.append,
+            clone=other,
+            seams=Seams(runner, lambda _p: "someone/elsewhere"),
+        )
+    assert recorded == []
+    assert runner.calls == []
+    assert read_marker() is not None
 
 
 def test_finish_without_a_started_run_is_refused(data: Path) -> None:

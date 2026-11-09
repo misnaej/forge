@@ -150,6 +150,21 @@ def parse_semver(version: str) -> tuple[int, int, int] | None:
     return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
 
 
+def release_of(version: str | None) -> str | None:
+    """*version* as the release ``X.Y.Z`` it belongs to; ``None`` if none.
+
+    Args:
+        version: A tag, pin ref or version string (``v11.1.0``,
+            ``11.1.0.dev3+g1234``, ``main``), or ``None``.
+
+    Returns:
+        ``X.Y.Z`` from :func:`parse_semver`, or ``None`` when *version*
+        names no release.
+    """
+    parsed = parse_semver(version) if version else None
+    return ".".join(map(str, parsed)) if parsed else None
+
+
 def next_version(latest_tag: str | None, bump: str) -> str:
     """Return the ``vX.Y.Z`` tag that follows *latest_tag* for a semver *bump*.
 

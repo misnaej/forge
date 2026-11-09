@@ -883,6 +883,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `emit(msg: str) -> None` — Write *msg* to stdout with a trailing newline.
 - `pad_semver(text: str) -> tuple[int, int, int] | None` — Return *text* as a three-part version, padding what it omits.
 - `parse_semver(version: str) -> tuple[int, int, int] | None` — Parse the leading ``X.Y.Z`` (optional ``v`` prefix) of a version string.
+- `release_of(version: str | None) -> str | None` — *version* as the release ``X.Y.Z`` it belongs to; ``None`` if none.
 - `next_version(latest_tag: str | None, bump: str) -> str` — Return the ``vX.Y.Z`` tag that follows *latest_tag* for a semver *bump*.
 - `classify_bump(old: tuple[int, int, int] | None, new: tuple[int, int, int] | None) -> str | None` — Classify the semver increment from *old* to *new*.
 - `latest_v_tag(root: Path) -> str | None` — Return the highest ``v*`` git tag by semver sort, or ``None`` if none.
@@ -1517,7 +1518,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `merged_prs() -> list[MergedPr]` — The newest merged PRs.
 - `_is_sha(value: object) -> bool` _(internal)_ — Whether *value* is a full hex commit id (safe to hand to git).
 - `_git(root: Path, *args: str, timeout: float = _GIT_TIMEOUT_S) -> str | None` _(internal)_ — Run a read-only git command in *root*; ``None`` when it fails.
-- `_release(version: str | None) -> str | None` _(internal)_ — *version* as the release ``X.Y.Z`` it belongs to; ``None`` if none.
 - `version_at_merge(root: Path, merge_sha: str | None) -> str | None` — The forge release a PR was built with, read from its merge commit.
 - `pending_prs(conn: sqlite3.Connection, repo: RepoKeys, merged: Iterable[MergedPr], tally: BranchUsageTally, *, limit: int) -> list[int]` — The merged PRs backfill would record: not yet in the database, with usage.
 - `backfill(conn: sqlite3.Connection, root: Path, repo: RepoKeys, tally: BranchUsageTally, numbers: Iterable[int]) -> list[int]` — Record the given merged PRs, skipping any that cannot be read.
@@ -1586,7 +1586,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_wrapups(slug: str, number: int, runner: Runner, cwd: Path) -> int` _(internal)_ — Wrap-ups posted on the PR: comments opening with ``verified-at:``.
 - `collect(outcome: BenchOutcome, marker: Marker, task: Task, data: Path, runner: Runner) -> None` — Fill *outcome* with what the clone and its transcripts show.
 - `close_out(outcome: BenchOutcome, marker: Marker, slug: str, runner: Runner) -> None` — Record the PR facts, close the PR unmerged and delete the run's branch.
-- `finish_run(*, data: Path, record: Callable[[BenchOutcome], None], clone: Path | None = None, runner: Runner = run_command) -> BenchOutcome` — Record the started run, close its PR, delete its branch, clear the marker.
+- `finish_run(*, data: Path, record: Callable[[BenchOutcome], None], clone: Path | None = None, seams: Seams = DEFAULT_SEAMS) -> BenchOutcome` — Record the started run, close its PR, delete its branch, clear the marker.
 
 ## `forge.pr_metrics_report`
 
