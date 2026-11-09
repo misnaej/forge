@@ -642,8 +642,8 @@ positional arguments:
     backfill            Record merged PRs not yet recorded.
     report              Print per-PR cost and the trend.
     export              Write the anonymised rows as JSON.
-    bench               Run fixed tasks against a forge version and compare
-                        versions.
+    bench               Run fixed tasks by hand in a sandbox repo to compare
+                        forge versions.
 
 options:
   -h, --help            show this help message and exit

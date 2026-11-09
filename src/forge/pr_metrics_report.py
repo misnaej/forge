@@ -74,7 +74,8 @@ class PrRow:
     test_runs: int | None
     active_s: float | None
     wall_s: float | None
-    forge_version: str
+    #: Forge release the PR was built with; ``None`` when unknown.
+    forge_version: str | None
     tokens: dict[str, TokenUsage]
 
     @property
@@ -147,7 +148,7 @@ def load_rows(
                 repo_id,
                 seen[repo_id],
                 *fields,
-                forge_version=version or "",
+                forge_version=version,
                 tokens=tokens.get(key, {}),
             )
         )
@@ -443,8 +444,6 @@ class BenchRow:
     task_id: str
     forge_version: str
     run_n: int
-    setup_ok: bool | None
-    timed_out: bool | None
     pr_opened: bool | None
     tests_green: bool | None
     precommit_ok: bool | None
@@ -503,7 +502,7 @@ def load_bench_rows(
             requests=counts[0],
         )
     query = (
-        "SELECT run_id, task_id, forge_version, run_n, setup_ok, timed_out, "
+        "SELECT run_id, task_id, forge_version, run_n, "
         "pr_opened, tests_green, precommit_ok, checks_passed, checks_total, "
         "review_rounds, additions, deletions, active_s, wall_s FROM bench_runs "
         "ORDER BY started_at, rowid"
@@ -511,14 +510,14 @@ def load_bench_rows(
     rows = []
     for record in conn.execute(query):
         run_id, task_id, version, run_n = record[:4]
-        facts = record[4:9]
-        passed, total, rounds, additions, deletions, active, wall = record[9:]
+        facts = record[4:7]
+        passed, total, rounds, additions, deletions, active, wall = record[7:]
         if task is not None and task_id != task:
             continue
         rows.append(
             BenchRow(
                 task_id,
-                version,
+                version or "unknown",
                 run_n,
                 *(_fact(v) for v in facts),
                 checks_passed=passed or 0,
@@ -574,8 +573,8 @@ def _version_key(version: str) -> tuple[int, int, int] | tuple[float]:
 
 _BENCH_HEADER: Final = (
     f"{'version':<10} {'runs':>4} {'new':>6} {'cache%':>6} {'active':>6} "
-    f"{'wall':>6} {'rounds':>6} {'lines':>6} {'setup':>5} {'pr':>5} "
-    f"{'tests':>5} {'checks':>6} {'commit':>6} {'timeout':>7}"
+    f"{'wall':>6} {'rounds':>6} {'lines':>6} {'pr':>5} "
+    f"{'tests':>5} {'checks':>6} {'commit':>6}"
 )
 
 
@@ -602,11 +601,9 @@ def _bench_line(version: str, runs: list[BenchRow]) -> str:
         f"{_fmt_s(_median([r.wall_s for r in runs])):>6} "
         f"{_fmt_median(rounds) if rounds is not None else '-':>6} "
         f"{round(lines) if lines is not None else '-':>6} "
-        f"{_count([r.setup_ok for r in runs]):>5} "
         f"{_count([r.pr_opened for r in runs]):>5} "
         f"{_count([r.tests_green for r in runs]):>5} {checks:>6} "
-        f"{_count([r.precommit_ok for r in runs]):>6} "
-        f"{_count([r.timed_out for r in runs]):>7}"
+        f"{_count([r.precommit_ok for r in runs]):>6}"
     )
 
 
@@ -620,7 +617,7 @@ def render_bench_report(rows: list[BenchRow]) -> str:
         The report text.
     """
     if not rows:
-        return "No benchmark runs recorded yet. Run `forge-metrics bench run`."
+        return "No benchmark runs recorded yet. Run `forge-metrics bench start <task>`."
     by_task: dict[str, dict[str, list[BenchRow]]] = {}
     for row in rows:
         by_task.setdefault(row.task_id, {}).setdefault(row.forge_version, []).append(
@@ -638,7 +635,7 @@ def render_bench_report(rows: list[BenchRow]) -> str:
     notes = (
         "Medians over runs: new = input + cache write + output tokens; lines = "
         "added + removed.\nCounts are runs where the fact held / runs that "
-        "reached it: setup ready, PR opened, sandbox tests green, task checks, "
-        "pre-commit verdict (commit), agent timed out."
+        "reached it: PR opened, sandbox tests green, task checks, pre-commit "
+        "verdict (commit). version = forge in the sandbox clone at finish."
     )
     return "\n".join([*lines, notes])

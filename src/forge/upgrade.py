@@ -145,6 +145,10 @@ _PIN_BARE_RE = re.compile(
     r"(?=[\s\"',]|$)"
 )
 
+# A released-version pin, ``"forge-scripts==X.Y.Z"`` (read-only: never
+# rewritten, only reported by :func:`pinned_ref`).
+_PIN_EQ_RE = re.compile(r'["\']forge-scripts\s*==\s*(?P<ref>[^"\',;\s]+)')
+
 # Where the pin search "no pin found" messages point users at.
 _PIN_SEARCH_SCOPE = "pyproject.toml, requirements*.txt, environment.yml"
 
@@ -203,6 +207,26 @@ def _pin_candidate_files(repo_root: Path) -> list[Path]:
         repo_root / "environment.yml",
     ]
     return [path for path in candidates if path.is_file()]
+
+
+def pinned_ref(pyproject_text: str) -> str | None:
+    """The forge-scripts ref a ``pyproject.toml``'s text pins, if any.
+
+    For reading a pin at some past commit, where there is no file on
+    disk for :func:`find_pin` to open.
+
+    Args:
+        pyproject_text: The file's content.
+
+    Returns:
+        The git ref (``vX.Y.Z``, ``main``, …) or ``==`` version, first
+        match wins; ``None`` when no line pins forge-scripts.
+    """
+    for line in pyproject_text.splitlines():
+        match = _PIN_RE.search(line) or _PIN_EQ_RE.search(line)
+        if match:
+            return match.group("ref")
+    return None
 
 
 def find_pin(repo_root: Path) -> Pin | None:

@@ -29,7 +29,13 @@ One row per merged PR:
 - **Time**: wall (first to last transcript record on the branch) and
   active (gaps over 5 minutes left out).
 - **Runs**: `forge-precommit` and `forge-smart-test` calls on the branch.
-- The forge version that recorded it.
+- **Forge version** the PR was built with, as a release `X.Y.Z`, read
+  from its merge commit (fetched once when missing locally): in forge
+  itself the newest release tag the merge contains; in a consumer the
+  forge-scripts pin in `pyproject.toml` at that commit (`==X.Y.Z` or a
+  git URL `@vX.Y.Z`; dev suffixes dropped). Empty when it cannot be told
+  (branch pin, commit unreachable) — never the version installed when
+  recording.
 
 Tokens, time and runs come from Claude Code's transcripts
 (`~/.claude/projects/`), whose every record names the git branch it ran
@@ -45,9 +51,11 @@ not charged twice. Work on the base branch goes to an
 - `forge-metrics record --pr <N>` — after merge: the `/next` cleanup and
   the PR monitor's merge handling run it. Re-recording replaces the PR's
   rows.
-- `forge-metrics backfill [--limit N]` — merged PRs not yet recorded whose
-  branch still has transcripts. Claude Code purges transcripts after about
-  30 days; older PRs cannot be recovered.
+- `forge-metrics backfill [--limit N] [--refresh]` — merged PRs not yet
+  recorded whose branch still has transcripts. Claude Code purges
+  transcripts after about 30 days; older PRs cannot be recovered.
+  `--refresh` also rewrites the forge version of PRs already recorded
+  (among GitHub's newest 100 merged), leaving their other figures alone.
 
 ## Where
 
@@ -87,8 +95,9 @@ database stays readable but unattributable: a repo recorded again gets a
 new id, and a re-recorded PR a new key (a second row).
 
 A database of an earlier layout is upgraded on open: schema 2 (plain
-`sha256` keys) is rekeyed, and schema 2 or 3 gains the bench tables. Any other schema version is refused with the expected
-and found versions named.
+`sha256` keys) is rekeyed, and schema 2 or 3 gains the bench tables. Any
+other schema version is refused with the expected and found versions
+named.
 
 `record` parses only transcript files written since the day before the
 PR was opened that name its branch or the base branch; `backfill` reads
@@ -121,35 +130,39 @@ file before sending it.
 ## Comparing versions (`forge-metrics bench`)
 
 Real PRs differ too much to tell whether a forge version made the same
-work cheaper. `bench` runs five fixed tasks the same way against a chosen
-version so versions can be compared on equal work.
+work cheaper. `bench` gives five fixed tasks and a private sandbox repo to
+run them in, by hand, so versions can be compared on equal work.
 
-> **Cost.** A full set (five tasks, two runs each) spends about as many
-> tokens as ten PRs: every run goes through the full forge workflow up to
-> a posted PR wrap-up. Run it by hand, for a version you want to measure;
-> nothing runs it automatically.
+> **Cost.** Each run is a real session taken through the full forge
+> workflow to a posted PR wrap-up: about one PR's worth of tokens. Run
+> the tasks for a version you want to measure; nothing runs them
+> automatically.
 
 - `forge-metrics bench init --repo <owner>/<name>` — create the repo on
-  GitHub first, **private and empty** (no README); `init` refuses any
-  other. It fills it with a small sample project shipped in forge, sets it
-  up as a forge consumer with the running forge, pushes `main` and tags it
+  GitHub first, **private and empty** (no README); `init` refuses a repo
+  that is public, not yours (no admin rights) or has a branch. It fills
+  it with a small sample project shipped in forge, sets it up as a forge
+  consumer with the running forge, pushes `main` and tags it
   `bench-base-1`. Pushing `main` from a CLI is allowed here only because
-  it is the first commit of a sandbox nobody else uses, checked empty and
-  private just before, through forge's no-force push seam. The repo name
-  is kept in `<data dir>/bench.json` (local only, never in the database).
-- `forge-metrics bench run --version vX.Y.Z [--task T]... [--runs 2]
-  [--model M] [--timeout-min 45]` — per task × run, in a temporary
-  directory: a clone of the sandbox at `bench-base-1`, a throwaway venv
-  holding forge at tag `vX.Y.Z` (and the sample), that version's
-  bootstrap committed on branch `bench/<task>-<vX>-<n>`, then a headless
-  `claude -p` with the task's prompt, the tag's plugin (`--plugin-dir`),
-  and `--permission-mode dontAsk` plus a settings file allowing the usual
-  tools: nothing is prompted, anything not allowed is denied, and forge's
-  hooks still guard every call. After the agent stops (or hits the
-  timeout) the run's facts are collected, the PR is closed unmerged, the
-  branch deleted (lease-pinned, never the base branch) and the directory
-  removed. A failed run is recorded as facts and the set continues.
-- `forge-metrics bench report [--task T]` — per task, one line per
+  it is the first commit of a sandbox nobody else uses, checked just
+  before, through forge's no-force push seam. The repo name is kept in
+  `<data dir>/bench.json` (local only, never in the database). Every
+  later command checks again that the sandbox is private and yours.
+- `forge-metrics bench start <task> [--clone DIR]` — in your local clone
+  of the sandbox (default `<data dir>/bench/sandbox`, cloned on first
+  use): fetch, then, **only if the working tree is clean** (a dirty clone
+  is refused, nothing is discarded), create branch `bench/<task>-<n>` at
+  the base tag and write the task's setup files. It prints the line to
+  start a session (`cd <clone> && claude`) and the prompt to paste. The
+  run in progress is kept in `<data dir>/bench-run.json`; one at a time.
+- Run the prompt in that session. Install the forge version you want to
+  measure in the clone's `.venv` first (and its plugin, as for any
+  consumer); the prompt asks for the normal workflow up to a posted
+  wrap-up, without questions.
+- `forge-metrics bench finish [--clone DIR]` — records the run, closes
+  its PR unmerged, deletes its branch on GitHub (lease-pinned, never the
+  base branch; the local branch is kept) and clears the run file.
+- `forge-metrics bench report [--task T]` — per task, one line per forge
   version (release order): median new tokens, cache %, active and wall
   time, review rounds and lines changed, then counts of runs where each
   fact held. No pass/fail verdict: the figures inform decisions.
@@ -157,18 +170,18 @@ version so versions can be compared on equal work.
 Tasks: `add-command` (new CLI subcommand with tests), `fix-bug` (a planted
 bug and its failing test), `docs` (a README section), `refactor` (extract
 a helper, behaviour unchanged), `review` (review a provided diff and fix
-its findings). Each states its request in full, tells the agent never to
-ask and to stop after the wrap-up, and carries outcome checks (test files
-added only after the run, a symbol or text that must exist).
+its findings). Each states its request in full, asks for no questions and
+a stop after the wrap-up, and carries outcome checks (test files added
+only while `finish` checks, a symbol or text that must exist).
 
 Stored per run, in `bench_runs` and `bench_tokens` (keyed by a random
-`run_id`): forge version under test, task, run number, model, base tag,
-start and end time, setup ready, timed out, `claude` exit code, PR
-opened, wrap-ups posted, sandbox tests green, task checks held / total,
+`run_id`): the forge version measured (forge-scripts in the clone's
+`.venv`, else the clone's pin; empty when neither tells), task, run
+number, model, base tag, start and finish time, PR opened, wrap-ups
+posted, sandbox tests green, task checks held / total,
 `forge-precommit --verdict`, files and lines changed and commits since
-the setup commit, review rounds, pre-commit and smart-test runs, active
-and wall time, and tokens per agent type (folded as for PRs). No sandbox
-name, branch or path is stored. Tokens come from the transcripts of the
-run's temporary directory on the run's branch; those transcripts stay in
-`~/.claude/projects/` like any other session's. `export` does not include
-bench runs.
+the base tag, review rounds, pre-commit and smart-test runs, active and
+wall time, and tokens per agent type (folded as for PRs). Tokens and
+time are the run's branch in the clone's transcripts since `start`. No
+sandbox name, branch or path is stored. `export` does not include bench
+runs.

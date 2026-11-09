@@ -1,64 +1,68 @@
-"""``forge-metrics bench``: the same small tasks, run against a chosen forge version.
+"""``forge-metrics bench``: fixed tasks, run by hand, to compare forge versions.
 
 Real PRs differ too much to tell whether a forge version made the same
-work cheaper. The bench runs five fixed tasks (package data under
-``forge/data/bench``) the same way each time:
+work cheaper. The bench gives five fixed tasks (package data under
+``forge/data/bench``) and a private *sandbox* repo to run them in:
 
-- ``init`` fills an empty private GitHub repo (the *sandbox*, created by
-  the owner) with a sample Python project, sets it up as a forge
-  consumer, pushes ``main`` and tags it ``bench-base-1``;
-- ``run`` gives each task-run pair a throwaway directory: a clone of the
-  sandbox at its base tag, a venv holding the forge version under test, a
-  headless ``claude -p`` asked to take the task to a posted PR wrap-up;
-  then it collects facts, closes the PR unmerged, deletes the branch and
-  removes the directory.
+- ``init`` fills an empty private GitHub repo (created by the owner) with
+  a sample Python project, sets it up as a forge consumer, pushes ``main``
+  and tags it ``bench-base-1``;
+- ``start <task>`` puts a local clone of the sandbox on a fresh branch at
+  the base tag and prints the task's prompt; the owner runs it in a normal
+  Claude Code session in that clone;
+- ``finish`` collects what the run did, hands it to the database writer,
+  closes the PR unmerged and deletes the branch on GitHub.
 
-What a run measured goes to :mod:`forge.pr_metrics` through a callback
-(this module writes no database row itself), keyed by a random run id —
-no sandbox name, branch or path is stored. The sandbox slug lives only in
-``bench.json`` beside ``repo-ids.json``. Python files ship with a
-``.tmpl`` suffix so forge's own linters and test collection leave the
-sample alone; ``dot-<name>`` ships ``.<name>``.
+The forge version measured is the one installed in the clone's ``.venv``
+(else the clone's pin). Rows are keyed by a random run id — no sandbox
+name, branch or path is stored. The sandbox slug lives only in
+``bench.json`` and the run in progress in ``bench-run.json``, both beside
+the database. Python data files ship with a ``.tmpl`` suffix so forge's
+own linters and test collection leave the sample alone; ``dot-<name>``
+ships ``.<name>``.
 """
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
-import os
 import re
+import shlex
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
 import tomllib
 import uuid
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from dataclasses import asdict, dataclass, field, replace
+from datetime import UTC, datetime, timedelta
 from importlib import resources
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Protocol
 
-from forge.agent_profile import branch_usage, default_transcripts_dir
+from forge.agent_profile import TranscriptFilter, branch_usage, default_transcripts_dir
+from forge.agent_profile_tokens import parse_ts
 from forge.git_utils import (
-    _FORGE_GITHUB_REPO,
     PUSH_TIMEOUT_S,
     create_annotated_tag,
     create_commit,
     delete_remote_branch,
     forge_cli_argv,
     forge_data_dir,
+    github_slug,
     network_git_env,
+    parse_semver,
     push_branch,
     push_tag,
+    ref_exists,
     run_git,
 )
+from forge.upgrade import pinned_ref
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Mapping, Sequence
+    import contextlib
+    from collections.abc import Callable, Mapping, Sequence
 
     from forge.agent_profile_tokens import BranchSummary
 
@@ -67,34 +71,17 @@ logger = logging.getLogger(__name__)
 
 #: Local file naming the sandbox; never exported, never in the database.
 BENCH_CONFIG_NAME: Final = "bench.json"
+#: Local file describing the run between ``start`` and ``finish``.
+MARKER_NAME: Final = "bench-run.json"
 BASE_TAG_PREFIX: Final = "bench-base-"
 FIRST_BASE_TAG: Final = f"{BASE_TAG_PREFIX}1"
 #: The sandbox's base branch.
 SANDBOX_BASE: Final = "main"
-DEFAULT_RUNS: Final = 2
-DEFAULT_TIMEOUT_MIN: Final = 45
-#: ``dontAsk`` runs without a person: a tool the settings file does not
-#: allow is denied instead of prompted, and hooks — forge's guards among
-#: them — still run on every call. ``bypassPermissions`` would skip them.
-PERMISSION_MODE: Final = "dontAsk"
-#: Tools the run's settings file allows; forge's hooks still gate each call.
-ALLOWED_TOOLS: Final = (
-    "Bash",
-    "Read",
-    "Edit",
-    "Write",
-    "Glob",
-    "Grep",
-    "Task",
-    "Agent",
-    "Skill",
-    "TodoWrite",
-)
-#: Bootstrap steps a run skips. ``plugin`` would register a Claude Code
-#: install for a directory deleted minutes later; the run loads that
-#: version's plugin with ``--plugin-dir`` instead.
+#: Bootstrap steps ``init`` skips: ``plugin`` would register a Claude Code
+#: install for the temporary directory ``init`` deletes.
 SKIPPED_BOOTSTRAP_STEPS: Final = ("plugin",)
-_VERSION = re.compile(r"v\d+\.\d+\.\d+")
+#: Work on a run starts after ``start``; a little slack for clock skew.
+_START_SLACK: Final = timedelta(minutes=1)
 _SLUG = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._][A-Za-z0-9._-]*")
 _TEMPLATE_SUFFIX: Final = ".tmpl"
 _DOT_PREFIX: Final = "dot-"
@@ -102,10 +89,12 @@ _SETUP_TIMEOUT_S: Final = 900
 _CHECK_TIMEOUT_S: Final = 600
 _GH_TIMEOUT_S: Final = 60
 _TAIL_CHARS: Final = 400
+#: The dist-info directory name ``pip`` gives forge-scripts.
+_DIST_INFO = re.compile(r"forge_scripts-(?P<version>[^-]+)\.dist-info")
 
 
 class BenchError(RuntimeError):
-    """The sandbox or a requested version is not usable; the user can act on it."""
+    """The sandbox, the clone or the run marker is not usable; the user can act."""
 
 
 # --- running commands ------------------------------------------------------
@@ -119,7 +108,6 @@ class Completed:
     returncode: int | None
     stdout: str = ""
     stderr: str = ""
-    timed_out: bool = False
 
     @property
     def ok(self) -> bool:
@@ -131,70 +119,50 @@ class Runner(Protocol):
     """Runs one external command; the seam tests replace."""
 
     def __call__(
-        self,
-        argv: Sequence[str],
-        *,
-        cwd: Path,
-        env: Mapping[str, str] | None = None,
-        timeout: float | None = None,
+        self, argv: Sequence[str], *, cwd: Path, timeout: float | None = None
     ) -> Completed:
         """Run *argv*.
 
         Args:
             argv: The command.
             cwd: Its working directory.
-            env: Its whole environment; the current one when ``None``.
-            timeout: Seconds before it is killed; unbounded when ``None``.
+            timeout: Seconds before it is stopped; unbounded when ``None``.
         """
         ...
 
 
 def run_command(
-    argv: Sequence[str],
-    *,
-    cwd: Path,
-    env: Mapping[str, str] | None = None,
-    timeout: float | None = None,
+    argv: Sequence[str], *, cwd: Path, timeout: float | None = None
 ) -> Completed:
-    """Run *argv* without a terminal, killing its whole process group on timeout.
-
-    ``claude`` starts hooks, agents and tools of its own; killing only the
-    parent would leave them running after the bound.
+    """Run *argv* without a terminal, bounded by *timeout*.
 
     Args:
         argv: The command.
         cwd: Its working directory.
-        env: Its whole environment; the current one when ``None``.
-        timeout: Seconds before it is killed; unbounded when ``None``.
+        timeout: Seconds before it is stopped; unbounded when ``None``.
 
     Returns:
-        The result; ``timed_out`` set when the bound was hit.
+        The result; ``returncode`` ``None`` when it timed out or did not start.
     """
     try:
-        proc = subprocess.Popen(
+        proc = subprocess.run(
             list(argv),
             cwd=cwd,
-            env=dict(env) if env is not None else None,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
-            start_new_session=True,
+            check=False,
+            timeout=timeout,
         )
+    except subprocess.TimeoutExpired:
+        return Completed(None, "", f"timed out after {timeout}s")
     except OSError as exc:
         return Completed(None, "", str(exc))
-    try:
-        out, err = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(proc.pid, signal.SIGKILL)
-        out, err = proc.communicate()
-        return Completed(None, out, err, timed_out=True)
-    return Completed(proc.returncode, out, err)
+    return Completed(proc.returncode, proc.stdout, proc.stderr)
 
 
 def _tail(result: Completed) -> str:
-    """The end of a failed command's output, for a log line.
+    """The end of a failed command's output, for a message.
 
     Args:
         result: The command's result.
@@ -206,42 +174,18 @@ def _tail(result: Completed) -> str:
     return text[-_TAIL_CHARS:]
 
 
-@contextlib.contextmanager
-def _environ(env: Mapping[str, str]) -> Iterator[None]:
-    """Run the block with ``os.environ`` replaced by *env*, then restore it.
-
-    :func:`forge.git_utils.create_commit` runs the pre-commit hook with the
-    process environment; the hook must find the venv's forge, not the
-    caller's.
-
-    Args:
-        env: The environment for the block.
-
-    Yields:
-        Nothing.
-    """
-    saved = dict(os.environ)
-    os.environ.clear()
-    os.environ.update(env)
-    try:
-        yield
-    finally:
-        os.environ.clear()
-        os.environ.update(saved)
-
-
 # --- package data ----------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class Check:
-    """One outcome check of a task, run in the clone after the agent stops."""
+    """One outcome check of a task, run in the clone at ``finish``."""
 
     #: ``pytest``, ``symbol`` or ``contains``.
     kind: str
     #: ``pytest``: test paths or node ids to run.
     nodes: tuple[str, ...] = ()
-    #: ``pytest``: a data file copied into ``tests/`` after the run, then run.
+    #: ``pytest``: a data file copied into ``tests/`` for the check only.
     hidden: str | None = None
     #: ``symbol`` / ``contains``: file in the clone.
     path: str | None = None
@@ -258,9 +202,18 @@ class Task:
     id: str
     summary: str
     prompt: str
-    #: Clone path → data file, written before the agent starts.
+    #: Clone path → data file, written by ``start``.
     setup: dict[str, str] = field(default_factory=dict)
     checks: tuple[Check, ...] = ()
+
+    def data_files(self) -> list[str]:
+        """Every ``files/`` data path the task names.
+
+        Returns:
+            Paths relative to the ``files`` data directory.
+        """
+        hidden = [c.hidden for c in self.checks if c.hidden]
+        return [*self.setup.values(), *hidden]
 
 
 def bench_data() -> contextlib.AbstractContextManager[Path]:
@@ -367,54 +320,43 @@ def materialise_sample(sample: Path, dest: Path) -> list[Path]:
     return written
 
 
-# --- sandbox config --------------------------------------------------------
+# --- local state -----------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class Sandbox:
-    """The private repo benchmark runs clone, and the tag they start from."""
+    """The private repo benchmark runs use, and the tag they start from."""
 
     slug: str
     base_tag: str = FIRST_BASE_TAG
 
 
-def config_path() -> Path:
-    """The local ``bench.json``.
-
-    Returns:
-        Its path in the data directory, beside ``repo-ids.json``.
-    """
-    return forge_data_dir() / BENCH_CONFIG_NAME
-
-
-def read_sandbox() -> Sandbox | None:
-    """The sandbox ``init`` recorded, if any.
-
-    Returns:
-        It, or ``None`` when ``init`` never ran or the file is unreadable.
-    """
-    try:
-        raw = json.loads(config_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    slug = raw.get("repo") if isinstance(raw, dict) else None
-    tag = raw.get("base_tag", FIRST_BASE_TAG) if isinstance(raw, dict) else None
-    if not isinstance(slug, str) or not valid_slug(slug) or not isinstance(tag, str):
-        return None
-    return Sandbox(slug, tag)
-
-
-def write_sandbox(sandbox: Sandbox) -> None:
-    """Save *sandbox* to ``bench.json``, readable by the owner only.
+def _write_private(path: Path, payload: Mapping[str, object]) -> None:
+    """Write *payload* as JSON, readable by the owner only.
 
     Args:
-        sandbox: The sandbox.
+        path: The file.
+        payload: Its content.
     """
-    path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"repo": sandbox.slug, "base_tag": sandbox.base_tag}
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     path.chmod(0o600)
+
+
+def _read_json(path: Path) -> dict[str, object] | None:
+    """A JSON object file, ``None`` when absent or unreadable.
+
+    Args:
+        path: The file.
+
+    Returns:
+        Its content.
+    """
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return raw if isinstance(raw, dict) else None
 
 
 def valid_slug(slug: str) -> bool:
@@ -429,23 +371,88 @@ def valid_slug(slug: str) -> bool:
     return bool(_SLUG.fullmatch(slug)) and ".." not in slug
 
 
-def valid_version(version: str) -> bool:
-    """Whether *version* is a forge release tag (``vX.Y.Z``).
-
-    Args:
-        version: The candidate.
+def read_sandbox() -> Sandbox | None:
+    """The sandbox ``init`` recorded, if any.
 
     Returns:
-        ``True`` for ``vX.Y.Z``.
+        It, or ``None`` when ``init`` never ran or the file is unreadable.
     """
-    return bool(_VERSION.fullmatch(version))
+    raw = _read_json(forge_data_dir() / BENCH_CONFIG_NAME) or {}
+    slug, tag = raw.get("repo"), raw.get("base_tag", FIRST_BASE_TAG)
+    if not isinstance(slug, str) or not valid_slug(slug) or not isinstance(tag, str):
+        return None
+    return Sandbox(slug, tag)
 
 
-# --- init ------------------------------------------------------------------
+def write_sandbox(sandbox: Sandbox) -> None:
+    """Save *sandbox* to ``bench.json``.
+
+    Args:
+        sandbox: The sandbox.
+    """
+    payload = {"repo": sandbox.slug, "base_tag": sandbox.base_tag}
+    _write_private(forge_data_dir() / BENCH_CONFIG_NAME, payload)
 
 
-def check_sandbox(slug: str, runner: Runner, cwd: Path) -> None:
-    """Refuse a repo that is not an existing, empty, private one.
+@dataclass(frozen=True)
+class Marker:
+    """The run between ``start`` and ``finish`` (local only)."""
+
+    task_id: str
+    run_n: int
+    base_tag: str
+    started_at: str
+    branch: str
+    clone: str
+
+
+def marker_path() -> Path:
+    """The local ``bench-run.json``.
+
+    Returns:
+        Its path beside the database.
+    """
+    return forge_data_dir() / MARKER_NAME
+
+
+def read_marker() -> Marker | None:
+    """The run in progress, if any.
+
+    Returns:
+        It, or ``None`` when no run is started or the file is unreadable.
+    """
+    raw = _read_json(marker_path()) or {}
+    text = {
+        key: raw.get(key)
+        for key in ("task_id", "base_tag", "started_at", "branch", "clone")
+    }
+    run_n = raw.get("run_n")
+    if not isinstance(run_n, int) or not all(isinstance(v, str) for v in text.values()):
+        return None
+    return Marker(
+        task_id=str(text["task_id"]),
+        run_n=run_n,
+        base_tag=str(text["base_tag"]),
+        started_at=str(text["started_at"]),
+        branch=str(text["branch"]),
+        clone=str(text["clone"]),
+    )
+
+
+def default_clone_dir() -> Path:
+    """Where ``start`` keeps the sandbox clone unless told otherwise.
+
+    Returns:
+        ``<data dir>/bench/sandbox``.
+    """
+    return forge_data_dir() / "bench" / "sandbox"
+
+
+# --- sandbox checks --------------------------------------------------------
+
+
+def check_access(slug: str, runner: Runner, cwd: Path) -> None:
+    """Refuse a sandbox that is not private or that the user does not own.
 
     Args:
         slug: ``owner/name``.
@@ -453,7 +460,8 @@ def check_sandbox(slug: str, runner: Runner, cwd: Path) -> None:
         cwd: Where to run ``gh``.
 
     Raises:
-        BenchError: The repo is unreadable, public, or not empty.
+        BenchError: The repo is unreadable, public, or not administered by
+            the ``gh`` user.
     """
     if not valid_slug(slug):
         msg = f"forge-metrics bench: {slug!r} is not an owner/name repo"
@@ -464,14 +472,28 @@ def check_sandbox(slug: str, runner: Runner, cwd: Path) -> None:
     except ValueError:
         info = None
     if not isinstance(info, dict):
-        msg = (
-            f"forge-metrics bench: cannot read {slug} through gh; create it "
-            "first (private, no README, no commits)"
-        )
+        msg = f"forge-metrics bench: cannot read {slug} through gh"
         raise BenchError(msg)
     if info.get("private") is not True:
         msg = f"forge-metrics bench: {slug} is not private; refused"
         raise BenchError(msg)
+    permissions = info.get("permissions")
+    if not isinstance(permissions, dict) or permissions.get("admin") is not True:
+        msg = f"forge-metrics bench: {slug} is not yours (no admin rights); refused"
+        raise BenchError(msg)
+
+
+def check_empty(slug: str, runner: Runner, cwd: Path) -> None:
+    """Refuse a repo with any branch.
+
+    Args:
+        slug: ``owner/name``.
+        runner: Command runner.
+        cwd: Where to run ``gh``.
+
+    Raises:
+        BenchError: The repo has a branch, or its branches cannot be read.
+    """
     branches = runner(
         ["gh", "api", f"repos/{slug}/branches", "--jq", "length"],
         cwd=cwd,
@@ -480,6 +502,9 @@ def check_sandbox(slug: str, runner: Runner, cwd: Path) -> None:
     if not branches.ok or branches.stdout.strip() != "0":
         msg = f"forge-metrics bench: {slug} is not empty; init needs a new empty repo"
         raise BenchError(msg)
+
+
+# --- init ------------------------------------------------------------------
 
 
 def _seed(clone: Path, data: Path, runner: Runner) -> None:
@@ -495,7 +520,6 @@ def _seed(clone: Path, data: Path, runner: Runner) -> None:
     """
     run_git("symbolic-ref", "HEAD", f"refs/heads/{SANDBOX_BASE}", cwd=clone)
     materialise_sample(data / "sample", clone)
-    # One forge for both: the running install sets the sandbox up.
     skip = [arg for step in SKIPPED_BOOTSTRAP_STEPS for arg in ("--skip", step)]
     boot = runner(
         [*forge_cli_argv("install-forge-bootstrap", caller="forge-metrics"), *skip],
@@ -523,9 +547,9 @@ def init_sandbox(
 
     Pushing ``main`` from a CLI is allowed here although forge never pushes
     to a base branch otherwise: this is the first commit of a sandbox
-    nobody else uses, checked empty and private just before, and the push
-    goes through forge's no-force seam, so it can create ``main`` but never
-    rewrite one.
+    nobody else uses, checked empty, private and owned just before, and the
+    push goes through forge's no-force seam, so it can create ``main`` but
+    never rewrite one.
 
     Args:
         slug: ``owner/name`` of the sandbox.
@@ -541,7 +565,8 @@ def init_sandbox(
     """
     tmp = Path(tempfile.mkdtemp(prefix="forge-bench-init-", dir=workdir))
     try:
-        check_sandbox(slug, runner, tmp)
+        check_access(slug, runner, tmp)
+        check_empty(slug, runner, tmp)
         clone = tmp / "sandbox"
         cloned = runner(
             ["gh", "repo", "clone", slug, str(clone)], cwd=tmp, timeout=PUSH_TIMEOUT_S
@@ -566,91 +591,7 @@ def init_sandbox(
     return sandbox
 
 
-# --- run -------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class RunOptions:
-    """Per-set run settings shared by every plan.
-
-    Attributes:
-        model: Model for ``claude``; its default when ``None``.
-        timeout_s: Bound on each agent run, in seconds.
-    """
-
-    model: str | None
-    timeout_s: float
-
-
-@dataclass(frozen=True)
-class RunPlan:
-    """One task-run pair of a set."""
-
-    version: str
-    task: Task
-    run_n: int
-    model: str | None
-    timeout_s: float
-    sandbox: Sandbox
-
-    @property
-    def branch(self) -> str:
-        """The run's branch in the sandbox."""
-        return f"bench/{self.task.id}-{self.version}-{self.run_n}"
-
-
-@dataclass
-class BenchOutcome:
-    """What one run measured; filled as the run goes, recorded even if it fails."""
-
-    run_id: str
-    version: str
-    task_id: str
-    run_n: int
-    model: str | None
-    base_tag: str
-    started_at: str
-    ended_at: str | None = None
-    #: Clone, venv, bootstrap and task files all ready.
-    setup_ok: bool = False
-    timed_out: bool = False
-    claude_exit: int | None = None
-    pr_opened: bool = False
-    wrapups_posted: int = 0
-    #: The sandbox's whole test suite; ``None`` when not reached.
-    tests_green: bool | None = None
-    #: ``forge-precommit --verdict``; ``None`` when not reached.
-    precommit_ok: bool | None = None
-    checks_passed: int = 0
-    checks_total: int = 0
-    files: int = 0
-    additions: int = 0
-    deletions: int = 0
-    commits: int = 0
-    summary: BranchSummary | None = None
-
-
-@dataclass(frozen=True)
-class Workspace:
-    """A prepared run directory."""
-
-    clone: Path
-    venv: Path
-    forge_src: Path
-    env: dict[str, str]
-    #: The commit the agent starts from; lines changed are counted from it.
-    base_sha: str
-
-    def tool(self, name: str) -> str:
-        """A console script of the run's venv.
-
-        Args:
-            name: Script name.
-
-        Returns:
-            Its path.
-        """
-        return str(self.venv / "bin" / name)
+# --- start -----------------------------------------------------------------
 
 
 def _now() -> str:
@@ -662,252 +603,267 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def forge_repo_url() -> str:
-    """The forge upstream repository's clone URL.
+def _require_sandbox() -> Sandbox:
+    """The recorded sandbox.
 
     Returns:
-        ``https://github.com/<upstream>.git``.
+        It.
+
+    Raises:
+        BenchError: ``init`` never ran.
     """
-    return f"https://github.com/{_FORGE_GITHUB_REPO}.git"
+    sandbox = read_sandbox()
+    if sandbox is None:
+        msg = "forge-metrics bench: no sandbox; run `bench init --repo` first"
+        raise BenchError(msg)
+    return sandbox
 
 
-def run_env(venv: Path) -> dict[str, str]:
-    """The environment a run's tools and agent see.
-
-    The venv's scripts come first on ``PATH``. ``FORGE_*`` overrides of
-    the caller (a relocated ``code_health/``, an armed bypass) and
-    ``CLAUDECODE`` (set when ``forge-metrics`` itself runs inside Claude
-    Code) are dropped so the run behaves like a fresh session.
+def _ready_clone(
+    sandbox: Sandbox,
+    clone: Path,
+    runner: Runner,
+    origin_slug: Callable[[Path], str | None],
+) -> None:
+    """Make sure *clone* is a clean, fetched clone of the sandbox.
 
     Args:
-        venv: The run's venv.
-
-    Returns:
-        The whole environment.
-    """
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if not k.startswith("FORGE_") and k not in {"CLAUDECODE", "VIRTUAL_ENV"}
-    }
-    env["PATH"] = f"{venv / 'bin'}{os.pathsep}{env.get('PATH', '')}"
-    env["VIRTUAL_ENV"] = str(venv)
-    return env
-
-
-def _step(name: str, result: Completed) -> bool:
-    """Log a failed setup step.
-
-    Args:
-        name: What the step did.
-        result: Its result.
-
-    Returns:
-        Whether it succeeded.
-    """
-    if not result.ok:
-        logger.warning("forge-metrics bench: %s failed: %s", name, _tail(result))
-    return result.ok
-
-
-def _fetch(plan: RunPlan, tmp: Path, runner: Runner) -> tuple[Path, Path] | None:
-    """Clone the sandbox at its base tag and forge at the version under test.
-
-    Args:
-        plan: The run.
-        tmp: The run directory.
+        sandbox: The sandbox.
+        clone: The local clone; created when it does not exist.
         runner: Command runner.
+        origin_slug: Reads a clone's ``origin`` as ``owner/name``.
 
-    Returns:
-        ``(sandbox clone, forge source)``, or ``None`` when either failed.
+    Raises:
+        BenchError: Cloning or fetching failed, *clone* is another repo, or
+            its working tree has changes (never discarded).
     """
-    clone, forge_src = tmp / "sandbox", tmp / "forge"
-    net = {**os.environ, **network_git_env(None)}
-    sandbox = runner(
-        ["gh", "repo", "clone", plan.sandbox.slug, str(clone), "--", "--quiet"],
-        cwd=tmp,
-        timeout=PUSH_TIMEOUT_S,
-    )
-    if not _step("sandbox clone", sandbox):
-        return None
-    forge = runner(
-        [
-            "git",
-            "clone",
-            "--quiet",
-            "--depth",
-            "1",
-            "--branch",
-            plan.version,
-            "--",
-            forge_repo_url(),
-            str(forge_src),
-        ],
-        cwd=tmp,
-        env=net,
-        timeout=PUSH_TIMEOUT_S,
-    )
-    if not _step(f"forge {plan.version} clone", forge):
-        return None
-    run_git("checkout", "--quiet", "-b", plan.branch, plan.sandbox.base_tag, cwd=clone)
-    return clone, forge_src
-
-
-def _install(tmp: Path, clone: Path, forge_src: Path, runner: Runner) -> Path | None:
-    """Build the run's venv: the forge version under test, then the sample.
-
-    A throwaway venv inside the run directory is FOUNDATION §2's
-    "disposable per-checkout env": nothing in the user's environment or
-    any pin changes, and the directory is deleted after the run. The
-    package and the plugin come from the same tag checkout, so the
-    agents, skills and hooks the session loads match the CLIs it runs.
-
-    Args:
-        tmp: The run directory.
-        clone: The sandbox clone.
-        forge_src: Forge's source at the version under test.
-        runner: Command runner.
-
-    Returns:
-        The venv, or ``None`` when a step failed.
-    """
-    venv = tmp / "venv"
-    if not _step("venv", runner([sys.executable, "-m", "venv", str(venv)], cwd=tmp)):
-        return None
-    pip = [str(venv / "bin" / "python"), "-m", "pip", "install", "--quiet"]
-    for name, argv in (
-        ("forge install", [*pip, str(forge_src)]),
-        ("sample install", [*pip, "-e", f"{clone}[dev]"]),
-    ):
-        if not _step(name, runner(argv, cwd=tmp, timeout=_SETUP_TIMEOUT_S)):
-            return None
-    return venv
-
-
-def _bootstrap(clone: Path, venv: Path, runner: Runner) -> str | None:
-    """Set the clone up with the version under test and commit what changed.
-
-    The commit runs that version's pre-commit hook, so the agent starts
-    from a tree the version itself accepts.
-
-    Args:
-        clone: The sandbox clone, on the run's branch.
-        venv: The run's venv.
-        runner: Command runner.
-
-    Returns:
-        The commit the agent starts from, or ``None`` when setup failed.
-    """
-    env = run_env(venv)
-    skip = [arg for step in SKIPPED_BOOTSTRAP_STEPS for arg in ("--skip", step)]
-    boot = runner(
-        [str(venv / "bin" / "install-forge-bootstrap"), *skip],
-        cwd=clone,
-        env=env,
-        timeout=_SETUP_TIMEOUT_S,
-    )
-    if not boot.ok:
-        logger.warning("forge-metrics bench: bootstrap failures: %s", _tail(boot))
+    if not (clone / ".git").exists():
+        clone.parent.mkdir(parents=True, exist_ok=True)
+        cloned = runner(
+            ["gh", "repo", "clone", sandbox.slug, str(clone)],
+            cwd=clone.parent,
+            timeout=PUSH_TIMEOUT_S,
+        )
+        if not cloned.ok:
+            msg = f"forge-metrics bench: clone failed: {_tail(cloned)}"
+            raise BenchError(msg)
+    elif origin_slug(clone) != sandbox.slug:
+        msg = f"forge-metrics bench: {clone} is not a clone of the sandbox"
+        raise BenchError(msg)
     if run_git("status", "--porcelain", cwd=clone):
-        run_git("add", "-A", cwd=clone)
-        try:
-            with _environ(env):
-                create_commit(clone, "chore: forge setup for this benchmark run")
-        except subprocess.CalledProcessError:
-            logger.warning("forge-metrics bench: setup commit refused by its hook")
-            return None
-    return run_git("rev-parse", "HEAD", cwd=clone)
+        msg = (
+            f"forge-metrics bench: {clone} has uncommitted changes; commit, "
+            "move or remove them first (nothing is discarded)"
+        )
+        raise BenchError(msg)
+    run_git(
+        "fetch",
+        "--quiet",
+        "--tags",
+        "origin",
+        cwd=clone,
+        env=network_git_env(clone),
+        timeout=PUSH_TIMEOUT_S,
+    )
 
 
-def prepare(plan: RunPlan, tmp: Path, data: Path, runner: Runner) -> Workspace | None:
-    """Make the run directory ready for the agent.
-
-    Args:
-        plan: The run.
-        tmp: The run directory.
-        data: The bench data directory.
-        runner: Command runner.
-
-    Returns:
-        The workspace, or ``None`` when a step failed (logged).
-    """
-    fetched = _fetch(plan, tmp, runner)
-    if fetched is None:
-        return None
-    clone, forge_src = fetched
-    venv = _install(tmp, clone, forge_src, runner)
-    if venv is None:
-        return None
-    base_sha = _bootstrap(clone, venv, runner)
-    if base_sha is None:
-        return None
-    for dest, src in plan.task.setup.items():
-        install_file(data / "files" / src, clone / dest)
-    return Workspace(clone, venv, forge_src, run_env(venv), base_sha)
-
-
-def write_settings(path: Path) -> Path:
-    """Write the run's Claude Code settings: the allow-list, nothing else.
-
-    Args:
-        path: The file to write.
-
-    Returns:
-        *path*.
-    """
-    settings = {
-        "permissions": {"defaultMode": PERMISSION_MODE, "allow": list(ALLOWED_TOOLS)}
-    }
-    path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
-    return path
-
-
-def claude_argv(plan: RunPlan, prompt: str, settings: Path, plugin: Path) -> list[str]:
-    """The headless ``claude`` command of one run.
-
-    Args:
-        plan: The run.
-        prompt: The full task prompt.
-        settings: The run's settings file.
-        plugin: The version's plugin directory (its source checkout).
-
-    Returns:
-        The argv.
-    """
-    argv = [
-        "claude",
-        "-p",
-        prompt,
-        "--output-format",
-        "json",
-        "--permission-mode",
-        PERMISSION_MODE,
-        "--settings",
-        str(settings),
-        "--plugin-dir",
-        str(plugin),
-    ]
-    if plan.model:
-        argv += ["--model", plan.model]
-    return argv
-
-
-# --- collecting ------------------------------------------------------------
-
-
-def _numstat(clone: Path, base_sha: str) -> tuple[int, int, int]:
-    """Files, lines added and removed since *base_sha*, uncommitted work included.
+def _free_branch(clone: Path, task_id: str, first_n: int) -> tuple[str, int]:
+    """The first ``bench/<task>-<n>`` branch name not taken locally or on origin.
 
     Args:
         clone: The sandbox clone.
-        base_sha: The commit the agent started from.
+        task_id: The task.
+        first_n: The lowest run number to try.
+
+    Returns:
+        ``(branch, n)``.
+    """
+    n = first_n
+    while True:
+        branch = f"bench/{task_id}-{n}"
+        taken = ref_exists(clone, f"refs/heads/{branch}") or ref_exists(
+            clone, f"refs/remotes/origin/{branch}"
+        )
+        if not taken:
+            return branch, n
+        n += 1
+
+
+@dataclass(frozen=True)
+class Seams:
+    """The external-command seams a run uses; tests replace them."""
+
+    runner: Runner = run_command
+    origin_slug: Callable[[Path], str | None] = github_slug
+
+
+DEFAULT_SEAMS: Final = Seams()
+
+
+def start_run(
+    task: Task,
+    *,
+    data: Path,
+    first_n: int,
+    clone: Path | None = None,
+    seams: Seams = DEFAULT_SEAMS,
+) -> tuple[Marker, str]:
+    """Put the sandbox clone on a fresh branch for *task* and record the marker.
+
+    The clone is moved to the base tag only when its working tree is clean;
+    a dirty clone is refused, never reset.
+
+    Args:
+        task: The task.
+        data: The bench data directory.
+        first_n: The lowest run number to use (one past the recorded runs).
+        clone: The local clone; :func:`default_clone_dir` when ``None``.
+        seams: Command runner and origin reader.
+
+    Returns:
+        The marker and the prompt to paste.
+
+    Raises:
+        BenchError: No sandbox, a run already started, or the clone refused.
+    """
+    sandbox = _require_sandbox()
+    current = read_marker()
+    if current is not None:
+        msg = (
+            f"forge-metrics bench: run {current.task_id} #{current.run_n} is "
+            "started; `bench finish` it first"
+        )
+        raise BenchError(msg)
+    clone = (clone or default_clone_dir()).resolve()
+    check_access(
+        sandbox.slug, seams.runner, clone.parent if not clone.is_dir() else clone
+    )
+    _ready_clone(sandbox, clone, seams.runner, seams.origin_slug)
+    branch, n = _free_branch(clone, task.id, first_n)
+    run_git("checkout", "--quiet", "-b", branch, sandbox.base_tag, cwd=clone)
+    for dest, src in task.setup.items():
+        install_file(data / "files" / src, clone / dest)
+    marker = Marker(task.id, n, sandbox.base_tag, _now(), branch, str(clone))
+    _write_private(marker_path(), asdict(marker))
+    return marker, task_prompt(task, data, branch)
+
+
+def session_line(marker: Marker) -> str:
+    """The command to paste to start the session.
+
+    Args:
+        marker: The run.
+
+    Returns:
+        ``cd <clone> && claude``.
+    """
+    return f"cd {shlex.quote(marker.clone)} && claude"
+
+
+# --- finish ----------------------------------------------------------------
+
+
+@dataclass
+class BenchOutcome:
+    """What one run measured, as the database writer stores it."""
+
+    run_id: str
+    #: Forge release ``X.Y.Z`` of the clone's environment; ``None`` if unknown.
+    version: str | None
+    task_id: str
+    run_n: int
+    base_tag: str
+    started_at: str
+    ended_at: str | None = None
+    pr_opened: bool = False
+    wrapups_posted: int = 0
+    #: The sandbox's whole test suite.
+    tests_green: bool | None = None
+    #: ``forge-precommit --verdict`` in the clone.
+    precommit_ok: bool | None = None
+    checks_passed: int = 0
+    checks_total: int = 0
+    files: int = 0
+    additions: int = 0
+    deletions: int = 0
+    commits: int = 0
+    summary: BranchSummary | None = None
+
+
+def clone_forge_version(clone: Path) -> str | None:
+    """The forge release the clone runs: its ``.venv``'s, else its pin.
+
+    Args:
+        clone: The sandbox clone.
+
+    Returns:
+        ``X.Y.Z``, or ``None`` when neither tells.
+    """
+    for info in sorted(clone.glob(".venv/lib/python*/site-packages/*.dist-info")):
+        match = _DIST_INFO.fullmatch(info.name)
+        parsed = parse_semver(match.group("version")) if match else None
+        if parsed:
+            return ".".join(map(str, parsed))
+    try:
+        text = (clone / "pyproject.toml").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    ref = pinned_ref(text)
+    parsed = parse_semver(ref) if ref else None
+    return ".".join(map(str, parsed)) if parsed else None
+
+
+def _clone_tool(clone: Path, name: str) -> list[str]:
+    """Argv running *name* from the clone's ``.venv``, else the running forge.
+
+    Args:
+        clone: The sandbox clone.
+        name: ``python`` or a forge console script.
+
+    Returns:
+        The argv prefix.
+    """
+    local = clone / ".venv" / "bin" / name
+    if local.exists():
+        return [str(local)]
+    if name == "python":
+        return [sys.executable]
+    return forge_cli_argv(name, caller="forge-metrics")
+
+
+def _pytest(clone: Path) -> list[str]:
+    """Argv running the clone's tests quietly, writing no cache into it.
+
+    Args:
+        clone: The sandbox clone.
+
+    Returns:
+        The argv; test paths may be appended.
+    """
+    return [
+        *_clone_tool(clone, "python"),
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+    ]
+
+
+def _numstat(clone: Path, base: str) -> tuple[int, int, int]:
+    """Files, lines added and removed since *base*, uncommitted work included.
+
+    Args:
+        clone: The sandbox clone.
+        base: The base tag.
 
     Returns:
         ``(files, additions, deletions)``.
     """
     files = added = removed = 0
-    for line in run_git("diff", "--numstat", base_sha, cwd=clone).splitlines():
-        plus, minus, _path = ([*line.split("\t", 2), "", ""])[:3]
+    diff = run_git("diff", "--numstat", f"{base}^{{commit}}", cwd=clone)
+    for line in diff.splitlines():
+        plus, minus, *_ = line.split("\t")
         files += 1
         added += int(plus) if plus.isdigit() else 0
         removed += int(minus) if minus.isdigit() else 0
@@ -915,14 +871,14 @@ def _numstat(clone: Path, base_sha: str) -> tuple[int, int, int]:
 
 
 def run_check(
-    check: Check, index: int, ws: Workspace, data: Path, runner: Runner
+    check: Check, index: int, clone: Path, data: Path, runner: Runner
 ) -> bool:
-    """Run one outcome check in the clone.
+    """Run one outcome check in the clone; a hidden test file is removed after.
 
     Args:
         check: The check.
         index: Its position in the task, naming a hidden test file.
-        ws: The run's workspace.
+        clone: The sandbox clone.
         data: The bench data directory.
         runner: Command runner.
 
@@ -931,18 +887,18 @@ def run_check(
     """
     if check.kind == "pytest":
         nodes = list(check.nodes)
-        if check.hidden:
-            rel = f"tests/test_bench_hidden_{index}.py"
-            install_file(data / "files" / check.hidden, ws.clone / rel)
-            nodes.append(rel)
-        argv = [ws.tool("python"), "-m", "pytest", "-q", "-p", "no:cacheprovider"]
-        result = runner(
-            [*argv, *nodes], cwd=ws.clone, env=ws.env, timeout=_CHECK_TIMEOUT_S
-        )
-        return result.ok
-    target = ws.clone / (check.path or "")
+        hidden = clone / f"tests/test_bench_hidden_{index}.py" if check.hidden else None
+        if hidden is not None and check.hidden:
+            install_file(data / "files" / check.hidden, hidden)
+            nodes.append(str(hidden.relative_to(clone)))
+        argv = _pytest(clone)
+        try:
+            return runner([*argv, *nodes], cwd=clone, timeout=_CHECK_TIMEOUT_S).ok
+        finally:
+            if hidden is not None:
+                hidden.unlink(missing_ok=True)
     try:
-        text = target.read_text(encoding="utf-8")
+        text = (clone / (check.path or "")).read_text(encoding="utf-8")
     except OSError:
         return False
     if check.kind == "symbol" and check.name:
@@ -951,46 +907,6 @@ def run_check(
     if check.kind == "contains" and check.pattern:
         return bool(re.search(check.pattern, text))
     return False
-
-
-def collect(
-    outcome: BenchOutcome, plan: RunPlan, ws: Workspace, data: Path, runner: Runner
-) -> None:
-    """Fill *outcome* with what the clone and the transcripts show.
-
-    The suite and pre-commit verdict are read before the hidden checks
-    add their test files.
-
-    Args:
-        outcome: The run's record, filled in place.
-        plan: The run.
-        ws: The run's workspace.
-        data: The bench data directory.
-        runner: Command runner.
-    """
-    transcripts = default_transcripts_dir(ws.clone)
-    if transcripts is not None:
-        outcome.summary = branch_usage([transcripts]).summary(plan.branch)
-    outcome.files, outcome.additions, outcome.deletions = _numstat(
-        ws.clone, ws.base_sha
-    )
-    count = run_git("rev-list", "--count", f"{ws.base_sha}..HEAD", cwd=ws.clone)
-    outcome.commits = int(count) if count.isdigit() else 0
-    suite = [ws.tool("python"), "-m", "pytest", "-q", "-p", "no:cacheprovider"]
-    outcome.tests_green = runner(
-        suite, cwd=ws.clone, env=ws.env, timeout=_CHECK_TIMEOUT_S
-    ).ok
-    outcome.precommit_ok = runner(
-        [ws.tool("forge-precommit"), "--verdict"],
-        cwd=ws.clone,
-        env=ws.env,
-        timeout=_CHECK_TIMEOUT_S,
-    ).ok
-    outcome.checks_total = len(plan.task.checks)
-    outcome.checks_passed = sum(
-        run_check(check, i, ws, data, runner)
-        for i, check in enumerate(plan.task.checks)
-    )
 
 
 def _find_pr(slug: str, branch: str, runner: Runner, cwd: Path) -> int | None:
@@ -1024,8 +940,8 @@ def _find_pr(slug: str, branch: str, runner: Runner, cwd: Path) -> int | None:
         cwd=cwd,
         timeout=_GH_TIMEOUT_S,
     )
-    first = found.stdout.split()[0] if found.ok and found.stdout.split() else ""
-    return int(first) if first.isdigit() else None
+    words = found.stdout.split() if found.ok else []
+    return int(words[0]) if words and words[0].isdigit() else None
 
 
 def _wrapups(slug: str, number: int, runner: Runner, cwd: Path) -> int:
@@ -1052,44 +968,77 @@ def _wrapups(slug: str, number: int, runner: Runner, cwd: Path) -> int:
         cwd=cwd,
         timeout=_GH_TIMEOUT_S,
     )
-    if not pages.ok:
-        return 0
-    return sum(int(n) for n in pages.stdout.split() if n.isdigit())
+    return sum(int(n) for n in pages.stdout.split() if n.isdigit()) if pages.ok else 0
 
 
-def close_out(
-    outcome: BenchOutcome, plan: RunPlan, clone: Path, runner: Runner
+def collect(
+    outcome: BenchOutcome, marker: Marker, task: Task, data: Path, runner: Runner
 ) -> None:
-    """Record the PR facts, close the PR unmerged and delete the run's branch.
+    """Fill *outcome* with what the clone and its transcripts show.
 
-    Runs whatever happened before, so a timed-out agent's PR and branch
-    are cleaned up too. The branch is deleted through forge's lease-pinned
-    seam, which refuses the sandbox's base branch.
+    Tokens and time are the run's branch in the clone's transcripts since
+    ``start``. The suite and pre-commit verdict are read before the hidden
+    checks add (then remove) their test files.
 
     Args:
         outcome: The run's record, filled in place.
-        plan: The run.
-        clone: The sandbox clone (may not exist when setup failed early).
+        marker: The run.
+        task: Its task.
+        data: The bench data directory.
         runner: Command runner.
     """
-    slug, branch = plan.sandbox.slug, plan.branch
-    cwd = clone if clone.is_dir() else clone.parent
-    number = _find_pr(slug, branch, runner, cwd)
+    clone = Path(marker.clone)
+    started = parse_ts(marker.started_at)
+    since = started - _START_SLACK if started else None
+    transcripts = default_transcripts_dir(clone)
+    if transcripts is not None:
+        keep = TranscriptFilter(since=since, branches=frozenset({marker.branch}))
+        outcome.summary = branch_usage([transcripts], keep).summary(
+            marker.branch, after=since
+        )
+    outcome.files, outcome.additions, outcome.deletions = _numstat(
+        clone, marker.base_tag
+    )
+    count = run_git("rev-list", "--count", f"{marker.base_tag}..HEAD", cwd=clone)
+    outcome.commits = int(count) if count.isdigit() else 0
+    suite = _pytest(clone)
+    outcome.tests_green = runner(suite, cwd=clone, timeout=_CHECK_TIMEOUT_S).ok
+    verdict = [*_clone_tool(clone, "forge-precommit"), "--verdict"]
+    outcome.precommit_ok = runner(verdict, cwd=clone, timeout=_CHECK_TIMEOUT_S).ok
+    outcome.checks_total = len(task.checks)
+    outcome.checks_passed = sum(
+        run_check(check, i, clone, data, runner) for i, check in enumerate(task.checks)
+    )
+
+
+def close_out(outcome: BenchOutcome, marker: Marker, slug: str, runner: Runner) -> None:
+    """Record the PR facts, close the PR unmerged and delete the run's branch.
+
+    The branch is deleted on GitHub through forge's lease-pinned seam, which
+    refuses the sandbox's base branch; the local branch is kept.
+
+    Args:
+        outcome: The run's record, filled in place.
+        marker: The run.
+        slug: The sandbox.
+        runner: Command runner.
+    """
+    clone = Path(marker.clone)
+    number = _find_pr(slug, marker.branch, runner, clone)
     if number is not None:
         outcome.pr_opened = True
-        outcome.wrapups_posted = _wrapups(slug, number, runner, cwd)
+        outcome.wrapups_posted = _wrapups(slug, number, runner, clone)
         closed = runner(
             ["gh", "pr", "close", str(number), "--repo", slug],
-            cwd=cwd,
+            cwd=clone,
             timeout=_GH_TIMEOUT_S,
         )
-        _step("closing the PR", closed)
-    if not clone.is_dir():
-        return
+        if not closed.ok:
+            logger.warning("forge-metrics bench: PR not closed: %s", _tail(closed))
     remote = run_git(
         "ls-remote",
         "origin",
-        f"refs/heads/{branch}",
+        f"refs/heads/{marker.branch}",
         cwd=clone,
         check=False,
         env=network_git_env(clone),
@@ -1098,147 +1047,56 @@ def close_out(
     sha = remote.split()[0] if remote else ""
     if sha:
         deleted = delete_remote_branch(
-            clone, branch, expected_sha=sha, base_branch=SANDBOX_BASE
+            clone, marker.branch, expected_sha=sha, base_branch=SANDBOX_BASE
         )
         if not deleted.ok:
             logger.warning("forge-metrics bench: branch kept: %s", deleted.stderr)
 
 
-def run_one(
-    plan: RunPlan,
-    *,
-    data: Path,
-    runner: Runner = run_command,
-    workdir: Path | None = None,
-) -> BenchOutcome:
-    """Run one task once, end to end; never raises for a failed step.
-
-    Args:
-        plan: The run.
-        data: The bench data directory.
-        runner: Command runner.
-        workdir: Parent of the run directory; the system's when ``None``.
-
-    Returns:
-        What the run measured; a failure shows as facts (``setup_ok``,
-        ``timed_out``, ``claude_exit``).
-    """
-    outcome = BenchOutcome(
-        run_id=uuid.uuid4().hex,
-        version=plan.version,
-        task_id=plan.task.id,
-        run_n=plan.run_n,
-        model=plan.model,
-        base_tag=plan.sandbox.base_tag,
-        started_at=_now(),
-    )
-    tmp = Path(tempfile.mkdtemp(prefix="forge-bench-", dir=workdir))
-    try:
-        ws = prepare(plan, tmp, data, runner)
-        if ws is not None:
-            outcome.setup_ok = True
-            prompt = task_prompt(plan.task, data, plan.branch)
-            settings = write_settings(tmp / "settings.json")
-            result = runner(
-                claude_argv(plan, prompt, settings, ws.forge_src),
-                cwd=ws.clone,
-                env=ws.env,
-                timeout=plan.timeout_s,
-            )
-            outcome.timed_out, outcome.claude_exit = result.timed_out, result.returncode
-            collect(outcome, plan, ws, data, runner)
-    except (OSError, ValueError, subprocess.SubprocessError) as exc:
-        logger.warning(
-            "forge-metrics bench: %s run %d stopped: %s", plan.task.id, plan.run_n, exc
-        )
-    finally:
-        try:
-            close_out(outcome, plan, tmp / "sandbox", runner)
-        except (OSError, subprocess.SubprocessError) as exc:
-            logger.warning("forge-metrics bench: cleanup incomplete: %s", exc)
-        shutil.rmtree(tmp, ignore_errors=True)
-        outcome.ended_at = _now()
-    return outcome
-
-
-def plan_set(
-    sandbox: Sandbox,
-    tasks: Sequence[Task],
-    *,
-    version: str,
-    runs: int,
-    run_options: RunOptions,
-) -> list[RunPlan]:
-    """Every task-run pair of a set, runs of one task together.
-
-    Args:
-        sandbox: The sandbox.
-        tasks: The tasks.
-        version: The forge version under test.
-        runs: Runs per task.
-        run_options: Model and timeout shared by every run.
-
-    Returns:
-        The plans.
-    """
-    return [
-        RunPlan(version, task, n, run_options.model, run_options.timeout_s, sandbox)
-        for task in tasks
-        for n in range(1, runs + 1)
-    ]
-
-
-def run_set(
-    plans: Sequence[RunPlan],
+def finish_run(
     *,
     data: Path,
     record: Callable[[BenchOutcome], None],
+    clone: Path | None = None,
     runner: Runner = run_command,
-    workdir: Path | None = None,
-) -> list[BenchOutcome]:
-    """Run every plan in turn, recording each as it ends.
+) -> BenchOutcome:
+    """Record the started run, close its PR, delete its branch, clear the marker.
 
     Args:
-        plans: The runs.
         data: The bench data directory.
-        record: Stores one outcome (the database writer).
+        record: Stores the outcome (the database writer).
+        clone: The local clone; the marker's when ``None``.
         runner: Command runner.
-        workdir: Parent of the run directories.
 
     Returns:
-        The outcomes, in plan order.
+        What the run measured.
+
+    Raises:
+        BenchError: No run started, its task unknown, or the sandbox refused.
     """
-    outcomes = []
-    for plan in plans:
-        outcome = run_one(plan, data=data, runner=runner, workdir=workdir)
-        record(outcome)
-        outcomes.append(outcome)
-        logger.info(
-            "forge-metrics bench: %s run %d — setup %s, timed out %s, PR %s",
-            plan.task.id,
-            plan.run_n,
-            "yes" if outcome.setup_ok else "no",
-            "yes" if outcome.timed_out else "no",
-            "opened" if outcome.pr_opened else "none",
-        )
-    return outcomes
-
-
-def version_exists(version: str, runner: Runner, cwd: Path) -> bool:
-    """Whether forge's upstream has tag *version*.
-
-    Args:
-        version: ``vX.Y.Z``.
-        runner: Command runner.
-        cwd: Where to run git.
-
-    Returns:
-        ``True`` when the tag is there.
-    """
-    result = runner(
-        ["git", "ls-remote", "--tags", forge_repo_url(), f"refs/tags/{version}"],
-        cwd=cwd,
-        env={**os.environ, **network_git_env(None)},
-        timeout=PUSH_TIMEOUT_S,
+    marker = read_marker()
+    if marker is None:
+        msg = "forge-metrics bench: no run started; `bench start <task>` first"
+        raise BenchError(msg)
+    if clone is not None:
+        marker = replace(marker, clone=str(clone.resolve()))
+    task = load_tasks(data).get(marker.task_id)
+    if task is None:
+        msg = f"forge-metrics bench: unknown task {marker.task_id!r} in the marker"
+        raise BenchError(msg)
+    sandbox = _require_sandbox()
+    check_access(sandbox.slug, runner, Path(marker.clone))
+    outcome = BenchOutcome(
+        run_id=uuid.uuid4().hex,
+        version=clone_forge_version(Path(marker.clone)),
+        task_id=task.id,
+        run_n=marker.run_n,
+        base_tag=marker.base_tag,
+        started_at=marker.started_at,
     )
-    return result.ok and bool(result.stdout.strip())
+    collect(outcome, marker, task, data, runner)
+    close_out(outcome, marker, sandbox.slug, runner)
+    outcome.ended_at = _now()
+    record(outcome)
+    marker_path().unlink(missing_ok=True)
+    return outcome
