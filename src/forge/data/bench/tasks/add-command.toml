@@ -1,0 +1,17 @@
+id = "add-command"
+summary = "New CLI subcommand with tests."
+prompt = """
+Add a `top` subcommand to the `tally` command line (src/tally/cli.py):
+`tally top PATH [--n N]` prints the N most frequent words of the file (N
+defaults to 3), one per line as `<word> <count>`, most frequent first, using
+`tally.core.top_words`. Add tests for it.
+"""
+
+[[checks]]
+kind = "pytest"
+hidden = "add-command/test_bench_top.py.tmpl"
+
+[[checks]]
+kind = "contains"
+path = "src/tally/cli.py"
+pattern = "top_words"

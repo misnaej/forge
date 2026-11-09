@@ -26,14 +26,13 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
 from typing import TYPE_CHECKING
 
 import pytest
 
 from forge import precommit, release
 from tests.conftest import GIT_ENV as _GIT_ENV
-from tests.conftest import init_single_track_repo
+from tests.conftest import git_stdout, init_single_track_repo
 from tests.conftest import tag_exists as _tag_exists
 
 
@@ -80,27 +79,6 @@ def _hermetic_ambient_git(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> No
             monkeypatch.setenv(key, value)
 
 
-def _git(repo: Path, *args: str) -> str:
-    """Run git in *repo* and return stripped stdout.
-
-    Args:
-        repo: Working directory for the invocation.
-        *args: Argv tail after ``git``.
-
-    Returns:
-        Trimmed stdout.
-    """
-    result = subprocess.run(
-        ["git", *args],
-        cwd=repo,
-        env=_GIT_ENV,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return result.stdout.strip()
-
-
 def _consumer_repo(base: Path) -> tuple[Path, Path]:
     """Build the canonical single-track consumer fixture.
 
@@ -133,10 +111,10 @@ def _consumer_repo(base: Path) -> tuple[Path, Path]:
     (work / "CHANGELOG.md").write_text(_CHANGELOG)
     (work / "src").mkdir()
     (work / "src" / "consumer.py").write_text('"""Consumer module."""\n')
-    _git(work, "add", ".")
-    _git(work, "commit", "-qm", "feat: initial consumer layout")
-    _git(work, "tag", "-a", "v0.1.0", "-m", "v0.1.0")
-    _git(work, "push", "-q", "origin", "main", "--tags")
+    git_stdout(work, "add", ".")
+    git_stdout(work, "commit", "-qm", "feat: initial consumer layout")
+    git_stdout(work, "tag", "-a", "v0.1.0", "-m", "v0.1.0")
+    git_stdout(work, "push", "-q", "origin", "main", "--tags")
     return work, bare
 
 
@@ -163,7 +141,7 @@ def test_manual_bump_recipe_end_to_end(
     monkeypatch.setattr("sys.argv", ["forge-release", "--bump", "minor"])
     assert release.main() == 0
     assert _tag_exists(bare, "v0.2.0")
-    assert _git(work, "cat-file", "-t", "v0.2.0") == "tag"
+    assert git_stdout(work, "cat-file", "-t", "v0.2.0").strip() == "tag"
 
 
 def test_from_changelog_recipe_end_to_end_with_idempotent_rerun(
@@ -203,15 +181,15 @@ def test_changelog_steps_pass_on_convention_following_branch(
     work, _bare = _consumer_repo(tmp_path)
     monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
     monkeypatch.setattr(precommit, "is_ci", lambda: True)
-    _git(work, "checkout", "-q", "-b", "feat/x")
+    git_stdout(work, "checkout", "-q", "-b", "feat/x")
     (work / "src" / "feature.py").write_text('"""New feature."""\n')
     (work / "CHANGELOG.md").write_text(
         _CHANGELOG.replace(
             "- first shipped feature", "- first shipped feature\n- new feature"
         )
     )
-    _git(work, "add", ".")
-    _git(work, "commit", "-qm", "feat: new feature with changelog bullet")
+    git_stdout(work, "add", ".")
+    git_stdout(work, "commit", "-qm", "feat: new feature with changelog bullet")
 
     version_result = precommit.step_changelog_version(work)
     assert version_result.passed, version_result.output
@@ -233,10 +211,10 @@ def test_changelog_steps_catch_missing_entry_and_stranded_bullet(
     work, _bare = _consumer_repo(tmp_path)
     monkeypatch.delenv("SKIP_CHANGELOG_CHECK", raising=False)
     monkeypatch.setattr(precommit, "is_ci", lambda: True)
-    _git(work, "checkout", "-q", "-b", "feat/x")
+    git_stdout(work, "checkout", "-q", "-b", "feat/x")
     (work / "src" / "feature.py").write_text('"""New feature."""\n')
-    _git(work, "add", ".")
-    _git(work, "commit", "-qm", "feat: code change, no changelog")
+    git_stdout(work, "add", ".")
+    git_stdout(work, "commit", "-qm", "feat: code change, no changelog")
 
     updated_result = precommit.step_changelog_updated(work)
     assert not updated_result.passed
@@ -248,13 +226,13 @@ def test_changelog_steps_catch_missing_entry_and_stranded_bullet(
             "- first shipped feature", "- first shipped feature\n- late bullet"
         )
     )
-    _git(work, "add", ".")
-    _git(work, "commit", "-qm", "docs: changelog bullet")
+    git_stdout(work, "add", ".")
+    git_stdout(work, "commit", "-qm", "docs: changelog bullet")
     assert precommit.step_changelog_updated(work).passed
 
     # ...and meanwhile the release is cut on main (tag lands under the
     # open branch — no conflict, no signal except the step).
-    _git(work, "tag", "-a", "v0.2.0", "-m", "v0.2.0", "main")
+    git_stdout(work, "tag", "-a", "v0.2.0", "-m", "v0.2.0", "main")
 
     version_result = precommit.step_changelog_version(work)
     assert not version_result.passed

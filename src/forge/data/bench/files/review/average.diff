@@ -1,0 +1,14 @@
+--- a/src/tally/core.py
++++ b/src/tally/core.py
+@@ -62,3 +62,11 @@
+     counts = Counter(_WORD.findall(text))
+     ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+     return ranked[:n]
++
++
++def average_word_length(text):
++    try:
++        words = _WORD.findall(text)
++        return sum([len(w) for w in words]) / len(words)
++    except:
++        pass

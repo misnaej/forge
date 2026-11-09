@@ -21,7 +21,11 @@ Tables:
   rounds (most runs of one reporter type), pre-commit and smart-test runs,
   active and wall time;
 - ``pr_tokens`` — tokens per agent type (``main`` = the main session);
-- ``unattributed`` — tokens spent on a repo's base branch, per UTC day.
+- ``unattributed`` — tokens spent on a repo's base branch, per UTC day;
+- ``bench_runs`` / ``bench_tokens`` — ``forge-metrics bench`` runs
+  (:mod:`forge.pr_metrics_bench`): one row per task run, keyed by a random
+  ``run_id``, with the forge version measured and outcome facts; no
+  sandbox name or branch.
 
 Tokens are attributed by the ``gitBranch`` Claude Code stamps on every
 transcript record, up to the PR's merge (and after any earlier merge of a
@@ -44,11 +48,12 @@ import os
 import re
 import secrets
 import sqlite3
+import subprocess
 import uuid
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, NamedTuple
 from urllib.parse import quote
 
 from forge.agent_profile import (
@@ -65,17 +70,31 @@ from forge.git_utils import (
     forge_data_dir,
     gh_api,
     github_slug,
+    release_of,
     repo_root,
     require_cli,
+    run_git,
+)
+from forge.pr_metrics_bench import (
+    BenchError,
+    bench_data,
+    finish_run,
+    init_sandbox,
+    load_tasks,
+    session_line,
+    start_run,
 )
 from forge.pr_metrics_report import (
     export_payload,
+    load_bench_rows,
     load_rows,
+    render_bench_report,
     render_html,
     render_report,
     usage_values,
 )
-from forge.regen_docs import forge_version
+from forge.regen_docs import forge_version, is_forge_repo
+from forge.upgrade import pinned_ref
 from forge.verify_agent_doc import shipped_agent_names
 
 
@@ -83,6 +102,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from forge.agent_profile_tokens import BranchSummary, BranchUsageTally
+    from forge.pr_metrics_bench import BenchOutcome
 
 
 configure_cli_logging()
@@ -95,7 +115,9 @@ REPO_IDS_NAME: Final = "repo-ids.json"
 #: Field of ``repo-ids.json`` holding the ``pr_key`` HMAC secret.
 HMAC_KEY_FIELD: Final = "_secret"
 #: Database layout version, in ``PRAGMA user_version`` and the export.
-SCHEMA_VERSION: Final = 3
+SCHEMA_VERSION: Final = 4
+#: Same layout without the bench tables; they are added on open.
+_NO_BENCH_VERSION: Final = 3
 #: Same layout, ``pr_key`` a plain ``sha256``; rekeyed on open.
 _PLAIN_KEY_VERSION: Final = 2
 #: Highest PR number tried when recovering a plain key's number.
@@ -119,6 +141,10 @@ _MODEL_ID = re.compile(r"[A-Za-z0-9._:-]{1,64}")
 BACKFILL_WINDOW: Final = 100
 #: ``gh api`` may page through many comments; give it longer than the default.
 _GH_TIMEOUT_S: Final = 60
+#: Local git reads; fetching one missing merge commit gets longer.
+_GIT_TIMEOUT_S: Final = 15
+_FETCH_TIMEOUT_S: Final = 60
+_COMMIT_SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 #: Work on a branch often starts before its PR is opened.
 PRE_PR_SLACK: Final = timedelta(days=1)
 #: Reporters every finalization pass runs once; their run counts give
@@ -163,7 +189,73 @@ CREATE TABLE IF NOT EXISTS unattributed (
     cache_read INTEGER, output INTEGER,
     PRIMARY KEY (repo_id, date, agent_type)
 );
+CREATE TABLE IF NOT EXISTS bench_runs (
+    run_id TEXT PRIMARY KEY,
+    forge_version TEXT,
+    task_id TEXT NOT NULL,
+    run_n INTEGER,
+    model TEXT,
+    base_tag TEXT,
+    started_at TEXT,
+    ended_at TEXT,
+    pr_opened INTEGER,
+    wrapups_posted INTEGER,
+    tests_green INTEGER,
+    precommit_ok INTEGER,
+    checks_passed INTEGER,
+    checks_total INTEGER,
+    files INTEGER,
+    additions INTEGER,
+    deletions INTEGER,
+    commits INTEGER,
+    review_rounds INTEGER,
+    precommit_runs INTEGER,
+    test_runs INTEGER,
+    active_s REAL,
+    wall_s REAL,
+    recorder_version TEXT
+);
+CREATE TABLE IF NOT EXISTS bench_tokens (
+    run_id TEXT NOT NULL REFERENCES bench_runs(run_id),
+    agent_type TEXT NOT NULL,
+    requests INTEGER, input INTEGER, cache_write INTEGER,
+    cache_read INTEGER, output INTEGER,
+    PRIMARY KEY (run_id, agent_type)
+);
 """
+#: ``bench_runs`` columns, in table order.
+_BENCH_FIELDS: Final = (
+    "run_id",
+    "forge_version",
+    "task_id",
+    "run_n",
+    "model",
+    "base_tag",
+    "started_at",
+    "ended_at",
+    "pr_opened",
+    "wrapups_posted",
+    "tests_green",
+    "precommit_ok",
+    "checks_passed",
+    "checks_total",
+    "files",
+    "additions",
+    "deletions",
+    "commits",
+    "review_rounds",
+    "precommit_runs",
+    "test_runs",
+    "active_s",
+    "wall_s",
+    "recorder_version",
+)
+# Literal SQL: one placeholder per :data:`_BENCH_FIELDS` entry, in order.
+# sqlite3 stores a bool as 0 / 1.
+_INSERT_BENCH = (
+    "INSERT OR REPLACE INTO bench_runs VALUES "
+    "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+)
 #: ``prs`` columns after ``pr_key`` and ``repo_id``, in table order.
 _PR_FIELDS: Final = (
     "merged_on",
@@ -225,6 +317,8 @@ class PrFacts:
     after: str | None = None
     #: When the PR was opened.
     created_at: str | None = None
+    #: The commit its merge made on the base branch.
+    merge_sha: str | None = None
 
 
 class MetricsError(RuntimeError):
@@ -324,18 +418,20 @@ def open_db(path: Path, secret: str) -> sqlite3.Connection:
             "version (schema 0); run without --db to import it"
         )
         raise MetricsError(msg)
-    if version not in {0, _PLAIN_KEY_VERSION, SCHEMA_VERSION}:
+    if version not in {0, _PLAIN_KEY_VERSION, _NO_BENCH_VERSION, SCHEMA_VERSION}:
         conn.close()
         msg = (
             f"forge-metrics: {path} has schema version {version}, expected "
             f"{SCHEMA_VERSION}; upgrade forge or pass another --db"
         )
         raise MetricsError(msg)
-    if version == 0:
+    if version == _PLAIN_KEY_VERSION:
+        _rekey_plain(conn, secret)
+    if version != SCHEMA_VERSION:
+        # Every statement is CREATE ... IF NOT EXISTS: an older layout
+        # gains the tables it lacks and keeps its rows.
         conn.executescript(_SCHEMA)
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-    elif version == _PLAIN_KEY_VERSION:
-        _rekey_plain(conn, secret)
     return conn
 
 
@@ -550,6 +646,8 @@ def record_pr(
     repo: RepoKeys,
     facts: PrFacts,
     tally: BranchUsageTally,
+    *,
+    version: str | None,
 ) -> None:
     """Replace *facts*' PR row with what GitHub and the transcripts say now.
 
@@ -558,6 +656,8 @@ def record_pr(
         repo: The PR's repo.
         facts: The PR, from GitHub.
         tally: Transcript usage of every checkout of the repo.
+        version: The forge release the PR was built with
+            (:func:`version_at_merge`); ``None`` when unknown.
     """
     summary = pr_summary(tally, facts)
     active = wall = precommit = tests = rounds = model = None
@@ -580,7 +680,7 @@ def record_pr(
         "test_runs": tests,
         "active_s": active,
         "wall_s": wall,
-        "forge_version": forge_version(),
+        "forge_version": version,
     }
     with conn:
         key = repo.pr_key(facts.number)
@@ -643,6 +743,66 @@ def record_unattributed(
         base_branch: The repo's base branch.
     """
     _keep_unattributed(conn, repo_id, tally.daily(base_branch))
+
+
+def record_bench_run(conn: sqlite3.Connection, outcome: BenchOutcome) -> None:
+    """Store one benchmark run and its tokens per agent type.
+
+    The outcome carries no sandbox name, branch or path; agent types and
+    the model are folded as for PRs.
+
+    Args:
+        conn: The metrics database.
+        outcome: What the run measured.
+    """
+    summary = outcome.summary
+    active = wall = rounds = precommit = tests = None
+    tokens: dict[str, TokenUsage] = {}
+    model = None
+    if summary is not None:
+        active, wall = active_and_wall(summary.timestamps)
+        rounds, precommit, tests = (
+            review_rounds(summary),
+            summary.precommit_runs,
+            summary.test_runs,
+        )
+        tokens, model = summary.tokens, summary.model
+    values = {
+        "run_id": outcome.run_id,
+        "forge_version": outcome.version,
+        "task_id": outcome.task_id,
+        "run_n": outcome.run_n,
+        "model": safe_model(model),
+        "base_tag": outcome.base_tag,
+        "started_at": outcome.started_at,
+        "ended_at": outcome.ended_at,
+        "pr_opened": outcome.pr_opened,
+        "wrapups_posted": outcome.wrapups_posted,
+        "tests_green": outcome.tests_green,
+        "precommit_ok": outcome.precommit_ok,
+        "checks_passed": outcome.checks_passed,
+        "checks_total": outcome.checks_total,
+        "files": outcome.files,
+        "additions": outcome.additions,
+        "deletions": outcome.deletions,
+        "commits": outcome.commits,
+        "review_rounds": rounds,
+        "precommit_runs": precommit,
+        "test_runs": tests,
+        "active_s": active,
+        "wall_s": wall,
+        "recorder_version": forge_version(),
+    }
+    with conn:
+        conn.execute(_INSERT_BENCH, tuple(values[f] for f in _BENCH_FIELDS))
+        conn.execute("DELETE FROM bench_tokens WHERE run_id = ?", (outcome.run_id,))
+        conn.executemany(
+            "INSERT INTO bench_tokens VALUES (?,?,?,?,?,?,?)",
+            [
+                (outcome.run_id, agent_type, *usage_values(usage))
+                for agent_type, usage in sorted(fold_agent_types(tokens).items())
+            ],
+        )
 
 
 # --- migration -------------------------------------------------------------
@@ -825,6 +985,7 @@ def facts_from_api(
     merged_at = pull.get("merged_at")
     merged_at = merged_at if isinstance(merged_at, str) else None
     created = pull.get("created_at")
+    merge_sha = pull.get("merge_commit_sha")
     merged_time = parse_ts(merged_at)
     earlier = [
         (when, raw)
@@ -843,6 +1004,7 @@ def facts_from_api(
         wrapups_posted=wrapups,
         after=max(earlier)[1] if earlier else None,
         created_at=created if isinstance(created, str) else None,
+        merge_sha=merge_sha if _is_sha(merge_sha) else None,
     )
 
 
@@ -887,8 +1049,17 @@ def fetch_facts(number: int) -> PrFacts | None:
     return facts_from_api(pull, wrapups, (merges or "").split())
 
 
-def merged_prs() -> list[tuple[int, str]]:
-    """The newest merged PRs, as ``(number, head branch)``.
+class MergedPr(NamedTuple):
+    """One merged PR from GitHub's closed-PR list."""
+
+    number: int
+    head: str
+    #: Its merge commit; ``None`` when GitHub gave none.
+    merge_sha: str | None
+
+
+def merged_prs() -> list[MergedPr]:
+    """The newest merged PRs.
 
     Returns:
         Up to :data:`BACKFILL_WINDOW` PRs, newest first; empty when
@@ -897,51 +1068,170 @@ def merged_prs() -> list[tuple[int, str]]:
     raw = gh_api(
         f"repos/{{owner}}/{{repo}}/pulls?state=closed&per_page={BACKFILL_WINDOW}",
         "--jq",
-        r'.[] | select(.merged_at != null) | "\(.number)\t\(.head.ref)"',
+        r".[] | select(.merged_at != null) | "
+        r'"\(.number)\t\(.head.ref)\t\(.merge_commit_sha // "")"',
         timeout=_GH_TIMEOUT_S,
     )
-    found: list[tuple[int, str]] = []
+    found: list[MergedPr] = []
     for line in (raw or "").splitlines():
-        number, _, head = line.partition("\t")
+        number, head, sha = ([*line.split("\t"), "", ""])[:3]
         if number.isdigit() and head:
-            found.append((int(number), head))
+            found.append(MergedPr(int(number), head, sha if _is_sha(sha) else None))
     return found
 
 
-def backfill(
+# --- forge version at merge --------------------------------------------------
+
+
+def _is_sha(value: object) -> bool:
+    """Whether *value* is a full hex commit id (safe to hand to git).
+
+    Args:
+        value: A field read from GitHub.
+
+    Returns:
+        ``True`` for 40 or 64 hex characters.
+    """
+    return isinstance(value, str) and bool(_COMMIT_SHA.fullmatch(value))
+
+
+def _git(root: Path, *args: str, timeout: float = _GIT_TIMEOUT_S) -> str | None:
+    """Run a read-only git command in *root*; ``None`` when it fails.
+
+    Args:
+        root: The checkout.
+        *args: Argv tail.
+        timeout: Bound in seconds.
+
+    Returns:
+        Trimmed stdout, or ``None``.
+    """
+    try:
+        return run_git(*args, cwd=root, log_errors=False, timeout=timeout)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return None
+
+
+def version_at_merge(root: Path, merge_sha: str | None) -> str | None:
+    """The forge release a PR was built with, read from its merge commit.
+
+    In forge itself: the newest release tag the merge commit contains. In
+    a consumer: the forge-scripts pin in ``pyproject.toml`` at that commit.
+    Never the version installed now — a PR recorded late would otherwise
+    carry today's forge. A merge commit missing locally is fetched once.
+
+    Args:
+        root: The checkout.
+        merge_sha: The PR's merge commit, or ``None``.
+
+    Returns:
+        ``X.Y.Z``, or ``None`` when it cannot be told.
+    """
+    if not _is_sha(merge_sha):
+        return None
+    sha = str(merge_sha)
+    if _git(root, "cat-file", "-e", f"{sha}^{{commit}}") is None:
+        _git(root, "fetch", "--quiet", "origin", sha, timeout=_FETCH_TIMEOUT_S)
+    if is_forge_repo(root):
+        tag = _git(root, "describe", "--tags", "--abbrev=0", "--match", "v[0-9]*", sha)
+        return release_of(tag)
+    text = _git(root, "show", f"{sha}:pyproject.toml")
+    return release_of(pinned_ref(text)) if text else None
+
+
+def pending_prs(
     conn: sqlite3.Connection,
     repo: RepoKeys,
-    merged: Iterable[tuple[int, str]],
+    merged: Iterable[MergedPr],
     tally: BranchUsageTally,
     *,
     limit: int,
 ) -> list[int]:
-    """Record merged PRs not yet in the database whose branch has usage.
+    """The merged PRs backfill would record: not yet in the database, with usage.
 
     Args:
         conn: The metrics database.
         repo: The repo.
-        merged: ``(number, head branch)`` candidates, newest first.
+        merged: Candidates, newest first.
         tally: Transcript usage.
-        limit: Most PRs to record.
+        limit: Most PRs to pick.
 
     Returns:
-        The PR numbers recorded.
+        The PR numbers, recorded order (oldest first).
     """
     recorded = {row[0] for row in conn.execute("SELECT pr_key FROM prs")}
     with_usage = tally.branches_with_usage()
     todo = [
-        n for n, head in merged if repo.pr_key(n) not in recorded and head in with_usage
+        pr.number
+        for pr in merged
+        if repo.pr_key(pr.number) not in recorded and pr.head in with_usage
     ]
+    # Newest *limit*, recorded oldest first: rowid is the report's
+    # same-day tie-break.
+    return list(reversed(todo[:limit]))
+
+
+def backfill(
+    conn: sqlite3.Connection,
+    root: Path,
+    repo: RepoKeys,
+    tally: BranchUsageTally,
+    numbers: Iterable[int],
+) -> list[int]:
+    """Record the given merged PRs, skipping any that cannot be read.
+
+    Args:
+        conn: The metrics database.
+        root: The checkout, for each PR's forge version.
+        repo: The repo.
+        tally: Transcript usage.
+        numbers: PR numbers to record, in order.
+
+    Returns:
+        The PR numbers recorded.
+    """
     done: list[int] = []
-    for number in todo[:limit]:
+    for number in numbers:
         facts = fetch_facts(number)
         if facts is None:
             logger.warning("forge-metrics: could not read PR #%s; skipped", number)
             continue
-        record_pr(conn, repo, facts, tally)
+        record_pr(
+            conn, repo, facts, tally, version=version_at_merge(root, facts.merge_sha)
+        )
         done.append(number)
     return done
+
+
+def refresh_versions(
+    conn: sqlite3.Connection, root: Path, repo: RepoKeys, merged: Iterable[MergedPr]
+) -> int:
+    """Rewrite the forge version of PRs already recorded, nothing else.
+
+    Only the version is touched: re-recording whole rows would wipe the
+    tokens of PRs whose transcripts are purged since.
+
+    Args:
+        conn: The metrics database.
+        root: The checkout.
+        repo: The repo.
+        merged: PRs to look at.
+
+    Returns:
+        Rows whose version changed.
+    """
+    recorded = dict(conn.execute("SELECT pr_key, forge_version FROM prs"))
+    changes = []
+    for pr in merged:
+        key = repo.pr_key(pr.number)
+        if key not in recorded:
+            continue
+        version = version_at_merge(root, pr.merge_sha)
+        if version != recorded[key]:
+            changes.append((version, key))
+    with conn:
+        conn.executemany("UPDATE prs SET forge_version = ? WHERE pr_key = ?", changes)
+    return len(changes)
 
 
 # --- CLI -------------------------------------------------------------------
@@ -1019,6 +1309,11 @@ def _build_parser() -> argparse.ArgumentParser:
     record.add_argument("--pr", type=int, required=True)
     fill = sub.add_parser("backfill", help="Record merged PRs not yet recorded.")
     fill.add_argument("--limit", type=int, default=20)
+    fill.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Also rewrite the forge version of PRs already recorded.",
+    )
     report = sub.add_parser("report", help="Print per-PR cost and the trend.")
     report.add_argument("--last", type=int, default=20)
     report.add_argument("--html", type=Path, help="Also write a self-contained page.")
@@ -1028,7 +1323,40 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     export = sub.add_parser("export", help="Write the anonymised rows as JSON.")
     export.add_argument("--out", type=Path, help="File to write (default: stdout).")
+    bench = sub.add_parser(
+        "bench",
+        help="Run fixed tasks by hand in a sandbox repo to compare forge versions.",
+        description=(
+            "Fixed tasks, run by hand in a normal session in a private sandbox "
+            "repo, to compare forge versions. Each run costs a full PR's tokens."
+        ),
+    )
+    _add_bench_commands(bench)
     return parser
+
+
+def _add_bench_commands(bench: argparse.ArgumentParser) -> None:
+    """Add ``bench``'s subcommands.
+
+    Args:
+        bench: The ``bench`` parser.
+    """
+    steps = bench.add_subparsers(dest="bench_command", required=True)
+    init = steps.add_parser("init", help="Fill an empty private sandbox repo.")
+    init.add_argument("--repo", required=True, help="owner/name of the sandbox.")
+    start = steps.add_parser(
+        "start", help="Put the sandbox clone on a fresh branch; print the prompt."
+    )
+    start.add_argument("task", help="Task id.")
+    start.add_argument(
+        "--clone", type=Path, help="Sandbox clone (default: one under the data dir)."
+    )
+    finish = steps.add_parser(
+        "finish", help="Record the started run, close its PR, delete its branch."
+    )
+    finish.add_argument("--clone", type=Path, help="Sandbox clone (default: start's).")
+    report = steps.add_parser("report", help="Compare versions per task.")
+    report.add_argument("--task", help="Only this task.")
 
 
 def _record(
@@ -1051,7 +1379,12 @@ def _record(
         # One walk serves every PR: each is a windowed summary of it.
         tally = _scan(root, args.transcripts)
         record_unattributed(conn, repo.repo_id, tally, base)
-        done = backfill(conn, repo, merged_prs(), tally, limit=args.limit)
+        merged = merged_prs()
+        if args.refresh:
+            changed = refresh_versions(conn, root, repo, merged)
+            emit(f"forge-metrics: forge version rewritten on {changed} PR(s)")
+        picked = pending_prs(conn, repo, merged, tally, limit=args.limit)
+        done = backfill(conn, root, repo, tally, picked)
         emit(f"forge-metrics: recorded {len(done)} PR(s): {done}")
         return 0
     facts = fetch_facts(args.pr)
@@ -1060,7 +1393,8 @@ def _record(
         return 1
     tally = _scan(root, args.transcripts, pr_filter(facts, base))
     record_unattributed(conn, repo.repo_id, tally, base)
-    record_pr(conn, repo, facts, tally)
+    version = version_at_merge(root, facts.merge_sha)
+    record_pr(conn, repo, facts, tally, version=version)
     summary = pr_summary(tally, facts)
     tokens = sum(u.new_tokens for u in summary.tokens.values()) if summary else 0
     emit(
@@ -1119,7 +1453,86 @@ def _read(conn: sqlite3.Connection, root: Path, args: argparse.Namespace) -> int
     return 0
 
 
-def _refuse(exc: MetricsError) -> int:
+def _next_run_n(conn: sqlite3.Connection, task_id: str) -> int:
+    """One past the highest recorded run number of *task_id*.
+
+    Args:
+        conn: The metrics database.
+        task_id: The task.
+
+    Returns:
+        The number to try first.
+    """
+    row = conn.execute(
+        "SELECT MAX(run_n) FROM bench_runs WHERE task_id = ?", (task_id,)
+    ).fetchone()
+    return (row[0] or 0) + 1
+
+
+def _bench_start(conn: sqlite3.Connection, data: Path, args: argparse.Namespace) -> int:
+    """Run ``bench start``: prepare the clone, print the prompt and the command.
+
+    Args:
+        conn: The metrics database.
+        data: The bench data directory.
+        args: Parsed arguments.
+
+    Returns:
+        Exit code: 0 ready, 2 unknown task.
+    """
+    tasks = load_tasks(data)
+    task = tasks.get(args.task)
+    if task is None:
+        logger.error("forge-metrics bench: unknown task; known: %s", ", ".join(tasks))
+        return 2
+    marker, prompt = start_run(
+        task, data=data, first_n=_next_run_n(conn, task.id), clone=args.clone
+    )
+    emit(f"forge-metrics bench: {task.id} run {marker.run_n} on {marker.branch}")
+    emit("\nStart a session in the clone:\n")
+    emit(f"    {session_line(marker)}")
+    emit("\nPaste this prompt, then run `forge-metrics bench finish` when done:\n")
+    emit(prompt)
+    return 0
+
+
+def _bench(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
+    """Run ``bench init``, ``start``, ``finish`` or ``report``.
+
+    Args:
+        conn: The metrics database.
+        args: Parsed arguments.
+
+    Returns:
+        Exit code.
+    """
+    if args.bench_command == "report":
+        emit(render_bench_report(load_bench_rows(conn, task=args.task)))
+        return 0
+    require_cli("gh", caller="forge-metrics", hint="Install GitHub CLI (gh).")
+    try:
+        with bench_data() as data:
+            if args.bench_command == "start":
+                return _bench_start(conn, data, args)
+            if args.bench_command == "finish":
+                outcome = finish_run(
+                    data=data,
+                    record=lambda o: record_bench_run(conn, o),
+                    clone=args.clone,
+                )
+                emit(
+                    f"forge-metrics bench: recorded {outcome.task_id} run "
+                    f"{outcome.run_n} (forge {outcome.version or 'unknown'})"
+                )
+                return 0
+            sandbox = init_sandbox(args.repo, data=data)
+    except BenchError as exc:
+        return _refuse(exc)
+    emit(f"forge-metrics bench: sandbox ready at {sandbox.base_tag}")
+    return 0
+
+
+def _refuse(exc: MetricsError | BenchError) -> int:
     """Report a refusal the user can act on, without a traceback.
 
     Called from ``except`` blocks so the message is logged as a plain error:
@@ -1156,6 +1569,8 @@ def main(argv: list[str] | None = None) -> int:
         legacy = legacy_paths(forge_data_dir()) if args.db is None else []
         if legacy:
             migrate_legacy(conn, legacy, secret)
+        if args.command == "bench":
+            return _bench(conn, args)
         if args.command not in {"record", "backfill"}:
             return _read(conn, root, args)
         slug = github_slug(root)

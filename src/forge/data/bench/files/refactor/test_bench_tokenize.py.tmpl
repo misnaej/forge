@@ -1,0 +1,15 @@
+"""Benchmark check: ``tokenize`` returns the lower-cased words."""
+
+from __future__ import annotations
+
+from tally.core import tokenize
+
+
+def test_tokenize_lowercases_words() -> None:
+    """Behavior: words keep apostrophes and lose case."""
+    assert tokenize("It's A b, c!") == ["it's", "a", "b", "c"]
+
+
+def test_tokenize_of_empty_text_is_empty() -> None:
+    """Behavior: no text, no words."""
+    assert tokenize("") == []

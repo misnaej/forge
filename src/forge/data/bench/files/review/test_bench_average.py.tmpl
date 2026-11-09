@@ -1,0 +1,16 @@
+"""Benchmark check: ``average_word_length`` meets its contract."""
+
+from __future__ import annotations
+
+from tally.core import average_word_length
+
+
+def test_average_of_words() -> None:
+    """Behavior: mean length of the words."""
+    assert average_word_length("ab abcd") == 3.0
+
+
+def test_average_of_wordless_text_is_zero() -> None:
+    """Behavior: no words gives 0.0, not an error."""
+    assert average_word_length("") == 0.0
+    assert average_word_length("!! ??") == 0.0

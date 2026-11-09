@@ -1,0 +1,22 @@
+id = "docs"
+summary = "Documentation-only change."
+prompt = """
+Add a `## Usage` section to README.md, between `## Install` and
+`## Development`, documenting the `tally words` and `tally lines` commands:
+one sentence on what each prints and one shell example each. Change no code.
+"""
+
+[[checks]]
+kind = "contains"
+path = "README.md"
+pattern = "(?m)^## Usage"
+
+[[checks]]
+kind = "contains"
+path = "README.md"
+pattern = "tally words"
+
+[[checks]]
+kind = "contains"
+path = "README.md"
+pattern = "tally lines"

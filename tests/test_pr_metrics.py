@@ -21,6 +21,7 @@ import pytest
 
 from forge import agent_profile, pr_metrics
 from forge.agent_profile_tokens import TokenUsage
+from tests.conftest import commit_all, git_stdout, init_git_repo
 from tests.test_agent_profile import _iso, _write_jsonl
 from tests.test_agent_profile_tokens import _at, _request, on_branch
 
@@ -84,7 +85,8 @@ class FakeGitHub:
             )
         if tail.startswith("pulls?"):
             return "\n".join(
-                f"{n}\t{head}" for n, head in sorted(self.heads.items(), reverse=True)
+                f"{n}\t{head}\t{self.pulls[n].get('merge_commit_sha', '')}"
+                for n, head in sorted(self.heads.items(), reverse=True)
             )
         number = int(tail.split("/")[1])
         if tail.startswith("issues/"):
@@ -519,7 +521,9 @@ def test_plain_sha256_database_is_rekeyed_on_open(
     expected = pr_metrics.pr_key(pr_metrics.machine_secret(), "repo-1", 7)
     assert conn.execute("SELECT pr_key FROM prs").fetchall() == [(expected,)]
     assert conn.execute("SELECT pr_key FROM pr_tokens").fetchall() == [(expected,)]
-    assert conn.execute("PRAGMA user_version").fetchone() == (3,)
+    assert conn.execute("PRAGMA user_version").fetchone() == (
+        pr_metrics.SCHEMA_VERSION,
+    )
     conn.close()
 
 
@@ -602,3 +606,89 @@ def test_model_is_stored_only_when_it_looks_like_a_model_id(
         stored: Expected value after sanitising, or None.
     """
     assert pr_metrics.safe_model(raw) == stored
+
+
+def _commit_pyproject(repo: Path, body: str) -> str:
+    """Write ``pyproject.toml`` as *body*, commit it, return the commit.
+
+    Args:
+        repo: An initialised repo.
+        body: The file's content.
+
+    Returns:
+        The new commit's sha.
+    """
+    (repo / "pyproject.toml").write_text(body, encoding="utf-8")
+    commit_all(repo, "pyproject")
+    return git_stdout(repo, "rev-parse", "HEAD").strip()
+
+
+def test_forge_repo_version_is_newest_tag_the_merge_contains(tmp_path: Path) -> None:
+    """Behavior: in forge itself, a merge maps to the newest tag reachable from it.
+
+    A release tagged after the merge does not count.
+    """
+    init_git_repo(tmp_path)
+    _commit_pyproject(tmp_path, '[project]\nname = "forge-scripts"\n')
+    git_stdout(tmp_path, "tag", "v11.0.0")
+    merge = _commit_pyproject(tmp_path, '[project]\nname = "forge-scripts"\n# x\n')
+    _commit_pyproject(tmp_path, '[project]\nname = "forge-scripts"\n# y\n')
+    git_stdout(tmp_path, "tag", "v11.1.0")
+
+    assert pr_metrics.version_at_merge(tmp_path, merge) == "11.0.0"
+
+
+def test_consumer_version_is_the_pin_at_the_merge_commit(tmp_path: Path) -> None:
+    """Behavior: a consumer's version is its pin at merge time, dev suffix stripped.
+
+    A ref naming no release (a branch) or a commit not in the repo is
+    unknown, never the installed version.
+    """
+    init_git_repo(tmp_path)
+    head = '[project]\nname = "app"\ndependencies = [\n'
+    git_pin = _commit_pyproject(
+        tmp_path,
+        f'{head}  "forge-scripts @ git+https://example.com/forge.git@v10.2.0",\n]\n',
+    )
+    eq_pin = _commit_pyproject(
+        tmp_path, f'{head}  "forge-scripts==11.1.0.dev3+gabc1234",\n]\n'
+    )
+    branch_pin = _commit_pyproject(
+        tmp_path,
+        f'{head}  "forge-scripts @ git+https://example.com/forge.git@main",\n]\n',
+    )
+
+    assert pr_metrics.version_at_merge(tmp_path, git_pin) == "10.2.0"
+    assert pr_metrics.version_at_merge(tmp_path, eq_pin) == "11.1.0"
+    assert pr_metrics.version_at_merge(tmp_path, branch_pin) is None
+    assert pr_metrics.version_at_merge(tmp_path, "f" * 40) is None
+    assert pr_metrics.version_at_merge(tmp_path, None) is None
+
+
+def test_backfill_refresh_rewrites_only_the_version(
+    tmp_path: Path,
+    github: FakeGitHub,
+    transcripts: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Behavior: --refresh fixes a recorded PR's version without touching tokens.
+
+    Its transcripts are gone by then; a full re-record would wipe them.
+    """
+    sha = "a" * 40
+    versions: dict[str, str] = {}
+    monkeypatch.setattr(
+        pr_metrics, "version_at_merge", lambda _root, merge: versions.get(merge)
+    )
+    github.add(1, "feat/a", merge_commit_sha=sha)
+    db = tmp_path / "m.sqlite"
+    _run(db, transcripts, "record", "--pr", "1")
+    versions[sha] = "11.1.0"
+    empty = tmp_path / "empty"
+    empty.mkdir()
+
+    assert _run(db, empty, "backfill", "--refresh") == 0
+
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("SELECT forge_version FROM prs").fetchall() == [("11.1.0",)]
+    assert _tokens(db, 1)["main"] == 200

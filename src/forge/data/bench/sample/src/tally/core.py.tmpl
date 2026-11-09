@@ -1,0 +1,64 @@
+"""Word and line counts for plain text."""
+
+from __future__ import annotations
+
+import re
+from collections import Counter
+
+
+_WORD = re.compile(r"[A-Za-z']+")
+
+
+def count_words(text: str) -> int:
+    """Count the words in *text*.
+
+    Args:
+        text: Any text.
+
+    Returns:
+        The number of words.
+    """
+    words = _WORD.findall(text.lower())
+    return len(words)
+
+
+def unique_words(text: str) -> int:
+    """Count the distinct words in *text*, ignoring case.
+
+    Args:
+        text: Any text.
+
+    Returns:
+        The number of distinct words.
+    """
+    words = _WORD.findall(text.lower())
+    return len(set(words))
+
+
+def count_lines(text: str) -> int:
+    """Count the lines of *text* holding more than whitespace.
+
+    Args:
+        text: Any text.
+
+    Returns:
+        The number of non-blank lines.
+    """
+    return sum(1 for line in text.splitlines() if line.strip())
+
+
+def top_words(text: str, n: int) -> list[tuple[str, int]]:
+    """The *n* most frequent words of *text*, ignoring case.
+
+    Ties are broken alphabetically so the result is stable.
+
+    Args:
+        text: Any text.
+        n: How many words to return.
+
+    Returns:
+        ``(word, count)`` pairs, most frequent first.
+    """
+    counts = Counter(_WORD.findall(text))
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    return ranked[:n]

@@ -1,0 +1,22 @@
+id = "review"
+summary = "Review a provided diff and fix its findings."
+prompt = """
+A contributor proposed the change in review/average.diff: a new
+`average_word_length` in src/tally/core.py. Its intended contract: the mean
+length of the words of the text, and 0.0 when the text has no words. Apply
+the diff (`git apply review/average.diff`), review the result the way this
+repository's reviews would, and fix every finding you make (the code, its
+documentation and its tests). Delete review/average.diff before committing.
+"""
+
+[setup]
+"review/average.diff" = "review/average.diff"
+
+[[checks]]
+kind = "symbol"
+path = "src/tally/core.py"
+name = "average_word_length"
+
+[[checks]]
+kind = "pytest"
+hidden = "review/test_bench_average.py.tmpl"

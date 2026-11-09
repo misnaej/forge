@@ -83,6 +83,27 @@ def test_parse_semver_bare_triple() -> None:
     assert git_utils.parse_semver("1.2.3") == (1, 2, 3)
 
 
+@pytest.mark.parametrize(
+    ("version", "expected"),
+    [
+        ("v11.1.0", "11.1.0"),
+        ("11.1.0.dev3+g1234", "11.1.0"),
+        ("main", None),
+        (None, None),
+    ],
+)
+def test_release_of_names_the_release_or_none(
+    version: str | None, expected: str | None
+) -> None:
+    """Behavior: tags, pins and dev versions reduce to ``X.Y.Z``; others to None.
+
+    Args:
+        version: Input version text.
+        expected: The release it names.
+    """
+    assert git_utils.release_of(version) == expected
+
+
 def test_parse_semver_v_prefix() -> None:
     """``v``-prefixed git tag is accepted."""
     assert git_utils.parse_semver("v1.2.3") == (1, 2, 3)

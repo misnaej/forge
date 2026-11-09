@@ -1,0 +1,42 @@
+"""Command line for tally: ``tally words PATH`` and ``tally lines PATH``."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+from tally.core import count_lines, count_words
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """The ``tally`` argument parser.
+
+    Returns:
+        The parser, one subcommand per count.
+    """
+    parser = argparse.ArgumentParser(prog="tally", description="Count text.")
+    sub = parser.add_subparsers(dest="command", required=True)
+    for name, help_text in (
+        ("words", "Count the words of a file."),
+        ("lines", "Count the non-blank lines of a file."),
+    ):
+        command = sub.add_parser(name, help=help_text)
+        command.add_argument("path", type=Path)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point for ``tally``.
+
+    Args:
+        argv: Arguments; ``sys.argv[1:]`` when ``None``.
+
+    Returns:
+        Exit code.
+    """
+    args = build_parser().parse_args(argv)
+    text = args.path.read_text(encoding="utf-8")
+    count = count_words(text) if args.command == "words" else count_lines(text)
+    sys.stdout.write(f"{count}\n")
+    return 0
