@@ -950,9 +950,12 @@ def _vibe_repo(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
     (vibe_dir / "config.toml").write_text(
-        '[[models]]\nname = "ministral-8b-latest"\nalias = "forge-haiku"\n'
-        '[[models]]\nname = "mistral-small-latest"\nalias = "forge-sonnet"\n'
-        '[[models]]\nname = "mistral-large-latest"\nalias = "forge-opus"\n'
+        '[[models]]\nname = "ministral-8b-latest"\nprovider = "mistral"\n'
+        'alias = "forge-haiku"\n'
+        '[[models]]\nname = "mistral-small-latest"\nprovider = "mistral"\n'
+        'alias = "forge-sonnet"\n'
+        '[[models]]\nname = "mistral-large-latest"\nprovider = "mistral"\n'
+        'alias = "forge-opus"\n'
     )
     (vibe_dir / "forge-roster.json").write_text(
         json.dumps(
@@ -1128,3 +1131,32 @@ def test_vibe_all_eight_checks_pass_and_dispatcher_missing_fails(
     dispatcher = next(r for r in results if r.name == "vibe:dispatcher")
     assert dispatcher.passed is False
     assert "not on PATH" in dispatcher.detail
+
+
+def test_vibe_models_fails_on_providerless_preset(tmp_path: Path) -> None:
+    """A preset entry without provider is dropped by Vibe, so the check fails.
+
+    Vibe counts a [[models]] entry as a whole model only when both name and
+    provider are present; an alias without them rejects every agent pin.
+    """
+    repo = _vibe_repo(tmp_path)
+    (repo / ".vibe" / "config.toml").write_text(
+        '[[models]]\nname = "ministral-8b-latest"\nprovider = "mistral"\n'
+        'alias = "forge-haiku"\n'
+        '[[models]]\nname = "mistral-small-latest"\nalias = "forge-sonnet"\n'
+        '[[models]]\nname = "mistral-large-latest"\nprovider = "mistral"\n'
+        'alias = "forge-opus"\n'
+    )
+    result = doctor._vibe_models_result(repo)
+    assert result.name == "vibe:models"
+    assert result.passed is False
+    assert "name/provider" in result.detail
+    assert "forge-sonnet" in result.detail
+
+
+def test_vibe_models_passes_with_whole_model_presets(tmp_path: Path) -> None:
+    """Preset entries carrying name+provider pass the vibe:models check."""
+    repo = _vibe_repo(tmp_path)
+    result = doctor._vibe_models_result(repo)
+    assert result.passed is True
+    assert "presets present" in result.detail

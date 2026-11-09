@@ -416,6 +416,12 @@ def _artifact_snapshot(repo_root: Path) -> dict[str, str]:
     return snapshot
 
 
+_MODEL_PRESET_PROVIDER = "mistral"
+
+# Marker delimiting the forge-owned block in .vibe/config.toml: everything
+# from the marker line on is regenerated, everything before it is user-owned.
+_MODEL_PRESET_MARKER = "# forge-owned model presets for subagent active_model pins"
+
 _MODEL_PRESETS: tuple[tuple[str, str], ...] = (
     ("forge-haiku", "ministral-8b-latest"),
     ("forge-sonnet", "mistral-small-latest"),
@@ -423,39 +429,74 @@ _MODEL_PRESETS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _configured_aliases(text: str) -> set[str]:
+    """Collect the aliases of every model entry in a config.toml fragment.
+
+    Args:
+        text: TOML text to parse.
+
+    Returns:
+        Aliases (falling back to name) of all [[models]] entries; empty when
+        the text is unparseable or has no models.
+    """
+    try:
+        models = tomllib.loads(text).get("models", [])
+    except tomllib.TOMLDecodeError:
+        return set()
+    if isinstance(models, dict):
+        return {str(alias) for alias in models}
+    aliases: set[str] = set()
+    for entry in models:
+        if isinstance(entry, dict):
+            alias = entry.get("alias", entry.get("name"))
+            if isinstance(alias, str):
+                aliases.add(alias)
+    return aliases
+
+
 def _write_model_presets(repo_root: Path) -> bool:
     """Write forge-owned [[models]] presets into .vibe/config.toml.
 
-    Appends a preset only when its alias is not already configured, so
-    user/admin models are never clobbered. The presets give generated
-    .vibe/agents/*.toml a guaranteed-resolvable active_model alias (an
-    unknown alias would reject the whole agent file at load).
+    Each preset carries name, provider and alias: Vibe counts a [[models]]
+    entry as a whole model only when both name and provider are present, and
+    silently drops the rest as orphan overrides — which then rejects every
+    generated agent file pinning that alias at load. The forge-owned block
+    (from the marker line on) is regenerated whole, so entries written by
+    older forge versions without provider are repaired; content before the
+    marker is user-owned and never touched, and a preset whose alias already
+    appears there is skipped.
 
     Args:
         repo_root: Repository root.
 
     Returns:
-        True if the file was created or extended.
+        True if the file was created or changed.
     """
     config_path = repo_root / ".vibe" / "config.toml"
     existing = config_path.read_text(encoding="utf-8") if config_path.is_file() else ""
-    try:
-        configured = {m.get("alias") for m in tomllib.loads(existing).get("models", [])}
-    except tomllib.TOMLDecodeError:
-        configured = set()
-    additions = [
-        f'\n[[models]]\nname = "{name}"\nalias = "{alias}"\n'
+    head, marker_found, _old_block = existing.partition(_MODEL_PRESET_MARKER)
+    configured = _configured_aliases(head)
+    additions = "".join(
+        f'\n[[models]]\nname = "{name}"\nprovider = "{_MODEL_PRESET_PROVIDER}"\n'
+        f'alias = "{alias}"\n'
         for alias, name in _MODEL_PRESETS
         if alias not in configured
-    ]
-    if not additions:
+    )
+    if marker_found:
+        new_content = head if head.endswith("\n") or not head else head + "\n"
+        if additions:
+            new_content += _MODEL_PRESET_MARKER + "\n" + additions
+    else:
+        if not additions:
+            return False
+        new_content = (
+            existing if existing.endswith("\n") or not existing else existing + "\n"
+        )
+        new_content += _MODEL_PRESET_MARKER + "\n" + additions
+    if new_content == existing:
         return False
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    with config_path.open("a", encoding="utf-8") as f:
-        if existing and not existing.endswith("\n"):
-            f.write("\n")
-        f.write("# forge-owned model presets for subagent active_model pins\n")
-        f.writelines(additions)
+    config_path.write_text(new_content, encoding="utf-8")
     return True
 
 

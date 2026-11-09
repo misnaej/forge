@@ -1090,42 +1090,23 @@ def _vibe_models_result(repo_root: Path) -> CheckResult:
     Returns:
         The check result for the model presets.
     """
-    config = repo_root / ".vibe" / "config.toml"
-    if not config.is_file():
+    config_path = repo_root / ".vibe" / "config.toml"
+    if not config_path.is_file():
         return CheckResult(
             name="vibe:models",
             passed=False,
-            detail=f"missing {config} — run `install-forge-vibe`",
+            detail=f"missing {config_path} — run `install-forge-vibe`",
         )
     try:
-        aliases = {
-            m.get("alias") for m in tomllib.loads(config.read_text()).get("models", [])
-        }
+        entries = _read_model_entries(config_path)
     except (tomllib.TOMLDecodeError, OSError) as exc:
         return CheckResult(
             name="vibe:models", passed=False, detail=f"unparseable: {exc}"
         )
-    presets = {"forge-haiku", "forge-sonnet", "forge-opus"}
-    missing = presets - aliases
-    if missing:
-        return CheckResult(
-            name="vibe:models",
-            passed=False,
-            detail=(
-                f"missing preset aliases {sorted(missing)} — run `install-forge-vibe`"
-            ),
-        )
-    # every active_model pin in generated agents must resolve
-    agents_dir = repo_root / ".vibe" / "agents"
-    unresolved: list[str] = []
-    if agents_dir.is_dir():
-        for toml_path in sorted(agents_dir.glob("*.toml")):
-            try:
-                pin = tomllib.loads(toml_path.read_text()).get("active_model")
-            except (tomllib.TOMLDecodeError, OSError):
-                continue
-            if pin and pin not in aliases:
-                unresolved.append(f"{toml_path.stem}:{pin}")
+    problem = _preset_problem(entries)
+    if problem:
+        return CheckResult(name="vibe:models", passed=False, detail=problem)
+    unresolved = _unresolved_agent_pins(repo_root / ".vibe" / "agents", set(entries))
     if unresolved:
         return CheckResult(
             name="vibe:models",
@@ -1137,8 +1118,89 @@ def _vibe_models_result(repo_root: Path) -> CheckResult:
     return CheckResult(
         name="vibe:models",
         passed=True,
-        detail=f"{len(aliases)} model aliases, presets present",
+        detail=f"{len(entries)} model aliases, presets present",
     )
+
+
+_FORGE_PRESET_ALIASES = frozenset({"forge-haiku", "forge-sonnet", "forge-opus"})
+
+
+def _read_model_entries(config_path: Path) -> dict[str, dict[str, object]]:
+    """Read a config.toml and key its model entries by alias.
+
+    Args:
+        config_path: Path to the TOML file to parse.
+
+    Returns:
+        Mapping of alias (falling back to name) to raw model entry, handling
+        both the [[models]] list form and the [models.<alias>] map form.
+    """
+    with config_path.open("rb") as f:
+        models = tomllib.load(f).get("models", [])
+    if isinstance(models, dict):
+        return {
+            str(alias): entry
+            for alias, entry in models.items()
+            if isinstance(entry, dict)
+        }
+    entries: dict[str, dict[str, object]] = {}
+    for entry in models:
+        if isinstance(entry, dict):
+            alias = entry.get("alias", entry.get("name"))
+            if isinstance(alias, str):
+                entries[alias] = entry
+    return entries
+
+
+def _preset_problem(entries: dict[str, dict[str, object]]) -> str | None:
+    """Describe why the forge preset aliases are unusable, if they are.
+
+    Vibe drops a [[models]] entry that lacks name or provider as an orphan
+    override, so an alias without both rejects every agent pinning it.
+
+    Args:
+        entries: Model entries keyed by alias, from _read_model_entries.
+
+    Returns:
+        The failure detail, or None when every preset is a whole model.
+    """
+    missing = sorted(_FORGE_PRESET_ALIASES - entries.keys())
+    if missing:
+        return f"missing preset aliases {missing} — run `install-forge-vibe`"
+    incomplete = sorted(
+        alias
+        for alias in _FORGE_PRESET_ALIASES
+        if not {"name", "provider"} <= entries[alias].keys()
+    )
+    if incomplete:
+        return (
+            f"preset entries missing name/provider: {incomplete} "
+            "— run `install-forge-vibe`"
+        )
+    return None
+
+
+def _unresolved_agent_pins(agents_dir: Path, aliases: set[str]) -> list[str]:
+    """List generated agent files whose active_model pin has no model entry.
+
+    Args:
+        agents_dir: Directory of generated .vibe/agents/*.toml files.
+        aliases: Configured model aliases.
+
+    Returns:
+        ``<file-stem>:<pin>`` strings for every unresolved pin.
+    """
+    unresolved: list[str] = []
+    if not agents_dir.is_dir():
+        return unresolved
+    for toml_path in sorted(agents_dir.glob("*.toml")):
+        try:
+            pin = tomllib.loads(toml_path.read_text()).get("active_model")
+        except (tomllib.TOMLDecodeError, OSError):
+            continue
+        if pin and pin not in aliases:
+            unresolved.append(f"{toml_path.stem}:{pin}")
+    return unresolved
 
 
 def _print_human(results: list[CheckResult]) -> None:

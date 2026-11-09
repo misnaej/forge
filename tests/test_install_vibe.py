@@ -158,18 +158,54 @@ def test_agents_md_generation_drops_foundation_directive(consumer_repo: Path) ->
 
 
 def test_model_presets_written_and_idempotent(tmp_path: Path) -> None:
-    """Install writes forge-* [[models]] presets once; re-run adds nothing."""
+    """Install writes forge-* [[models]] presets once; re-run adds nothing.
+
+    Each preset must carry provider: Vibe drops a [[models]] entry lacking
+    name or provider as an orphan override, which would reject every agent
+    file pinning the alias.
+    """
     root = tmp_path / "c"
     (root / ".claude-plugin").mkdir(parents=True)
     (root / ".claude-plugin" / "plugin.json").write_text('{"hooks": {}}')
     assert install_vibe(root) == 0
     cfg = root / ".vibe" / "config.toml"
     data = tomllib.loads(cfg.read_text())
-    aliases = {m["alias"] for m in data["models"]}
-    assert {"forge-haiku", "forge-sonnet", "forge-opus"} <= aliases
+    presets = {m["alias"]: m for m in data["models"]}
+    assert {"forge-haiku", "forge-sonnet", "forge-opus"} <= presets.keys()
+    for alias in ("forge-haiku", "forge-sonnet", "forge-opus"):
+        assert presets[alias]["provider"] == "mistral"
+        assert presets[alias]["name"]
     first = cfg.read_text()
     assert install_vibe(root) == 0
     assert cfg.read_text() == first
+
+
+def test_model_presets_repair_providerless_forge_block(tmp_path: Path) -> None:
+    """A forge-owned preset block written without provider is regenerated whole.
+
+    Older forge versions appended presets with only name+alias; Vibe drops
+    those entries, so re-running the install must repair the marked block
+    while leaving user content before the marker untouched.
+    """
+    root = tmp_path / "c"
+    (root / ".vibe").mkdir(parents=True)
+    (root / ".claude-plugin").mkdir()
+    (root / ".claude-plugin" / "plugin.json").write_text('{"hooks": {}}')
+    (root / ".vibe" / "config.toml").write_text(
+        '[[models]]\nname = "my-own"\nprovider = "mistral"\nalias = "custom"\n'
+        "# forge-owned model presets for subagent active_model pins\n"
+        '\n[[models]]\nname = "mistral-small-latest"\nalias = "forge-sonnet"\n'
+    )
+    assert install_vibe(root) == 0
+    data = tomllib.loads((root / ".vibe" / "config.toml").read_text())
+    presets = {m["alias"]: m for m in data["models"]}
+    assert presets["custom"] == {
+        "name": "my-own",
+        "provider": "mistral",
+        "alias": "custom",
+    }
+    assert presets["forge-sonnet"]["provider"] == "mistral"
+    assert {"forge-haiku", "forge-opus"} <= presets.keys()
 
 
 def test_model_presets_never_clobber_user_alias(tmp_path: Path) -> None:

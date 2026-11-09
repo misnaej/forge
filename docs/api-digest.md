@@ -594,6 +594,9 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_vibe_trusted_folder_result(repo_root: Path) -> CheckResult` _(internal)_ — Check the checkout is in Vibe's trusted-folders database.
 - `_check_vibe_integration(repo_root: Path) -> list[CheckResult]` _(internal)_ — Check forge's Mistral Vibe integration artifacts in this checkout.
 - `_vibe_models_result(repo_root: Path) -> CheckResult` _(internal)_ — Check .vibe/config.toml carries the forge model presets that agent pins rely on.
+- `_read_model_entries(config_path: Path) -> dict[str, dict[str, object]]` _(internal)_ — Read a config.toml and key its model entries by alias.
+- `_preset_problem(entries: dict[str, dict[str, object]]) -> str | None` _(internal)_ — Describe why the forge preset aliases are unusable, if they are.
+- `_unresolved_agent_pins(agents_dir: Path, aliases: set[str]) -> list[str]` _(internal)_ — List generated agent files whose active_model pin has no model entry.
 - `_print_human(results: list[CheckResult]) -> None` _(internal)_ — Print a human-readable report, separating blocking and INFO results.
 - `main() -> int` — Run all forge-doctor checks and print the results.
 
@@ -1116,6 +1119,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_install_agents_md(repo_root: Path) -> bool` _(internal)_ — Regenerate AGENTS.md from FOUNDATION.md + CLAUDE.md with includes resolved.
 - `_print_trust_summary(*, restart_needed: bool) -> None` _(internal)_ — Print the trust requirement and unenforced protections to stderr.
 - `_artifact_snapshot(repo_root: Path) -> dict[str, str]` _(internal)_ — Map every generated Vibe artifact path to its content hash.
+- `_configured_aliases(text: str) -> set[str]` _(internal)_ — Collect the aliases of every model entry in a config.toml fragment.
 - `_write_model_presets(repo_root: Path) -> bool` _(internal)_ — Write forge-owned [[models]] presets into .vibe/config.toml.
 - `install_vibe(repo_root: Path | None = None, *, check_mode: bool = False, verify_mode: bool = False) -> int` — Install Vibe integration for forge.
 - `_missing_artifact_issues(repo_root: Path) -> list[str]` _(internal)_ — Check the required Vibe artifact paths exist and are non-empty.
