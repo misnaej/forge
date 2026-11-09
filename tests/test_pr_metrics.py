@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -19,6 +20,7 @@ from urllib.parse import unquote
 import pytest
 
 from forge import agent_profile, pr_metrics
+from forge.agent_profile_tokens import TokenUsage
 from tests.test_agent_profile import _iso, _write_jsonl
 from tests.test_agent_profile_tokens import _at, _request, on_branch
 
@@ -121,7 +123,7 @@ def _key(pr: int) -> str:
     """
     repo_id = pr_metrics.lookup_repo_id(SLUG)
     assert repo_id is not None
-    return pr_metrics.pr_key(repo_id, pr)
+    return pr_metrics.pr_key(pr_metrics.machine_secret(), repo_id, pr)
 
 
 @pytest.fixture
@@ -240,7 +242,8 @@ def test_database_holds_no_repo_pr_or_branch_name(
     for leak in (b"Secret", b"feat/a", b"acme", b"widget", b"9876543", b"checkout"):
         assert leak not in data
     ids = json.loads((tmp_path / "data" / "forge" / "repo-ids.json").read_text())
-    assert list(ids) == [SLUG]
+    assert sorted(ids) == [pr_metrics.HMAC_KEY_FIELD, SLUG]
+    assert ids[pr_metrics.HMAC_KEY_FIELD].encode() not in data
 
 
 def test_reused_branch_name_splits_usage_at_each_merge(
@@ -411,7 +414,8 @@ def test_legacy_per_repo_database_moves_into_machine_database(
 ) -> None:
     """Behavior: an old per-repo file is imported without names, then deleted.
 
-    Running again changes nothing (idempotent).
+    Importing the same file again — a crash after import, before the
+    delete — counts nothing twice; a run with nothing left changes nothing.
     """
     del github  # wires XDG, slug and repo root
     legacy = tmp_path / "data" / "forge" / "acme" / "widget" / "metrics.sqlite"
@@ -419,7 +423,11 @@ def test_legacy_per_repo_database_moves_into_machine_database(
     with sqlite3.connect(legacy) as conn:
         conn.executescript(_LEGACY_SCHEMA)
     conn.close()
+    saved = legacy.read_bytes()
 
+    assert pr_metrics.main(["report"]) == 0
+    legacy.parent.mkdir(parents=True)
+    legacy.write_bytes(saved)  # as if the delete never happened
     assert pr_metrics.main(["report"]) == 0
     assert pr_metrics.main(["report"]) == 0
 
@@ -447,6 +455,7 @@ def test_export_equals_stored_rows(
 
     assert _run(db, transcripts, "export", "--out", str(out)) == 0
 
+    assert pr_metrics.machine_secret() not in out.read_text()
     payload = json.loads(out.read_text())
     assert payload["schema"] == pr_metrics.SCHEMA_VERSION
     [pr] = payload["prs"]
@@ -473,3 +482,123 @@ def test_report_repo_filter_resolves_current_repo_and_rejects_unknown(
     short = (pr_metrics.lookup_repo_id(SLUG) or "")[:6]
     assert f"2026-09-30 {short}#1" in capsys.readouterr().out
     assert _run(db, transcripts, "report", "--repo", "acme/other") == 2
+
+
+def test_pr_key_is_keyed_by_the_machine_secret_and_stable(
+    github: FakeGitHub,
+) -> None:
+    """Behavior: pr_key is an HMAC, not a plain sha256 anyone could recompute."""
+    del github  # wires XDG
+    secret = pr_metrics.machine_secret()
+
+    key = pr_metrics.pr_key(secret, "repo-1", 42)
+
+    assert key == pr_metrics.pr_key(pr_metrics.machine_secret(), "repo-1", 42)
+    assert key != hashlib.sha256(b"repo-1:42").hexdigest()
+    assert len(secret) == 64
+
+
+def test_plain_sha256_database_is_rekeyed_on_open(
+    tmp_path: Path, github: FakeGitHub
+) -> None:
+    """Behavior: a schema-2 database's plain keys become HMAC keys, tokens too."""
+    del github  # wires XDG
+    db = tmp_path / "v2.sqlite"
+    plain = hashlib.sha256(b"repo-1:7").hexdigest()
+    with sqlite3.connect(db) as conn:
+        conn.executescript(pr_metrics._SCHEMA)
+        conn.execute("PRAGMA user_version = 2")
+        conn.execute("INSERT INTO prs (pr_key, repo_id) VALUES (?, 'repo-1')", (plain,))
+        conn.execute(
+            "INSERT INTO pr_tokens VALUES (?, 'main', 1, 5, 0, 0, 0)", (plain,)
+        )
+    conn.close()
+
+    conn = pr_metrics.open_db(db, pr_metrics.machine_secret())
+
+    expected = pr_metrics.pr_key(pr_metrics.machine_secret(), "repo-1", 7)
+    assert conn.execute("SELECT pr_key FROM prs").fetchall() == [(expected,)]
+    assert conn.execute("SELECT pr_key FROM pr_tokens").fetchall() == [(expected,)]
+    assert conn.execute("PRAGMA user_version").fetchone() == (3,)
+    conn.close()
+
+
+@pytest.mark.parametrize("version", [99, 0])
+def test_unknown_or_legacy_database_is_refused(
+    tmp_path: Path,
+    github: FakeGitHub,
+    transcripts: Path,
+    caplog: pytest.LogCaptureFixture,
+    version: int,
+) -> None:
+    """Behavior: --db on an unknown schema or an old per-repo file exits 2, named.
+
+    Version 0 with tables is a per-repo file of an earlier version.
+
+    Args:
+        version: Value written to the database's PRAGMA user_version.
+    """
+    del github  # wires XDG
+    db = tmp_path / "odd.sqlite"
+    with sqlite3.connect(db) as conn:
+        conn.execute("CREATE TABLE prs (pr INTEGER)")
+        conn.execute(f"PRAGMA user_version = {version}")
+    conn.close()
+
+    assert _run(db, transcripts, "report") == 2
+
+    assert f"schema {version}" in caplog.text or f"version {version}" in caplog.text
+
+
+def test_fold_keeps_public_agent_types_and_sums_the_rest_as_other() -> None:
+    """Behavior: only main, shipped forge agents and Claude Code built-ins keep names.
+
+    A ``forge:`` prefix is not enough: a repo's own agent often carries
+    its name.
+    """
+    usage = {
+        name: TokenUsage(input_tokens=n, requests=1)
+        for name, n in (
+            ("main", 10),
+            ("forge:design-checker", 5),
+            ("Explore", 4),
+            ("forge:acme-reviewer", 3),
+            ("design-checker-acme", 2),
+        )
+    }
+
+    folded = pr_metrics.fold_agent_types(usage)
+
+    assert set(folded) == {"main", "forge:design-checker", "Explore", "other"}
+    assert folded["other"].input_tokens == 5
+
+
+def test_fold_refuses_an_empty_roster(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Behavior: an unreadable roster raises instead of folding all to other."""
+    monkeypatch.setattr(pr_metrics, "shipped_agent_names", frozenset)
+
+    with pytest.raises(pr_metrics.MetricsError, match="roster"):
+        pr_metrics.fold_agent_types({"main": TokenUsage()})
+
+
+@pytest.mark.parametrize(
+    ("raw", "stored"),
+    [
+        ("claude-opus-4-1", "claude-opus-4-1"),
+        ("us.anthropic.claude:v2", "us.anthropic.claude:v2"),
+        ("acme corp model", "other"),
+        ("a/b", "other"),
+        ("x" * 65, "other"),
+        (None, None),
+    ],
+)
+def test_model_is_stored_only_when_it_looks_like_a_model_id(
+    raw: str | None, stored: str | None
+) -> None:
+    """Behavior: a free-form model string from a transcript is stored as other.
+
+    Args:
+        raw: Model string as read from the transcript, or None.
+        stored: Expected value after sanitising, or None.
+    """
+    assert pr_metrics.safe_model(raw) == stored

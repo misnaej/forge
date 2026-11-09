@@ -9,7 +9,9 @@ One row per merged PR:
 
 - **Merge day** (date only, no time) and the tool (`claude-code`).
 - **Model** answering most main-session requests, from the transcripts
-  (empty when unknown).
+  (empty when unknown). Stored only when it matches
+  `[A-Za-z0-9._:-]{1,64}`; anything else is stored as `other`, since
+  transcript text is free-form.
 - **Size** (from GitHub): files changed, lines added and removed, commits.
 - **Review rounds**: the most runs any one reporter
   (`forge:design-checker`, `forge:security-checker`,
@@ -21,7 +23,9 @@ One row per merged PR:
   (the installed package's roster) and Claude Code's built-ins
   (`Explore`, `Plan`, `general-purpose`, `claude-code-guide`) keep their
   name; every other type is summed under `other` before it is stored — a
-  repo's own wrappers often carry its name, `forge:`-prefixed or not.
+  repo's own wrappers often carry its name, `forge:`-prefixed or not. An
+  unreadable roster stops recording with an error rather than storing
+  every forge agent as `other`.
 - **Time**: wall (first to last transcript record on the branch) and
   active (gaps over 5 minutes left out).
 - **Runs**: `forge-precommit` and `forge-smart-test` calls on the branch.
@@ -57,7 +61,9 @@ Earlier versions kept one database per repo at
 `<data dir>/<owner>/<repo>/metrics.sqlite`. The first run of any
 `forge-metrics` command (default `--db` only) imports those rows into the
 machine database, dropping titles, branch names and PR numbers, then
-deletes the old file and its empty directories.
+deletes the old file and its empty directories. Every import write
+replaces rather than adds, so an import interrupted before the delete
+is safely repeated.
 
 ## What is not stored
 
@@ -66,15 +72,23 @@ path, no PR number, title or head branch, no file names, no commit
 messages, no merge time of day. Instead:
 
 - **`repo_id`** — a random UUID minted the first time a repo records a PR.
-- **`pr_key`** — `sha256(repo_id + ":" + PR number)` in hex: stable, so
-  re-recording a PR replaces its row, but the number is not stored.
+- **`pr_key`** — `HMAC-SHA256(secret, repo_id + ":" + PR number)` in
+  hex: stable, so re-recording a PR replaces its row, but the number is
+  not stored and cannot be recovered by hashing small numbers with an
+  exported `repo_id`.
 
 The one file tying an id to a repo is **`<data dir>/repo-ids.json`**
-(`{"<owner>/<repo>": "<repo_id>"}`), local to this machine. `record`
-reads it to find the id; `report --repo` reads it to resolve a name to
-an id. Nothing `report`, `--html` or `export` prints reads names from it.
-Delete it and the database stays readable, just unattributable (a repo
-recorded again then gets a new id).
+(`{"<owner>/<repo>": "<repo_id>", "_secret": "<hex>"}`, owner-readable
+only), local to this machine. `_secret` is 32 random bytes minted on
+first use; it is never exported. `record` reads the file to find the id
+and key; `report --repo` reads it to resolve a name to an id. Nothing
+`report`, `--html` or `export` prints comes from it. Delete it and the
+database stays readable but unattributable: a repo recorded again gets a
+new id, and a re-recorded PR a new key (a second row).
+
+A database of the previous layout (schema 2, plain `sha256` keys) is
+rekeyed on open. Any other schema version is refused with the expected
+and found versions named.
 
 `record` parses only transcript files written since the day before the
 PR was opened that name its branch or the base branch; `backfill` reads

@@ -8,7 +8,6 @@ from forge.agent_profile_tokens import TokenUsage
 from forge.pr_metrics_report import (
     PrRow,
     export_payload,
-    fold_agent_types,
     render_html,
     render_report,
 )
@@ -58,26 +57,6 @@ def _usage(new: int, cached: int = 0) -> TokenUsage:
         The usage.
     """
     return TokenUsage(input_tokens=new, cache_read_tokens=cached, requests=1)
-
-
-def test_fold_keeps_public_agent_types_and_sums_the_rest_as_other() -> None:
-    """Behavior: only main, shipped forge agents and Claude Code built-ins keep names.
-
-    A ``forge:`` prefix is not enough: a repo's own agent often carries
-    its name.
-    """
-    folded = fold_agent_types(
-        {
-            "main": _usage(10),
-            "forge:design-checker": _usage(5),
-            "Explore": _usage(4),
-            "forge:acme-reviewer": _usage(3),
-            "design-checker-acme": _usage(2),
-        }
-    )
-
-    assert set(folded) == {"main", "forge:design-checker", "Explore", "other"}
-    assert folded["other"].input_tokens == 5
 
 
 def test_export_is_the_rows_as_stored_with_schema_version() -> None:

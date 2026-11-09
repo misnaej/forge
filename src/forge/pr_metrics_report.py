@@ -1,8 +1,7 @@
 """Reading the ``forge-metrics`` database back: report, HTML page, export.
 
 The writer side (schema, recording, GitHub) lives in
-:mod:`forge.pr_metrics`; this module only reads rows and renders them,
-plus :func:`fold_agent_types`, which the writer applies before storing.
+:mod:`forge.pr_metrics`; this module only reads rows and renders them.
 Rows carry no repo or PR name, so neither does anything rendered here: a
 PR is labelled by merge day, short repo id and its ordinal in that repo.
 """
@@ -16,7 +15,6 @@ from typing import TYPE_CHECKING, Any, Final
 
 from forge.agent_profile_tokens import MAIN_AGENT, TokenUsage, fmt_tokens
 from forge.regen_docs import forge_version
-from forge.verify_agent_doc import shipped_agent_names
 
 
 if TYPE_CHECKING:
@@ -26,13 +24,6 @@ if TYPE_CHECKING:
 #: Token table columns, in storage order.
 TOKEN_COLUMNS: Final = ("requests", "input", "cache_write", "cache_read", "output")
 _SHARED_PREFIX: Final = "forge:"
-#: Claude Code's own subagent types: public names, kept as they are.
-BUILTIN_AGENT_TYPES: Final = frozenset(
-    {"Explore", "Plan", "general-purpose", "claude-code-guide"}
-)
-#: Stored label for every agent type neither forge nor Claude Code ships
-#: (a repo's own wrappers often carry its name).
-OTHER_AGENT: Final = "other"
 #: Characters of the repo id shown in PR labels.
 SHORT_ID: Final = 6
 #: Fewest PRs with tokens a trend compares (two per half).
@@ -59,27 +50,6 @@ def usage_values(usage: TokenUsage) -> tuple[int, ...]:
         usage.cache_read_tokens,
         usage.output_tokens,
     )
-
-
-def fold_agent_types(tokens: dict[str, TokenUsage]) -> dict[str, TokenUsage]:
-    """Per-type usage, every type nobody public ships summed under ``other``.
-
-    A ``forge:`` prefix alone is not enough: anyone can name a local agent
-    ``forge:<repo>-reviewer``, so only names on the shipped roster pass.
-
-    Args:
-        tokens: Agent type → usage.
-
-    Returns:
-        Storable agent type → usage.
-    """
-    shipped = {f"{_SHARED_PREFIX}{name}" for name in shipped_agent_names()}
-    public = shipped | BUILTIN_AGENT_TYPES | {MAIN_AGENT}
-    folded: dict[str, TokenUsage] = {}
-    for agent_type, usage in tokens.items():
-        key = agent_type if agent_type in public else OTHER_AGENT
-        folded.setdefault(key, TokenUsage()).add(usage)
-    return folded
 
 
 @dataclass(frozen=True)
