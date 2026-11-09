@@ -40,6 +40,7 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import re
 import secrets
 import sqlite3
@@ -429,8 +430,13 @@ def _write_repo_ids(path: Path, ids: dict[str, str]) -> None:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(ids, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    tmp.chmod(0o600)
+    # Created owner-only before the secret is written: a default-umask file
+    # would hold it world-readable until a later chmod. A leftover from a
+    # crash is removed first: reopening it would keep its old mode.
+    tmp.unlink(missing_ok=True)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(ids, indent=2, sort_keys=True) + "\n")
     tmp.replace(path)
 
 
