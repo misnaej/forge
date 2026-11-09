@@ -32,7 +32,6 @@ from forge.pr_metrics_publish import (
     public_order,
     publish,
 )
-from tests.conftest import GIT_ENV
 from tests.test_pr_metrics_bench import FakeRunner, _git
 from tests.test_pr_metrics_report import _REPO_A, _REPO_B, _fixture_rows
 
@@ -46,14 +45,7 @@ MAINTAINER = _FORGE_GITHUB_REPO.partition("/")[0]
 SLUG = f"{MAINTAINER}/forge-metrics"
 PUBLIC = '{"private": false, "permissions": {"admin": true}}'
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}|W\d\d")
-
-
-@pytest.fixture(autouse=True)
-def isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """No machine git config; data dir in *tmp_path*."""
-    for name, value in GIT_ENV.items():
-        monkeypatch.setenv(name, value)
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+pytestmark = pytest.mark.usefixtures("isolated_git_data")
 
 
 @pytest.fixture

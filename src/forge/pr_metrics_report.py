@@ -12,7 +12,7 @@ import html
 import re
 import statistics
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, TypeVar, cast
 
 from forge.agent_profile_tokens import MAIN_AGENT, TokenUsage, fmt_tokens
 from forge.git_utils import parse_semver
@@ -859,6 +859,12 @@ class BenchRow:
     active_s: float | None
     wall_s: float | None
     tokens: dict[str, TokenUsage]
+    #: Random id of the run; keys it in the sandbox's results file.
+    run_id: str = ""
+    model: str | None = None
+    base_tag: str | None = None
+    #: Day the run was finished (``YYYY-MM-DD``).
+    recorded_on: str | None = None
 
     @property
     def new_tokens(self) -> int:
@@ -908,14 +914,15 @@ def load_bench_rows(
     query = (
         "SELECT run_id, task_id, forge_version, run_n, "
         "pr_opened, tests_green, precommit_ok, checks_passed, checks_total, "
-        "review_rounds, additions, deletions, active_s, wall_s FROM bench_runs "
-        "ORDER BY started_at, rowid"
+        "review_rounds, additions, deletions, active_s, wall_s, model, base_tag, "
+        "ended_at FROM bench_runs ORDER BY started_at, rowid"
     )
     rows = []
     for record in conn.execute(query):
         run_id, task_id, version, run_n = record[:4]
         facts = record[4:7]
-        passed, total, rounds, additions, deletions, active, wall = record[7:]
+        passed, total, rounds, additions, deletions, active, wall = record[7:14]
+        model, base_tag, ended_at = record[14:]
         if task is not None and task_id != task:
             continue
         rows.append(
@@ -932,9 +939,129 @@ def load_bench_rows(
                 active_s=active,
                 wall_s=wall,
                 tokens=tokens.get(run_id, {}),
+                run_id=run_id,
+                model=model,
+                base_tag=base_tag,
+                recorded_on=ended_at[:10] if ended_at else None,
             )
         )
     return rows
+
+
+#: :class:`BenchRow` fields stored as they are in a results file.
+_BENCH_JSON_FIELDS: Final = (
+    "task_id",
+    "forge_version",
+    "run_n",
+    "model",
+    "base_tag",
+    "recorded_on",
+    "pr_opened",
+    "tests_green",
+    "precommit_ok",
+    "checks_passed",
+    "checks_total",
+    "review_rounds",
+    "additions",
+    "deletions",
+    "active_s",
+    "wall_s",
+)
+
+
+def bench_row_json(row: BenchRow) -> dict[str, Any]:
+    """*row* as a results-file entry: its fields, tokens per agent type.
+
+    Args:
+        row: The run.
+
+    Returns:
+        JSON-ready dict (no run id: it is the entry's key).
+    """
+    entry = {name: getattr(row, name) for name in _BENCH_JSON_FIELDS}
+    entry["tokens"] = {
+        agent: dict(zip(TOKEN_COLUMNS, usage_values(usage), strict=True))
+        for agent, usage in sorted(row.tokens.items())
+    }
+    return entry
+
+
+def _json_int(value: object) -> int:
+    """A JSON count as int, ``0`` for anything else.
+
+    Args:
+        value: The decoded value.
+
+    Returns:
+        *value* when it is an int (not a bool), else ``0``.
+    """
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+_JsonT = TypeVar("_JsonT")
+
+
+def _json_opt(value: object, kind: type[_JsonT]) -> _JsonT | None:
+    """*value* when it is of *kind* (a bool is never an int or float), else None.
+
+    Args:
+        value: The decoded value.
+        kind: ``bool``, ``int``, ``float`` or ``str``.
+
+    Returns:
+        The value or ``None``.
+    """
+    if isinstance(value, bool) and kind is not bool:
+        return None
+    if kind is float and isinstance(value, int):
+        return cast("_JsonT", float(value))
+    return value if isinstance(value, kind) else None
+
+
+def bench_row_from_json(run_id: str, entry: dict[str, Any]) -> BenchRow:
+    """A results-file entry back as a :class:`BenchRow`; bad values dropped.
+
+    The file is shared through a repo, so every value is type-checked.
+
+    Args:
+        run_id: The entry's key.
+        entry: The entry.
+
+    Returns:
+        The row.
+    """
+    raw_tokens = entry.get("tokens")
+    tokens = {}
+    for agent, counts in (raw_tokens if isinstance(raw_tokens, dict) else {}).items():
+        if isinstance(agent, str) and isinstance(counts, dict):
+            values = [_json_int(counts.get(c)) for c in TOKEN_COLUMNS]
+            tokens[agent] = TokenUsage(
+                input_tokens=values[1],
+                cache_write_tokens=values[2],
+                cache_read_tokens=values[3],
+                output_tokens=values[4],
+                requests=values[0],
+            )
+    return BenchRow(
+        task_id=_json_opt(entry.get("task_id"), str) or "?",
+        forge_version=_json_opt(entry.get("forge_version"), str) or "unknown",
+        run_n=_json_int(entry.get("run_n")),
+        pr_opened=_json_opt(entry.get("pr_opened"), bool),
+        tests_green=_json_opt(entry.get("tests_green"), bool),
+        precommit_ok=_json_opt(entry.get("precommit_ok"), bool),
+        checks_passed=_json_int(entry.get("checks_passed")),
+        checks_total=_json_int(entry.get("checks_total")),
+        review_rounds=_json_opt(entry.get("review_rounds"), int),
+        additions=_json_int(entry.get("additions")),
+        deletions=_json_int(entry.get("deletions")),
+        active_s=_json_opt(entry.get("active_s"), float),
+        wall_s=_json_opt(entry.get("wall_s"), float),
+        tokens=tokens,
+        run_id=run_id,
+        model=_json_opt(entry.get("model"), str),
+        base_tag=_json_opt(entry.get("base_tag"), str),
+        recorded_on=_json_opt(entry.get("recorded_on"), str),
+    )
 
 
 def _median(values: list[float | None]) -> float | None:
@@ -1043,3 +1170,18 @@ def render_bench_report(rows: list[BenchRow]) -> str:
         "verdict (commit). version = forge in the sandbox clone at finish."
     )
     return "\n".join([*lines, notes])
+
+
+def render_bench_html(rows: list[BenchRow]) -> str:
+    """The bench report as one self-contained page, every value escaped.
+
+    Args:
+        rows: Benchmark runs.
+
+    Returns:
+        The page.
+    """
+    body = f"<pre>{html.escape(render_bench_report(rows))}</pre>"
+    return html_page(
+        "forge benchmark", "Fixed tasks per forge version: medians over runs.", body
+    )

@@ -371,6 +371,18 @@ def _git_identity(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv(key, value)
 
 
+@pytest.fixture
+def isolated_git_data(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Read no machine git config; put forge's data dir under *tmp_path*.
+
+    For suites driving forge code that runs git and writes the per-machine
+    metrics database or its side files.
+    """
+    for name, value in GIT_ENV.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+
+
 def init_git_repo(repo: Path) -> None:
     """Initialize a minimal git repo with one empty commit on ``main``.
 

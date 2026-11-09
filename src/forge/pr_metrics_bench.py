@@ -619,27 +619,20 @@ def _require_sandbox() -> Sandbox:
     return sandbox
 
 
-def _ready_clone(
-    sandbox: Sandbox,
-    clone: Path,
-    runner: Runner,
-    origin_slug: Callable[[Path], str | None],
-) -> None:
-    """Make sure *clone* is a clean, fetched clone of the sandbox.
+def sync_clone(sandbox: Sandbox, clone: Path, seams: Seams) -> None:
+    """Make sure *clone* is a fetched clone of the sandbox, cloning on first use.
 
     Args:
         sandbox: The sandbox.
         clone: The local clone; created when it does not exist.
-        runner: Command runner.
-        origin_slug: Reads a clone's ``origin`` as ``owner/name``.
+        seams: Command runner and origin reader.
 
     Raises:
-        BenchError: Cloning or fetching failed, *clone* is another repo, or
-            its working tree has changes (never discarded).
+        BenchError: Cloning failed, or *clone* is another repo.
     """
     if not (clone / ".git").exists():
         clone.parent.mkdir(parents=True, exist_ok=True)
-        cloned = runner(
+        cloned = seams.runner(
             ["gh", "repo", "clone", sandbox.slug, str(clone)],
             cwd=clone.parent,
             timeout=PUSH_TIMEOUT_S,
@@ -647,14 +640,8 @@ def _ready_clone(
         if not cloned.ok:
             msg = f"forge-metrics bench: clone failed: {_tail(cloned)}"
             raise BenchError(msg)
-    elif origin_slug(clone) != sandbox.slug:
+    elif seams.origin_slug(clone) != sandbox.slug:
         msg = f"forge-metrics bench: {clone} is not a clone of the sandbox"
-        raise BenchError(msg)
-    if run_git("status", "--porcelain", cwd=clone):
-        msg = (
-            f"forge-metrics bench: {clone} has uncommitted changes; commit, "
-            "move or remove them first (nothing is discarded)"
-        )
         raise BenchError(msg)
     run_git(
         "fetch",
@@ -665,6 +652,27 @@ def _ready_clone(
         env=network_git_env(clone),
         timeout=PUSH_TIMEOUT_S,
     )
+
+
+def _ready_clone(sandbox: Sandbox, clone: Path, seams: Seams) -> None:
+    """Make sure *clone* is a clean, fetched clone of the sandbox.
+
+    Args:
+        sandbox: The sandbox.
+        clone: The local clone; created when it does not exist.
+        seams: Command runner and origin reader.
+
+    Raises:
+        BenchError: Cloning failed, *clone* is another repo, or its working
+            tree has changes (never discarded).
+    """
+    sync_clone(sandbox, clone, seams)
+    if run_git("status", "--porcelain", cwd=clone):
+        msg = (
+            f"forge-metrics bench: {clone} has uncommitted changes; commit, "
+            "move or remove them first (nothing is discarded)"
+        )
+        raise BenchError(msg)
 
 
 def _free_branch(clone: Path, task_id: str, first_n: int) -> tuple[str, int]:
@@ -738,7 +746,7 @@ def start_run(
     check_access(
         sandbox.slug, seams.runner, clone.parent if not clone.is_dir() else clone
     )
-    _ready_clone(sandbox, clone, seams.runner, seams.origin_slug)
+    _ready_clone(sandbox, clone, seams)
     branch, n = _free_branch(clone, task.id, first_n)
     run_git("checkout", "--quiet", "-b", branch, sandbox.base_tag, cwd=clone)
     for dest, src in task.setup.items():
@@ -1057,6 +1065,7 @@ def finish_run(
     record: Callable[[BenchOutcome], None],
     clone: Path | None = None,
     seams: Seams = DEFAULT_SEAMS,
+    share: Callable[[Path], None] | None = None,
 ) -> BenchOutcome:
     """Record the started run, close its PR, delete its branch, clear the marker.
 
@@ -1069,6 +1078,9 @@ def finish_run(
         record: Stores the outcome (the database writer).
         clone: The local clone; the marker's when ``None``.
         seams: Command runner and origin reader.
+        share: Called with the clone once the run is recorded locally, to
+            write the results to the sandbox; its failure leaves the local
+            record in place.
 
     Returns:
         What the run measured.
@@ -1106,4 +1118,6 @@ def finish_run(
     outcome.ended_at = _now()
     record(outcome)
     marker_path().unlink(missing_ok=True)
+    if share is not None:
+        share(Path(marker.clone))
     return outcome
