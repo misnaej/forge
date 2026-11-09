@@ -1,0 +1,15 @@
+"""Benchmark check: ``top_words`` ignores case, other counts unchanged."""
+
+from __future__ import annotations
+
+from tally.core import count_words, top_words
+
+
+def test_mixed_case_words_merge() -> None:
+    """Behavior: every casing of a word counts toward one lower-case entry."""
+    assert top_words("Dog DOG dog cat Cat", 2) == [("dog", 3), ("cat", 2)]
+
+
+def test_count_words_unchanged() -> None:
+    """Behavior: the fix leaves word counting alone."""
+    assert count_words("The the cat") == 3

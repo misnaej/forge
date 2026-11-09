@@ -1,0 +1,30 @@
+"""Tests for tally.core."""
+
+from __future__ import annotations
+
+from tally.core import count_lines, count_words, top_words, unique_words
+
+
+def test_count_words_counts_each_word() -> None:
+    """Behavior: words are runs of letters and apostrophes."""
+    assert count_words("It's a small, small world.") == 5
+
+
+def test_count_words_of_empty_text_is_zero() -> None:
+    """Behavior: no text, no words."""
+    assert count_words("") == 0
+
+
+def test_unique_words_ignores_case() -> None:
+    """Behavior: ``Small`` and ``small`` are one word."""
+    assert unique_words("Small small world") == 2
+
+
+def test_count_lines_skips_blank_lines() -> None:
+    """Behavior: whitespace-only lines are not counted."""
+    assert count_lines("one\n\n  \ntwo\n") == 2
+
+
+def test_top_words_orders_by_count_then_alphabetically() -> None:
+    """Behavior: most frequent first, ties alphabetical."""
+    assert top_words("b a c b a b", 2) == [("b", 3), ("a", 2)]

@@ -1,0 +1,22 @@
+id = "refactor"
+summary = "Extract a helper, behaviour unchanged."
+prompt = """
+`count_words` and `unique_words` in src/tally/core.py repeat the same word
+splitting. Extract it into a public helper `tokenize(text: str) -> list[str]`
+in the same module, returning the lower-cased words of the text, and use it
+in both. Behaviour must not change: every existing test keeps passing
+unchanged. Leave `top_words` as it is.
+"""
+
+[[checks]]
+kind = "symbol"
+path = "src/tally/core.py"
+name = "tokenize"
+
+[[checks]]
+kind = "pytest"
+nodes = ["tests/test_core.py", "tests/test_cli.py"]
+
+[[checks]]
+kind = "pytest"
+hidden = "refactor/test_bench_tokenize.py.tmpl"

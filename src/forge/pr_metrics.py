@@ -21,7 +21,11 @@ Tables:
   rounds (most runs of one reporter type), pre-commit and smart-test runs,
   active and wall time;
 - ``pr_tokens`` — tokens per agent type (``main`` = the main session);
-- ``unattributed`` — tokens spent on a repo's base branch, per UTC day.
+- ``unattributed`` — tokens spent on a repo's base branch, per UTC day;
+- ``bench_runs`` / ``bench_tokens`` — ``forge-metrics bench`` runs
+  (:mod:`forge.pr_metrics_bench`): one row per task run, keyed by a random
+  ``run_id``, with the forge version under test and outcome facts; no
+  sandbox name or branch.
 
 Tokens are attributed by the ``gitBranch`` Claude Code stamps on every
 transcript record, up to the PR's merge (and after any earlier merge of a
@@ -68,9 +72,26 @@ from forge.git_utils import (
     repo_root,
     require_cli,
 )
+from forge.pr_metrics_bench import (
+    DEFAULT_RUNS,
+    DEFAULT_TIMEOUT_MIN,
+    BenchError,
+    RunOptions,
+    bench_data,
+    init_sandbox,
+    load_tasks,
+    plan_set,
+    read_sandbox,
+    run_command,
+    run_set,
+    valid_version,
+    version_exists,
+)
 from forge.pr_metrics_report import (
     export_payload,
+    load_bench_rows,
     load_rows,
+    render_bench_report,
     render_html,
     render_report,
     usage_values,
@@ -83,6 +104,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from forge.agent_profile_tokens import BranchSummary, BranchUsageTally
+    from forge.pr_metrics_bench import BenchOutcome
 
 
 configure_cli_logging()
@@ -95,7 +117,9 @@ REPO_IDS_NAME: Final = "repo-ids.json"
 #: Field of ``repo-ids.json`` holding the ``pr_key`` HMAC secret.
 HMAC_KEY_FIELD: Final = "_secret"
 #: Database layout version, in ``PRAGMA user_version`` and the export.
-SCHEMA_VERSION: Final = 3
+SCHEMA_VERSION: Final = 4
+#: Same layout without the bench tables; they are added on open.
+_NO_BENCH_VERSION: Final = 3
 #: Same layout, ``pr_key`` a plain ``sha256``; rekeyed on open.
 _PLAIN_KEY_VERSION: Final = 2
 #: Highest PR number tried when recovering a plain key's number.
@@ -163,7 +187,79 @@ CREATE TABLE IF NOT EXISTS unattributed (
     cache_read INTEGER, output INTEGER,
     PRIMARY KEY (repo_id, date, agent_type)
 );
+CREATE TABLE IF NOT EXISTS bench_runs (
+    run_id TEXT PRIMARY KEY,
+    forge_version TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    run_n INTEGER,
+    model TEXT,
+    base_tag TEXT,
+    started_at TEXT,
+    ended_at TEXT,
+    setup_ok INTEGER,
+    timed_out INTEGER,
+    claude_exit INTEGER,
+    pr_opened INTEGER,
+    wrapups_posted INTEGER,
+    tests_green INTEGER,
+    precommit_ok INTEGER,
+    checks_passed INTEGER,
+    checks_total INTEGER,
+    files INTEGER,
+    additions INTEGER,
+    deletions INTEGER,
+    commits INTEGER,
+    review_rounds INTEGER,
+    precommit_runs INTEGER,
+    test_runs INTEGER,
+    active_s REAL,
+    wall_s REAL,
+    recorder_version TEXT
+);
+CREATE TABLE IF NOT EXISTS bench_tokens (
+    run_id TEXT NOT NULL REFERENCES bench_runs(run_id),
+    agent_type TEXT NOT NULL,
+    requests INTEGER, input INTEGER, cache_write INTEGER,
+    cache_read INTEGER, output INTEGER,
+    PRIMARY KEY (run_id, agent_type)
+);
 """
+#: ``bench_runs`` columns, in table order.
+_BENCH_FIELDS: Final = (
+    "run_id",
+    "forge_version",
+    "task_id",
+    "run_n",
+    "model",
+    "base_tag",
+    "started_at",
+    "ended_at",
+    "setup_ok",
+    "timed_out",
+    "claude_exit",
+    "pr_opened",
+    "wrapups_posted",
+    "tests_green",
+    "precommit_ok",
+    "checks_passed",
+    "checks_total",
+    "files",
+    "additions",
+    "deletions",
+    "commits",
+    "review_rounds",
+    "precommit_runs",
+    "test_runs",
+    "active_s",
+    "wall_s",
+    "recorder_version",
+)
+# Literal SQL: one placeholder per :data:`_BENCH_FIELDS` entry, in order.
+# sqlite3 stores a bool as 0 / 1.
+_INSERT_BENCH = (
+    "INSERT OR REPLACE INTO bench_runs VALUES "
+    "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+)
 #: ``prs`` columns after ``pr_key`` and ``repo_id``, in table order.
 _PR_FIELDS: Final = (
     "merged_on",
@@ -324,18 +420,20 @@ def open_db(path: Path, secret: str) -> sqlite3.Connection:
             "version (schema 0); run without --db to import it"
         )
         raise MetricsError(msg)
-    if version not in {0, _PLAIN_KEY_VERSION, SCHEMA_VERSION}:
+    if version not in {0, _PLAIN_KEY_VERSION, _NO_BENCH_VERSION, SCHEMA_VERSION}:
         conn.close()
         msg = (
             f"forge-metrics: {path} has schema version {version}, expected "
             f"{SCHEMA_VERSION}; upgrade forge or pass another --db"
         )
         raise MetricsError(msg)
-    if version == 0:
+    if version == _PLAIN_KEY_VERSION:
+        _rekey_plain(conn, secret)
+    if version != SCHEMA_VERSION:
+        # Every statement is CREATE ... IF NOT EXISTS: an older layout
+        # gains the tables it lacks and keeps its rows.
         conn.executescript(_SCHEMA)
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
-    elif version == _PLAIN_KEY_VERSION:
-        _rekey_plain(conn, secret)
     return conn
 
 
@@ -643,6 +741,69 @@ def record_unattributed(
         base_branch: The repo's base branch.
     """
     _keep_unattributed(conn, repo_id, tally.daily(base_branch))
+
+
+def record_bench_run(conn: sqlite3.Connection, outcome: BenchOutcome) -> None:
+    """Store one benchmark run and its tokens per agent type.
+
+    The outcome carries no sandbox name, branch or path; agent types and
+    the model are folded as for PRs.
+
+    Args:
+        conn: The metrics database.
+        outcome: What the run measured.
+    """
+    summary = outcome.summary
+    active = wall = rounds = precommit = tests = None
+    tokens: dict[str, TokenUsage] = {}
+    model = outcome.model
+    if summary is not None:
+        active, wall = active_and_wall(summary.timestamps)
+        rounds, precommit, tests = (
+            review_rounds(summary),
+            summary.precommit_runs,
+            summary.test_runs,
+        )
+        tokens, model = summary.tokens, summary.model or model
+    values = {
+        "run_id": outcome.run_id,
+        "forge_version": outcome.version,
+        "task_id": outcome.task_id,
+        "run_n": outcome.run_n,
+        "model": safe_model(model),
+        "base_tag": outcome.base_tag,
+        "started_at": outcome.started_at,
+        "ended_at": outcome.ended_at,
+        "setup_ok": outcome.setup_ok,
+        "timed_out": outcome.timed_out,
+        "claude_exit": outcome.claude_exit,
+        "pr_opened": outcome.pr_opened,
+        "wrapups_posted": outcome.wrapups_posted,
+        "tests_green": outcome.tests_green,
+        "precommit_ok": outcome.precommit_ok,
+        "checks_passed": outcome.checks_passed,
+        "checks_total": outcome.checks_total,
+        "files": outcome.files,
+        "additions": outcome.additions,
+        "deletions": outcome.deletions,
+        "commits": outcome.commits,
+        "review_rounds": rounds,
+        "precommit_runs": precommit,
+        "test_runs": tests,
+        "active_s": active,
+        "wall_s": wall,
+        "recorder_version": forge_version(),
+    }
+    with conn:
+        conn.execute(_INSERT_BENCH, tuple(values[f] for f in _BENCH_FIELDS))
+        conn.execute("DELETE FROM bench_tokens WHERE run_id = ?", (outcome.run_id,))
+        conn.executemany(
+            "INSERT INTO bench_tokens VALUES (?,?,?,?,?,?,?)",
+            [
+                (outcome.run_id, agent_type, *usage_values(usage))
+                for agent_type, usage in sorted(fold_agent_types(tokens).items())
+            ],
+        )
 
 
 # --- migration -------------------------------------------------------------
@@ -1028,7 +1189,40 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     export = sub.add_parser("export", help="Write the anonymised rows as JSON.")
     export.add_argument("--out", type=Path, help="File to write (default: stdout).")
+    bench = sub.add_parser(
+        "bench",
+        help="Run fixed tasks against a forge version and compare versions.",
+        description=(
+            "Fixed tasks run headless in a private sandbox repo, to compare "
+            "forge versions. A full set costs about as many tokens as ten PRs."
+        ),
+    )
+    _add_bench_commands(bench)
     return parser
+
+
+def _add_bench_commands(bench: argparse.ArgumentParser) -> None:
+    """Add ``bench``'s subcommands.
+
+    Args:
+        bench: The ``bench`` parser.
+    """
+    steps = bench.add_subparsers(dest="bench_command", required=True)
+    init = steps.add_parser("init", help="Fill an empty private sandbox repo.")
+    init.add_argument("--repo", required=True, help="owner/name of the sandbox.")
+    run = steps.add_parser("run", help="Run the tasks against one forge version.")
+    run.add_argument("--version", required=True, help="Forge release tag, vX.Y.Z.")
+    run.add_argument("--task", action="append", help="Only this task (repeatable).")
+    run.add_argument("--runs", type=int, default=DEFAULT_RUNS)
+    run.add_argument("--model", help="Model for claude (default: its own).")
+    run.add_argument(
+        "--timeout-min",
+        type=float,
+        default=DEFAULT_TIMEOUT_MIN,
+        help="Bound on each agent run, in minutes.",
+    )
+    report = steps.add_parser("report", help="Compare versions per task.")
+    report.add_argument("--task", help="Only this task.")
 
 
 def _record(
@@ -1119,7 +1313,75 @@ def _read(conn: sqlite3.Connection, root: Path, args: argparse.Namespace) -> int
     return 0
 
 
-def _refuse(exc: MetricsError) -> int:
+def _bench_run(conn: sqlite3.Connection, data: Path, args: argparse.Namespace) -> int:
+    """Run ``bench run``: every chosen task-run pair against one forge version.
+
+    Args:
+        conn: The metrics database.
+        data: The bench data directory.
+        args: Parsed arguments.
+
+    Returns:
+        Exit code: 0 once every run is recorded, 2 when nothing can run.
+    """
+    sandbox = read_sandbox()
+    if sandbox is None:
+        logger.error("forge-metrics bench: no sandbox; run `bench init --repo` first")
+        return 2
+    if not valid_version(args.version) or args.runs < 1:
+        logger.error("forge-metrics bench: --version vX.Y.Z and --runs >= 1 needed")
+        return 2
+    tasks = load_tasks(data)
+    unknown = sorted(set(args.task or ()) - set(tasks))
+    if unknown:
+        known = ", ".join(tasks)
+        logger.error("forge-metrics bench: unknown %s; known: %s", unknown, known)
+        return 2
+    require_cli("gh", caller="forge-metrics", hint="Install GitHub CLI (gh).")
+    require_cli("claude", caller="forge-metrics", hint="Install Claude Code.")
+    if not version_exists(args.version, run_command, Path.cwd()):
+        logger.error("forge-metrics bench: forge has no tag %s", args.version)
+        return 2
+    chosen = [tasks[t] for t in (args.task or tasks)]
+    plans = plan_set(
+        sandbox,
+        chosen,
+        version=args.version,
+        runs=args.runs,
+        run_options=RunOptions(args.model, args.timeout_min * 60),
+    )
+    emit(f"forge-metrics bench: {len(plans)} run(s) of forge {args.version}")
+    run_set(plans, data=data, record=lambda outcome: record_bench_run(conn, outcome))
+    emit("forge-metrics bench: recorded; `forge-metrics bench report` compares")
+    return 0
+
+
+def _bench(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
+    """Run ``bench init``, ``bench run`` or ``bench report``.
+
+    Args:
+        conn: The metrics database.
+        args: Parsed arguments.
+
+    Returns:
+        Exit code.
+    """
+    if args.bench_command == "report":
+        emit(render_bench_report(load_bench_rows(conn, task=args.task)))
+        return 0
+    with bench_data() as data:
+        if args.bench_command == "run":
+            return _bench_run(conn, data, args)
+        require_cli("gh", caller="forge-metrics", hint="Install GitHub CLI (gh).")
+        try:
+            sandbox = init_sandbox(args.repo, data=data)
+        except BenchError as exc:
+            return _refuse(exc)
+    emit(f"forge-metrics bench: sandbox ready at {sandbox.base_tag}")
+    return 0
+
+
+def _refuse(exc: MetricsError | BenchError) -> int:
     """Report a refusal the user can act on, without a traceback.
 
     Called from ``except`` blocks so the message is logged as a plain error:
@@ -1156,6 +1418,8 @@ def main(argv: list[str] | None = None) -> int:
         legacy = legacy_paths(forge_data_dir()) if args.db is None else []
         if legacy:
             migrate_legacy(conn, legacy, secret)
+        if args.command == "bench":
+            return _bench(conn, args)
         if args.command not in {"record", "backfill"}:
             return _read(conn, root, args)
         slug = github_slug(root)

@@ -1,0 +1,39 @@
+"""Tests for the tally command line."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import pytest
+
+from tally.cli import main
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+
+def test_words_prints_the_word_count(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Behavior: ``tally words`` prints one number."""
+    path = tmp_path / "text.txt"
+    path.write_text("one two three\n", encoding="utf-8")
+    assert main(["words", str(path)]) == 0
+    assert capsys.readouterr().out == "3\n"
+
+
+def test_lines_prints_the_line_count(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Behavior: ``tally lines`` counts non-blank lines."""
+    path = tmp_path / "text.txt"
+    path.write_text("one\n\ntwo\n", encoding="utf-8")
+    assert main(["lines", str(path)]) == 0
+    assert capsys.readouterr().out == "2\n"
+
+
+def test_missing_command_exits_with_usage() -> None:
+    """Behavior: no subcommand is a usage error."""
+    with pytest.raises(SystemExit):
+        main([])

@@ -519,7 +519,9 @@ def test_plain_sha256_database_is_rekeyed_on_open(
     expected = pr_metrics.pr_key(pr_metrics.machine_secret(), "repo-1", 7)
     assert conn.execute("SELECT pr_key FROM prs").fetchall() == [(expected,)]
     assert conn.execute("SELECT pr_key FROM pr_tokens").fetchall() == [(expected,)]
-    assert conn.execute("PRAGMA user_version").fetchone() == (3,)
+    assert conn.execute("PRAGMA user_version").fetchone() == (
+        pr_metrics.SCHEMA_VERSION,
+    )
     conn.close()
 
 

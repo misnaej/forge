@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final
 
 from forge.agent_profile_tokens import MAIN_AGENT, TokenUsage, fmt_tokens
+from forge.git_utils import parse_semver
 from forge.regen_docs import forge_version
 
 
@@ -430,3 +431,214 @@ def export_payload(rows: list[PrRow], *, schema: int) -> dict[str, Any]:
             for row in rows
         ],
     }
+
+
+# --- bench -----------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class BenchRow:
+    """One recorded benchmark run with its tokens."""
+
+    task_id: str
+    forge_version: str
+    run_n: int
+    setup_ok: bool | None
+    timed_out: bool | None
+    pr_opened: bool | None
+    tests_green: bool | None
+    precommit_ok: bool | None
+    checks_passed: int
+    checks_total: int
+    review_rounds: int | None
+    additions: int
+    deletions: int
+    active_s: float | None
+    wall_s: float | None
+    tokens: dict[str, TokenUsage]
+
+    @property
+    def new_tokens(self) -> int:
+        """Every agent's tokens not served from cache."""
+        return sum(usage.new_tokens for usage in self.tokens.values())
+
+    @property
+    def cache_share(self) -> float | None:
+        """Cache reads as a share of all tokens; ``None`` with no tokens."""
+        total = sum(usage.total_tokens for usage in self.tokens.values())
+        return 1 - self.new_tokens / total if total else None
+
+
+def _fact(value: int | None) -> bool | None:
+    """A stored ``0`` / ``1`` fact as a bool.
+
+    Args:
+        value: The stored value.
+
+    Returns:
+        The bool, ``None`` when not recorded.
+    """
+    return None if value is None else bool(value)
+
+
+def load_bench_rows(
+    conn: sqlite3.Connection, *, task: str | None = None
+) -> list[BenchRow]:
+    """Recorded benchmark runs, oldest first.
+
+    Args:
+        conn: The metrics database.
+        task: Only this task's runs; all when ``None``.
+
+    Returns:
+        The rows.
+    """
+    tokens: dict[str, dict[str, TokenUsage]] = {}
+    for run_id, agent, *counts in conn.execute("SELECT * FROM bench_tokens"):
+        tokens.setdefault(run_id, {})[agent] = TokenUsage(
+            input_tokens=counts[1],
+            cache_write_tokens=counts[2],
+            cache_read_tokens=counts[3],
+            output_tokens=counts[4],
+            requests=counts[0],
+        )
+    query = (
+        "SELECT run_id, task_id, forge_version, run_n, setup_ok, timed_out, "
+        "pr_opened, tests_green, precommit_ok, checks_passed, checks_total, "
+        "review_rounds, additions, deletions, active_s, wall_s FROM bench_runs "
+        "ORDER BY started_at, rowid"
+    )
+    rows = []
+    for record in conn.execute(query):
+        run_id, task_id, version, run_n = record[:4]
+        facts = record[4:9]
+        passed, total, rounds, additions, deletions, active, wall = record[9:]
+        if task is not None and task_id != task:
+            continue
+        rows.append(
+            BenchRow(
+                task_id,
+                version,
+                run_n,
+                *(_fact(v) for v in facts),
+                checks_passed=passed or 0,
+                checks_total=total or 0,
+                review_rounds=rounds,
+                additions=additions or 0,
+                deletions=deletions or 0,
+                active_s=active,
+                wall_s=wall,
+                tokens=tokens.get(run_id, {}),
+            )
+        )
+    return rows
+
+
+def _median(values: list[float | None]) -> float | None:
+    """The median of the known values.
+
+    Args:
+        values: Values, ``None`` for unknown.
+
+    Returns:
+        The median, ``None`` when nothing is known.
+    """
+    known = [v for v in values if v is not None]
+    return statistics.median(known) if known else None
+
+
+def _count(values: list[bool | None]) -> str:
+    """``true/known`` for one fact across runs.
+
+    Args:
+        values: The fact per run, ``None`` when not reached.
+
+    Returns:
+        ``n/m``; ``-`` when no run reached it.
+    """
+    known = [v for v in values if v is not None]
+    return f"{sum(known)}/{len(known)}" if known else "-"
+
+
+def _version_key(version: str) -> tuple[int, int, int] | tuple[float]:
+    """Sort key putting versions in release order, unknown shapes last.
+
+    Args:
+        version: ``vX.Y.Z``.
+
+    Returns:
+        The key.
+    """
+    return parse_semver(version) or (float("inf"),)
+
+
+_BENCH_HEADER: Final = (
+    f"{'version':<10} {'runs':>4} {'new':>6} {'cache%':>6} {'active':>6} "
+    f"{'wall':>6} {'rounds':>6} {'lines':>6} {'setup':>5} {'pr':>5} "
+    f"{'tests':>5} {'checks':>6} {'commit':>6} {'timeout':>7}"
+)
+
+
+def _bench_line(version: str, runs: list[BenchRow]) -> str:
+    """One version's medians and fact counts for one task.
+
+    Args:
+        version: The forge version.
+        runs: Its runs of the task.
+
+    Returns:
+        The table line.
+    """
+    new = _median([r.new_tokens or None for r in runs])
+    cache = _median([r.cache_share for r in runs])
+    rounds = _median([r.review_rounds for r in runs])
+    lines = _median([r.additions + r.deletions for r in runs])
+    checks = f"{sum(r.checks_passed for r in runs)}/{sum(r.checks_total for r in runs)}"
+    return (
+        f"{version:<10} {len(runs):>4} "
+        f"{fmt_tokens(round(new)) if new is not None else '-':>6} "
+        f"{f'{cache:.0%}' if cache is not None else '-':>6} "
+        f"{_fmt_s(_median([r.active_s for r in runs])):>6} "
+        f"{_fmt_s(_median([r.wall_s for r in runs])):>6} "
+        f"{_fmt_median(rounds) if rounds is not None else '-':>6} "
+        f"{round(lines) if lines is not None else '-':>6} "
+        f"{_count([r.setup_ok for r in runs]):>5} "
+        f"{_count([r.pr_opened for r in runs]):>5} "
+        f"{_count([r.tests_green for r in runs]):>5} {checks:>6} "
+        f"{_count([r.precommit_ok for r in runs]):>6} "
+        f"{_count([r.timed_out for r in runs]):>7}"
+    )
+
+
+def render_bench_report(rows: list[BenchRow]) -> str:
+    """Per task, each version's runs side by side: medians and fact counts.
+
+    Args:
+        rows: Benchmark runs.
+
+    Returns:
+        The report text.
+    """
+    if not rows:
+        return "No benchmark runs recorded yet. Run `forge-metrics bench run`."
+    by_task: dict[str, dict[str, list[BenchRow]]] = {}
+    for row in rows:
+        by_task.setdefault(row.task_id, {}).setdefault(row.forge_version, []).append(
+            row
+        )
+    lines: list[str] = []
+    for task_id in sorted(by_task):
+        lines += [f"task {task_id}", _BENCH_HEADER]
+        versions = by_task[task_id]
+        lines += [
+            _bench_line(version, versions[version])
+            for version in sorted(versions, key=_version_key)
+        ]
+        lines.append("")
+    notes = (
+        "Medians over runs: new = input + cache write + output tokens; lines = "
+        "added + removed.\nCounts are runs where the fact held / runs that "
+        "reached it: setup ready, PR opened, sandbox tests green, task checks, "
+        "pre-commit verdict (commit), agent timed out."
+    )
+    return "\n".join([*lines, notes])

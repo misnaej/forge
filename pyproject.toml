@@ -284,7 +284,14 @@ where = ["src"]
 include = ["forge*"]
 
 [tool.setuptools.package-data]
-forge = ["data/*.md", "data/*.js", "data/*.toml", "data/docs/*.md"]
+forge = [
+    "data/*.md",
+    "data/*.js",
+    "data/*.toml",
+    "data/docs/*.md",
+    # `forge-metrics bench`: sample project, task specs, check files.
+    "data/bench/**/*",
+]
 
 [tool.setuptools_scm]
 # Version derived from the latest git tag (e.g. v1.1.0 → 1.1.0).
