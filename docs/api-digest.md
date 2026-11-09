@@ -1620,10 +1620,16 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 - `class PublishError` — The target repo is refused, or cloning or pushing failed.
 - `class Published` — What a publish did.
-- `public_files(rows: list[PrRow], *, schema: int, shuffle: Callable[[list[PrRow]], None] | None = None) -> dict[str, str]` — The public page and data, in one shared random order.
+- `_scatter_key(row: PrRow) -> str` _(internal)_ — A stable, merge-order-free sort key: a hash of the row's own PR key.
+- `public_order(rows: list[PrRow]) -> list[PrRow]` — *rows* grouped by forge version (release order), scattered in each group.
+- `public_rows(rows: list[PrRow], forge_repo_id: str | None) -> list[PrRow]` — *rows* relabelled ``forge`` / ``external`` and in :func:`public_order`.
+- `render_public_html(rows: list[PrRow]) -> str` — The public page: by-version charts and per-PR numbers, no dates.
+- `public_payload(rows: list[PrRow], *, schema: int) -> dict[str, Any]` — The public page's rows as JSON: no keys, names or dates.
+- `public_files(rows: list[PrRow], *, schema: int, forge_repo_id: str | None) -> dict[str, str]` — The public page and data, in one shared scrambled order.
 - `write_files(files: Mapping[str, str], dest: Path) -> list[Path]` — Write *files* into *dest*, creating it.
 - `pages_url(slug: str) -> str` — Where GitHub Pages serves a project repo.
 - `enable_pages_command(slug: str) -> str` — The one-time ``gh`` command serving *slug*'s ``main`` with Pages.
+- `check_maintainer(slug: str, runner: Runner, cwd: Path) -> None` — Refuse anyone but forge's maintainer, and any repo they do not own.
 - `check_target(slug: str, runner: Runner, cwd: Path) -> None` — Refuse a repo that is private or not administered by the ``gh`` user.
 - `check_tracked(clone: Path) -> None` — Refuse a clone tracking any file publish does not write, or off ``main``.
 - `_commit_and_push(clone: Path, files: Mapping[str, str]) -> bool` _(internal)_ — Write the page files into *clone*, commit and push when anything changed.
@@ -1634,6 +1640,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 > _Reading the ``forge-metrics`` database back: report, HTML page, export._
 
 - `usage_values(usage: TokenUsage) -> tuple[int, ...]` — *usage* in :data:`TOKEN_COLUMNS` order.
+- `short_repo(repo_id: str) -> str` — How a repo shows: an id cut to :data:`SHORT_ID`, a word label whole.
 - `class PrRow` — One recorded PR with its tokens, as the report and export read it.
   - `total_tokens(self) -> int` — Every agent's tokens summed, cache reads included.
   - `new_tokens(self) -> int` — Every agent's tokens not served from cache.
@@ -1650,7 +1657,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_cells(row: PrRow) -> dict[str, str]` _(internal)_ — One PR's report cells, shared by the terminal table and the page.
 - `_bar_chart(rows: list[PrRow]) -> str` _(internal)_ — An inline SVG bar chart of new tokens per PR, main session vs helpers.
 - `class VersionStats` — Medians for one (forge version, repo) group of PRs.
-- `_version_name(row: PrRow) -> str` _(internal)_ — The row's forge version, :data:`UNKNOWN_VERSION` when not recorded.
+- `version_name(row: PrRow) -> str` — The row's forge version, :data:`UNKNOWN_VERSION` when not recorded.
 - `version_order(rows: list[PrRow]) -> list[str]` — The versions in *rows*, release order, :data:`UNKNOWN_VERSION` last.
 - `repo_order(rows: list[PrRow]) -> list[str]` — Repo ids by first recorded PR: fixes each repo's colour.
 - `_group_stats(group: list[PrRow]) -> VersionStats` _(internal)_ — Medians for one group; token medians over PRs with token data only.
@@ -1661,14 +1668,11 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_fmt_cell(value: float | None, fmt: Callable[[float], str]) -> str` _(internal)_ — A table median, ``-`` when unknown.
 - `_version_table(rows: list[PrRow], stats: dict[tuple[str, str], VersionStats]) -> str` _(internal)_ — Version by repo table of counts and medians.
 - `_repo_legend(rows: list[PrRow]) -> str` _(internal)_ — Legend naming each repo's colour by short id.
-- `_version_section(rows: list[PrRow], *, over_time: bool = True) -> str` _(internal)_ — The by-version charts and table.
-- `_pr_cells(row: PrRow) -> str` _(internal)_ — One PR's number cells, from ``tokens`` to top helpers.
-- `_page(title: str, intro: str, body: str) -> str` _(internal)_ — The self-contained page shell: inline style, nothing fetched.
+- `version_section(rows: list[PrRow], *, over_time: bool = True) -> str` — The by-version charts and table.
+- `pr_cells(row: PrRow) -> str` — One PR's number cells, from ``tokens`` to top helpers.
+- `html_page(title: str, intro: str, body: str) -> str` — The self-contained page shell: inline style, nothing fetched.
 - `render_html(rows: list[PrRow]) -> str` — One self-contained HTML page: charts, tables and trend, nothing fetched.
-- `public_order(rows: list[PrRow], shuffle: Callable[[list[PrRow]], None] | None = None) -> list[PrRow]` — *rows* grouped by forge version (release order), shuffled in each group.
-- `render_public_html(rows: list[PrRow]) -> str` — The public page: by-version charts and per-PR numbers, no dates.
-- `public_payload(rows: list[PrRow], *, schema: int) -> dict[str, Any]` — The public page's rows as JSON: no keys, names or dates.
-- `_token_dict(row: PrRow) -> dict[str, dict[str, int]]` _(internal)_ — *row*'s tokens as ``agent type → column → count``.
+- `token_dict(row: PrRow) -> dict[str, dict[str, int]]` — *row*'s tokens as ``agent type → column → count``.
 - `export_payload(rows: list[PrRow], *, schema: int) -> dict[str, Any]` — The stored rows as they are: already anonymised, so nothing is dropped.
 - `class BenchRow` — One recorded benchmark run with its tokens.
   - `new_tokens(self) -> int` — Every agent's tokens not served from cache.

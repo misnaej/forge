@@ -9,13 +9,13 @@ PR is labelled by merge day, short repo id and its ordinal in that repo.
 from __future__ import annotations
 
 import html
-import secrets
+import re
 import statistics
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final
 
 from forge.agent_profile_tokens import MAIN_AGENT, TokenUsage, fmt_tokens
-from forge.git_utils import parse_semver, release_of
+from forge.git_utils import parse_semver
 from forge.pr_metrics_charts import (
     COMPACT_FROM,
     Change,
@@ -39,6 +39,8 @@ TOKEN_COLUMNS: Final = ("requests", "input", "cache_write", "cache_read", "outpu
 _SHARED_PREFIX: Final = "forge:"
 #: Characters of the repo id shown in PR labels.
 SHORT_ID: Final = 6
+#: What a stored repo id looks like (hex uuid); anything else is a label.
+_REPO_ID_RE: Final = re.compile(r"[0-9a-f-]+")
 #: Fewest PRs with tokens a trend compares (two per half).
 TREND_MIN_PRS: Final = 4
 _CHART_W: Final = 640
@@ -61,6 +63,21 @@ def usage_values(usage: TokenUsage) -> tuple[int, ...]:
         usage.cache_read_tokens,
         usage.output_tokens,
     )
+
+
+def short_repo(repo_id: str) -> str:
+    """How a repo shows: an id cut to :data:`SHORT_ID`, a word label whole.
+
+    Stored ids are hex uuids; the public page swaps them for word labels
+    (``forge`` / ``external``), which must not be cut.
+
+    Args:
+        repo_id: A stored id or a label.
+
+    Returns:
+        The shown form.
+    """
+    return repo_id[:SHORT_ID] if _REPO_ID_RE.fullmatch(repo_id) else repo_id
 
 
 @dataclass(frozen=True)
@@ -112,7 +129,7 @@ class PrRow:
     @property
     def label(self) -> str:
         """``<merge day> <short repo id>#<ordinal>``: names the PR without names."""
-        return f"{self.merged_on or '?'} {self.repo_id[:SHORT_ID]}#{self.ordinal}"
+        return f"{self.merged_on or '?'} {short_repo(self.repo_id)}#{self.ordinal}"
 
 
 def load_rows(
@@ -368,7 +385,7 @@ class VersionStats:
     rounds: float | None
 
 
-def _version_name(row: PrRow) -> str:
+def version_name(row: PrRow) -> str:
     """The row's forge version, :data:`UNKNOWN_VERSION` when not recorded.
 
     Args:
@@ -389,7 +406,7 @@ def version_order(rows: list[PrRow]) -> list[str]:
     Returns:
         The version names.
     """
-    names = {_version_name(row) for row in rows}
+    names = {version_name(row) for row in rows}
     known = sorted(names - {UNKNOWN_VERSION}, key=lambda v: (_version_key(v), v))
     return known + [UNKNOWN_VERSION] * (UNKNOWN_VERSION in names)
 
@@ -439,7 +456,7 @@ def version_stats(rows: list[PrRow]) -> dict[tuple[str, str], VersionStats]:
     """
     groups: dict[tuple[str, str], list[PrRow]] = {}
     for row in rows:
-        groups.setdefault((_version_name(row), row.repo_id), []).append(row)
+        groups.setdefault((version_name(row), row.repo_id), []).append(row)
     return {key: _group_stats(group) for key, group in groups.items()}
 
 
@@ -469,7 +486,7 @@ def _version_chart(
         cells = [stats.get((version, repo_id)) for version in versions]
         series.append(
             Series(
-                repo_id[:SHORT_ID],
+                short_repo(repo_id),
                 [metric(cell) if cell else None for cell in cells],
             )
         )
@@ -496,7 +513,9 @@ def version_changes(rows: list[PrRow]) -> list[Change]:
         last[row.repo_id] = row.forge_version
         if before is not None and before != row.forge_version:
             changes.append(
-                Change(row.merged_on, row.repo_id[:SHORT_ID], before, row.forge_version)
+                Change(
+                    row.merged_on, short_repo(row.repo_id), before, row.forge_version
+                )
             )
     return changes
 
@@ -514,10 +533,10 @@ def _time_chart(rows: list[PrRow]) -> str:
     dots = [
         Dot(
             slot[row.repo_id],
-            row.repo_id[:SHORT_ID],
+            short_repo(row.repo_id),
             row.merged_on,
             float(row.new_tokens),
-            f"#{row.ordinal} {row.merged_on} {_version_name(row)}: "
+            f"#{row.ordinal} {row.merged_on} {version_name(row)}: "
             f"{fmt_tokens(row.new_tokens)}",
         )
         for row in rows
@@ -572,7 +591,7 @@ def _version_table(
                 _fmt_cell(cell.rounds, lambda v: f"{v:.1f}"),
             )
             body.append(
-                f"<tr><td>{esc(version)}</td><td>{esc(repo_id[:SHORT_ID])}</td>"
+                f"<tr><td>{esc(version)}</td><td>{esc(short_repo(repo_id))}</td>"
                 + "".join(f"<td>{esc(v)}</td>" for v in values)
                 + "</tr>"
             )
@@ -594,13 +613,13 @@ def _repo_legend(rows: list[PrRow]) -> str:
         A ``<p>``.
     """
     items = "".join(
-        f'<span class="swatch {series_class(i)}"></span>{html.escape(r[:SHORT_ID])}'
+        f'<span class="swatch {series_class(i)}"></span>{html.escape(short_repo(r))}'
         for i, r in enumerate(repo_order(rows))
     )
     return f'<p class="legend">repo:{items}</p>'
 
 
-def _version_section(rows: list[PrRow], *, over_time: bool = True) -> str:
+def version_section(rows: list[PrRow], *, over_time: bool = True) -> str:
     """The by-version charts and table.
 
     Args:
@@ -691,14 +710,14 @@ th:nth-child(-n+2), td:nth-child(-n+2), td:last-child, th:last-child {
 .wrap { overflow-x: auto; } p.muted { color: var(--muted); }
 """
 _PR_COLUMNS: Final = ("tokens", "new", "cache", "per_line", "rounds", "wall", "active")
-_PR_HEADER: Final = (
+PR_HEADER: Final = (
     "<th>tokens</th><th>new</th><th>cache%</th><th>new/line</th>"
     "<th>rounds</th><th>wall</th><th>active</th><th>lines</th>"
     "<th>top helpers (new)</th>"
 )
 
 
-def _pr_cells(row: PrRow) -> str:
+def pr_cells(row: PrRow) -> str:
     """One PR's number cells, from ``tokens`` to top helpers.
 
     Args:
@@ -715,7 +734,7 @@ def _pr_cells(row: PrRow) -> str:
     )
 
 
-def _page(title: str, intro: str, body: str) -> str:
+def html_page(title: str, intro: str, body: str) -> str:
     """The self-contained page shell: inline style, nothing fetched.
 
     Args:
@@ -748,7 +767,7 @@ def render_html(rows: list[PrRow]) -> str:
     esc = html.escape
     body_rows = "".join(
         f"<tr><td>{esc(row.label)}</td><td>{esc(row.model or '-')}</td>"
-        f"{_pr_cells(row)}</tr>"
+        f"{pr_cells(row)}</tr>"
         for row in reversed(rows)
     )
     trend = "".join(f"<p>{esc(line)}</p>" for line in trend_lines(rows))
@@ -757,114 +776,16 @@ def render_html(rows: list[PrRow]) -> str:
         '<p class="legend"><span class="main" style="background:var(--main)">'
         '</span>main session<span style="background:var(--helper)"></span>'
         "helpers</p>"
-        f"{trend}{_version_section(rows)}<h2>Per PR</h2>"
+        f"{trend}{version_section(rows)}<h2>Per PR</h2>"
         '<div class="wrap"><table><thead><tr><th>PR</th><th>model</th>'
-        f"{_PR_HEADER}</tr></thead>"
+        f"{PR_HEADER}</tr></thead>"
         f"<tbody>{body_rows}</tbody></table></div>"
     )
     intro = f"{len(rows)} merged PRs, oldest left. Generated by forge-metrics."
-    return _page("PR metrics", intro, body)
+    return html_page("PR metrics", intro, body)
 
 
-# --- public variant ----------------------------------------------------------
-
-
-def public_order(
-    rows: list[PrRow],
-    shuffle: Callable[[list[PrRow]], None] | None = None,
-) -> list[PrRow]:
-    """*rows* grouped by forge version (release order), shuffled in each group.
-
-    Shuffling removes the merge order, which would otherwise date each PR
-    against the releases around it.
-
-    Args:
-        rows: PRs.
-        shuffle: Shuffles a list in place; the seam tests replace.
-
-    Returns:
-        The reordered rows.
-    """
-    if shuffle is None:
-        shuffle = secrets.SystemRandom().shuffle
-    ordered: list[PrRow] = []
-    for version in version_order(rows):
-        group = [row for row in rows if _version_name(row) == version]
-        shuffle(group)
-        ordered += group
-    return ordered
-
-
-def render_public_html(rows: list[PrRow]) -> str:
-    """The public page: by-version charts and per-PR numbers, no dates.
-
-    No merge day, no ordinal and no over-time chart reach it; repos show
-    only by short random id.
-
-    Args:
-        rows: PRs in :func:`public_order`.
-
-    Returns:
-        The page.
-    """
-    esc = html.escape
-    body_rows = "".join(
-        f"<tr><td>{esc(_version_name(row))}</td>"
-        f"<td>{esc(row.repo_id[:SHORT_ID])}</td><td>{esc(row.tool)}</td>"
-        f"<td>{esc(row.model or '-')}</td>{_pr_cells(row)}</tr>"
-        for row in rows
-    )
-    body = (
-        f"{_version_section(rows, over_time=False)}<h2>Per PR</h2>"
-        '<p class="muted">Grouped by forge version, in random order.</p>'
-        '<div class="wrap"><table class="public"><thead><tr><th>version</th>'
-        f"<th>repo</th><th>tool</th><th>model</th>{_PR_HEADER}</tr></thead>"
-        f"<tbody>{body_rows}</tbody></table></div>"
-    )
-    intro = (
-        f"{len(rows)} merged PRs built with forge, by forge version. Repos are "
-        "random ids; no names and no dates. Generated by forge-metrics publish."
-    )
-    return _page("Forge PR metrics", intro, body)
-
-
-def public_payload(rows: list[PrRow], *, schema: int) -> dict[str, Any]:
-    """The public page's rows as JSON: no keys, names or dates.
-
-    Args:
-        rows: PRs in :func:`public_order`.
-        schema: The database schema version the rows follow.
-
-    Returns:
-        The JSON-ready payload.
-    """
-    return {
-        "schema": schema,
-        "generator": release_of(forge_version()),
-        "prs": [
-            {
-                "repo_id": row.repo_id[:SHORT_ID],
-                "forge_version": row.forge_version,
-                "tool": row.tool,
-                "model": row.model,
-                "files": row.files,
-                "additions": row.additions,
-                "deletions": row.deletions,
-                "commits": row.commits,
-                "review_rounds": row.review_rounds,
-                "wrapups_posted": row.wrapups_posted,
-                "precommit_runs": row.precommit_runs,
-                "test_runs": row.test_runs,
-                "active_s": row.active_s,
-                "wall_s": row.wall_s,
-                "tokens": _token_dict(row),
-            }
-            for row in rows
-        ],
-    }
-
-
-def _token_dict(row: PrRow) -> dict[str, dict[str, int]]:
+def token_dict(row: PrRow) -> dict[str, dict[str, int]]:
     """*row*'s tokens as ``agent type → column → count``.
 
     Args:
@@ -910,7 +831,7 @@ def export_payload(rows: list[PrRow], *, schema: int) -> dict[str, Any]:
                 "test_runs": row.test_runs,
                 "active_s": row.active_s,
                 "wall_s": row.wall_s,
-                "tokens": _token_dict(row),
+                "tokens": token_dict(row),
             }
             for row in rows
         ],

@@ -127,12 +127,18 @@ every transcript once and splits it across the PRs it records.
 `forge-metrics publish --repo OWNER/NAME` pushes a public variant of the
 page to a dedicated repo served by GitHub Pages: `index.html` and
 `metrics.json` (same rows as data, with the schema version), plus a short
-`README.md` and `.nojekyll`. The public variant has no dates at all (no
-over-time chart, no merge days), no PR keys and no names; repos show as
-the first 6 characters of their random id, and PRs are grouped by forge
-version and shuffled within each group, so their order dates nothing. It
-keeps forge version, tool, model, and the token, time, review-round and
-size numbers.
+`README.md` and `.nojekyll`. While metrics publishing is an experiment,
+only forge's maintainer may publish: it refuses any other `gh` user, and
+any target repo outside the maintainer's account (`--dry-run` stays open
+to everyone). The public variant has no dates at all (no over-time chart,
+no merge days), no PR keys, no names and no repo ids: forge's own repo
+shows as `forge` and every other repo merges into one `external` series.
+PRs are grouped by forge version and put in an order fixed by a hash of each PR's key, so their
+order dates nothing and an unchanged database republishes identical files
+(nothing is pushed). It keeps forge version, tool, model, and the token,
+time, review-round and size numbers. The page repo's commit history still
+shows roughly when rows were added (no names), and each commit carries the
+publisher's git identity.
 
 Before writing anything it checks the target exists, is public (Pages
 needs that), and that you have admin rights on it; then it clones it to a

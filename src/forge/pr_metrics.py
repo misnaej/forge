@@ -65,6 +65,7 @@ from forge.agent_profile import (
 from forge.agent_profile_tokens import MAIN_AGENT, TokenUsage, fmt_tokens, parse_ts
 from forge.config import load_config
 from forge.git_utils import (
+    _FORGE_GITHUB_REPO,
     configure_cli_logging,
     emit,
     forge_data_dir,
@@ -1565,7 +1566,13 @@ def _publish(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
     Returns:
         Exit code.
     """
-    files = public_files(load_rows(conn), schema=SCHEMA_VERSION)
+    # Read the local mapping only to tell forge's own repo apart; neither the
+    # slug nor any per-repo id reaches the public files.
+    files = public_files(
+        load_rows(conn),
+        schema=SCHEMA_VERSION,
+        forge_repo_id=lookup_repo_id(_FORGE_GITHUB_REPO),
+    )
     if args.dry_run:
         for path in write_files(files, args.dry_run):
             emit(f"Wrote {path}")
