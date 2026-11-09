@@ -1532,6 +1532,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_read(conn: sqlite3.Connection, root: Path, args: argparse.Namespace) -> int` _(internal)_ — Run ``report`` or ``export``.
 - `_next_run_n(conn: sqlite3.Connection, task_id: str) -> int` _(internal)_ — One past the highest recorded run number of *task_id*.
 - `_bench_start(conn: sqlite3.Connection, data: Path, args: argparse.Namespace) -> int` _(internal)_ — Run ``bench start``: prepare the clone, print the prompt and the command.
+- `_share(conn: sqlite3.Connection, clone: Path) -> None` _(internal)_ — Share every local benchmark run to the sandbox's results files.
 - `_bench(conn: sqlite3.Connection, args: argparse.Namespace) -> int` _(internal)_ — Run ``bench init``, ``start``, ``finish`` or ``report``.
 - `_publish(conn: sqlite3.Connection, args: argparse.Namespace) -> int` _(internal)_ — Run ``publish``: write the public files locally, or push them.
 - `_refuse(exc: MetricsError | BenchError | PublishError) -> int` _(internal)_ — Report a refusal the user can act on, without a traceback.
@@ -1573,7 +1574,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `init_sandbox(slug: str, *, data: Path, runner: Runner = run_command, workdir: Path | None = None) -> Sandbox` — Fill the empty private repo *slug* and tag its starting point.
 - `_now() -> str` _(internal)_ — The current UTC time, to the second.
 - `_require_sandbox() -> Sandbox` _(internal)_ — The recorded sandbox.
-- `_ready_clone(sandbox: Sandbox, clone: Path, runner: Runner, origin_slug: Callable[[Path], str | None]) -> None` _(internal)_ — Make sure *clone* is a clean, fetched clone of the sandbox.
+- `sync_clone(sandbox: Sandbox, clone: Path, seams: Seams) -> None` — Make sure *clone* is a fetched clone of the sandbox, cloning on first use.
+- `_ready_clone(sandbox: Sandbox, clone: Path, seams: Seams) -> None` _(internal)_ — Make sure *clone* is a clean, fetched clone of the sandbox.
 - `_free_branch(clone: Path, task_id: str, first_n: int) -> tuple[str, int]` _(internal)_ — The first ``bench/<task>-<n>`` branch name not taken locally or on origin.
 - `class Seams` — The external-command seams a run uses; tests replace them.
 - `start_run(task: Task, *, data: Path, first_n: int, clone: Path | None = None, seams: Seams = DEFAULT_SEAMS) -> tuple[Marker, str]` — Put the sandbox clone on a fresh branch for *task* and record the marker.
@@ -1588,7 +1590,24 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_wrapups(slug: str, number: int, runner: Runner, cwd: Path) -> int` _(internal)_ — Wrap-ups posted on the PR: comments opening with ``verified-at:``.
 - `collect(outcome: BenchOutcome, marker: Marker, task: Task, data: Path, runner: Runner) -> None` — Fill *outcome* with what the clone and its transcripts show.
 - `close_out(outcome: BenchOutcome, marker: Marker, slug: str, runner: Runner) -> None` — Record the PR facts, close the PR unmerged and delete the run's branch.
-- `finish_run(*, data: Path, record: Callable[[BenchOutcome], None], clone: Path | None = None, seams: Seams = DEFAULT_SEAMS) -> BenchOutcome` — Record the started run, close its PR, delete its branch, clear the marker.
+- `finish_run(*, data: Path, record: Callable[[BenchOutcome], None], clone: Path | None = None, seams: Seams = DEFAULT_SEAMS, share: Callable[[Path], None] | None = None) -> BenchOutcome` — Record the started run, close its PR, delete its branch, clear the marker.
+
+## `forge.pr_metrics_bench_results`
+
+> _Benchmark results kept in the sandbox repo, so any machine can run the bench._
+
+- `parse_results(text: str | None) -> dict[str, dict[str, Any]]` — The run entries of a ``benchmarks.json`` text, by run id.
+- `merge_results(existing: dict[str, dict[str, Any]], rows: list[BenchRow]) -> dict[str, dict[str, Any]]` — *existing* entries with *rows* added; a run already there is replaced.
+- `results_rows(entries: dict[str, dict[str, Any]]) -> list[BenchRow]` — Entries as report rows, oldest recorded first.
+- `results_files(entries: dict[str, dict[str, Any]]) -> dict[str, str]` — The two results files for *entries*, in a stable form.
+- `read_remote_results(clone: Path) -> dict[str, dict[str, Any]]` — The entries on the sandbox's ``main`` as last fetched into *clone*.
+- `_fetch(repo: Path) -> None` _(internal)_ — Fetch the sandbox's ``main``.
+- `_merge_main(tree: Path) -> bool` _(internal)_ — Bring ``origin/main`` into the clone's ``main``, results conflicts allowed.
+- `_write_and_commit(tree: Path, rows: list[BenchRow]) -> None` _(internal)_ — Write the merged results into the clone and commit them.
+- `_push_results(tree: Path, rows: list[BenchRow]) -> bool` _(internal)_ — Merge, write, commit and push, retrying after a rejected push.
+- `_onto_main(clone: Path) -> None` _(internal)_ — Switch the clean clone to ``main``, fast-forwarded to the sandbox's.
+- `share_results(clone: Path, rows: list[BenchRow]) -> bool` — Put *rows* into the sandbox's results files, committed on ``main``.
+- `sandbox_rows(clone: Path | None = None, *, task: str | None = None, seams: Seams = DEFAULT_SEAMS) -> list[BenchRow]` — Every run in the sandbox's results file, from any machine.
 
 ## `forge.pr_metrics_charts`
 
@@ -1679,11 +1698,16 @@ A compact index of this codebase's symbols — every top-level function and clas
   - `cache_share(self) -> float | None` — Cache reads as a share of all tokens; ``None`` with no tokens.
 - `_fact(value: int | None) -> bool | None` _(internal)_ — A stored ``0`` / ``1`` fact as a bool.
 - `load_bench_rows(conn: sqlite3.Connection, *, task: str | None = None) -> list[BenchRow]` — Recorded benchmark runs, oldest first.
+- `bench_row_json(row: BenchRow) -> dict[str, Any]` — *row* as a results-file entry: its fields, tokens per agent type.
+- `_json_int(value: object) -> int` _(internal)_ — A JSON count as int, ``0`` for anything else.
+- `_json_opt(value: object, kind: type[_JsonT]) -> _JsonT | None` _(internal)_ — *value* when it is of *kind* (a bool is never an int or float), else None.
+- `bench_row_from_json(run_id: str, entry: dict[str, Any]) -> BenchRow` — A results-file entry back as a :class:`BenchRow`; bad values dropped.
 - `_median(values: list[float | None]) -> float | None` _(internal)_ — The median of the known values.
 - `_count(values: list[bool | None]) -> str` _(internal)_ — ``true/known`` for one fact across runs.
 - `_version_key(version: str) -> tuple[int, int, int] | tuple[float]` _(internal)_ — Sort key putting versions in release order, unknown shapes last.
 - `_bench_line(version: str, runs: list[BenchRow]) -> str` _(internal)_ — One version's medians and fact counts for one task.
 - `render_bench_report(rows: list[BenchRow]) -> str` — Per task, each version's runs side by side: medians and fact counts.
+- `render_bench_html(rows: list[BenchRow]) -> str` — The bench report as one self-contained page, every value escaped.
 
 ## `forge.pr_plan`
 

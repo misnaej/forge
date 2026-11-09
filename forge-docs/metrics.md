@@ -196,11 +196,47 @@ run them in, by hand, so versions can be compared on equal work.
   wrap-up, without questions.
 - `forge-metrics bench finish [--clone DIR]` — records the run, closes
   its PR unmerged, deletes its branch on GitHub (lease-pinned, never the
-  base branch; the local branch is kept) and clears the run file.
-- `forge-metrics bench report [--task T]` — per task, one line per forge
-  version (release order): median new tokens, cache %, active and wall
-  time, review rounds and lines changed, then counts of runs where each
-  fact held. No pass/fail verdict: the figures inform decisions.
+  base branch; the local branch is kept) and clears the run file. Then
+  it shares the results with the sandbox (below).
+- `forge-metrics bench report [--task T] [--from-sandbox [--clone DIR]]`
+  — per task, one line per forge version (release order): median new
+  tokens, cache %, active and wall time, review rounds and lines changed,
+  then counts of runs where each fact held. No pass/fail verdict: the
+  figures inform decisions. `--from-sandbox` reads every machine's runs
+  from the sandbox's `results/benchmarks.json` (after a fetch) instead of
+  this machine's database.
+
+### Results in the sandbox
+
+So it does not matter which machine runs the benchmark, `bench finish`
+also commits the results to the sandbox's `main`:
+
+- `results/benchmarks.json` — `{"schema": 1, "runs": {<run_id>: {...}}}`.
+  Each entry: forge version, task, run number, model, base tag, the day
+  it was recorded, tokens per agent type (requests, input, cache write,
+  cache read, output), active and wall time, review rounds, lines added
+  and removed, and the outcome facts. No host, user, path or branch.
+  Every run in this machine's database is merged in, keyed by run id:
+  the same run shared again replaces its entry, never duplicates it, and
+  other machines' runs are kept as they are. A file of a newer schema is
+  refused, not rewritten.
+- `results/index.html` — the bench report regenerated from the merged
+  file: one self-contained page, every value escaped, nothing fetched.
+
+The commit is made on `main` in the clone itself, through the sandbox's
+own hooks: `finish` needs the clone's working tree clean (a dirty clone
+is refused and nothing is discarded; the results stay local), switches
+to `main`, fast-forwards it to the sandbox's (a diverged `main` is
+refused), commits and pushes, and leaves the clone on `main` — the next
+`start` branches from the base tag anyway. The bench branch's commits
+are not touched. A push rejected
+because another machine pushed first is retried after merging the new
+`main` (results files are rewritten from both sides' runs), up to 3
+times; then the results stay in the local database, `finish` says so,
+and the next `finish` shares them. Pushing the sandbox's `main` from a
+CLI is allowed only here: a private sandbox nobody else uses, checked
+just before, through forge's no-force push seam. Runs keep starting
+from the `bench-base` tag, so results never change what a run sees.
 
 Tasks: `add-command` (new CLI subcommand with tests), `fix-bug` (a planted
 bug and its failing test), `docs` (a README section), `refactor` (extract

@@ -349,11 +349,14 @@ def test_finish_records_closes_the_pr_and_deletes_the_branch(
     )
     db = tmp_path / "m.sqlite"
     conn = pr_metrics.open_db(db, "00" * 32)
+    shared: list[Path] = []
     outcome = finish_run(
         data=data,
         record=lambda o: pr_metrics.record_bench_run(conn, o),
         seams=Seams(runner, lambda _p: SLUG),
+        share=shared.append,
     )
+    assert shared == [clone.resolve()]
     assert outcome.version == "11.2.0"
     assert (outcome.pr_opened, outcome.wrapups_posted) == (True, 1)
     assert (outcome.tests_green, outcome.precommit_ok) == (True, False)

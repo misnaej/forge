@@ -85,6 +85,7 @@ from forge.pr_metrics_bench import (
     session_line,
     start_run,
 )
+from forge.pr_metrics_bench_results import sandbox_rows, share_results
 from forge.pr_metrics_publish import (
     PublishError,
     enable_pages_command,
@@ -1378,6 +1379,12 @@ def _add_bench_commands(bench: argparse.ArgumentParser) -> None:
     finish.add_argument("--clone", type=Path, help="Sandbox clone (default: start's).")
     report = steps.add_parser("report", help="Compare versions per task.")
     report.add_argument("--task", help="Only this task.")
+    report.add_argument(
+        "--from-sandbox",
+        action="store_true",
+        help="Read every machine's runs from the sandbox repo, not this database.",
+    )
+    report.add_argument("--clone", type=Path, help="Sandbox clone for --from-sandbox.")
 
 
 def _record(
@@ -1520,6 +1527,17 @@ def _bench_start(conn: sqlite3.Connection, data: Path, args: argparse.Namespace)
     return 0
 
 
+def _share(conn: sqlite3.Connection, clone: Path) -> None:
+    """Share every local benchmark run to the sandbox's results files.
+
+    Args:
+        conn: The metrics database.
+        clone: The sandbox clone.
+    """
+    if share_results(clone, load_bench_rows(conn)):
+        emit("forge-metrics bench: results committed to the sandbox (results/)")
+
+
 def _bench(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
     """Run ``bench init``, ``start``, ``finish`` or ``report``.
 
@@ -1530,11 +1548,14 @@ def _bench(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
     Returns:
         Exit code.
     """
-    if args.bench_command == "report":
+    if args.bench_command == "report" and not args.from_sandbox:
         emit(render_bench_report(load_bench_rows(conn, task=args.task)))
         return 0
     require_cli("gh", caller="forge-metrics", hint="Install GitHub CLI (gh).")
     try:
+        if args.bench_command == "report":
+            emit(render_bench_report(sandbox_rows(args.clone, task=args.task)))
+            return 0
         with bench_data() as data:
             if args.bench_command == "start":
                 return _bench_start(conn, data, args)
@@ -1543,6 +1564,7 @@ def _bench(conn: sqlite3.Connection, args: argparse.Namespace) -> int:
                     data=data,
                     record=lambda o: record_bench_run(conn, o),
                     clone=args.clone,
+                    share=lambda clone: _share(conn, clone),
                 )
                 emit(
                     f"forge-metrics bench: recorded {outcome.task_id} run "
