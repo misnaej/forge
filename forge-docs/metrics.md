@@ -122,6 +122,32 @@ every transcript once and splits it across the PRs it records.
 - `forge-metrics export [--out PATH]` — the stored rows as JSON, plus the
   database schema version, for sharing with forge.
 
+## Publishing a public page
+
+`forge-metrics publish --repo OWNER/NAME` pushes a public variant of the
+page to a dedicated repo served by GitHub Pages: `index.html` and
+`metrics.json` (same rows as data, with the schema version), plus a short
+`README.md` and `.nojekyll`. The public variant has no dates at all (no
+over-time chart, no merge days), no PR keys and no names; repos show as
+the first 6 characters of their random id, and PRs are grouped by forge
+version and shuffled within each group, so their order dates nothing. It
+keeps forge version, tool, model, and the token, time, review-round and
+size numbers.
+
+Before writing anything it checks the target exists, is public (Pages
+needs that), and that you have admin rights on it; then it clones it to a
+temporary directory and refuses unless it tracks nothing but those four
+files (an empty repo is fine). It never force-pushes and touches no other
+repo. `--dry-run DIR` writes `index.html` and `metrics.json` to `DIR`
+without any network call, for a look first.
+
+One-time setup by the owner:
+
+1. `gh repo create OWNER/forge-metrics --public`
+2. `forge-metrics publish --repo OWNER/forge-metrics`
+3. If it says Pages is off, run the `gh api -X POST repos/OWNER/forge-metrics/pages ...`
+   command it prints. The page then lives at `https://OWNER.github.io/forge-metrics/`.
+
 ## Privacy of `export`
 
 The export is the stored rows as they are, so it holds exactly what the

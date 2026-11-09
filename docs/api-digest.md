@@ -1533,7 +1533,9 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_next_run_n(conn: sqlite3.Connection, task_id: str) -> int` _(internal)_ — One past the highest recorded run number of *task_id*.
 - `_bench_start(conn: sqlite3.Connection, data: Path, args: argparse.Namespace) -> int` _(internal)_ — Run ``bench start``: prepare the clone, print the prompt and the command.
 - `_bench(conn: sqlite3.Connection, args: argparse.Namespace) -> int` _(internal)_ — Run ``bench init``, ``start``, ``finish`` or ``report``.
-- `_refuse(exc: MetricsError | BenchError) -> int` _(internal)_ — Report a refusal the user can act on, without a traceback.
+- `_publish(conn: sqlite3.Connection, args: argparse.Namespace) -> int` _(internal)_ — Run ``publish``: write the public files locally, or push them.
+- `_refuse(exc: MetricsError | BenchError | PublishError) -> int` _(internal)_ — Report a refusal the user can act on, without a traceback.
+- `_run_subcommand(conn: sqlite3.Connection, root: Path, secret: str, args: argparse.Namespace) -> int` _(internal)_ — Run the subcommand *args* names against the open database.
 - `main(argv: list[str] | None = None) -> int` — Entry point for ``forge-metrics``.
 
 ## `forge.pr_metrics_bench`
@@ -1612,6 +1614,21 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `time_chart(dots: list[Dot], changes: list[Change], *, label: str, y_title: str) -> str` — Dots by day, version changes marked; log scale past a 100x range.
 - `_iso(ordinal: int) -> str` _(internal)_ — An ordinal day as ISO text.
 
+## `forge.pr_metrics_publish`
+
+> _``forge-metrics publish``: the public metrics page, pushed to a page repo._
+
+- `class PublishError` — The target repo is refused, or cloning or pushing failed.
+- `class Published` — What a publish did.
+- `public_files(rows: list[PrRow], *, schema: int, shuffle: Callable[[list[PrRow]], None] | None = None) -> dict[str, str]` — The public page and data, in one shared random order.
+- `write_files(files: Mapping[str, str], dest: Path) -> list[Path]` — Write *files* into *dest*, creating it.
+- `pages_url(slug: str) -> str` — Where GitHub Pages serves a project repo.
+- `enable_pages_command(slug: str) -> str` — The one-time ``gh`` command serving *slug*'s ``main`` with Pages.
+- `check_target(slug: str, runner: Runner, cwd: Path) -> None` — Refuse a repo that is private or not administered by the ``gh`` user.
+- `check_tracked(clone: Path) -> None` — Refuse a clone tracking any file publish does not write, or off ``main``.
+- `_commit_and_push(clone: Path, files: Mapping[str, str]) -> bool` _(internal)_ — Write the page files into *clone*, commit and push when anything changed.
+- `publish(slug: str, files: Mapping[str, str], *, runner: Runner = run_command, workdir: Path | None = None) -> Published` — Check *slug*, then push *files* to its ``main``.
+
 ## `forge.pr_metrics_report`
 
 > _Reading the ``forge-metrics`` database back: report, HTML page, export._
@@ -1644,8 +1661,14 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_fmt_cell(value: float | None, fmt: Callable[[float], str]) -> str` _(internal)_ — A table median, ``-`` when unknown.
 - `_version_table(rows: list[PrRow], stats: dict[tuple[str, str], VersionStats]) -> str` _(internal)_ — Version by repo table of counts and medians.
 - `_repo_legend(rows: list[PrRow]) -> str` _(internal)_ — Legend naming each repo's colour by short id.
-- `_version_section(rows: list[PrRow]) -> str` _(internal)_ — The by-version charts and table.
+- `_version_section(rows: list[PrRow], *, over_time: bool = True) -> str` _(internal)_ — The by-version charts and table.
+- `_pr_cells(row: PrRow) -> str` _(internal)_ — One PR's number cells, from ``tokens`` to top helpers.
+- `_page(title: str, intro: str, body: str) -> str` _(internal)_ — The self-contained page shell: inline style, nothing fetched.
 - `render_html(rows: list[PrRow]) -> str` — One self-contained HTML page: charts, tables and trend, nothing fetched.
+- `public_order(rows: list[PrRow], shuffle: Callable[[list[PrRow]], None] | None = None) -> list[PrRow]` — *rows* grouped by forge version (release order), shuffled in each group.
+- `render_public_html(rows: list[PrRow]) -> str` — The public page: by-version charts and per-PR numbers, no dates.
+- `public_payload(rows: list[PrRow], *, schema: int) -> dict[str, Any]` — The public page's rows as JSON: no keys, names or dates.
+- `_token_dict(row: PrRow) -> dict[str, dict[str, int]]` _(internal)_ — *row*'s tokens as ``agent type → column → count``.
 - `export_payload(rows: list[PrRow], *, schema: int) -> dict[str, Any]` — The stored rows as they are: already anonymised, so nothing is dropped.
 - `class BenchRow` — One recorded benchmark run with its tokens.
   - `new_tokens(self) -> int` — Every agent's tokens not served from cache.
