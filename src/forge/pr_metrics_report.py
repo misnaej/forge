@@ -2,6 +2,8 @@
 
 The writer side (schema, recording, GitHub) lives in
 :mod:`forge.pr_metrics`; this module only reads rows and renders them.
+Rows carry no repo or PR name, so neither does anything rendered here: a
+PR is labelled by merge day, short repo id and its ordinal in that repo.
 """
 
 from __future__ import annotations
@@ -13,20 +15,17 @@ from typing import TYPE_CHECKING, Any, Final
 
 from forge.agent_profile_tokens import MAIN_AGENT, TokenUsage, fmt_tokens
 from forge.regen_docs import forge_version
-from forge.verify_agent_doc import shipped_agent_names
 
 
 if TYPE_CHECKING:
     import sqlite3
 
 
-EXPORT_SCHEMA: Final = 1
 #: Token table columns, in storage order.
 TOKEN_COLUMNS: Final = ("requests", "input", "cache_write", "cache_read", "output")
 _SHARED_PREFIX: Final = "forge:"
-#: Export label for every agent type forge does not ship (a repo's own
-#: wrappers often carry its name).
-_OTHER: Final = "other"
+#: Characters of the repo id shown in PR labels.
+SHORT_ID: Final = 6
 #: Fewest PRs with tokens a trend compares (two per half).
 TREND_MIN_PRS: Final = 4
 #: Medians below this print with a decimal, not as compact token counts.
@@ -57,9 +56,13 @@ def usage_values(usage: TokenUsage) -> tuple[int, ...]:
 class PrRow:
     """One recorded PR with its tokens, as the report and export read it."""
 
-    pr: int
-    title: str
-    merged_at: str | None
+    pr_key: str
+    repo_id: str
+    #: The PR's place among its repo's recorded PRs, 1 = oldest merge.
+    ordinal: int
+    merged_on: str | None
+    tool: str
+    model: str | None
     files: int
     additions: int
     deletions: int
@@ -94,37 +97,60 @@ class PrRow:
         """Lines added plus removed."""
         return self.additions + self.deletions
 
+    @property
+    def label(self) -> str:
+        """``<merge day> <short repo id>#<ordinal>``: names the PR without names."""
+        return f"{self.merged_on or '?'} {self.repo_id[:SHORT_ID]}#{self.ordinal}"
 
-def load_rows(conn: sqlite3.Connection, *, last: int | None = None) -> list[PrRow]:
+
+def load_rows(
+    conn: sqlite3.Connection, *, last: int | None = None, repo_prefix: str = ""
+) -> list[PrRow]:
     """Recorded PRs, oldest merge first.
 
     Args:
         conn: The metrics database.
         last: Keep only the newest *last* PRs; all when ``None``.
+        repo_prefix: Keep only repos whose id starts with it; all when empty.
 
     Returns:
-        The rows.
+        The rows; ordinals count every recorded PR of the repo.
     """
+    # rowid breaks same-day ties in first-recorded order: an upsert keeps it,
+    # and PRs are recorded as they merge. Literal SQL, no interpolated names.
     query = (
-        "SELECT pr, title, merged_at, files, additions, deletions, commits, "
-        "review_rounds, wrapups_posted, precommit_runs, test_runs, active_s, "
-        "wall_s, forge_version FROM prs ORDER BY merged_at DESC, pr DESC"
+        "SELECT pr_key, repo_id, merged_on, tool, model, files, additions, "
+        "deletions, commits, review_rounds, wrapups_posted, precommit_runs, "
+        "test_runs, active_s, wall_s, forge_version FROM prs "
+        "ORDER BY merged_on, rowid"
     )
-    picked = conn.execute(query).fetchall()
-    picked = picked[:last] if last is not None else picked
-    tokens: dict[int, dict[str, TokenUsage]] = {}
-    for pr, agent, *counts in conn.execute("SELECT * FROM pr_tokens"):
-        tokens.setdefault(pr, {})[agent] = TokenUsage(
+    tokens: dict[str, dict[str, TokenUsage]] = {}
+    for key, agent, *counts in conn.execute("SELECT * FROM pr_tokens"):
+        tokens.setdefault(key, {})[agent] = TokenUsage(
             input_tokens=counts[1],
             cache_write_tokens=counts[2],
             cache_read_tokens=counts[3],
             output_tokens=counts[4],
             requests=counts[0],
         )
-    return [
-        PrRow(*row[:13], forge_version=row[13] or "", tokens=tokens.get(row[0], {}))
-        for row in reversed(picked)
-    ]
+    seen: dict[str, int] = {}
+    rows: list[PrRow] = []
+    for key, repo_id, *rest in conn.execute(query):
+        seen[repo_id] = seen.get(repo_id, 0) + 1
+        if not repo_id.startswith(repo_prefix):
+            continue
+        *fields, version = rest
+        rows.append(
+            PrRow(
+                key,
+                repo_id,
+                seen[repo_id],
+                *fields,
+                forge_version=version or "",
+                tokens=tokens.get(key, {}),
+            )
+        )
+    return rows[-last:] if last else rows
 
 
 def _fmt_s(seconds: float | None) -> str:
@@ -237,7 +263,7 @@ def render_report(rows: list[PrRow]) -> str:
     if not rows:
         return "No PRs recorded yet. Run `forge-metrics backfill` or `record --pr N`."
     header = (
-        f"{'PR':>6} {'merged':<10} {'tokens':>7} {'new':>6} {'cache%':>6} "
+        f"{'PR (merged repo#n)':<22} {'tokens':>7} {'new':>6} {'cache%':>6} "
         f"{'new/line':>8} {'rounds':>6} {'wall':>6} {'active':>6}  "
         "top helpers (new)"
     )
@@ -245,7 +271,7 @@ def render_report(rows: list[PrRow]) -> str:
     for row in reversed(rows):
         cells = _cells(row)
         lines.append(
-            f"{row.pr:>6} {cells['merged']:<10} {cells['tokens']:>7} "
+            f"{row.label:<22} {cells['tokens']:>7} "
             f"{cells['new']:>6} {cells['cache']:>6} {cells['per_line']:>8} "
             f"{cells['rounds']:>6} {cells['wall']:>6} {cells['active']:>6}  "
             f"{cells['helpers']}"
@@ -266,7 +292,6 @@ def _cells(row: PrRow) -> dict[str, str]:
     per_line = _per_line(row)
     cache = row.cache_share
     return {
-        "merged": (row.merged_at or "")[:10],
         "tokens": fmt_tokens(row.total_tokens),
         "new": fmt_tokens(row.new_tokens),
         "cache": f"{cache:.0%}" if cache is not None else "-",
@@ -296,7 +321,8 @@ def _bar_chart(rows: list[PrRow]) -> str:
         total_h = _CHART_H * row.new_tokens / peak
         main_h = _CHART_H * main / peak
         bars.append(
-            f"<g><title>#{row.pr}: {fmt_tokens(row.new_tokens)} new tokens</title>"
+            f"<g><title>{html.escape(row.label)}: "
+            f"{fmt_tokens(row.new_tokens)} new tokens</title>"
             f'<rect class="helper" x="{x:.1f}" y="{_CHART_H - total_h:.1f}" '
             f'width="{width * 0.8:.1f}" height="{total_h - main_h:.1f}"/>'
             f'<rect class="main" x="{x:.1f}" y="{_CHART_H - main_h:.1f}" '
@@ -320,7 +346,8 @@ svg { width: 100%; height: auto; border-bottom: 1px solid var(--rule); }
 .legend span { display: inline-block; width: 10px; height: 10px; margin: 0 4px 0 12px; }
 table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
 th, td { padding: 4px 8px; border-bottom: 1px solid var(--rule); text-align: right; }
-th:nth-child(2), td:nth-child(2), td:last-child, th:last-child { text-align: left; }
+th:nth-child(-n+2), td:nth-child(-n+2), td:last-child, th:last-child {
+  text-align: left; }
 .wrap { overflow-x: auto; } p.muted { color: var(--muted); }
 """
 
@@ -337,7 +364,7 @@ def render_html(rows: list[PrRow]) -> str:
     esc = html.escape
     columns = ("tokens", "new", "cache", "per_line", "rounds", "wall", "active")
     body_rows = "".join(
-        f"<tr><td>{row.pr}</td><td>{esc(row.title)}</td>"
+        f"<tr><td>{esc(row.label)}</td><td>{esc(row.model or '-')}</td>"
         + "".join(f"<td>{esc(cells[c])}</td>" for c in columns)
         + f"<td>{row.changed_lines}</td><td>{esc(cells['helpers'])}</td></tr>"
         for row in reversed(rows)
@@ -354,7 +381,7 @@ def render_html(rows: list[PrRow]) -> str:
         '<p class="legend"><span class="main" style="background:var(--main)">'
         '</span>main session<span style="background:var(--helper)"></span>'
         "helpers</p>"
-        f'{trend}<div class="wrap"><table><thead><tr><th>PR</th><th>title</th>'
+        f'{trend}<div class="wrap"><table><thead><tr><th>PR</th><th>model</th>'
         "<th>tokens</th><th>new</th><th>cache%</th><th>new/line</th>"
         "<th>rounds</th><th>wall</th><th>active</th><th>lines</th>"
         "<th>top helpers (new)</th></tr></thead>"
@@ -362,44 +389,26 @@ def render_html(rows: list[PrRow]) -> str:
     )
 
 
-def _shared_tokens(tokens: dict[str, TokenUsage]) -> dict[str, dict[str, int]]:
-    """Per-type token counts, every type forge does not ship folded into ``other``.
-
-    A ``forge:`` prefix alone is not enough: anyone can name a local agent
-    ``forge:<repo>-reviewer``, so only names on the shipped roster pass.
-
-    Args:
-        tokens: Agent type → usage.
-
-    Returns:
-        Exportable type → column → count.
-    """
-    shipped = {f"{_SHARED_PREFIX}{name}" for name in shipped_agent_names()}
-    folded: dict[str, TokenUsage] = {}
-    for agent_type, usage in tokens.items():
-        shared = agent_type == MAIN_AGENT or agent_type in shipped
-        folded.setdefault(agent_type if shared else _OTHER, TokenUsage()).add(usage)
-    return {
-        agent_type: dict(zip(TOKEN_COLUMNS, usage_values(usage), strict=True))
-        for agent_type, usage in sorted(folded.items())
-    }
-
-
-def export_payload(rows: list[PrRow]) -> dict[str, Any]:
-    """Figures only, safe to share: no titles, numbers, branches or dates.
+def export_payload(rows: list[PrRow], *, schema: int) -> dict[str, Any]:
+    """The stored rows as they are: already anonymised, so nothing is dropped.
 
     Args:
         rows: PRs, oldest first.
+        schema: The database schema version the rows follow.
 
     Returns:
-        The JSON-ready payload; PRs keyed by ordinal (1 = oldest).
+        The JSON-ready payload.
     """
     return {
-        "schema": EXPORT_SCHEMA,
+        "schema": schema,
         "forge_version": forge_version(),
         "prs": [
             {
-                "ordinal": ordinal,
+                "pr_key": row.pr_key,
+                "repo_id": row.repo_id,
+                "merged_on": row.merged_on,
+                "tool": row.tool,
+                "model": row.model,
                 "forge_version": row.forge_version,
                 "files": row.files,
                 "additions": row.additions,
@@ -411,8 +420,13 @@ def export_payload(rows: list[PrRow]) -> dict[str, Any]:
                 "test_runs": row.test_runs,
                 "active_s": row.active_s,
                 "wall_s": row.wall_s,
-                "tokens": _shared_tokens(row.tokens),
+                "tokens": {
+                    agent_type: dict(
+                        zip(TOKEN_COLUMNS, usage_values(usage), strict=True)
+                    )
+                    for agent_type, usage in sorted(row.tokens.items())
+                },
             }
-            for ordinal, row in enumerate(rows, start=1)
+            for row in rows
         ],
     }

@@ -7,6 +7,11 @@ checked for whether it made work cheaper.
 
 One row per merged PR:
 
+- **Merge day** (date only, no time) and the tool (`claude-code`).
+- **Model** answering most main-session requests, from the transcripts
+  (empty when unknown). Stored only when it matches
+  `[A-Za-z0-9._:-]{1,64}`; anything else is stored as `other`, since
+  transcript text is free-form.
 - **Size** (from GitHub): files changed, lines added and removed, commits.
 - **Review rounds**: the most runs any one reporter
   (`forge:design-checker`, `forge:security-checker`,
@@ -14,7 +19,13 @@ One row per merged PR:
   each reporter once.
 - **Wrap-ups posted**: PR comments opening with a `verified-at:` header.
 - **Tokens**, per agent type (`main` = the main session): requests, input,
-  cache write, cache read, output.
+  cache write, cache read, output. Only `main`, the agents forge ships
+  (the installed package's roster) and Claude Code's built-ins
+  (`Explore`, `Plan`, `general-purpose`, `claude-code-guide`) keep their
+  name; every other type is summed under `other` before it is stored — a
+  repo's own wrappers often carry its name, `forge:`-prefixed or not. An
+  unreadable roster stops recording with an error rather than storing
+  every forge agent as `other`.
 - **Time**: wall (first to last transcript record on the branch) and
   active (gaps over 5 minutes left out).
 - **Runs**: `forge-precommit` and `forge-smart-test` calls on the branch.
@@ -26,7 +37,7 @@ on. A PR's figures are everything recorded on its head branch, in every
 checkout of the repo on this machine, up to its merge — and after the
 merge of any earlier PR with the same branch name, so a reused name is
 not charged twice. Work on the base branch goes to an
-`unattributed` table per day instead. No transcripts (CI, another machine)
+`unattributed` table per repo id and day instead. No transcripts (CI, another machine)
 → size and review rounds only.
 
 ## When
@@ -40,11 +51,44 @@ not charged twice. Work on the base branch goes to an
 
 ## Where
 
-`$XDG_DATA_HOME/forge/<owner>/<repo>/metrics.sqlite` (default
-`~/.local/share/...`): one database per repo, shared by all its checkouts,
-never committed. It lives outside the per-checkout `code_health/` because
-one PR can be worked from any checkout of the repo. `--db PATH`
-overrides.
+`$XDG_DATA_HOME/forge/metrics.sqlite` (default
+`~/.local/share/forge/metrics.sqlite`): one database per machine user,
+shared by every repo and checkout, never committed. It lives outside the
+per-checkout `code_health/` because one PR can be worked from any
+checkout of the repo. `--db PATH` overrides.
+
+Earlier versions kept one database per repo at
+`<data dir>/<owner>/<repo>/metrics.sqlite`. The first run of any
+`forge-metrics` command (default `--db` only) imports those rows into the
+machine database, dropping titles, branch names and PR numbers, then
+deletes the old file and its empty directories. Every import write
+replaces rather than adds, so an import interrupted before the delete
+is safely repeated.
+
+## What is not stored
+
+The database holds no name: no repo name or `owner/repo`, no checkout
+path, no PR number, title or head branch, no file names, no commit
+messages, no merge time of day. Instead:
+
+- **`repo_id`** — a random UUID minted the first time a repo records a PR.
+- **`pr_key`** — `HMAC-SHA256(secret, repo_id + ":" + PR number)` in
+  hex: stable, so re-recording a PR replaces its row, but the number is
+  not stored and cannot be recovered by hashing small numbers with an
+  exported `repo_id`.
+
+The one file tying an id to a repo is **`<data dir>/repo-ids.json`**
+(`{"<owner>/<repo>": "<repo_id>", "_secret": "<hex>"}`, owner-readable
+only), local to this machine. `_secret` is 32 random bytes minted on
+first use; it is never exported. `record` reads the file to find the id
+and key; `report --repo` reads it to resolve a name to an id. Nothing
+`report`, `--html` or `export` prints comes from it. Delete it and the
+database stays readable but unattributable: a repo recorded again gets a
+new id, and a re-recorded PR a new key (a second row).
+
+A database of the previous layout (schema 2, plain `sha256` keys) is
+rekeyed on open. Any other schema version is refused with the expected
+and found versions named.
 
 `record` parses only transcript files written since the day before the
 PR was opened that name its branch or the base branch; `backfill` reads
@@ -52,20 +96,24 @@ every transcript once and splits it across the PRs it records.
 
 ## Reading it
 
-- `forge-metrics report [--last N] [--html PATH]` — per-PR table (all
-  tokens, `new` tokens, `cache%`, new tokens per changed line, top
-  helpers, review rounds, wall and active time) plus a trend: older half
-  vs newer half, by median of new tokens. Cache reads dominate the total
-  but cost far less, so `new` = input + cache write + output is the
-  comparable figure. `--html` writes
-  one self-contained page (inline chart, no network fetches).
-- `forge-metrics export [--out PATH]` — JSON for sharing with forge.
+- `forge-metrics report [--last N] [--html PATH] [--repo R]` — per-PR
+  table (all tokens, `new` tokens, `cache%`, new tokens per changed line,
+  top helpers, review rounds, wall and active time) plus a trend: older
+  half vs newer half, by median of new tokens. Cache reads dominate the
+  total but cost far less, so `new` = input + cache write + output is the
+  comparable figure. A PR is labelled `<merge day> <first 6 of repo_id>#<n>`,
+  `n` = its place among that repo's recorded PRs (1 = oldest). All repos
+  by default; `--repo .` (this checkout's repo), `--repo owner/repo`
+  (resolved through `repo-ids.json`) or `--repo <id prefix>` narrows it.
+  `--html` writes one self-contained page (inline chart, no network
+  fetches).
+- `forge-metrics export [--out PATH]` — the stored rows as JSON, plus the
+  database schema version, for sharing with forge.
 
 ## Privacy of `export`
 
-Figures only. PRs are keyed by ordinal (1 = oldest); no PR numbers,
-titles, branch or file names, dates or messages. Agent types are kept only
-for `main` and the agents forge ships (the installed package's roster); every
-other type — a repo's own wrappers often carry its name, `forge:`-prefixed
-or not — is summed under `other`. Read the file
-before sending it.
+The export is the stored rows as they are, so it holds exactly what the
+database holds (see "What is not stored"): `repo_id`, `pr_key`, merge
+day, tool, model, forge version, figures and tokens per agent type. The
+`repo_id` lets rows of one repo be grouped without naming it. Read the
+file before sending it.

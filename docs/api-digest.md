@@ -152,6 +152,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `class BranchEvent` — One transcript record on a branch: when, who, and what it cost.
 - `class BranchSummary` — A branch's events inside one time window, summed.
 - `_bash_counts(record: dict[str, Any]) -> tuple[int, int]` _(internal)_ — ``(precommit, smart-test)`` ``Bash`` calls an assistant record makes.
+- `_model(record: dict[str, Any]) -> str | None` _(internal)_ — The model an assistant record names; ``None`` for synthetic or absent.
 - `_in_window(time: datetime | None, after: datetime | None, until: datetime | None) -> bool` _(internal)_ — Whether *time* falls in ``after < time <= until``.
 - `class BranchUsageTally` — Every transcript record per git branch, for windowed per-PR sums.
   - `add_transcript(self, records: Iterable[dict[str, Any]], agent_type: str, run: str) -> None` — Keep one transcript's records under the branches they ran on.
@@ -893,7 +894,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `require_cli(name: str, *, caller: str | None = None, extra: str | None = None, hint: str | None = None) -> None` — Abort with a clear install hint if *name* isn't on PATH.
 - `code_health_dir(repo_root: Path) -> Path` — Return the directory forge writes and reads its step logs in.
 - `forge_cache_dir() -> Path` — Return the per-user directory forge keeps machine-wide caches in.
-- `forge_data_dir(slug: str) -> Path` — Return the per-user directory forge keeps one repo's lasting data in.
+- `forge_data_dir() -> Path` — Return the per-user directory forge keeps machine-wide lasting data in.
 - `github_slug(root: Path) -> str | None` — Return ``owner/repo`` from the ``origin`` remote, or ``None``.
 - `write_step_log(repo_root: Path, name: str, output: str) -> Path` — Write *output* to ``code_health/<name>.log`` under *repo_root*.
 - `capturing_to_step_log(repo_root: Path, name: str) -> Iterator[None]` — Tee root-logger output into ``code_health/<name>.log`` for the block.
@@ -1477,23 +1478,46 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _``forge-metrics``: what each merged PR cost, kept in a local database._
 
-- `class PrFacts` — What GitHub says about one merged PR.
-- `open_db(path: Path) -> sqlite3.Connection` — Open the metrics database, creating file and schema on first use.
+- `class PrFacts` — What GitHub says about one merged PR (held in memory, never stored).
+- `class MetricsError` — The database or the roster is not in a state forge-metrics can use.
+- `pr_key(secret: str, repo_id: str, number: int) -> str` — The stored key of PR *number*: stable, but no PR number in sight.
+- `class RepoKeys` — What keys one repo's PRs: its id and the machine's secret.
+  - `pr_key(self, number: int) -> str` — The stored key of this repo's PR *number*.
+- `_rekey_plain(conn: sqlite3.Connection, secret: str) -> None` _(internal)_ — Turn plain ``sha256`` keys of a version-2 database into HMAC keys.
+- `open_db(path: Path, secret: str) -> sqlite3.Connection` — Open the metrics database, creating file and schema on first use.
+- `fold_agent_types(tokens: dict[str, TokenUsage]) -> dict[str, TokenUsage]` — Per-type usage, every type nobody public ships summed under ``other``.
+- `safe_model(model: str | None) -> str | None` — *model* when it looks like a model id, ``other`` when not.
+- `_ids_path() -> Path` _(internal)_ — The ``repo-ids.json`` file.
+- `_read_repo_ids(path: Path) -> dict[str, str]` _(internal)_ — The ``repo-ids.json`` content; empty when absent or unreadable.
+- `_write_repo_ids(path: Path, ids: dict[str, str]) -> None` _(internal)_ — Save *ids* atomically, readable by the owner only (it holds the secret).
+- `machine_secret() -> str` — The machine's ``pr_key`` secret, minted (32 random bytes) on first use.
+- `lookup_repo_id(slug: str) -> str | None` — The random id standing for repo *slug* in the database, if minted.
+- `ensure_repo_id(slug: str) -> str` — The id of repo *slug*, minted (``uuid4``) and saved on first use.
 - `pr_summary(tally: BranchUsageTally, facts: PrFacts) -> BranchSummary | None` — The PR's share of its head branch's transcript records.
 - `review_rounds(summary: BranchSummary) -> int` — Review rounds on the PR, from reporter runs.
-- `record_pr(conn: sqlite3.Connection, facts: PrFacts, tally: BranchUsageTally, *, now: datetime) -> None` — Replace *facts*' PR rows with what GitHub and the transcripts say now.
-- `record_unattributed(conn: sqlite3.Connection, tally: BranchUsageTally, base_branch: str) -> None` — Keep base-branch usage per day and agent type.
+- `_write_pr(conn: sqlite3.Connection, key: str, repo_id: str, values: dict[str, Any], tokens: dict[str, TokenUsage]) -> None` _(internal)_ — Upsert one ``prs`` row and replace its ``pr_tokens`` rows.
+- `record_pr(conn: sqlite3.Connection, repo: RepoKeys, facts: PrFacts, tally: BranchUsageTally) -> None` — Replace *facts*' PR row with what GitHub and the transcripts say now.
+- `_unattributed_rows(repo_id: str, days: dict[tuple[str, str], TokenUsage]) -> list[tuple[Any, ...]]` _(internal)_ — Per-day base-branch usage as ``unattributed`` rows, agent types folded.
+- `_keep_unattributed(conn: sqlite3.Connection, repo_id: str, days: dict[tuple[str, str], TokenUsage]) -> None` _(internal)_ — Upsert per-day base-branch usage, never shrinking, never adding.
+- `record_unattributed(conn: sqlite3.Connection, repo_id: str, tally: BranchUsageTally, base_branch: str) -> None` — Keep base-branch usage per day and agent type.
+- `_legacy_rows(old: sqlite3.Connection, repo: RepoKeys) -> list[tuple[str, dict[str, Any]]]` _(internal)_ — A per-repo database's PRs as ``(pr_key, values)``, names dropped.
+- `_legacy_tokens(old: sqlite3.Connection, query: str) -> dict[Any, dict[str, TokenUsage]]` _(internal)_ — Usage per key (PR number or day) per agent type from a legacy table.
+- `_import_legacy(conn: sqlite3.Connection, path: Path, repo: RepoKeys) -> int` _(internal)_ — Copy one per-repo database into *conn*, anonymised, in one transaction.
+- `legacy_paths(data_dir: Path) -> list[Path]` — Per-repo databases of earlier versions still on disk.
+- `migrate_legacy(conn: sqlite3.Connection, paths: list[Path], secret: str) -> int` — Import per-repo databases of earlier versions, then delete them.
 - `_int(value: object) -> int` _(internal)_ — A JSON count as int, ``0`` for anything else.
 - `facts_from_api(pull: dict[str, Any], wrapups: int, same_head_merges: Iterable[str] = ()) -> PrFacts | None` — Build :class:`PrFacts` from a ``GET /pulls/N`` response.
 - `fetch_facts(number: int) -> PrFacts | None` — Read PR *number* and count its wrap-ups through ``gh api``.
 - `merged_prs() -> list[tuple[int, str]]` — The newest merged PRs, as ``(number, head branch)``.
-- `backfill(conn: sqlite3.Connection, merged: Iterable[tuple[int, str]], tally: BranchUsageTally, *, limit: int) -> list[int]` — Record merged PRs not yet in the database whose branch has usage.
-- `default_db_path(root: Path) -> Path | None` — Where this repo's metrics database lives.
+- `backfill(conn: sqlite3.Connection, repo: RepoKeys, merged: Iterable[tuple[int, str]], tally: BranchUsageTally, *, limit: int) -> list[int]` — Record merged PRs not yet in the database whose branch has usage.
+- `default_db_path() -> Path` — Where the machine's metrics database lives.
 - `_scan(root: Path, explicit: list[Path] | None, keep: TranscriptFilter | None = None) -> BranchUsageTally` _(internal)_ — Read the transcripts of every checkout of the repo (or *explicit*).
 - `pr_filter(facts: PrFacts, base_branch: str) -> TranscriptFilter` — The transcript files one PR's record needs.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — The ``forge-metrics`` argument parser.
-- `_record(conn: sqlite3.Connection, root: Path, args: argparse.Namespace) -> int` _(internal)_ — Run ``record`` or ``backfill``.
-- `_read(conn: sqlite3.Connection, args: argparse.Namespace) -> int` _(internal)_ — Run ``report`` or ``export``.
+- `_record(conn: sqlite3.Connection, root: Path, repo: RepoKeys, args: argparse.Namespace) -> int` _(internal)_ — Run ``record`` or ``backfill``.
+- `_repo_prefix(root: Path, wanted: str | None) -> str | None` _(internal)_ — The repo id prefix ``report --repo`` selects.
+- `_read(conn: sqlite3.Connection, root: Path, args: argparse.Namespace) -> int` _(internal)_ — Run ``report`` or ``export``.
+- `_refuse(exc: MetricsError) -> int` _(internal)_ — Report a refusal the user can act on, without a traceback.
 - `main(argv: list[str] | None = None) -> int` — Entry point for ``forge-metrics``.
 
 ## `forge.pr_metrics_report`
@@ -1506,7 +1530,8 @@ A compact index of this codebase's symbols — every top-level function and clas
   - `new_tokens(self) -> int` — Every agent's tokens not served from cache.
   - `cache_share(self) -> float | None` — Cache reads as a share of all tokens; ``None`` with no tokens.
   - `changed_lines(self) -> int` — Lines added plus removed.
-- `load_rows(conn: sqlite3.Connection, *, last: int | None = None) -> list[PrRow]` — Recorded PRs, oldest merge first.
+  - `label(self) -> str` — ``<merge day> <short repo id>#<ordinal>``: names the PR without names.
+- `load_rows(conn: sqlite3.Connection, *, last: int | None = None, repo_prefix: str = '') -> list[PrRow]` — Recorded PRs, oldest merge first.
 - `_fmt_s(seconds: float | None) -> str` _(internal)_ — Seconds as ``1h05``, ``12m`` or ``-``.
 - `_top_helpers(row: PrRow, count: int = 2) -> str` _(internal)_ — The costliest helper types of a PR by new tokens, ``type 12k`` each.
 - `_per_line(row: PrRow) -> float | None` _(internal)_ — New (uncached) tokens per changed line; ``None`` without either.
@@ -1516,8 +1541,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_cells(row: PrRow) -> dict[str, str]` _(internal)_ — One PR's report cells, shared by the terminal table and the page.
 - `_bar_chart(rows: list[PrRow]) -> str` _(internal)_ — An inline SVG bar chart of new tokens per PR, main session vs helpers.
 - `render_html(rows: list[PrRow]) -> str` — One self-contained HTML page: chart, table and trend, nothing fetched.
-- `_shared_tokens(tokens: dict[str, TokenUsage]) -> dict[str, dict[str, int]]` _(internal)_ — Per-type token counts, every type forge does not ship folded into ``other``.
-- `export_payload(rows: list[PrRow]) -> dict[str, Any]` — Figures only, safe to share: no titles, numbers, branches or dates.
+- `export_payload(rows: list[PrRow], *, schema: int) -> dict[str, Any]` — The stored rows as they are: already anonymised, so nothing is dropped.
 
 ## `forge.pr_plan`
 

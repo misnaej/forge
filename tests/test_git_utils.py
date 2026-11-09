@@ -5415,13 +5415,9 @@ def test_github_slug_parses_ssh_and_https(
 def test_forge_data_dir_honours_xdg_and_falls_back_home(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Behavior: per-repo data lives under XDG_DATA_HOME, else ~/.local/share."""
+    """Behavior: machine data lives under XDG_DATA_HOME, else ~/.local/share."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-    assert git_utils.forge_data_dir("acme/widget") == (
-        tmp_path / "data" / "forge" / "acme" / "widget"
-    )
+    assert git_utils.forge_data_dir() == tmp_path / "data" / "forge"
     monkeypatch.setenv("XDG_DATA_HOME", "")
     monkeypatch.setenv("HOME", str(tmp_path))
-    assert git_utils.forge_data_dir("acme/widget") == (
-        tmp_path / ".local" / "share" / "forge" / "acme" / "widget"
-    )
+    assert git_utils.forge_data_dir() == tmp_path / ".local" / "share" / "forge"
