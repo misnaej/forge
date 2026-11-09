@@ -417,12 +417,21 @@ graph LR
   main_agent -->|runs| sk_memory_audit
   sk_report_to_forge(["/report-to-forge<br/>skill"])
   cli_forge_agent_profile[("forge-agent-profile<br/>CLI")]
+  sk_caveman(["/caveman<br/>skill"])
+  sk_ultracave(["/ultracave<br/>skill"])
+  sk_megacave(["/megacave<br/>skill"])
   main_agent -->|runs| sk_report_to_forge
+  main_agent -->|runs| sk_caveman
+  main_agent -->|runs| sk_ultracave
+  main_agent -->|runs| sk_megacave
   sk_report_to_forge -->|invokes| cli_forge_agent_profile
   class human person
   class main_agent orchestrator
   class sk_memory_audit skill
   class sk_report_to_forge skill
+  class sk_caveman skill
+  class sk_ultracave skill
+  class sk_megacave skill
   class cli_forge_agent_profile cli
 ```
 
@@ -433,3 +442,9 @@ user confirmation before `gh issue create` targets the canonical
 upstream. User-invoked only — no proactive detection. For an agent or
 skill defect it also quotes the `forge-agent-profile` summary for that
 agent as timing evidence.
+
+The `/caveman`, `/ultracave` and `/megacave` skills are vendored from
+JuliusBrussee/caveman v4.0.1 (Apache-2.0, attribution in
+`src/forge/data/VENDORED.md`). They set a terse output voice for the
+session; in Claude Code the `caveman_mode` hook activates them
+automatically, in Mistral Vibe the user invokes the skill manually.

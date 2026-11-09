@@ -84,7 +84,13 @@ WORD_CAP_MEDIUM = 800  # Above this → MEDIUM finding (trim candidate).
 SHARED_TOKEN_MIN = 8
 
 REQUIRED_FRONTMATTER_KEYS = ("name", "description", "tools", "model")
-REQUIRED_SECTIONS = ("Workflow", "Scope Boundaries", "Output", "Success Criteria")
+REQUIRED_SECTIONS = (
+    "Workflow",
+    "Scope Boundaries",
+    "Output",
+    "Success Criteria",
+    "Output style (always)",
+)
 REPORTER_FORBIDDEN_TOOLS = ("Write", "Edit")
 
 # Explicit allowlist of agent names subject to the reporter-agent contracts
@@ -287,7 +293,12 @@ def _check_word_count(agent: AgentDoc) -> list[Finding]:
         Zero or one finding (HIGH above ``WORD_CAP_HIGH``, MEDIUM above
         ``WORD_CAP_MEDIUM``, else no finding).
     """
-    count = _word_count(agent.body_no_code)
+    # The required "Output style (always)" block is template-mandated
+    # boilerplate, not authored content — exclude it from the budget.
+    body = re.sub(
+        r"(?ms)^## Output style \(always\)\n.*?(?=^## |\Z)", "", agent.body_no_code
+    )
+    count = _word_count(body)
     if count > WORD_CAP_HIGH:
         return [
             Finding(
@@ -543,8 +554,8 @@ def _check_required_sections(agent: AgentDoc) -> list[Finding]:
             message=f"missing canonical section '## {section}' (see _TEMPLATE.md)",
         )
         for section in REQUIRED_SECTIONS
-        if f"\n## {section}" not in agent.body_no_code
-        and not agent.body_no_code.startswith(f"## {section}")
+        # line-anchored: "## Output" must not match "## Output style (always)"
+        if not re.search(rf"(?m)^## {re.escape(section)}$", agent.body_no_code)
     ]
 
 

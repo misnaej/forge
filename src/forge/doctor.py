@@ -32,11 +32,12 @@ Checks:
   8. Vibe integration (skipped unless Vibe is detected or forced with
      ``--harness vibe``/``all``; blocking when ``.vibe/`` exists, advisory
      otherwise) — ``.vibe/hooks.toml`` present
-     and parseable with ``strict = true`` on every entry,
+     and parseable with ``strict = true`` on every blocking (tool) entry,
      ``.vibe/forge-roster.json`` valid, ``.vibe/agents/*.toml`` carrying
      ``agent_type = "subagent"`` with matching ``.vibe/prompts/*.md``,
      ``.agents/skills/`` populated, ``AGENTS.md`` present,
-     ``forge-hook-dispatch`` on PATH, and the checkout listed in Vibe's
+     ``forge-hook-dispatch`` on PATH, ``.vibe/config.toml`` model presets
+     present and every agent pin resolves, and the checkout listed in Vibe's
      trusted-folders database (without trust, Vibe silently skips every
      project-local guard).
 
@@ -1071,8 +1072,73 @@ def _check_vibe_integration(repo_root: Path) -> list[CheckResult]:
         _vibe_skills_result(repo_root),
         _vibe_agents_md_result(repo_root),
         _vibe_dispatcher_result(),
+        _vibe_models_result(repo_root),
         _vibe_trusted_folder_result(repo_root),
     ]
+
+
+def _vibe_models_result(repo_root: Path) -> CheckResult:
+    """Check .vibe/config.toml carries the forge model presets that agent pins rely on.
+
+    Generated .vibe/agents/*.toml carry active_model = "forge-<tier>"; an
+    unresolvable alias rejects the whole agent file at Vibe load time, so
+    the presets are a hard dependency of the install.
+
+    Args:
+        repo_root: Checkout to inspect.
+
+    Returns:
+        The check result for the model presets.
+    """
+    config = repo_root / ".vibe" / "config.toml"
+    if not config.is_file():
+        return CheckResult(
+            name="vibe:models",
+            passed=False,
+            detail=f"missing {config} — run `install-forge-vibe`",
+        )
+    try:
+        aliases = {
+            m.get("alias") for m in tomllib.loads(config.read_text()).get("models", [])
+        }
+    except (tomllib.TOMLDecodeError, OSError) as exc:
+        return CheckResult(
+            name="vibe:models", passed=False, detail=f"unparseable: {exc}"
+        )
+    presets = {"forge-haiku", "forge-sonnet", "forge-opus"}
+    missing = presets - aliases
+    if missing:
+        return CheckResult(
+            name="vibe:models",
+            passed=False,
+            detail=(
+                f"missing preset aliases {sorted(missing)} — run `install-forge-vibe`"
+            ),
+        )
+    # every active_model pin in generated agents must resolve
+    agents_dir = repo_root / ".vibe" / "agents"
+    unresolved: list[str] = []
+    if agents_dir.is_dir():
+        for toml_path in sorted(agents_dir.glob("*.toml")):
+            try:
+                pin = tomllib.loads(toml_path.read_text()).get("active_model")
+            except (tomllib.TOMLDecodeError, OSError):
+                continue
+            if pin and pin not in aliases:
+                unresolved.append(f"{toml_path.stem}:{pin}")
+    if unresolved:
+        return CheckResult(
+            name="vibe:models",
+            passed=False,
+            detail=(
+                f"agent pins without a configured alias: {', '.join(unresolved[:5])}"
+            ),
+        )
+    return CheckResult(
+        name="vibe:models",
+        passed=True,
+        detail=f"{len(aliases)} model aliases, presets present",
+    )
 
 
 def _print_human(results: list[CheckResult]) -> None:

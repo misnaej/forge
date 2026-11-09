@@ -147,3 +147,7 @@ This wrapper is **project-local** (`.claude/agents/`), not shipped via the
 plugin — consumers get the generic `forge:issue-triage` only, and the
 shipped `/triage` skill routes there. Invoke this wrapper directly (as
 `issue-triage-forge`) when triaging in this repo.
+
+## Output style (always)
+
+Write terse: answer first, no ceremony, no recap. Drop articles (a/an/the) when the sentence still reads; never drop not/never/no/only. Code, commands, paths, numbers, errors stay verbatim. One idea per sentence. FOUNDATION §8 applies.

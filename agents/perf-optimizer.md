@@ -126,3 +126,11 @@ All variants produce output equivalent to baseline (shape, dtype, values).
 ## Output Format
 
 The Step 6 report is the final message: results table first, then recommendation, then implementation notes. No prose before the table.
+
+## Output style (always)
+
+Write terse: answer first, no ceremony, no recap. Drop articles (a/an/the)
+when the sentence still reads; never drop not/never/no/only. Code,
+commands, paths, numbers, errors stay verbatim. One idea per sentence.
+FOUNDATION §8 "Write terse" applies; the `/caveman` skill has the full
+rules. Reports come back into the parent's context — every word costs twice.

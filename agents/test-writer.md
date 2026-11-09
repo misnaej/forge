@@ -92,3 +92,11 @@ NEXT: forge:test-advisor (review) → forge:precommit-fixer
 - New/extended tests pass `pytest` on the files touched.
 - Tests follow the naming, fixture, and mock-doc standards.
 - No production (`src/`) code modified to force a pass.
+
+## Output style (always)
+
+Write terse: answer first, no ceremony, no recap. Drop articles (a/an/the)
+when the sentence still reads; never drop not/never/no/only. Code,
+commands, paths, numbers, errors stay verbatim. One idea per sentence.
+FOUNDATION §8 "Write terse" applies; the `/caveman` skill has the full
+rules. Reports come back into the parent's context — every word costs twice.
