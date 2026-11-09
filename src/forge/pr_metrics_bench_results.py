@@ -77,7 +77,8 @@ def parse_results(text: str | None) -> dict[str, dict[str, Any]]:
 
     Raises:
         BenchError: The file is not a results file this forge can read
-            (unparseable, or a newer schema).
+            (unparseable, a newer schema, or an entry that is not a run).
+            Refusing keeps a later write from dropping what it cannot read.
     """
     if text is None:
         return {}
@@ -95,11 +96,15 @@ def parse_results(text: str | None) -> dict[str, dict[str, Any]]:
             f"expected {RESULTS_SCHEMA}; upgrade forge"
         )
         raise BenchError(msg)
-    return {
-        key: entry
-        for key, entry in runs.items()
-        if isinstance(key, str) and isinstance(entry, dict)
-    }
+    bad = [key for key, entry in runs.items() if not isinstance(entry, dict)]
+    if bad:
+        msg = (
+            f"forge-metrics bench: {RESULTS_JSON} has {len(bad)} malformed run "
+            f"entr{'y' if len(bad) == 1 else 'ies'} ({', '.join(bad[:3])}); "
+            "fix the file in the sandbox before results can be written"
+        )
+        raise BenchError(msg)
+    return dict(runs)
 
 
 def merge_results(
@@ -231,15 +236,39 @@ def _write_and_commit(tree: Path, rows: list[BenchRow]) -> None:
         create_commit(tree, f"chore(bench): record {len(rows)} benchmark run(s)")
 
 
-def _push_results(tree: Path, rows: list[BenchRow]) -> bool:
+def _check_origin(tree: Path, slug: str, seams: Seams) -> None:
+    """Refuse to push unless the clone's ``origin`` is still the sandbox.
+
+    Run right before each push, so nothing between the check and the push
+    (a merge, a hook, a retry) can retarget it.
+
+    Args:
+        tree: The clone.
+        slug: The sandbox's ``owner/name``.
+        seams: Supplies the origin reader.
+
+    Raises:
+        BenchError: ``origin`` names another repo.
+    """
+    if seams.origin_slug(tree) != slug:
+        msg = f"forge-metrics bench: {tree} origin is not the sandbox; not pushed"
+        raise BenchError(msg)
+
+
+def _push_results(tree: Path, rows: list[BenchRow], slug: str, seams: Seams) -> bool:
     """Merge, write, commit and push, retrying after a rejected push.
 
     Args:
         tree: The clone, on ``main``.
         rows: Locally recorded runs.
+        slug: The sandbox's ``owner/name``.
+        seams: Supplies the origin reader.
 
     Returns:
         Whether the results reached the sandbox.
+
+    Raises:
+        BenchError: ``origin`` stopped naming the sandbox before a push.
     """
     for attempt in range(1, PUSH_ATTEMPTS + 1):
         _fetch(tree)
@@ -253,6 +282,7 @@ def _push_results(tree: Path, rows: list[BenchRow]) -> bool:
         # A CLI pushing the sandbox's main is sanctioned here only: the
         # sandbox is a private repo nobody else uses, checked just before,
         # and the seam cannot force, so it adds commits but never rewrites.
+        _check_origin(tree, slug, seams)
         pushed = push_branch(tree, SANDBOX_BASE)
         if pushed.ok:
             return True
@@ -299,7 +329,9 @@ def _onto_main(clone: Path) -> None:
         raise BenchError(msg)
 
 
-def share_results(clone: Path, rows: list[BenchRow]) -> bool:
+def share_results(
+    clone: Path, rows: list[BenchRow], *, slug: str, seams: Seams = DEFAULT_SEAMS
+) -> bool:
     """Put *rows* into the sandbox's results files, committed on ``main``.
 
     The clone is switched to ``main`` and left there (the next ``bench
@@ -310,6 +342,9 @@ def share_results(clone: Path, rows: list[BenchRow]) -> bool:
         clone: A clone of the sandbox (access already checked).
         rows: Locally recorded runs; all are merged, so a run whose results
             stayed local earlier is shared now.
+        slug: The sandbox's ``owner/name``; each push first re-checks that
+            the clone's ``origin`` still names it.
+        seams: Supplies the origin reader.
 
     Returns:
         Whether the results reached the sandbox; ``False`` leaves them in
@@ -317,7 +352,7 @@ def share_results(clone: Path, rows: list[BenchRow]) -> bool:
     """
     try:
         _onto_main(clone)
-        shared = _push_results(clone, rows)
+        shared = _push_results(clone, rows, slug, seams)
     except (subprocess.SubprocessError, OSError, BenchError) as exc:
         logger.warning("forge-metrics bench: results not shared: %s", exc)
         shared = False

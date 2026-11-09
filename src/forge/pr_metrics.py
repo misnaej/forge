@@ -82,6 +82,7 @@ from forge.pr_metrics_bench import (
     finish_run,
     init_sandbox,
     load_tasks,
+    read_sandbox,
     session_line,
     start_run,
 )
@@ -1534,7 +1535,10 @@ def _share(conn: sqlite3.Connection, clone: Path) -> None:
         conn: The metrics database.
         clone: The sandbox clone.
     """
-    if share_results(clone, load_bench_rows(conn)):
+    sandbox = read_sandbox()
+    if sandbox is None:
+        return
+    if share_results(clone, load_bench_rows(conn), slug=sandbox.slug):
         emit("forge-metrics bench: results committed to the sandbox (results/)")
 
 

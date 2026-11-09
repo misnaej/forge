@@ -37,12 +37,13 @@ from forge.pr_metrics_bench import (
     write_sandbox,
 )
 from forge.pr_metrics_report import load_bench_rows, render_bench_report
-from tests.conftest import GIT_ENV, git_stdout
+from tests.conftest import git_stdout
 
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
+pytestmark = pytest.mark.usefixtures("isolated_git_data")
 SLUG = "someone/bench-sandbox"
 OWNED = '{"private": true, "permissions": {"admin": true}}'
 
@@ -61,11 +62,8 @@ def _git(cwd: Path, *args: str) -> str:
 
 
 @pytest.fixture(autouse=True)
-def isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """No machine git config, data dir in *tmp_path*, no transcripts."""
-    for name, value in GIT_ENV.items():
-        monkeypatch.setenv(name, value)
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+def no_transcripts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No transcripts: token figures stay out of these tests."""
     monkeypatch.setattr(pr_metrics_bench, "default_transcripts_dir", lambda _p: None)
 
 

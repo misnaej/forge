@@ -1604,9 +1604,10 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_fetch(repo: Path) -> None` _(internal)_ — Fetch the sandbox's ``main``.
 - `_merge_main(tree: Path) -> bool` _(internal)_ — Bring ``origin/main`` into the clone's ``main``, results conflicts allowed.
 - `_write_and_commit(tree: Path, rows: list[BenchRow]) -> None` _(internal)_ — Write the merged results into the clone and commit them.
-- `_push_results(tree: Path, rows: list[BenchRow]) -> bool` _(internal)_ — Merge, write, commit and push, retrying after a rejected push.
+- `_check_origin(tree: Path, slug: str, seams: Seams) -> None` _(internal)_ — Refuse to push unless the clone's ``origin`` is still the sandbox.
+- `_push_results(tree: Path, rows: list[BenchRow], slug: str, seams: Seams) -> bool` _(internal)_ — Merge, write, commit and push, retrying after a rejected push.
 - `_onto_main(clone: Path) -> None` _(internal)_ — Switch the clean clone to ``main``, fast-forwarded to the sandbox's.
-- `share_results(clone: Path, rows: list[BenchRow]) -> bool` — Put *rows* into the sandbox's results files, committed on ``main``.
+- `share_results(clone: Path, rows: list[BenchRow], *, slug: str, seams: Seams = DEFAULT_SEAMS) -> bool` — Put *rows* into the sandbox's results files, committed on ``main``.
 - `sandbox_rows(clone: Path | None = None, *, task: str | None = None, seams: Seams = DEFAULT_SEAMS) -> list[BenchRow]` — Every run in the sandbox's results file, from any machine.
 
 ## `forge.pr_metrics_charts`

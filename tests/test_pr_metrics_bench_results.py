@@ -19,7 +19,7 @@ from forge.agent_profile_tokens import TokenUsage
 from forge.git_utils import PushResult
 from forge.pr_metrics_bench import BenchError, Completed, Sandbox, Seams, write_sandbox
 from forge.pr_metrics_report import BenchRow, render_bench_report
-from tests.conftest import GIT_ENV, git_stdout
+from tests.test_pr_metrics_bench import _git
 
 
 if TYPE_CHECKING:
@@ -28,27 +28,22 @@ if TYPE_CHECKING:
 
 SLUG = "someone/bench-sandbox"
 BENCH_BRANCH = "bench/docs-1"
+pytestmark = pytest.mark.usefixtures("isolated_git_data")
 
 
-def _git(cwd: Path, *args: str) -> str:
-    """Shared test git runner, stripped.
+def _share(clone: Path, rows: list[BenchRow], *, origin: str = SLUG) -> bool:
+    """Share *rows* from *clone*, its ``origin`` read as *origin*.
 
     Args:
-        cwd: Working directory.
-        *args: Git arguments.
+        clone: The clone.
+        rows: Runs to share.
+        origin: What the origin reader reports (local bare repos have no slug).
 
     Returns:
-        Stripped stdout.
+        ``share_results``' verdict.
     """
-    return git_stdout(cwd, *args).strip()
-
-
-@pytest.fixture(autouse=True)
-def isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """No machine git config; data dir in *tmp_path*."""
-    for name, value in GIT_ENV.items():
-        monkeypatch.setenv(name, value)
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    seams = Seams(origin_slug=lambda _p: origin)
+    return results.share_results(clone, rows, slug=SLUG, seams=seams)
 
 
 @pytest.fixture
@@ -137,7 +132,7 @@ def test_first_run_creates_the_results_files(origin: Path, tmp_path: Path) -> No
     """Behavior: JSON and page committed on main in the clone; bench branch kept."""
     clone = _machine(origin, tmp_path, "a")
     head = _git(clone, "rev-parse", BENCH_BRANCH)
-    assert results.share_results(clone, [_row("r1")])
+    assert _share(clone, [_row("r1")])
     runs = _remote_runs(origin)
     assert list(runs) == ["r1"]
     assert runs["r1"]["forge_version"] == "1.0.0"
@@ -158,7 +153,7 @@ def test_dirty_clone_is_refused_and_kept(origin: Path, tmp_path: Path) -> None:
     clone = _machine(origin, tmp_path, "a")
     before = _git(origin, "rev-parse", "main")
     (clone / "draft.txt").write_text("uncommitted\n", encoding="utf-8")
-    assert not results.share_results(clone, [_row("r1")])
+    assert not _share(clone, [_row("r1")])
     assert (clone / "draft.txt").read_text(encoding="utf-8") == "uncommitted\n"
     assert _git(clone, "branch", "--show-current") == BENCH_BRANCH
     assert _git(origin, "rev-parse", "main") == before
@@ -167,7 +162,7 @@ def test_dirty_clone_is_refused_and_kept(origin: Path, tmp_path: Path) -> None:
 def test_entries_hold_no_machine_identifiers(origin: Path, tmp_path: Path) -> None:
     """Behavior: no path, branch or host-like field reaches the shared file."""
     clone = _machine(origin, tmp_path, "a")
-    results.share_results(clone, [_row("r1")])
+    _share(clone, [_row("r1")])
     text = _git(origin, "show", f"main:{results.RESULTS_JSON}")
     for name in (str(tmp_path), BENCH_BRANCH, "host", "user"):
         assert name not in text
@@ -178,10 +173,10 @@ def test_second_machine_appends_and_same_run_id_replaces(
 ) -> None:
     """Behavior: other machines' runs kept; re-sharing a run never duplicates it."""
     first, second = _machine(origin, tmp_path, "a"), _machine(origin, tmp_path, "b")
-    assert results.share_results(first, [_row("r1")])
-    assert results.share_results(second, [_row("r2", "1.1.0")])
+    assert _share(first, [_row("r1")])
+    assert _share(second, [_row("r2", "1.1.0")])
     assert sorted(_remote_runs(origin)) == ["r1", "r2"]
-    assert results.share_results(first, [_row("r1", new=500)])
+    assert _share(first, [_row("r1", new=500)])
     runs = _remote_runs(origin)
     assert sorted(runs) == ["r1", "r2"]
     assert runs["r1"]["tokens"]["main"]["input"] == 500
@@ -203,14 +198,14 @@ def test_rejected_push_is_retried_after_merging(
     def racing_push(tree: Path, branch: str, **kwargs: object) -> PushResult:
         if not calls:
             monkeypatch.setattr(results, "push_branch", real_push)
-            assert results.share_results(second, [_row("r2")])
+            assert _share(second, [_row("r2")])
             monkeypatch.setattr(results, "push_branch", racing_push)
         outcome = real_push(tree, branch, **kwargs)
         calls.append(outcome.ok)
         return outcome
 
     monkeypatch.setattr(results, "push_branch", racing_push)
-    assert results.share_results(first, [_row("r1")])
+    assert _share(first, [_row("r1")])
     assert calls == [False, True]
     assert sorted(_remote_runs(origin)) == ["r1", "r2"]
 
@@ -228,7 +223,7 @@ def test_every_push_rejected_leaves_results_local(
         return PushResult(ok=False, returncode=1, stderr="rejected")
 
     monkeypatch.setattr(results, "push_branch", rejected)
-    assert not results.share_results(clone, [_row("r1")])
+    assert not _share(clone, [_row("r1")])
     assert len(attempts) == results.PUSH_ATTEMPTS
     assert _git(origin, "rev-parse", "main") == before
     assert _git(clone, "branch", "--show-current") == "main"
@@ -237,8 +232,8 @@ def test_every_push_rejected_leaves_results_local(
 def test_report_from_sandbox_shows_every_machine(origin: Path, tmp_path: Path) -> None:
     """Behavior: the sandbox's file is read back with both machines' runs."""
     first, second = _machine(origin, tmp_path, "a"), _machine(origin, tmp_path, "b")
-    results.share_results(first, [_row("r1", "1.0.0")])
-    results.share_results(second, [_row("r2", "1.1.0")])
+    _share(first, [_row("r1", "1.0.0")])
+    _share(second, [_row("r2", "1.1.0")])
     write_sandbox(Sandbox(SLUG))
 
     def gh(
@@ -267,3 +262,32 @@ def test_newer_schema_is_refused() -> None:
     """Behavior: a results file from a newer forge is not rewritten."""
     with pytest.raises(BenchError, match="schema"):
         results.parse_results(json.dumps({"schema": 99, "runs": {}}))
+
+
+def test_malformed_entry_blocks_the_write(origin: Path, tmp_path: Path) -> None:
+    """Behavior: an unreadable entry is never dropped by a later write.
+
+    SCENARIO: the sandbox's results file holds an entry that is not a run.
+    EXPECTED BEHAVIOR: the share is refused naming the file; main unchanged.
+    """
+    seed = _machine(origin, tmp_path, "seed-results")
+    _git(seed, "switch", "--quiet", "main")
+    (seed / "results").mkdir()
+    bad = {"schema": 1, "runs": {"r0": "not a run"}}
+    (seed / results.RESULTS_JSON).write_text(json.dumps(bad), encoding="utf-8")
+    _git(seed, "add", "-A")
+    _git(seed, "commit", "--quiet", "-m", "hand-edited results")
+    _git(seed, "push", "--quiet", "origin", "main")
+    before = _git(origin, "rev-parse", "main")
+    with pytest.raises(BenchError, match="malformed"):
+        results.parse_results(json.dumps(bad))
+    assert not _share(_machine(origin, tmp_path, "a"), [_row("r1")])
+    assert _git(origin, "rev-parse", "main") == before
+
+
+def test_push_refused_when_origin_changed(origin: Path, tmp_path: Path) -> None:
+    """Behavior: origin is re-checked right before the push; mismatch, no push."""
+    clone = _machine(origin, tmp_path, "a")
+    before = _git(origin, "rev-parse", "main")
+    assert not _share(clone, [_row("r1")], origin="someone/elsewhere")
+    assert _git(origin, "rev-parse", "main") == before
