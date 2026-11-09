@@ -100,7 +100,8 @@ def parse_results(text: str | None) -> dict[str, dict[str, Any]]:
     if bad:
         msg = (
             f"forge-metrics bench: {RESULTS_JSON} has {len(bad)} malformed run "
-            f"entr{'y' if len(bad) == 1 else 'ies'} ({', '.join(bad[:3])}); "
+            f"entr{'y' if len(bad) == 1 else 'ies'} "
+            f"({', '.join(repr(key) for key in bad[:3])}); "
             "fix the file in the sandbox before results can be written"
         )
         raise BenchError(msg)
