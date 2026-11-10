@@ -10,8 +10,11 @@ single responsibility):
 2. Run ``ruff format`` in-place.
 3. Run ``ruff check --fix --unsafe-fixes``. Unsafe fixes are on by
    default; forge always applies them.
-4. ``git add`` every modified tracked file so the staged tree matches
-   the fixed tree.
+4. ``git add`` back only the files that were staged before ruff ran, so
+   ruff's fixes land in the commit being made and nothing the author left
+   unstaged is swept in. A partly-staged file (staged, then edited again)
+   that ruff rewrites cannot be re-staged without its unstaged edits, so
+   the run fails naming it and re-stages nothing.
 5. Write the combined output to ``code_health/ruff.log``.
 
 Both ruff invocations are idempotent — when nothing needs fixing they
@@ -30,7 +33,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from forge.config import resolve_tool_roots, select_diff_files
+from forge.config import filter_under_roots, resolve_tool_roots, select_diff_files
 from forge.git_utils import (
     SCOPE_DIFF,
     VALID_SCOPES,
@@ -38,12 +41,82 @@ from forge.git_utils import (
     path_escapes_repo,
     require_cli,
     stage_modified_paths,
+    staged_unstaged_paths,
     write_step_log,
 )
 
 
 configure_cli_logging()
 logger = logging.getLogger(__name__)
+
+_WHOLE_REPO_ROOTS = frozenset({".", "./", ""})
+
+
+def _staging_snapshot(
+    repo_root: Path, roots: list[str]
+) -> tuple[list[str], dict[str, bytes]] | None:
+    """Record what is staged under *roots* before ruff rewrites anything.
+
+    Args:
+        repo_root: Git repo root.
+        roots: Scan roots (dirs, or files in diff scope); ``.`` means all.
+
+    Returns:
+        ``(staged, partial)``: staged paths under *roots*, and the current
+        bytes of those also carrying unstaged edits. ``None`` when git
+        status cannot be read.
+    """
+    split = staged_unstaged_paths(repo_root)
+    if split is None:
+        return None
+    staged, unstaged = split
+    if not _WHOLE_REPO_ROOTS.intersection(roots):
+        staged = filter_under_roots(staged, roots)
+    unstaged_set = set(unstaged)
+    partial = {
+        p: (repo_root / p).read_bytes()
+        for p in staged
+        if p in unstaged_set and (repo_root / p).is_file()
+    }
+    return staged, partial
+
+
+def _restage_or_refuse(
+    repo_root: Path, snapshot: tuple[list[str], dict[str, bytes]] | None
+) -> tuple[list[str], str | None]:
+    """Fold ruff's fixes into the files that were staged, or refuse.
+
+    A partly-staged file is never ``git add``-ed: adding it would carry its
+    unstaged edits into the commit. If ruff rewrote one, its fix cannot
+    land without them, so the run refuses instead.
+
+    Args:
+        repo_root: Git repo root.
+        snapshot: :func:`_staging_snapshot` result, taken before ruff ran.
+
+    Returns:
+        ``(restaged, refusal)``: paths re-staged, and a refusal message
+        (``None`` when the run may pass).
+    """
+    if snapshot is None:
+        return [], None
+    staged, partial = snapshot
+    touched = sorted(
+        p
+        for p, before in partial.items()
+        if not (repo_root / p).is_file() or (repo_root / p).read_bytes() != before
+    )
+    if touched:
+        return [], (
+            "ruff rewrote partly-staged file(s): "
+            + ", ".join(touched)
+            + ". Their unstaged edits would ride into the commit, so nothing "
+            "was re-staged. Stage the rest or undo the extra edits, then "
+            "commit again."
+        )
+    return stage_modified_paths(
+        repo_root, [p for p in staged if p not in partial]
+    ), None
 
 
 def _validate_paths(repo_root: Path, paths: list[str]) -> list[str]:
@@ -89,7 +162,8 @@ def main() -> int:
         prog="fix-forge-ruff",
         description=(
             "Run `ruff format` + `ruff check --fix --unsafe-fixes` "
-            "in-place, re-stage modified tracked files, and write "
+            "in-place, re-stage the files that were already staged (failing "
+            "if ruff rewrote a partly-staged file), and write "
             "code_health/ruff.log."
         ),
     )
@@ -128,6 +202,7 @@ def main() -> int:
 
     require_cli("ruff", caller="fix-forge-ruff")
 
+    snapshot = _staging_snapshot(repo_root, source_dirs)
     format_cmd = ["ruff", "format", "--", *source_dirs]
     check_cmd = [
         "ruff",
@@ -144,7 +219,7 @@ def main() -> int:
     chk_proc = subprocess.run(
         check_cmd, cwd=repo_root, capture_output=True, text=True, check=False
     )
-    restaged = stage_modified_paths(repo_root, source_dirs)
+    restaged, refusal = _restage_or_refuse(repo_root, snapshot)
 
     sections = [
         "$ " + " ".join(format_cmd),
@@ -153,12 +228,16 @@ def main() -> int:
         "$ " + " ".join(check_cmd),
         (chk_proc.stdout + chk_proc.stderr).strip() or "(no output)",
     ]
+    if snapshot is None:
+        sections.extend(["", "git status unreadable; nothing re-staged."])
     if restaged:
         sections.extend(["", "Re-staged: " + ", ".join(restaged)])
+    if refusal:
+        sections.extend(["", refusal])
     output = "\n".join(sections)
     write_step_log(repo_root, "ruff", output)
     logger.info("%s", output)
-    return chk_proc.returncode
+    return 1 if refusal and chk_proc.returncode == 0 else chk_proc.returncode
 
 
 if __name__ == "__main__":

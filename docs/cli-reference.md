@@ -9,8 +9,9 @@ Forge's console-script CLIs are its real public surface. This page documents eac
 ```text
 usage: fix-forge-ruff [-h] [--scope {all,diff}] [dirs ...]
 
-Run `ruff format` + `ruff check --fix --unsafe-fixes` in-place, re-stage
-modified tracked files, and write code_health/ruff.log.
+Run `ruff format` + `ruff check --fix --unsafe-fixes` in-place, re-stage the
+files that were already staged (failing if ruff rewrote a partly-staged file),
+and write code_health/ruff.log.
 
 positional arguments:
   dirs                Source dirs to fix. If empty, resolve from
