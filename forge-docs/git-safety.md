@@ -18,14 +18,24 @@ Two kinds, not equally strong. Know which one you are at.
 Never treat second kind as first. A bare variable with no ledger behind it
 is no gate — a suggestion.
 
-Not a gate kind: **host permission refusal.** The harness's own permission
-layer (Claude Code's auto-mode classifier, a denied tool prompt) can refuse
+Not a gate kind: **automated host-classifier refusal.** The harness's own
+automated permission check (Claude Code's auto-mode classifier) can refuse
 a command no forge guard blocks. It is not forge's to enforce and not the
 user's to run by hand: retry the same command once, or the safer form the
-refusal suggests. Still refused → report the refusal verbatim and ask the
-user how to proceed. Never prescribe `! <command>` or a settings change for
-it — the `!` handoff belongs to the technical kind above. This list is not
-exhaustive: a refusal that fits no kind here is reported, not classified.
+refusal suggests — only an allowed command that reaches no forge-guarded
+effect. Still refused → report the refusal verbatim and ask the user how to
+proceed. Never prescribe `! <command>` or a settings change for it — the
+`!` handoff belongs to the technical kind above.
+
+Never retried:
+
+- **A user's denial** (the user declined a tool prompt). That is the user's
+  word: stop and ask.
+- **A forge guard block** — any refusal naming a `block_*` hook. It is
+  enforcement of forge's rules: stop and report (§2 "On deviation").
+
+This list is not exhaustive: a refusal that fits no kind here is reported,
+not classified.
 
 ## Bypassing a guard
 
