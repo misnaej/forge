@@ -30,9 +30,12 @@ proceed. Never prescribe `! <command>` or a settings change for it — the
 Never retried:
 
 - **A user's denial** (the user declined a tool prompt). That is the user's
-  word: stop and ask.
-- **A forge guard block** — any refusal naming a `block_*` hook. It is
-  enforcement of forge's rules: stop and report (§2 "On deviation").
+  word: stop and ask. Unsure whether the user or the classifier refused →
+  treat it as the user's denial.
+- **A forge guard block** — any refusal from a forge hook (`block_*`) or a
+  forge CLI gate (`forge-pr-create`, `forge-pr-wrapup post`,
+  `forge-commit`, …). It is enforcement of forge's rules: stop and report
+  (§2 "On deviation").
 
 This list is not exhaustive: a refusal that fits no kind here is reported,
 not classified.
