@@ -36,7 +36,7 @@ import pytest
 from forge import emergency, pip_audit_json, pr_create
 from forge.emergency_state import armed_state
 from forge.git_utils import code_health_dir
-from tests.conftest import GIT_ENV, commit_all, init_git_repo
+from tests.conftest import GIT_ENV, commit_all, git_stdout, init_git_repo
 
 
 if TYPE_CHECKING:
@@ -127,6 +127,7 @@ def _run_main(
     repo: Path,
     *extra_args: str,
     fresh_scan: bool = True,
+    real_base_sync: bool = False,
 ) -> int:
     """Point `forge-pr-create` at *repo* and run it with a minimal argv.
 
@@ -139,10 +140,14 @@ def _run_main(
             built, so the scan-freshness gate passes and the case under
             test is what decides. ``False`` leaves the sidecar as the test
             wrote it.
+        real_base_sync: Run the real base-sync gate. By default it is
+            stubbed to allow, since the repos built here have no origin.
 
     Returns:
         `pr_create.main()`'s exit code.
     """
+    if not real_base_sync:
+        monkeypatch.setattr(pr_create, "_base_sync_refusal", lambda *_a, **_kw: None)
     if fresh_scan:
         _write_scan(repo, time.time())
     monkeypatch.setattr(pr_create, "repo_root", lambda: repo)
@@ -1060,3 +1065,148 @@ def test_pr_create_gates_a_light_wrapup_on_the_cve_scan(
 
     assert calls == []
     assert any(_FORCE_SCAN_HINT in r.getMessage() for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Base-sync gate
+# ---------------------------------------------------------------------------
+
+
+def _repo_with_origin(tmp_path: Path) -> tuple[Path, Path]:
+    """Build a checkout on `feature/x` whose `origin/main` is a real bare remote.
+
+    Args:
+        tmp_path: Pytest's per-test temporary directory.
+
+    Returns:
+        The checkout root and the bare origin's path.
+    """
+    origin = tmp_path / "origin.git"
+    origin.mkdir()
+    git_stdout(origin, "init", "-q", "--bare", "-b", "main")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    init_git_repo(repo)
+    (repo / "shared.txt").write_text("base\n")
+    commit_all(repo, "add shared")
+    git_stdout(repo, "remote", "add", "origin", str(origin))
+    git_stdout(repo, "push", "-q", "origin", "main")
+    git_stdout(repo, "checkout", "-q", "-b", "feature/x")
+    return repo, origin
+
+
+def _advance_origin(tmp_path: Path, origin: Path, *, shared_line: str | None) -> None:
+    """Push one new commit to `origin/main` from a second clone.
+
+    Args:
+        tmp_path: Pytest's per-test temporary directory.
+        origin: The bare remote to push to.
+        shared_line: New content for `shared.txt`, or ``None`` to add an
+            unrelated file instead.
+    """
+    other = tmp_path / "other"
+    git_stdout(tmp_path, "clone", "-q", str(origin), str(other))
+    git_stdout(other, "config", "user.name", "t")
+    git_stdout(other, "config", "user.email", "t@t")
+    if shared_line is None:
+        (other / "unrelated.txt").write_text("moved\n")
+    else:
+        (other / "shared.txt").write_text(shared_line)
+    commit_all(other, "base moves")
+    git_stdout(other, "push", "-q", "origin", "main")
+
+
+@pytest.mark.parametrize(
+    ("case", "emergency", "expect"),
+    [
+        pytest.param("current", False, ("allow", None), id="up-to-date"),
+        pytest.param(
+            "behind", False, ("refuse", "1 commit(s) behind origin/main"), id="behind"
+        ),
+        pytest.param(
+            "behind",
+            True,
+            ("warn", "1 commit(s) behind origin/main"),
+            id="behind-emergency",
+        ),
+        pytest.param(
+            "conflict", False, ("refuse", "conflicts with main"), id="conflict"
+        ),
+        pytest.param(
+            "conflict", True, ("refuse", "conflicts with main"), id="conflict-emergency"
+        ),
+        pytest.param(
+            "no-origin",
+            False,
+            ("warn", "could not fetch origin/main"),
+            id="fetch-fails",
+        ),
+    ],
+)
+def test_base_sync_refusal_follows_the_branch_state(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    *,
+    case: str,
+    emergency: bool,
+    expect: tuple[str, str | None],
+) -> None:
+    """Behind or conflicting refuses; an emergency waives only the behind case.
+
+    SCENARIO: a feature branch against a real bare origin whose `main`
+        is current, moved on, moved on over the same line, or unreachable.
+    MOCK SETUP: none; real git throughout.
+    EXPECTED BEHAVIOR: refusal text (naming `/pr`) or ``None``; an
+        unreadable base or a waived behind count warns instead.
+
+    Args:
+        case: Which base state to build.
+        emergency: Whether the wrap-up declares an emergency publication.
+        expect: ``(kind, text)`` — ``allow`` (no refusal, no warning),
+            ``refuse`` (refusal carrying *text*), or ``warn`` (allowed, one
+            WARNING carrying *text*).
+    """
+    kind, text = expect
+    repo, origin = _repo_with_origin(tmp_path)
+    if case == "behind":
+        _advance_origin(tmp_path, origin, shared_line=None)
+    elif case == "conflict":
+        (repo / "shared.txt").write_text("branch\n")
+        commit_all(repo, "branch edits shared")
+        _advance_origin(tmp_path, origin, shared_line="main\n")
+    elif case == "no-origin":
+        git_stdout(repo, "remote", "remove", "origin")
+
+    with caplog.at_level("WARNING", logger=pr_create.__name__):
+        result = pr_create._base_sync_refusal(repo, "main", emergency=emergency)
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    if kind == "refuse":
+        assert result is not None
+        assert text is not None
+        assert text in result
+        assert "/pr" in result
+    else:
+        assert result is None
+    if kind == "warn":
+        assert text is not None
+        assert len(warnings) == 1
+        assert text in warnings[0]
+    else:
+        assert not warnings
+
+
+def test_pr_create_refuses_publication_when_behind_the_base(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A branch behind `origin/main` exits 2 and never reaches `gh pr create`."""
+    repo, origin = _repo_with_origin(tmp_path)
+    _advance_origin(tmp_path, origin, shared_line=None)
+    _write_wrapup(repo, _head_sha(repo))
+    calls = _stub_gh(monkeypatch)
+
+    with caplog.at_level("ERROR", logger=pr_create.__name__):
+        assert _run_main(monkeypatch, repo, real_base_sync=True) == 2
+
+    assert calls == []
+    assert any("behind origin/main" in r.getMessage() for r in caplog.records)

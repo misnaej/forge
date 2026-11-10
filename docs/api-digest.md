@@ -1432,6 +1432,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_publish_emergency(root: Path, branch: str, cmd: list[str]) -> int` _(internal)_ — Run ``gh pr create`` under a claimed bypass, then commit or release it.
 - `_read_verified_wrapup(root: Path, branch: str) -> tuple[str | None, str | None]` _(internal)_ — Read the wrap-up and confirm it verifies this checkout's HEAD.
 - `_cve_scan_refusal(root: Path, base: str) -> str | None` _(internal)_ — Refuse a branch with no trustworthy CVE scan since it left *base*.
+- `_base_sync_refusal(root: Path, base: str, *, emergency: bool) -> str | None` _(internal)_ — Refuse a branch that is behind or conflicting with ``origin/<base>``.
 - `_gate(root: Path, branch: str, base: str) -> tuple[str | None, bool]` _(internal)_ — Return why publication is refused, and whether it is an emergency.
 - `_warn_unlisted_closes(body_file: str) -> None` _(internal)_ — Warn when the body would close an issue forge's summary does not list.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Build the argument parser.
@@ -1798,6 +1799,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_section_bounds(lines: list[str], title: str) -> tuple[int, int] | None` _(internal)_ — Return the ``(heading, end)`` line indexes of section *title*.
 - `follow_up_refs(text: str) -> list[int]` — Return the issues the wrap-up's findings were deferred to or filed as.
 - `refresh_sections(text: str, *, ci_status: str, issue_management: str) -> str` — Replace the CI Status and Issue Management bodies, leaving the rest as is.
+- `conflict_refusal(base: str, rerun: str) -> str` — The refusal for a branch that conflicts with its base.
+- `behind_refusal(behind: int, base: str, rerun: str) -> str` — The refusal for a branch that is behind its base.
 - `post_gates(view: Mapping[str, object], verified_sha: str, *, behind: int | None, emergency: bool) -> tuple[list[str], list[str]]` — Decide whether a wrap-up may be published on the PR as it is now.
 - `_read_optional(path: Path | None) -> str | None` _(internal)_ — Read *path* when given.
 - `_load_plan(root: Path, args: argparse.Namespace) -> tuple[str, tuple[str, ...], tuple[str, ...]]` _(internal)_ — Return the plan's ``(mode, reporters, reasons)``.

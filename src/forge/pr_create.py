@@ -47,16 +47,19 @@ from typing import Final, cast
 from forge import emergency, pip_audit_json
 from forge.config import load_config
 from forge.git_utils import (
+    behind_ahead,
     code_health_dir,
     configure_cli_logging,
+    fetch_quietly,
     fork_point_time,
+    merge_tree_clean,
     repo_root,
     resolve_current_branch,
     run_git,
 )
 from forge.pr_delta import extract_verified_shas, unlisted_closing_refs
 from forge.pr_plan import classify
-from forge.pr_wrapup import WRAPUP_NAME
+from forge.pr_wrapup import WRAPUP_NAME, behind_refusal, conflict_refusal
 from forge.precommit import install_refresh_hint, resolve_steps
 
 
@@ -453,6 +456,53 @@ def _cve_scan_refusal(root: Path, base: str) -> str | None:
     )
 
 
+def _base_sync_refusal(root: Path, base: str, *, emergency: bool) -> str | None:
+    """Refuse a branch that is behind or conflicting with ``origin/<base>``.
+
+    ``forge-pr-wrapup post`` refuses the same branch minutes later, after
+    the pull request is public and reviewers are notified; refusing here,
+    before it exists, costs nothing to retry. The base can move during
+    verification, so the ``/pr`` base-sync gate that ran earlier does not
+    cover this. Same rule as the post: an emergency publication may be
+    behind, never conflicting; an unreadable base is a warning, not a
+    refusal.
+
+    Args:
+        root: Checkout holding the branch.
+        base: Base branch name.
+        emergency: Whether the wrap-up declares an emergency publication.
+
+    Returns:
+        A refusal reason, or ``None``.
+    """
+    if not fetch_quietly(root, "origin", base):
+        logger.warning(
+            "could not fetch origin/%s; publishing without the base-sync check",
+            base,
+        )
+        return None
+    if merge_tree_clean(root, f"origin/{base}", "HEAD") is False:
+        return conflict_refusal(base, "/pr")
+    counts = behind_ahead(root, f"origin/{base}")
+    if counts is None:
+        logger.warning(
+            "could not compare with origin/%s; behind-base check skipped", base
+        )
+        return None
+    behind = counts[0]
+    if behind > 0 and emergency:
+        logger.warning(
+            "the branch is %d commit(s) behind origin/%s; allowed for an emergency "
+            "publication",
+            behind,
+            base,
+        )
+        return None
+    if behind > 0:
+        return behind_refusal(behind, base, "/pr")
+    return None
+
+
 def _gate(root: Path, branch: str, base: str) -> tuple[str | None, bool]:
     """Return why publication is refused, and whether it is an emergency.
 
@@ -463,7 +513,8 @@ def _gate(root: Path, branch: str, base: str) -> tuple[str | None, bool]:
     recognised here; the bypass is claimed later, as the last step before
     publishing, so no refusal can follow a claim. Every mode, emergency
     included, also needs a CVE scan since the branch left its base
-    (:func:`_cve_scan_refusal`).
+    (:func:`_cve_scan_refusal`) and a branch current with that base
+    (:func:`_base_sync_refusal`).
 
     Args:
         root: Checkout holding the branch.
@@ -486,7 +537,13 @@ def _gate(root: Path, branch: str, base: str) -> tuple[str | None, bool]:
     scan_refusal = _cve_scan_refusal(root, base)
     if scan_refusal is not None:
         return scan_refusal, False
-    if re.search(r"^wrapup-mode:[ \t]*emergency[ \t]*$", text, re.MULTILINE):
+    is_emergency = bool(
+        re.search(r"^wrapup-mode:[ \t]*emergency[ \t]*$", text, re.MULTILINE)
+    )
+    sync_refusal = _base_sync_refusal(root, base, emergency=is_emergency)
+    if sync_refusal is not None:
+        return sync_refusal, False
+    if is_emergency:
         return None, True
     for declared in EARNED_WRAPUP_MODES:
         marker = rf"^wrapup-mode:[ \t]*{re.escape(declared)}[ \t]*$"

@@ -625,6 +625,45 @@ def refresh_sections(text: str, *, ci_status: str, issue_management: str) -> str
     return "\n".join(lines)
 
 
+def conflict_refusal(base: str, rerun: str) -> str:
+    """The refusal for a branch that conflicts with its base.
+
+    Shared by ``forge-pr-create`` (before publication) and
+    ``forge-pr-wrapup post`` so both name the same remedy.
+
+    Args:
+        base: The base branch name.
+        rerun: The re-verification command to name (``/pr`` or ``/pr <N>``).
+
+    Returns:
+        The refusal text.
+    """
+    return (
+        f"the branch conflicts with {base}: run `git merge origin/{base}` "
+        "(only generated files conflict: `forge-resync --resolve-conflicts`), "
+        f"then re-verify with {rerun}"
+    )
+
+
+def behind_refusal(behind: int, base: str, rerun: str) -> str:
+    """The refusal for a branch that is behind its base.
+
+    Shared by ``forge-pr-create`` and ``forge-pr-wrapup post``.
+
+    Args:
+        behind: Commits the branch is behind ``origin/<base>``.
+        base: The base branch name.
+        rerun: The re-verification command to name (``/pr`` or ``/pr <N>``).
+
+    Returns:
+        The refusal text.
+    """
+    return (
+        f"the branch is {behind} commit(s) behind origin/{base}: run "
+        f"`git merge origin/{base}`, then re-verify with {rerun}"
+    )
+
+
 def post_gates(
     view: Mapping[str, object],
     verified_sha: str,
@@ -662,11 +701,7 @@ def post_gates(
         )
     sync = base_sync(str(view.get("mergeable") or ""), behind)
     if sync.conflicting:
-        refusals.append(
-            f"the branch conflicts with {base}: run `git merge origin/{base}` "
-            "(only generated files conflict: `forge-resync --resolve-conflicts`), "
-            f"then re-verify with {rerun}"
-        )
+        refusals.append(conflict_refusal(base, rerun))
     elif sync.mergeable_unknown:
         notes.append("GitHub has not computed mergeability yet (UNKNOWN)")
     if behind is None:
@@ -677,10 +712,7 @@ def post_gates(
             "for the recorded emergency PR"
         )
     elif behind > 0:
-        refusals.append(
-            f"the branch is {behind} commit(s) behind origin/{base}: run "
-            f"`git merge origin/{base}`, then re-verify with {rerun}"
-        )
+        refusals.append(behind_refusal(behind, base, rerun))
     rollup = view.get("statusCheckRollup")
     if isinstance(rollup, list) and rollup_not_run(rollup):
         cause = (
