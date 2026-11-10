@@ -374,6 +374,78 @@ def test_commit_and_push_commits_a_resolved_merge(feature_repo: Path) -> None:
     assert len(parents) == 2
 
 
+@pytest.mark.usefixtures("_fake_evidence")
+def test_commit_and_push_commits_a_git_mv_rename_naming_both_paths(
+    feature_repo: Path,
+) -> None:
+    """SCENARIO: ``git mv`` stages a rename; naming old and new path commits it.
+
+    A rename is two paths (old deleted, new added) to both the pre-commit
+    staged read and the post-commit ``diff-tree`` read; git's rename pairing
+    would show one path and refuse.
+    """
+    git_stdout(feature_repo, "mv", "a.txt", "moved.txt")
+
+    request = Request("refactor: move a", ("a.txt", "moved.txt"), push=False)
+    assert commit.commit_and_push(feature_repo, request) == commit.EXIT_OK
+
+    assert commit.committed_paths(feature_repo) == {"a.txt", "moved.txt"}
+
+
+@pytest.mark.usefixtures("_fake_evidence")
+def test_stage_exactly_staged_rename_naming_only_new_path_refuses_with_hint(
+    feature_repo: Path,
+) -> None:
+    """SCENARIO: staged rename, only the new path named; refusal says to name both."""
+    git_stdout(feature_repo, "mv", "a.txt", "moved.txt")
+    head = git_stdout(feature_repo, "rev-parse", "HEAD")
+
+    with pytest.raises(CommitRefusedError, match="name both") as excinfo:
+        commit.stage_exactly(feature_repo, ("moved.txt",))
+
+    assert "a.txt" in str(excinfo.value)
+    assert git_stdout(feature_repo, "rev-parse", "HEAD") == head
+
+
+@pytest.mark.usefixtures("_fake_evidence")
+def test_commit_and_push_commits_a_plain_filesystem_rename(
+    feature_repo: Path,
+) -> None:
+    """SCENARIO: rename done outside git (``Path.rename``), both paths named."""
+    (feature_repo / "a.txt").rename(feature_repo / "moved.txt")
+
+    request = Request("refactor: move a", ("a.txt", "moved.txt"), push=False)
+    assert commit.commit_and_push(feature_repo, request) == commit.EXIT_OK
+
+    assert commit.committed_paths(feature_repo) == {"a.txt", "moved.txt"}
+
+
+@pytest.mark.usefixtures("_fake_evidence")
+def test_commit_and_push_commits_a_merge_carrying_a_rename(
+    feature_repo: Path,
+) -> None:
+    """SCENARIO: clean merge brings in a base-side rename; both paths commit.
+
+    MOCK SETUP: none beyond the passing-evidence fixture; git runs for real.
+    EXPECTED BEHAVIOR: staged read lists old and new path, the merge commit
+    (first-parent diff) lists the same two, commit succeeds.
+    """
+    (feature_repo / "a.txt").write_text("feature\n", encoding="utf-8")
+    commit_all(feature_repo, "feat: change a")
+    git_stdout(feature_repo, "checkout", "-q", "main")
+    git_stdout(feature_repo, "mv", "b.txt", "renamed_b.txt")
+    commit_all(feature_repo, "refactor: rename b")
+    git_stdout(feature_repo, "checkout", "-q", "feat/x")
+    git_stdout(feature_repo, "merge", "-q", "--no-commit", "--no-ff", "main")
+    assert commit._staged(feature_repo) == {"b.txt", "renamed_b.txt"}
+
+    request = Request("chore: merge main", ("b.txt", "renamed_b.txt"), push=False)
+    assert commit.commit_and_push(feature_repo, request) == commit.EXIT_OK
+
+    assert commit.committed_paths(feature_repo) == {"b.txt", "renamed_b.txt"}
+    assert len(git_stdout(feature_repo, "log", "-1", "--format=%P").split()) == 2
+
+
 def test_committed_paths_root_commit_lists_every_file(tmp_path: Path) -> None:
     """A root commit (no parent) lists every file it adds."""
     subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)

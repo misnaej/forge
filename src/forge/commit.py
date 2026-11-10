@@ -203,16 +203,23 @@ def _git_paths(root: Path, *args: str) -> set[str]:
     return {p for p in run_git(*args, cwd=root).split("\0") if p}
 
 
-def _staged(root: Path) -> set[str]:
-    """Paths currently staged.
+def _staged(root: Path, *diff_filter: str) -> set[str]:
+    """Paths currently staged, a rename counted as its old and new path.
+
+    ``--no-renames`` because :func:`committed_paths` reads ``diff-tree``,
+    which never pairs renames: both reads must agree on what a rename is,
+    or a staged rename is refused before or after it is committed.
 
     Args:
         root: Repo root.
+        *diff_filter: Extra ``git diff`` arguments (e.g. ``--diff-filter=D``).
 
     Returns:
         The staged paths, repo-relative.
     """
-    return _git_paths(root, "diff", "--cached", "--name-only", "-z")
+    return _git_paths(
+        root, "diff", "--cached", "--name-only", "--no-renames", *diff_filter, "-z"
+    )
 
 
 def stage_exactly(root: Path, paths: tuple[str, ...]) -> None:
@@ -233,12 +240,15 @@ def stage_exactly(root: Path, paths: tuple[str, ...]) -> None:
     already = _staged(root) - set(paths)
     if already:
         msg = f"other files are already staged: {sorted(already)}; unstage them first."
+        if already & _staged(root, "--diff-filter=D") and set(paths) & _staged(
+            root, "--diff-filter=A"
+        ):
+            msg += " If this is a rename, name both the old and new paths."
         raise CommitRefusedError(msg)
-    # A removal staged earlier (`git rm`) is gone from both index and tree,
-    # so `git add` cannot match it; it is already staged as it should be.
-    removed = _git_paths(
-        root, "diff", "--cached", "--name-only", "--diff-filter=D", "-z"
-    )
+    # A removal staged earlier (`git rm`, or the old half of a `git mv`) is
+    # gone from both index and tree, so `git add` cannot match it; it is
+    # already staged as it should be.
+    removed = _staged(root, "--diff-filter=D")
     to_add = [p for p in paths if p not in removed]
     if to_add:
         try:
