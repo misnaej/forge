@@ -102,7 +102,11 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_load_digest(path: Path) -> dict[str, TranscriptStats]` _(internal)_ — Read the transcript digest: the last good line per agent id wins.
 - `_digest_is_behind(stats: TranscriptStats, known: TranscriptStats | None) -> bool` _(internal)_ — Whether *stats* says more than the digest already holds for its run.
 - `_record_digest(path: Path, runs: Iterable[AgentRun], digest: dict[str, TranscriptStats]) -> None` _(internal)_ — Append a digest line for every run whose stats are new or have grown.
-- `collect_runs(ledger_path: Path, transcripts_root: Path | None, *, record_digest: bool = True) -> list[AgentRun]` — Assemble every known run: ledger first, transcripts as enrichment or backfill.
+- `collect_runs(ledger_path: Path, transcripts_root: Path | None, *, record_digest: bool = True, root: Path | None = None, vibe_sessions_dir: Path | None = None) -> list[AgentRun]` — Assemble every known run: ledger first, other sources as backfill.
+- `_attach_transcripts(runs: dict[str, AgentRun]) -> None` _(internal)_ — Fill each ledger run's stats from its transcript when it resolves.
+- `merge_transcript_runs(runs: dict[str, AgentRun], transcripts_root: Path | None) -> None` — Backfill runs from a scanned Claude transcripts directory.
+- `merge_vibe_runs(runs: dict[str, AgentRun], root: Path, sessions_dir: Path | None) -> None` — Merge Vibe subagent sessions that no ledger run covers.
+- `_vibe_run_to_agent_run(key: str, vibe_run: VibeRun) -> AgentRun` _(internal)_ — Convert one Vibe run into an :class:`AgentRun`.
 - `_start_of(run: AgentRun) -> datetime` _(internal)_ — A run's best-known start, for ordering (unknown sorts first).
 - `filter_runs(runs: list[AgentRun], *, agent_type: str | None = None, since: datetime | None = None, last: int | None = None) -> list[AgentRun]` — Narrow *runs* by type, start time, and recency.
 - `type_rows(runs: Iterable[AgentRun]) -> list[TypeRow]` — Aggregate wall time per agent type, costliest total first.
@@ -2438,3 +2442,31 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `global_forge_keys(plugins_file: Path | None = None, settings_file: Path | None = None) -> list[str]` — Return every forge key installed or enabled for the whole user account.
 - `_resolved(path: Path) -> Path` _(internal)_ — Return *path* resolved, or unchanged when resolution fails.
 - `safe_text(value: object) -> str | None` — Return *value* as text if it matches :data:`_SAFE_TEXT`, else a placeholder.
+
+## `forge.vibe_metadata`
+
+> _Identity metadata for Mistral Vibe unified session stores._
+
+- `class VibeSessionMeta` — Identity of one Vibe session directory.
+- `default_sessions_dir() -> Path` — The unified session store of the active Vibe home.
+- `read_session_meta(session_dir: Path) -> VibeSessionMeta | None` — Read one session directory's identity.
+- `_mapping(value: dict[str, Any] | None) -> dict[str, Any]` _(internal)_ — Return *value* when it is a dict, else an empty one.
+- `_str_or_none(value: str | None) -> str | None` _(internal)_ — Return *value* when it is a non-empty string, else None.
+- `_latest_runtime_state(session_dir: Path) -> dict[str, Any] | None` _(internal)_ — The ``runtime-state.json`` of the generation ``CURRENT`` points to.
+- `_meta_json(session_dir: Path) -> dict[str, Any] | None` _(internal)_ — The root session's ``meta.json``, when present and parseable.
+- `_frontmatter(text: str) -> dict[str, str]` _(internal)_ — Parse the YAML-ish frontmatter block at the start of *text*.
+
+## `forge.vibe_sessions`
+
+> _Agent-run stats from Mistral Vibe unified session journals._
+
+- `class VibeRun` — One Vibe subagent session as profiler input.
+- `runs_from_vibe_sessions(root: Path, sessions_dir: Path | None = None) -> dict[str, VibeRun]` — Every Vibe subagent session that ran in *root*'s checkout.
+- `parse_vibe_journal(session_dir: Path) -> VibeRun | None` — Fold one session's journal records into a run.
+- `_iter_jsonl(path: Path) -> Iterator[dict[str, Any]]` _(internal)_ — Yield the JSON objects in *path*, skipping lines that are not one.
+- `class _JournalScan` _(internal)_ — Running state of one :func:`parse_vibe_journal` pass.
+  - `record(self, run: VibeRun, record: dict[str, Any]) -> None` — Fold one journal record into *run*.
+  - `finish(self, run: VibeRun) -> None` — Apply the fallback cumulative usage when no per-request usage was seen.
+- `_mapping(value: dict[str, Any] | None) -> dict[str, Any]` _(internal)_ — Return *value* when it is a dict, else an empty one.
+- `_record_ts(record: dict[str, Any]) -> datetime | None` _(internal)_ — One journal record's wall-clock time.
+- `_find_ms(value: dict[str, Any] | None, key: str) -> int | float | None` _(internal)_ — Depth-first search for the first numeric *key* in a nested structure.
