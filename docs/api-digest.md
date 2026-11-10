@@ -643,6 +643,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _Apply ruff fixes and write ``code_health/ruff.log``._
 
+- `_staging_snapshot(repo_root: Path, roots: list[str]) -> tuple[list[str], dict[str, bytes]] | None` _(internal)_ — Record what is staged under *roots* before ruff rewrites anything.
+- `_restage_or_refuse(repo_root: Path, snapshot: tuple[list[str], dict[str, bytes]] | None) -> tuple[list[str], str | None]` _(internal)_ — Fold ruff's fixes into the files that were staged, or refuse.
 - `_validate_paths(repo_root: Path, paths: list[str]) -> list[str]` _(internal)_ — Ensure every entry in *paths* resolves inside *repo_root*.
 - `main() -> int` — Apply ruff fixes and write ``code_health/ruff.log``.
 

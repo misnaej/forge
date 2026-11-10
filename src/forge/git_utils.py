@@ -2911,8 +2911,10 @@ def stage_modified_paths(repo_root: Path, pathspecs: list[str]) -> list[str]:
     are re-staged, so a step that mutates a file (ruff reformat, a doc
     regenerator) folds *its own* change into the commit without sweeping in
     unrelated unstaged edits elsewhere in the working tree. Both
-    :mod:`forge.fix_ruff` (source dirs) and the doc-regen pre-commit step
-    (specific doc paths) share this one git-add-back helper.
+    :mod:`forge.fix_ruff` (the files already staged) and the doc-regen
+    pre-commit step (specific doc paths) share this one git-add-back helper.
+    An empty *pathspecs* stages nothing: handed to git bare, it would mean
+    every modified file in the repo.
 
     Args:
         repo_root: Git repo root (the subprocess ``cwd``).
@@ -2923,7 +2925,7 @@ def stage_modified_paths(repo_root: Path, pathspecs: list[str]) -> list[str]:
         Newly-staged file paths (relative to repo root). Empty when no
         in-scope file changed or *repo_root* is not a git repo.
     """
-    if not (repo_root / ".git").exists():
+    if not pathspecs or not (repo_root / ".git").exists():
         return []
     files = diff_names_z(repo_root, "--", *pathspecs)
     if not files:

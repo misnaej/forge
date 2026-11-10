@@ -3616,6 +3616,29 @@ def test_stage_modified_paths_real_git_stages_modified_tracked_file(
     assert "docs/api-digest.md" in proc.stdout
 
 
+def test_stage_modified_paths_empty_pathspecs_stage_nothing(tmp_path: Path) -> None:
+    """Empty pathspecs return [] and leave a modified tracked file unstaged.
+
+    Bare ``git diff --`` would mean every modified file; the helper must not
+    widen an empty scope to the whole repo.
+    """
+    _init_git_repo(tmp_path)
+    target = tmp_path / "a.txt"
+    target.write_text("v1\n")
+    commit_all(tmp_path, "add a")
+    target.write_text("v2\n")
+    assert git_utils.stage_modified_paths(tmp_path, []) == []
+    cached = subprocess.run(
+        ["git", "diff", "--cached", "--name-only"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert cached == ""
+
+
 # ---------------------------------------------------------------------------
 # path_escapes_repo
 # ---------------------------------------------------------------------------
