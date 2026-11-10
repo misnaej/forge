@@ -171,7 +171,11 @@ def repo_with_committed_sources(tmp_path: Path) -> Path:
 
 
 def _run_main_with_fake_ruff(
-    monkeypatch: pytest.MonkeyPatch, repo: Path, fixes: dict[str, str]
+    monkeypatch: pytest.MonkeyPatch,
+    repo: Path,
+    fixes: dict[str, str],
+    *,
+    root: str = "src",
 ) -> int:
     """Run ``fix_ruff.main`` in *repo* where fake ruff rewrites *fixes* files.
 
@@ -180,6 +184,7 @@ def _run_main_with_fake_ruff(
     Args:
         repo: Git repository root where ``fix_ruff.main`` runs.
         fixes: Mapping of repo-relative path to the text the fake ruff writes.
+        root: Scan root passed on the command line.
     """
 
     def _run(cmd: list[str], **kwargs: object) -> object:
@@ -192,7 +197,7 @@ def _run_main_with_fake_ruff(
     monkeypatch.setattr(fix_ruff.subprocess, "run", _run)
     monkeypatch.setattr(fix_ruff, "require_cli", lambda *_a, **_k: None)
     monkeypatch.chdir(repo)
-    monkeypatch.setattr("sys.argv", ["fix-forge-ruff", "src"])
+    monkeypatch.setattr("sys.argv", ["fix-forge-ruff", root])
     return fix_ruff.main()
 
 
@@ -226,6 +231,26 @@ def test_left_out_modified_file_stays_unstaged(
     assert rc == 0
     assert _cached(repo) == {"src/a.py"}
     assert git_stdout(repo, "diff", "--name-only").split() == ["src/b.py"]
+
+
+def test_whole_repo_root_restages_staged_file_anywhere(
+    repo_with_committed_sources: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ``.`` root counts every staged file as in scope.
+
+    SCENARIO: docs/out.txt staged; ruff, run with root ``.``, rewrites it.
+    MOCK SETUP: ruff faked (rewrites files, rc=0); git is real.
+    EXPECTED BEHAVIOR: exit 0; the index holds the rewritten docs/out.txt.
+    """
+    repo = repo_with_committed_sources
+    (repo / "docs" / "out.txt").write_text("staged\n", encoding="utf-8")
+    git_stdout(repo, "add", "docs/out.txt")
+    rc = _run_main_with_fake_ruff(
+        monkeypatch, repo, {"docs/out.txt": "fixed\n"}, root="."
+    )
+    assert rc == 0
+    assert git_stdout(repo, "show", ":docs/out.txt") == "fixed\n"
+    assert not git_stdout(repo, "diff", "--name-only").strip()
 
 
 def test_staged_file_gets_fix_staged_and_outside_roots_untouched(
