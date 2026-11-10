@@ -344,9 +344,12 @@ def test_commit_and_push_commits_a_resolved_merge(feature_repo: Path) -> None:
 
     ``git show`` gives a merge's combined diff (only the resolved file), so
     the post-commit check used to call the other staged paths missing.
+    ``b.txt`` changes only on the branch: a diff against every parent would
+    list it as extra and refuse the merge.
     """
     (feature_repo / "a.txt").write_text("feature\n", encoding="utf-8")
-    commit_all(feature_repo, "feat: a on branch")
+    (feature_repo / "b.txt").write_text("feature only\n", encoding="utf-8")
+    commit_all(feature_repo, "feat: a and b on branch")
     git_stdout(feature_repo, "checkout", "-q", "main")
     (feature_repo / "a.txt").write_text("base\n", encoding="utf-8")
     (feature_repo / "c.txt").write_text("c\n", encoding="utf-8")

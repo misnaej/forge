@@ -262,6 +262,8 @@ def committed_paths(root: Path) -> set[str]:
     A merge is diffed against its first parent explicitly: ``git show``
     prints a merge's combined diff, which lists only paths differing from
     every parent, so a resolved merge read as missing its staged files.
+    ``--diff-merges=first-parent``, not ``-m --first-parent``: ``-m`` emits
+    one diff per parent, so the paths became the union of both sides.
 
     Args:
         root: Repo root.
@@ -275,8 +277,7 @@ def committed_paths(root: Path) -> set[str]:
         "diff-tree",
         "-r",
         "--root",
-        "-m",
-        "--first-parent",
+        "--diff-merges=first-parent",
         "--no-commit-id",
         "--name-only",
         "-z",
