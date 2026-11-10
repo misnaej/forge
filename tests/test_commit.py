@@ -629,3 +629,107 @@ def test_main_push_only_pushes(main_env: Path, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(commit, "push_branch", make_fake_push_branch(calls=calls))
     assert commit.main(["--push-only"]) == commit.EXIT_OK
     assert len(calls) == 1
+
+
+def test_wip_sync_commits_whole_dirty_tree(main_env: Path) -> None:
+    """A checkpoint takes tracked edits and untracked files, leaving a clean tree."""
+    (main_env / "a.txt").write_text("changed\n", encoding="utf-8")
+    (main_env / "new.txt").write_text("new\n", encoding="utf-8")
+
+    code = commit.main(["--wip-sync", "-m", "wip-sync: before merge", "--no-push"])
+
+    assert code == commit.EXIT_OK
+    assert git_stdout(main_env, "log", "-1", "--format=%s").strip() == (
+        "wip-sync: before merge"
+    )
+    assert set(
+        git_stdout(main_env, "show", "--name-only", "--format=", "HEAD").split()
+    ) == {
+        "a.txt",
+        "new.txt",
+    }
+    assert git_stdout(main_env, "status", "--porcelain").strip() == ""
+
+
+@pytest.mark.usefixtures("_fake_evidence")
+def test_wip_sync_defers_gate_without_leaking_env(
+    main_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The hook sees FORGE_WIP_SYNC=1 for the checkpoint only, never afterwards."""
+    monkeypatch.delenv("FORGE_WIP_SYNC", raising=False)
+    hook = main_env / ".git" / "hooks" / "pre-commit"
+    hook.write_text(
+        '#!/bin/sh\n[ "$FORGE_WIP_SYNC" = 1 ] || exit 1\n', encoding="utf-8"
+    )
+    hook.chmod(0o755)
+    (main_env / "a.txt").write_text("changed\n", encoding="utf-8")
+
+    assert commit.main(["--wip-sync", "-m", "wip-sync: x", "--no-push"]) == 0
+    assert "FORGE_WIP_SYNC" not in os.environ
+
+    (main_env / "b.txt").write_text("changed\n", encoding="utf-8")
+    with pytest.raises(CommitRefusedError, match="blocked"):
+        commit.commit_and_push(main_env, Request("fix: b", ("b.txt",), push=False))
+
+
+@pytest.mark.parametrize(
+    ("argv", "dirty", "reason"),
+    [
+        (
+            ["--wip-sync", "-m", "fix: not a checkpoint", "--no-push"],
+            True,
+            "must start with 'wip-sync:'",
+        ),
+        (
+            ["--wip-sync", "-m", "wip-sync: x", "--no-push", "a.txt"],
+            True,
+            "--wip-sync takes no files",
+        ),
+        (
+            ["--wip-sync", "-m", "wip-sync: x", "--no-push"],
+            False,
+            "working tree is clean",
+        ),
+        (["--wip-sync", "--push-only"], True, "--push-only takes no files"),
+        (
+            ["--wip-sync", "-m", "wip-sync: x\n\nCo-Authored-By: x <x@y>", "--no-push"],
+            True,
+            "AI attribution pattern detected",
+        ),
+    ],
+    ids=["wrong-marker", "paths-given", "clean-tree", "with-push-only", "attribution"],
+)
+def test_wip_sync_refusals_exit_refused_without_commit(
+    main_env: Path,
+    caplog: pytest.LogCaptureFixture,
+    argv: list[str],
+    reason: str,
+    *,
+    dirty: bool,
+) -> None:
+    """Each misuse of --wip-sync exits 1, names its own guard and adds no commit.
+
+    Args:
+        argv: The forge-commit arguments.
+        reason: Text the refusal warning must contain.
+        dirty: Whether the tracked file is modified first.
+    """
+    before = git_stdout(main_env, "rev-parse", "HEAD").strip()
+    if dirty:
+        (main_env / "a.txt").write_text("changed\n", encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger="forge.commit"):
+        assert commit.main(argv) == 1
+
+    assert "forge-commit: refused" in caplog.text
+    assert reason in caplog.text
+    assert git_stdout(main_env, "rev-parse", "HEAD").strip() == before
+
+
+def test_wip_sync_on_protected_branch_refused(main_env: Path) -> None:
+    """A checkpoint on the base branch is refused like any commit."""
+    git_stdout(main_env, "checkout", "-q", "main")
+    (main_env / "a.txt").write_text("changed\n", encoding="utf-8")
+
+    assert commit.main(["--wip-sync", "-m", "wip-sync: x", "--no-push"]) == 1
+    assert git_stdout(main_env, "log", "-1", "--format=%s").strip() == "chore: seed"

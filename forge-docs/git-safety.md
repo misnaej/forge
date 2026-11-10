@@ -109,9 +109,11 @@ Sanctioned dirty-tree base sync. Never `git reset --hard`, never stash
 2. **Probe clean and index clean** → plain `git merge origin/<base>`. Git's
    own dirty-overlap guard is backstop.
 3. **Otherwise** secure work as **checkpoint commit** first:
-   `git add -A`, then `FORGE_WIP_SYNC=1 git commit -m "wip-sync: <what>"`.
-   Gate defers to next real commit; PR squash erases checkpoint. Then merge
-   on clean tree.
+   `forge-commit --wip-sync -m "wip-sync: <what>"` — stages the whole tree
+   (untracked included), commits with the gate deferred. Gate defers to
+   next real commit; PR squash erases checkpoint. Then merge on clean tree.
+   Humans may type the inline form instead: `git add -A`, then
+   `FORGE_WIP_SYNC=1 git commit -m "wip-sync: <what>"`.
 
 Notes:
 
@@ -127,8 +129,8 @@ Notes:
   (git documents it lossy for uncommitted changes).
 - Humans: never `export FORGE_WIP_SYNC` in a persistent shell — silently
   defers gate on every later commit. Use inline, once.
-- Who runs it: main agent, never `forge-commit`; a `wip-sync:`
-  checkpoint (env `FORGE_WIP_SYNC=1`) is the one commit whose gate
-  legitimately defers.
+- Who runs it: main agent, through `forge-commit --wip-sync` (agents
+  never type `git commit`); a `wip-sync:` checkpoint is the one commit
+  whose gate legitimately defers.
 - Stranded-changelog recovery mid-branch: `git merge origin/<base>` via
   this ladder first, then `forge-changelog restrand`.

@@ -492,6 +492,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `class CommitRefusedError` — A guard refused the request; the message says which and why.
 - `class Request` — What the caller asked forge-commit to do.
 - `check_message(message: str) -> None` — Refuse a commit message forge's rules forbid.
+- `check_budget_and_attribution(message: str) -> None` — Refuse a message past the word ceiling or carrying AI attribution.
 - `current_branch(root: Path) -> str` — The checked-out branch, refused when protected or detached.
 - `check_verdict(root: Path) -> None` — Refuse unless the latest pre-commit verdict passed on this tree.
 - `_git_paths(root: Path, *args: str) -> set[str]` _(internal)_ — Run a ``-z`` path-listing git command and return its paths.
@@ -500,6 +501,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `committed_paths(root: Path) -> set[str]` — Paths the HEAD commit changed.
 - `push(root: Path, branch: str) -> int` — Push *branch*, retrying briefly when GitHub is momentarily unavailable.
 - `commit_and_push(root: Path, request: Request) -> int` — Run the guarded commit, then the push.
+- `checkpoint(root: Path, message: str, *, push_after: bool) -> int` — Commit the whole working tree as a ``wip-sync:`` checkpoint.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — The CLI surface.
 - `_dispatch(args: argparse.Namespace, root: Path) -> int` _(internal)_ — Route parsed arguments to push-only or a guarded commit.
 - `main(argv: list[str] | None = None) -> int` — Entry point for ``forge-commit``.
@@ -920,7 +922,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `wrap_in_code_fence(text: str) -> str` — Return *text* inside a markdown code fence it cannot close.
 - `run_gate_evidence(repo_root: Path, gates: str, *, success_headline: str, failure_headline: str, section_title: str) -> tuple[bool, str]` — Run ``forge-precommit --only`` gates and format PR-body evidence.
 - `find_open_pr_by_head_prefix(repo_root: Path, prefix: str) -> str | None` — Return the URL of an open PR whose head branch starts with *prefix*.
-- `create_commit(repo_root: Path, message: str) -> None` — Commit the staged index, surviving identity-less runners.
+- `create_commit(repo_root: Path, message: str, *, env: Mapping[str, str] | None = None) -> None` — Commit the staged index, surviving identity-less runners.
 - `resolve_current_branch(repo_root: Path) -> tuple[str, str] | None` — Return the current branch name and where it came from, or ``None``.
 - `ref_exists(repo_root: Path, ref: str) -> bool` — Return whether *ref* resolves to a commit in the repo.
 - `git_path(repo_root: Path, rel: str) -> Path | None` — Return where git keeps *rel* for the checkout at *repo_root*.

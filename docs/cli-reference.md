@@ -358,7 +358,8 @@ options:
 ## forge-commit
 
 ```text
-usage: forge-commit [-h] [-m MESSAGE] [--no-push] [--push-only] [paths ...]
+usage: forge-commit [-h] [-m MESSAGE] [--no-push] [--push-only] [--wip-sync]
+                    [paths ...]
 
 Commit exactly the named files with forge's guards enforced, then push (never
 force, never to a protected branch).
@@ -372,6 +373,9 @@ options:
                         Commit message (conventional title).
   --no-push             Commit only.
   --push-only           Push commits that already exist (no new commit).
+  --wip-sync            Checkpoint the whole working tree before a base merge
+                        (sync ladder): no files named, message starts 'wip-
+                        sync:', gate deferred to the next real commit.
 ```
 
 ## forge-config

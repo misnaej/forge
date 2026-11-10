@@ -1082,7 +1082,9 @@ def find_open_pr_by_head_prefix(repo_root: Path, prefix: str) -> str | None:
     return None
 
 
-def create_commit(repo_root: Path, message: str) -> None:
+def create_commit(
+    repo_root: Path, message: str, *, env: Mapping[str, str] | None = None
+) -> None:
     """Commit the staged index, surviving identity-less runners.
 
     The one commit seam for forge CLIs that write commits
@@ -1099,6 +1101,8 @@ def create_commit(repo_root: Path, message: str) -> None:
     Args:
         repo_root: Repo root.
         message: Commit message.
+        env: Variables set for this commit only (and so for its hooks),
+            merged over the current environment.
 
     Raises:
         subprocess.CalledProcessError: When git fails for any other
@@ -1109,7 +1113,12 @@ def create_commit(repo_root: Path, message: str) -> None:
     # so a `-`-prefixed message can never parse as a separate option.
     with git_env_overrides_removed():
         run_git(
-            *_fallback_identity_args(repo_root), "commit", "-m", message, cwd=repo_root
+            *_fallback_identity_args(repo_root),
+            "commit",
+            "-m",
+            message,
+            cwd=repo_root,
+            env=env,
         )
 
 
