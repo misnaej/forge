@@ -10,7 +10,10 @@
 
 from __future__ import annotations
 
+import logging
+import shutil
 import sqlite3
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -19,11 +22,13 @@ import pytest
 
 from forge import pr_metrics, pr_metrics_bench
 from forge.agent_profile_tokens import BranchSummary, TokenUsage
+from forge.plugin_sync import TagLookup
 from forge.pr_metrics_bench import (
     BenchError,
     BenchOutcome,
     Completed,
     Marker,
+    RunRequest,
     Sandbox,
     Seams,
     bench_data,
@@ -46,6 +51,21 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.usefixtures("isolated_git_data")
 SLUG = "someone/bench-sandbox"
 OWNED = '{"private": true, "permissions": {"admin": true}}'
+FORGE = "11.2.0"
+TAGGED = TagLookup(reached=True, commit="a" * 40)
+
+
+def _venv_holds(clone: Path, version: str) -> None:
+    """Make *clone*'s ``.venv`` look like it holds forge-scripts *version*.
+
+    Args:
+        clone: The clone.
+        version: Forge release.
+    """
+    site = clone / ".venv/lib/python3.12/site-packages"
+    (site / f"forge_scripts-{version}.dist-info").mkdir(parents=True, exist_ok=True)
+    (clone / ".venv/bin").mkdir(exist_ok=True)
+    (clone / ".venv/bin/forge-plugin-sync").touch()
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -122,6 +142,8 @@ class FakeRunner:
     #: ``(prefix, result)`` pairs, first match wins; unmatched commands succeed.
     answers: list[tuple[tuple[str, ...], Completed]] = field(default_factory=list)
     calls: list[list[str]] = field(default_factory=list)
+    #: Forge release a successful ``pip install`` leaves in ``<cwd>/.venv``.
+    installs: str = FORGE
 
     def __call__(
         self, argv: Sequence[str], *, cwd: Path, timeout: float | None = None
@@ -145,6 +167,10 @@ class FakeRunner:
         for prefix, result in self.answers:
             if _matches(prefix, argv):
                 return result
+        if argv[1:3] == ["-m", "venv"]:
+            shutil.rmtree(argv[-1], ignore_errors=True)
+        if argv[1:4] == ["-m", "pip", "install"]:
+            _venv_holds(cwd, self.installs)
         return Completed(0)
 
     def ran(self, *prefix: str) -> list[list[str]]:
@@ -247,26 +273,42 @@ def test_init_seeds_main_and_the_base_tag(
 
 
 def _start(
-    data: Path, runner: FakeRunner, clone: Path, task: str = "fix-bug"
+    data: Path,
+    runner: FakeRunner,
+    clone: Path,
+    forge: str = FORGE,
+    tag: TagLookup = TAGGED,
 ) -> tuple[Marker, str]:
-    """Start *task* in *clone* with the sandbox slug check satisfied.
+    """Start the fix-bug task in *clone* with the sandbox slug check satisfied.
 
     Args:
         data: The bench data directory.
         runner: Command runner.
         clone: The clone.
-        task: Task id.
+        forge: The ``--forge`` value.
+        tag: What GitHub says about forge's release tag.
 
     Returns:
         ``start_run``'s marker and prompt.
     """
     return start_run(
-        load_tasks(data)[task],
+        load_tasks(data)["fix-bug"],
+        RunRequest(forge=forge, first_n=1, clone=clone),
         data=data,
-        first_n=1,
-        clone=clone,
-        seams=Seams(runner, lambda _p: SLUG),
+        seams=Seams(runner, lambda _p: SLUG, lambda _v: tag),
     )
+
+
+def _installs(runner: FakeRunner) -> list[list[str]]:
+    """The venv and pip commands *runner* saw.
+
+    Args:
+        runner: The runner.
+
+    Returns:
+        Those calls, in order.
+    """
+    return [c for c in runner.calls if c[1:3] in (["-m", "venv"], ["-m", "pip"])]
 
 
 def test_start_branches_from_the_base_tag_and_prints_the_prompt(
@@ -277,7 +319,7 @@ def test_start_branches_from_the_base_tag_and_prints_the_prompt(
     marker, prompt = _start(data, _owned(seeded_origin), clone)
     assert marker.branch == "bench/fix-bug-1"
     assert _git(clone, "branch", "--show-current") == "bench/fix-bug-1"
-    assert _git(clone, "rev-parse", "HEAD") == _git(
+    assert _git(clone, "rev-parse", "HEAD^") == _git(
         clone, "rev-parse", "bench-base-1^{commit}"
     )
     assert (clone / "tests/test_top_words_case.py").is_file()
@@ -315,6 +357,131 @@ def test_start_refuses_a_public_sandbox(
     assert not runner.ran("gh", "repo", "clone")
 
 
+def test_start_pins_forge_in_a_setup_commit_on_the_branch(
+    seeded_origin: Path, data: Path, tmp_path: Path
+) -> None:
+    """Behavior: the branch's one new commit pins the forge tag; marker names it."""
+    clone = tmp_path / "clone"
+    marker, _ = _start(data, _owned(seeded_origin), clone, forge="v11.2.0")
+    assert marker.setup_commit == _git(clone, "rev-parse", "HEAD")
+    assert marker.forge_version == FORGE
+    assert _git(clone, "log", "-1", "--format=%s") == "chore(bench): pin forge v11.2.0"
+    assert _git(clone, "diff", "--name-only", "HEAD^", "HEAD") == "pyproject.toml"
+    pyproject = (clone / "pyproject.toml").read_text(encoding="utf-8")
+    assert '"forge-scripts @ git+https://github.com/' in pyproject
+    assert '.git@v11.2.0"' in pyproject
+    assert read_marker() == marker
+
+
+def test_start_builds_the_venv_when_missing(
+    seeded_origin: Path, data: Path, tmp_path: Path
+) -> None:
+    """Behavior: no .venv → venv created, project installed with its dev extra."""
+    clone = tmp_path / "clone"
+    runner = _owned(seeded_origin)
+    _start(data, runner, clone)
+    venv = clone.resolve() / ".venv"
+    assert _installs(runner) == [
+        [sys.executable, "-m", "venv", "--clear", str(venv)],
+        [str(venv / "bin/python"), "-m", "pip", "install", "-q", "-e", ".[dev]"],
+    ]
+    assert runner.ran(str(venv / "bin/forge-plugin-sync"))
+
+
+def test_start_reuses_a_venv_holding_the_release(
+    seeded_origin: Path, data: Path, tmp_path: Path
+) -> None:
+    """Behavior: .venv already on the release → no venv or pip command runs."""
+    clone = tmp_path / "clone"
+    _git(tmp_path, "clone", "--quiet", str(seeded_origin), str(clone))
+    _venv_holds(clone, FORGE)
+    runner = _owned(seeded_origin)
+    marker, _ = _start(data, runner, clone)
+    assert _installs(runner) == []
+    assert marker.forge_version == FORGE
+
+
+def test_start_rebuilds_a_venv_on_another_release(
+    seeded_origin: Path, data: Path, tmp_path: Path
+) -> None:
+    """Behavior: .venv on another forge release is rebuilt for the requested one."""
+    clone = tmp_path / "clone"
+    _git(tmp_path, "clone", "--quiet", str(seeded_origin), str(clone))
+    _venv_holds(clone, "10.0.0")
+    runner = _owned(seeded_origin)
+    _start(data, runner, clone)
+    assert len(_installs(runner)) == 2
+    site = clone / ".venv/lib/python3.12/site-packages"
+    assert [p.name for p in site.iterdir()] == [f"forge_scripts-{FORGE}.dist-info"]
+
+
+def test_start_refuses_a_symlinked_venv(
+    seeded_origin: Path, data: Path, tmp_path: Path
+) -> None:
+    """Behavior: a .venv symlink is refused; its target is never cleared."""
+    clone = tmp_path / "clone"
+    _git(tmp_path, "clone", "--quiet", str(seeded_origin), str(clone))
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "keep.txt").write_text("mine\n", encoding="utf-8")
+    (clone / ".venv").symlink_to(elsewhere, target_is_directory=True)
+    runner = _owned(seeded_origin)
+    with pytest.raises(BenchError, match="symlink"):
+        _start(data, runner, clone)
+    assert _installs(runner) == []
+    assert (elsewhere / "keep.txt").read_text(encoding="utf-8") == "mine\n"
+    assert read_marker() is None
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        ("11.2", TAGGED, "not a release"),
+        ("11.2.0rc1", TAGGED, "not a release"),
+        (FORGE, TagLookup(reached=True, commit=None), "no release tag v11.2.0"),
+        (FORGE, TagLookup(reached=False, commit=None), "cannot ask GitHub"),
+    ],
+    ids=["short", "pre-release", "untagged", "unreachable"],
+)
+def test_start_refuses_a_bad_or_untagged_version(
+    seeded_origin: Path,
+    data: Path,
+    tmp_path: Path,
+    case: tuple[str, TagLookup, str],
+) -> None:
+    """Behavior: --forge must be a tagged release; refused before any clone change.
+
+    Args:
+        case: The ``--forge`` value, what GitHub says about the tag, and the
+            expected refusal wording.
+    """
+    forge, tag, reason = case
+    runner = _owned(seeded_origin)
+    with pytest.raises(BenchError, match=reason):
+        _start(data, runner, tmp_path / "clone", forge=forge, tag=tag)
+    assert runner.calls == []
+    assert read_marker() is None
+
+
+def test_start_warns_and_continues_when_plugin_sync_fails(
+    seeded_origin: Path,
+    data: Path,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Behavior: plugin sync failing warns with the command to run; run starts."""
+    runner = _owned(
+        seeded_origin, (("forge-plugin-sync",), Completed(1, "", "no claude CLI"))
+    )
+    with caplog.at_level(logging.WARNING, logger=pr_metrics_bench.__name__):
+        marker, _ = _start(data, runner, tmp_path / "clone")
+    assert read_marker() == marker
+    assert marker.plugin_synced is False
+    assert "no claude CLI" in caplog.text
+    assert "forge-plugin-sync" in caplog.text
+    assert f"cd {marker.clone}" in caplog.text
+
+
 # --- finish ----------------------------------------------------------------
 
 
@@ -325,8 +492,9 @@ def test_finish_records_closes_the_pr_and_deletes_the_branch(
 
     SCENARIO: the session committed a fix, pushed its branch, opened PR 7.
     MOCK SETUP: gh reports PR 7 with one wrap-up; pre-commit verdict fails;
-        tests pass; the clone's .venv holds forge-scripts 11.2.0.
-    EXPECTED BEHAVIOR: one row naming 11.2.0, PR opened, verdict 0; PR 7
+        tests pass; start installed forge-scripts 11.2.0 in the clone's .venv.
+    EXPECTED BEHAVIOR: one row naming 11.2.0, PR opened, verdict 0; lines
+        and commits counted after start's pin commit only; PR 7
         closed; remote branch deleted; hidden check files removed; marker gone;
         nothing in the database names the sandbox, branch or path.
     """
@@ -337,8 +505,6 @@ def test_finish_records_closes_the_pr_and_deletes_the_branch(
     _git(clone, "add", "-A")
     _git(clone, "commit", "--quiet", "-m", "fix")
     _git(clone, "push", "--quiet", "origin", f"HEAD:refs/heads/{marker.branch}")
-    site = clone / ".venv/lib/python3.12/site-packages/forge_scripts-11.2.0.dist-info"
-    site.mkdir(parents=True)
     runner = _owned(
         seeded_origin,
         (("gh", "pr", "list"), Completed(0, "7\n")),
@@ -359,6 +525,9 @@ def test_finish_records_closes_the_pr_and_deletes_the_branch(
     assert (outcome.pr_opened, outcome.wrapups_posted) == (True, 1)
     assert (outcome.tests_green, outcome.precommit_ok) == (True, False)
     assert outcome.checks_total == 2
+    # core.py and the task's test file; the pin's pyproject.toml line swap
+    # (one deletion) belongs to the setup commit and is not counted.
+    assert (outcome.files, outcome.deletions) == (2, 0)
     assert outcome.commits == 1
     assert runner.ran("gh", "pr", "close", "7")
     assert not _git(seeded_origin, "branch", "--list", marker.branch)
@@ -371,6 +540,26 @@ def test_finish_records_closes_the_pr_and_deletes_the_branch(
     dump = "\n".join(conn.iterdump())
     for name in (SLUG, "someone", "bench-sandbox", marker.branch, str(tmp_path)):
         assert name not in dump
+
+
+def test_finish_warns_when_start_did_not_sync_the_plugin(
+    seeded_origin: Path,
+    data: Path,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Behavior: a run started without its plugin is flagged before recording."""
+    failing = (("forge-plugin-sync",), Completed(1, "", "no claude CLI"))
+    _start(data, _owned(seeded_origin, failing), tmp_path / "clone")
+    recorded: list[BenchOutcome] = []
+    with caplog.at_level(logging.WARNING, logger=pr_metrics_bench.__name__):
+        finish_run(
+            data=data,
+            record=recorded.append,
+            seams=Seams(_owned(seeded_origin), lambda _p: SLUG),
+        )
+    assert [o.version for o in recorded] == [FORGE]
+    assert f"could not install the forge {FORGE} plugin" in caplog.text
 
 
 def test_finish_refuses_a_clone_of_another_repo(

@@ -75,8 +75,8 @@ silently merge.** Which variant depends on Step 0:
   `docs/cli-reference.md`, `FOUNDATION.md`, `docs/architecture.dsl`),
   never hand-merge: run **`forge-resync --resolve-conflicts`** — it
   regenerates each from the merged tree, verifies with the generator's
-  `--check`, and stages; you commit the merge. It refuses if any other
-  path conflicts.
+  `--check`, and stages; you commit the merge with `forge-commit`,
+  naming every staged path. It refuses if any other path conflicts.
 - **Behind but clean** (left count > 0, not conflicting) → merge the
   base in and proceed, saying what was done — **no confirmation
   needed** (FOUNDATION §6's resolution rule governs): it refreshes the

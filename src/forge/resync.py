@@ -338,7 +338,8 @@ def _resolve_conflicts(root: Path, *, dry_run: bool) -> int:
             return 2
         run_git("add", path, cwd=root)
     logger.info(
-        "✓ staged %d regenerated artifact(s); commit the merge to finish.",
+        "✓ staged %d regenerated artifact(s); finish the merge with "
+        "forge-commit, naming every staged path.",
         len(conflicted),
     )
     return 0

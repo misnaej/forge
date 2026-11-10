@@ -86,7 +86,9 @@ Notes:
   `forge-precommit` on every PR and push, next commit's gate checks merged
   state, check logs are tree-stamped so `--freshness` and PR evidence read
   pre-merge logs as stale.
-- Conflicted merge → finish with `git commit`, gated as usual.
+- Conflicted merge → resolve, stage, then `forge-commit -m "<msg>" <paths>`
+  naming every staged path (`git diff --cached --name-only`); gated as
+  usual.
 - `git merge --abort` permitted **only after** a checkpoint secured work
   (git documents it lossy for uncommitted changes).
 - Humans: never `export FORGE_WIP_SYNC` in a persistent shell — silently
