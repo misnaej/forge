@@ -18,6 +18,28 @@ Two kinds, not equally strong. Know which one you are at.
 Never treat second kind as first. A bare variable with no ledger behind it
 is no gate — a suggestion.
 
+Not a gate kind: **automated host-classifier refusal.** The harness's own
+automated permission check (Claude Code's auto-mode classifier) can refuse
+a command no forge guard blocks. It is not forge's to enforce and not the
+user's to run by hand: retry the same command once, or the safer form the
+refusal suggests — only an allowed command that reaches no forge-guarded
+effect. Still refused → report the refusal verbatim and ask the user how to
+proceed. Never prescribe `! <command>` or a settings change for it — the
+`!` handoff belongs to the technical kind above.
+
+Never retried:
+
+- **A user's denial** (the user declined a tool prompt). That is the user's
+  word: stop and ask. Unsure whether the user or the classifier refused →
+  treat it as the user's denial.
+- **A forge guard block** — any refusal from a forge hook (`block_*`) or a
+  forge CLI gate (`forge-pr-create`, `forge-pr-wrapup post`,
+  `forge-commit`, …). It is enforcement of forge's rules: stop and report
+  (§2 "On deviation").
+
+This list is not exhaustive: a refusal that fits no kind here is reported,
+not classified.
+
 ## Bypassing a guard
 
 - Never on agent judgment. Never reach blocked effect another way: writing
@@ -63,6 +85,18 @@ Allowed:
 Why: rewinds un-commit published history on a synced branch; rest destroy
 uncommitted or untracked work — in a checkout other sessions share, maybe
 not yours.
+
+## Remote branch checks
+
+- **Before any force push** (user-approved only): check divergence with
+  `git fetch origin && git log origin/<branch>`. `block_force_push` covers
+  `--force` / `--force-with-lease`, the `-f` / `-uf` cluster, and
+  `+`-prefixed refspecs.
+- **Is a branch protected?** Check BOTH
+  `gh api repos/{owner}/{repo}/rules/branches/{branch}` and
+  `.../rulesets` — never conclude "unprotected" from a 404 on the legacy
+  `/branches/{branch}/protection` endpoint alone (FOUNDATION §1 "Absence of
+  evidence").
 
 ## Sync ladder
 
