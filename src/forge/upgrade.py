@@ -285,7 +285,7 @@ def _rewrite_pin(pin: Pin, new_ref: str) -> str:
     return "".join(lines)
 
 
-def _git_url_for(auth_mode: AuthMode, ref: str) -> str:
+def git_url_for(auth_mode: AuthMode, ref: str) -> str:
     """Return the ``git+...`` URL pip should resolve for *ref* under *auth_mode*.
 
     Picks the URL form that the consumer's runtime can authenticate
@@ -381,7 +381,7 @@ def pip_command(ref: str, *, auth_mode: AuthMode = "https-anonymous") -> str:
     """
     return (
         "pip install --upgrade --force-reinstall --no-deps "
-        f'"forge-scripts @ {_git_url_for(auth_mode, ref)}"'
+        f'"forge-scripts @ {git_url_for(auth_mode, ref)}"'
     )
 
 
