@@ -212,7 +212,7 @@ Git procedures (gate kinds, destructive forms, sync ladder):
   in a shared checkout, may not be yours. Unstage with
   `git restore --staged <path>`. Dirty-tree base sync = **sync ladder**
   (probe `git merge-tree --write-tree`, merge, else `wip-sync:` checkpoint
-  commit via inline `FORGE_WIP_SYNC=1`; `git merge --abort` only after
+  commit via `forge-commit --wip-sync`; `git merge --abort` only after
   that checkpoint); stash is in no sanctioned
   procedure. `block_git_destructive` enforces, **no bypass**; human:
   `! git ...`. Full form list, allowed exceptions, ladder:

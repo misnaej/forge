@@ -190,7 +190,7 @@ _stash_blocked() {
     return 1
 }
 if _guarded 'stash\b' && _stash_blocked; then
-    _block "git stash" "Stash moves uncommitted work out of a checkout other sessions may share, and pop/drop/-u can lose it. Only \`git stash list\` / \`git stash show\` are allowed. To secure dirty work use FOUNDATION §2's sync ladder (wip-sync checkpoint commit); to check whether a failure predates your change use \`git show <base>:<path>\` or a \`forge-scratch-repo snapshot --ref <base>\` copy."
+    _block "git stash" "Stash moves uncommitted work out of a checkout other sessions may share, and pop/drop/-u can lose it. Only \`git stash list\` / \`git stash show\` are allowed. To secure dirty work use FOUNDATION §2's sync ladder: \`forge-commit --wip-sync -m \"wip-sync: <what>\"\` checkpoints the whole tree; to check whether a failure predates your change use \`git show <base>:<path>\` or a \`forge-scratch-repo snapshot --ref <base>\` copy."
 fi
 
 # Restores that overwrite a path's working copy — `git checkout [<ref>]

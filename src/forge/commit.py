@@ -28,6 +28,8 @@ Usage:
 - ``forge-commit -m "fix: x" --no-push path/a`` — commit only.
 - ``forge-commit --push-only`` — push commits that already exist (a merge
   commit, work committed earlier).
+- ``forge-commit --wip-sync -m "wip-sync: <what>"`` — checkpoint the whole
+  dirty tree before a base merge (sync ladder); the gate is deferred.
 """
 
 from __future__ import annotations
@@ -83,6 +85,8 @@ _TRANSIENT_PUSH: Final = re.compile(
     r"Permission denied \(publickey\)|Internal Server Error|fatal error in commit_refs"
     r"|Could not read from remote repository|Connection (?:reset|closed|timed out)",
 )
+#: The message marker of a sync-ladder checkpoint commit.
+WIP_SYNC_PREFIX: Final = "wip-sync:"
 PUSH_ATTEMPTS: Final = 4
 PUSH_RETRY_DELAY_S: Final = 20
 
@@ -116,6 +120,24 @@ def check_message(message: str) -> None:
     if not TITLE_RE.match(title):
         msg = f"commit title {title!r} is not conventional (`<type>(scope)?: subject`)."
         raise CommitRefusedError(msg)
+    check_budget_and_attribution(message)
+
+
+def check_budget_and_attribution(message: str) -> None:
+    """Refuse a message past the word ceiling or carrying AI attribution.
+
+    The half of :func:`check_message` a ``wip-sync:`` checkpoint shares:
+    its title is a marker, not a conventional type, but the length and
+    attribution rules still hold.
+
+    Args:
+        message: The full commit message.
+
+    Raises:
+        CommitRefusedError: When the message runs past the ceiling of
+            :data:`forge.pr_squash_comment.MAX_WORDS` or carries AI
+            attribution.
+    """
     words = len(message.split())
     limit = ceiling(MAX_WORDS)
     if words > limit:
@@ -385,6 +407,51 @@ def commit_and_push(root: Path, request: Request) -> int:
     return push(root, branch) if request.push else EXIT_OK
 
 
+def checkpoint(root: Path, message: str, *, push_after: bool) -> int:
+    """Commit the whole working tree as a ``wip-sync:`` checkpoint.
+
+    The sync ladder's step 3 (``forge-docs/git-safety.md``): secure dirty
+    work before merging the base in. The gate is deferred, as for the
+    human ``FORGE_WIP_SYNC=1`` form — the pre-commit hook reads that
+    variable and runs no steps — and the next real commit and the PR squash
+    run the full battery. So no verdict is read and no file list is
+    compared: the checkpoint takes everything, untracked files included.
+
+    Args:
+        root: Repo root.
+        message: The commit message; must start with ``wip-sync:``.
+        push_after: Push the branch once committed.
+
+    Returns:
+        An exit code.
+
+    Raises:
+        CommitRefusedError: On a protected or detached branch, a message
+            without the ``wip-sync:`` marker, past the word ceiling or with
+            AI attribution, or a clean tree.
+    """
+    branch = current_branch(root)
+    if not message.startswith(WIP_SYNC_PREFIX):
+        msg = f"a checkpoint message must start with {WIP_SYNC_PREFIX!r}."
+        raise CommitRefusedError(msg)
+    check_budget_and_attribution(message)
+    run_git("add", "-A", cwd=root)
+    if not _staged(root):
+        msg = "nothing to checkpoint: the working tree is clean."
+        raise CommitRefusedError(msg)
+    logger.warning(
+        "forge-commit: wip-sync checkpoint — gate deferred to the next real commit."
+    )
+    try:
+        create_commit(root, message, env={"FORGE_WIP_SYNC": "1"})
+    except subprocess.CalledProcessError as exc:
+        msg = f"the checkpoint commit failed; nothing committed. Detail: {exc}"
+        raise CommitRefusedError(msg) from exc
+    sha = run_git("rev-parse", "--short", "HEAD", cwd=root).strip()
+    logger.info("forge-commit: checkpoint %s on %s.", sha, branch)
+    return push(root, branch) if push_after else EXIT_OK
+
+
 def _build_parser() -> argparse.ArgumentParser:
     """The CLI surface."""
     parser = argparse.ArgumentParser(
@@ -401,6 +468,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--push-only",
         action="store_true",
         help="Push commits that already exist (no new commit).",
+    )
+    parser.add_argument(
+        "--wip-sync",
+        action="store_true",
+        help=(
+            "Checkpoint the whole working tree before a base merge (sync "
+            "ladder): no files named, message starts 'wip-sync:', gate "
+            "deferred to the next real commit."
+        ),
     )
     return parser
 
@@ -422,13 +498,18 @@ def _dispatch(args: argparse.Namespace, root: Path) -> int:
     # --push-only re-checks the branch, not the commits it publishes: each
     # was already refused or admitted by this command or the commit hook.
     if args.push_only:
-        if args.paths or args.message:
-            msg = "--push-only takes no files and no message."
+        if args.paths or args.message or args.wip_sync:
+            msg = "--push-only takes no files, no message and no --wip-sync."
             raise CommitRefusedError(msg)
         return push(root, current_branch(root))
     if not args.message:
         msg = "a commit needs -m/--message."
         raise CommitRefusedError(msg)
+    if args.wip_sync:
+        if args.paths:
+            msg = "--wip-sync takes no files: a checkpoint commits the whole tree."
+            raise CommitRefusedError(msg)
+        return checkpoint(root, args.message, push_after=not args.no_push)
     request = Request(args.message, tuple(args.paths), push=not args.no_push)
     return commit_and_push(root, request)
 
