@@ -78,10 +78,12 @@ from forge.git_utils import (
 )
 from forge.pr_metrics_bench import (
     BenchError,
+    RunRequest,
     bench_data,
     finish_run,
     init_sandbox,
     load_tasks,
+    plugin_sync_command,
     read_sandbox,
     session_line,
     start_run,
@@ -1372,6 +1374,12 @@ def _add_bench_commands(bench: argparse.ArgumentParser) -> None:
     )
     start.add_argument("task", help="Task id.")
     start.add_argument(
+        "--forge",
+        required=True,
+        metavar="X.Y.Z",
+        help="Forge release to measure; pinned and installed in the clone.",
+    )
+    start.add_argument(
         "--clone", type=Path, help="Sandbox clone (default: one under the data dir)."
     )
     finish = steps.add_parser(
@@ -1517,10 +1525,18 @@ def _bench_start(conn: sqlite3.Connection, data: Path, args: argparse.Namespace)
     if task is None:
         logger.error("forge-metrics bench: unknown task; known: %s", ", ".join(tasks))
         return 2
-    marker, prompt = start_run(
-        task, data=data, first_n=_next_run_n(conn, task.id), clone=args.clone
+    request = RunRequest(
+        forge=args.forge, first_n=_next_run_n(conn, task.id), clone=args.clone
     )
+    marker, prompt = start_run(task, request, data=data)
     emit(f"forge-metrics bench: {task.id} run {marker.run_n} on {marker.branch}")
+    emit(f"forge-metrics bench: forge {marker.forge_version} in the clone's .venv")
+    if not marker.plugin_synced:
+        emit(
+            f"forge-metrics bench: the clone's Claude Code plugin is NOT on forge "
+            f"{marker.forge_version}; the run will not measure that version "
+            f"until you run:\n    {plugin_sync_command(marker.clone)}"
+        )
     emit("\nStart a session in the clone:\n")
     emit(f"    {session_line(marker)}")
     emit("\nPaste this prompt, then run `forge-metrics bench finish` when done:\n")

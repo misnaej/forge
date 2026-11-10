@@ -11,8 +11,8 @@ requires-python = ">=3.11"
 dependencies = []
 
 [project.optional-dependencies]
-# forge-scripts is left unpinned: each benchmark run installs the forge
-# version it measures before this project.
+# forge-scripts is left unpinned: `bench start --forge X.Y.Z` pins the
+# release a run measures in the run branch's first commit.
 dev = ["forge-scripts", "pytest>=8"]
 
 [project.scripts]
