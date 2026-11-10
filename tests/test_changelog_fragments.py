@@ -184,7 +184,7 @@ def test_validate_fragment_version_shaped_filename(tmp_path: Path) -> None:
 def test_validate_fragment_version_shaped_body(tmp_path: Path) -> None:
     """A concrete version number embedded in the body is rejected."""
     path = _write_fragment(
-        tmp_path, "note.added.md", "bump: minor\nSee v1.2.3 for context.\n"
+        tmp_path, "note.added.md", "bump: minor\n- See v1.2.3 for context.\n"
     )
     fragment, errors = validate_fragment(path)
     assert fragment is None
@@ -229,6 +229,35 @@ def test_validate_fragment_empty_body(tmp_path: Path) -> None:
     fragment, errors = validate_fragment(path)
     assert fragment is None
     assert errors == ["note.added.md: empty entry body"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    ["New thing ships.\n", "- first\nwrapped without indent\n", "  indented first\n"],
+    ids=["no-bullet", "unindented-continuation", "indented-first-line"],
+)
+def test_validate_fragment_body_line_not_bullet(tmp_path: Path, body: str) -> None:
+    """Regression: a body line that is neither a bullet nor indented is rejected.
+
+    Args:
+        body: Fragment body under test.
+    """
+    path = _write_fragment(tmp_path, "note.added.md", f"bump: minor\n{body}")
+    fragment, errors = validate_fragment(path)
+    assert fragment is None
+    assert any("not a '- ' bullet" in e for e in errors)
+
+
+def test_validate_fragment_bullets_with_indented_continuation(tmp_path: Path) -> None:
+    """Bullets, indented wraps and nested bullets pass."""
+    path = _write_fragment(
+        tmp_path,
+        "note.added.md",
+        "bump: minor\n- first entry\n  wrapped line\n\n- second\n  - nested\n",
+    )
+    fragment, errors = validate_fragment(path)
+    assert errors == []
+    assert fragment is not None
 
 
 @pytest.mark.parametrize(

@@ -58,7 +58,8 @@ this checkout. It is safe to re-run, and it is the only install command
 forge plugin:
 
 - Every PR targets `main` and carries a changelog fragment
-  (`changelog.d/<slug>.<type>.md`, first line `bump: patch|minor|major`).
+  (`changelog.d/<slug>.<type>.md`, first line `bump: patch|minor|major`,
+  then `- ` bullets).
   Never edit `CHANGELOG.md` or the plugin version.
 - `git commit` runs the full pre-commit battery; `/pr` runs the reviews
   and posts the wrap-up and squash message. The owner merges.

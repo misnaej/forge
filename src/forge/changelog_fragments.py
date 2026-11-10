@@ -12,7 +12,7 @@ line naming the semver LEVEL only (:data:`FRAGMENT_LEVELS`) — a concrete
 version number anywhere in a fragment is INVALID by design: versions are
 computed once, by the assembler, from the latest tag; a version inside
 fragments would recreate the exact next-slot collision fragments exist
-to remove. The rest of the body is the entry's markdown, verbatim.
+to remove. The rest of the body is ``- `` bullets, copied verbatim.
 
 Direction of truth is one-way: fragments → assembler → CHANGELOG +
 version. In fragment mode nothing may read ``CHANGELOG.md`` as a
@@ -273,6 +273,39 @@ def _check_no_versions_or_headings(name: str, body: str) -> list[str]:
     return errors
 
 
+def _check_bullets(name: str, body: str) -> list[str]:
+    """Check the body starts with a ``- `` bullet and every line continues one.
+
+    The assembler copies bodies verbatim under the group heading, so a
+    line that is neither a bullet nor an indented continuation renders as
+    loose prose between entries, and an indented first line as a code block.
+
+    Args:
+        name: Fragment filename (for error messages).
+        body: The fragment body text (stripped, so its first line is not blank).
+
+    Returns:
+        One error naming the first offending line and how many there are,
+        or none.
+    """
+    lines = body.splitlines()
+    bad = [
+        line
+        for i, line in enumerate(lines)
+        if line.strip()
+        and not line.startswith("- ")
+        and (i == 0 or not line.startswith((" ", "\t")))
+    ]
+    if not bad:
+        return []
+    return [
+        (
+            f"{name}: {len(bad)} body line(s) not a '- ' bullet or an indented "
+            f"continuation, first: {bad[0][:60]!r} — prefix each entry with '- '"
+        )
+    ]
+
+
 def validate_fragment(path: Path) -> tuple[Fragment | None, list[str]]:
     """Parse *path* into a :class:`Fragment`, collecting every violation.
 
@@ -280,7 +313,8 @@ def validate_fragment(path: Path) -> tuple[Fragment | None, list[str]]:
     known type; the body's first line must be ``bump: <level>`` with a
     known level; no version-shaped string may appear in the filename or
     body (level-only rule); no embedded ``## `` heading may appear in
-    the body (assembly-structure injection).
+    the body (assembly-structure injection); every body line is a ``- ``
+    bullet or an indented continuation.
 
     Args:
         path: Fragment file to validate.
@@ -312,6 +346,8 @@ def _validate_fragment_text(path: Path, text: str) -> tuple[Fragment | None, lis
     lines = text.splitlines()
     level, body, bump_errors = _parse_bump_line_and_body(path, lines)
     content_errors = _check_no_versions_or_headings(name, body)
+    if body:
+        content_errors += _check_bullets(name, body)
     errors = filename_errors + bump_errors + content_errors
     if errors:
         return None, errors

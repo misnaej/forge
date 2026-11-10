@@ -3017,7 +3017,8 @@ def _handle_fragment_mode(
                 "gate and stops instead of authoring one, because slug, type "
                 f"and bump level choose the released version. Add "
                 f"{FRAGMENTS_DIR}/<slug>.<type>.md "
-                "with a 'bump: patch|minor|major' first line, "
+                "with a 'bump: patch|minor|major' first line, then '- ' "
+                "bullets, "
                 "and include it in the commit "
                 "(docs/consumer-release.md, fragments mode). "
                 "No-version opt-outs apply unchanged." + unstaged_note
