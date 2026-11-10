@@ -981,6 +981,28 @@ def _is_emergency_post(root: Path, text: str, pr: int) -> bool:
     return state is not None and state.pr_number == pr
 
 
+def _emit_post_notes(pr: int, view: dict[str, object], follow_ups: list[int]) -> None:
+    """Print what the caller should know once a wrap-up has posted.
+
+    A posted wrap-up is when a PR becomes reviewable again, so a draft gets
+    a reminder; flipping it is left to the caller, since a draft may be kept
+    on purpose.
+
+    Args:
+        pr: The PR the wrap-up was posted to.
+        view: The PR view read before posting (``isDraft`` is used).
+        follow_ups: Issues the wrap-up names as follow-ups.
+    """
+    if view.get("isDraft") is True:
+        emit(
+            f"pr-wrapup: note: PR #{pr} is still draft — mark it ready "
+            f"(gh pr ready {pr}) unless it was kept draft on purpose."
+        )
+    if follow_ups:
+        # Informational: the issues placement will consider, as posted.
+        emit("follow-ups: " + " ".join(f"#{ref}" for ref in follow_ups))
+
+
 def _cmd_post(args: argparse.Namespace, text: str, path: Path) -> int:
     """Gate, refresh, post and record a validated wrap-up.
 
@@ -1000,23 +1022,7 @@ def _cmd_post(args: argparse.Namespace, text: str, path: Path) -> int:
     if view is None:
         emit(f"pr-wrapup: refused: cannot read PR #{args.pr} with gh; nothing posted")
         return EXIT_REFUSED
-    base = str(view.get("baseRefName") or "main")
-    counts = (
-        behind_ahead(root, f"origin/{base}")
-        if fetch_quietly(root, "origin", base)
-        else None
-    )
-    refusals, notes = post_gates(
-        view,
-        extract_verified_shas(text)[0],
-        behind=counts[0] if counts is not None else None,
-        emergency=_is_emergency_post(root, text, args.pr),
-    )
-    for note in notes:
-        emit(f"pr-wrapup: note: {note}")
-    if refusals:
-        for refusal in refusals:
-            emit(f"pr-wrapup: refused: {refusal}")
+    if _gate_post(root, view, text, args.pr):
         return EXIT_REFUSED
     body = str(view.get("body") or "")
     refs = find_closing_refs(body)
@@ -1041,12 +1047,41 @@ def _cmd_post(args: argparse.Namespace, text: str, path: Path) -> int:
     rc = post_wrapup(args.pr, refreshed)
     if rc != 0:
         return rc
-    if follow_ups:
-        # Informational: the issues placement will consider, as posted.
-        emit("follow-ups: " + " ".join(f"#{ref}" for ref in follow_ups))
+    _emit_post_notes(args.pr, view, follow_ups)
     if not args.no_continuation:
         refresh_state(root, with_pr=True)
     return 0
+
+
+def _gate_post(root: Path, view: dict[str, object], text: str, pr: int) -> list[str]:
+    """Run the post gates, emit their notes and refusals, return the refusals.
+
+    Args:
+        root: Repository root used for the base fetch and emergency check.
+        view: The ``gh pr view`` payload for the PR.
+        text: The validated wrap-up being posted.
+        pr: The PR number.
+
+    Returns:
+        The refusal messages; empty when the post may proceed.
+    """
+    base = str(view.get("baseRefName") or "main")
+    counts = (
+        behind_ahead(root, f"origin/{base}")
+        if fetch_quietly(root, "origin", base)
+        else None
+    )
+    refusals, notes = post_gates(
+        view,
+        extract_verified_shas(text)[0],
+        behind=counts[0] if counts is not None else None,
+        emergency=_is_emergency_post(root, text, pr),
+    )
+    for note in notes:
+        emit(f"pr-wrapup: note: {note}")
+    for refusal in refusals:
+        emit(f"pr-wrapup: refused: {refusal}")
+    return refusals
 
 
 def _build_parser() -> argparse.ArgumentParser:

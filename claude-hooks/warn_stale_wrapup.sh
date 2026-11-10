@@ -30,7 +30,9 @@ command_positions "$COMMAND" | grep -qE "${GIT_ANCHOR}push\b" || exit 0
 
 command -v forge-pr-plan >/dev/null 2>&1 || exit 0
 
-PR=$(gh pr view --json number --jq .number 2>/dev/null)
+PR_STATE=$(gh pr view --json number,isDraft --jq '"\(.number) \(.isDraft)"' 2>/dev/null)
+PR=${PR_STATE%% *}
+DRAFT=${PR_STATE#* }
 [ -n "$PR" ] || exit 0
 
 # A wrap-up already authored for this HEAD is a refresh in flight
@@ -57,4 +59,10 @@ FRESH=$(printf '%s' "$VERDICT" | jq -r '.fresh | tostring' 2>/dev/null)
 
 AT=$(printf '%s' "$VERDICT" | jq -r '.latest_verified_at // "?"')
 HEAD7=$(printf '%s' "$VERDICT" | jq -r '.head_oid // "?"' | cut -c1-7)
-echo "[forge] wrap-up on PR #$PR was verified at $AT but the head is now $HEAD7 — re-run /pr $PR to post a refreshed wrap-up (FOUNDATION §6)."
+MSG="[forge] wrap-up on PR #$PR was verified at $AT but the head is now $HEAD7 — re-run /pr $PR to post a refreshed wrap-up (FOUNDATION §6)."
+# The push that outdates a wrap-up is also the moment a rework begins;
+# a ready PR should not stay ready through one (FOUNDATION §6).
+if [ "$DRAFT" != "true" ]; then
+    MSG="$MSG If this push starts a rework (not a review-comment fix), mark the PR draft: gh pr ready $PR --undo."
+fi
+echo "$MSG"

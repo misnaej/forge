@@ -136,6 +136,14 @@ the first; next only after its answer, which may change or drop it. One
 question per `AskUserQuestion` call. Batch only where nobody answers live
 (PR, issue comment).
 
+**Authorized work starts in the same turn.** Go-ahead given and agent
+says it will do the work → it does, in that turn. Turn ending on an
+announcement ("starting now", "I'll show the diff") with no tool call
+toward that work = null turn: reads as progress, user learns otherwise
+only by asking. Work cannot start → say what blocks it, never announce
+it. Ending a turn on work genuinely in flight (background job started,
+bounded per §6) is not an announcement.
+
 ### Ask before acting on ambiguity
 
 Pause and ask when (a) instruction has two reasonable readings, user
@@ -417,6 +425,7 @@ Mechanics (modes, commands, templates): the `/pr` skill. Rules:
   - `forge-pr-wrapup post` refuses: unreadable PR, wrap-up not naming PR head, branch conflicting with or behind base.
   - `block_unverified_pr_create` hook refuses raw create, names `forge-pr-create`. That command runs in checkout it publishes; refuses unless that checkout's wrap-up names its `HEAD`. `wrapup-mode: light` / `wrapup-mode: light-release` re-earned by fail-closed `forge-pr-plan` re-run (must agree light-code / light-release). `FORGE_SKIP_WRAPUP_GATE=1` on explicit user request only.
   - **Draft PR** = escape hatch for early visibility.
+  - **A rework returns a ready PR to draft.** Revision round on a published non-draft PR — new commits changing what posted wrap-up describes — → convert to draft (`gh pr ready <N> --undo`), say so; mark ready again when refreshed wrap-up posts. Answering review comments is not a revision round: PR stays ready, reviewer is mid-conversation. Why: ready + green over a tree being rewritten invites review of dead content and misinforms the merge decision.
   - Genuine emergency → **`forge-emergency`**: one human-armed, ledger-backed `wrapup-mode: emergency` publication. Defers only verification ceremony — never a §2 hook, never publish-time CVE-scan-since-fork check, and of pre-commit only steps already self-skipping in CI. Owes retroactive verification after delivery. Agents arm it only on explicit user instruction.
 - **Verification starts itself.** Implementation commits done → run finalization reviews automatically (read-only, no permission). Stopping at "ready to finalize?" unverified = too early. Commit, push, open PR: no pause after verification. Merging, force ops, cutting release, publishing package: pause. Every §2 bypass keeps own confirmation.
 - **The wrap-up never waits on CI.** Post when checks done; state plainly when CI incomplete — unqualified wrap-up reads "all green", false.
