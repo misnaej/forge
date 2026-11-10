@@ -20,6 +20,17 @@ fragment type (**Features / Changes / Fixes / Removed / Docs**).
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v11.4.0 — 2026-11-10
+
+### Changes
+- FOUNDATION §1 gains "Authorized work starts in the same turn": once the user has given the go-ahead and an agent says it will do the work, it does it in that turn, or says what blocks it — a turn that ends on an announcement of work not yet begun is a null turn.
+- FOUNDATION §6 gains "A rework returns a ready PR to draft": starting a revision round on a published, ready PR (new commits changing what the posted wrap-up describes) converts it to draft until the refreshed wrap-up posts. Answering review comments is not a revision round, so the PR stays ready.
+- The after-push stale-wrap-up reminder now adds, for a ready PR, how to mark it draft if the push starts a rework; `forge-pr-wrapup post` notes when the PR it posted to is still draft, so it can be marked ready again.
+
+### Fixes
+- `forge-commit` can now commit a renamed file. A rename counts as its old and new path in every check, so naming both commits it; naming only the new path is refused before anything is committed, with a hint to name both. Previously one of its two checks always refused a staged rename, sometimes after the commit already existed.
+- The pre-commit ruff step no longer pulls files you left unstaged into a partial commit: after fixing, it re-stages only the files that were already staged. If ruff rewrites a file that is only partly staged, the commit stops before it is made and names the file, so you can stage the rest or undo the extra edits first.
+
 ## v11.3.0 — 2026-11-10
 
 ### Features
