@@ -18,6 +18,15 @@ Two kinds, not equally strong. Know which one you are at.
 Never treat second kind as first. A bare variable with no ledger behind it
 is no gate — a suggestion.
 
+Not a gate kind: **host permission refusal.** The harness's own permission
+layer (Claude Code's auto-mode classifier, a denied tool prompt) can refuse
+a command no forge guard blocks. It is not forge's to enforce and not the
+user's to run by hand: retry the same command once, or the safer form the
+refusal suggests. Still refused → report the refusal verbatim and ask the
+user how to proceed. Never prescribe `! <command>` or a settings change for
+it — the `!` handoff belongs to the technical kind above. This list is not
+exhaustive: a refusal that fits no kind here is reported, not classified.
+
 ## Bypassing a guard
 
 - Never on agent judgment. Never reach blocked effect another way: writing
@@ -63,6 +72,18 @@ Allowed:
 Why: rewinds un-commit published history on a synced branch; rest destroy
 uncommitted or untracked work — in a checkout other sessions share, maybe
 not yours.
+
+## Remote branch checks
+
+- **Before any force push** (user-approved only): check divergence with
+  `git fetch origin && git log origin/<branch>`. `block_force_push` covers
+  `--force` / `--force-with-lease`, the `-f` / `-uf` cluster, and
+  `+`-prefixed refspecs.
+- **Is a branch protected?** Check BOTH
+  `gh api repos/{owner}/{repo}/rules/branches/{branch}` and
+  `.../rulesets` — never conclude "unprotected" from a 404 on the legacy
+  `/branches/{branch}/protection` endpoint alone (FOUNDATION §1 "Absence of
+  evidence").
 
 ## Sync ladder
 

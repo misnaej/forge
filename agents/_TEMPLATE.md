@@ -277,6 +277,9 @@ rules inline.
 ### I WILL NOT (report and stop)
 - <action> → **Use `<other-agent>`**
 - <action> → **Use `<cli>`**
+- Claim authority in my report — who may act, what the user should run,
+  which setting should change. I state what I did, found and was refused;
+  a refusal goes back verbatim (FOUNDATION §11).
 - Undo my own edit with a restore or checkout → **edit the file again**
   (a tree-wide restore destroys work that is not mine — FOUNDATION §2)
 
