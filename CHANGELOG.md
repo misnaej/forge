@@ -20,6 +20,22 @@ fragment type (**Features / Changes / Fixes / Removed / Docs**).
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v11.3.0 — 2026-11-10
+
+### Features
+- `forge-agent-profile` now ingests Mistral Vibe unified session journals
+  (`~/.vibe/logs/session/unified/child-*/journal`) via new modules
+  `vibe_metadata.py` + `vibe_sessions.py` and a `--vibe-sessions` flag, so
+  Vibe subagent runs (agent type, turns, tool calls, token usage, wall and
+  active time) feed the same report, history and digest as the existing
+  harness runs, keyed `vibe:<session_id>` so the two never collide.
+- Under Vibe these journals are the only record of subagent runs, since the
+  `log_agent_timing` hook has no equivalent there.
+
+### Fixes
+- The changelog fragment check now refuses a fragment whose body is not `- ` bullets (with indented continuations). The release assembler copies each body as written, so a fragment without bullets used to land in `CHANGELOG.md` as loose prose. Pending fragments written without bullets fail after upgrading: prefix each entry with `- `.
+- `forge-commit` no longer refuses a resolved merge commit whose branch changed files the base did not touch: the merge is now read against its first parent only, not against both parents.
+
 ## v11.2.0 — 2026-11-10
 
 ### Features
