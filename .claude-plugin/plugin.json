@@ -218,6 +218,15 @@
             "timeout": 60
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/require_helpers_stopped.sh",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PostToolUse": [

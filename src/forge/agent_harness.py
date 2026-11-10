@@ -436,6 +436,10 @@ UNENFORCED_VIBE_HOOKS: Mapping[str, str] = {
     "log_agent_timing.sh": (
         "SubagentStart half - Vibe has no SubagentStart; partial at best"
     ),
+    "require_helpers_stopped.sh": (
+        "SubagentStop blocking gate - Vibe has no SubagentStop; "
+        "post_agent fires after the turn and cannot block"
+    ),
 }
 
 

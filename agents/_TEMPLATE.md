@@ -49,6 +49,16 @@ In this order:
 8. `## Success Criteria` — measurable done conditions.
 9. `## Output style (always)` — the terse-voice block below, verbatim.
 
+## Delegating agents wait for their helpers
+
+An agent that launches a helper (`Task`/`Agent`) waits for every helper's
+result before it hands back — its report is the caller's verdict, and a
+report written while a helper still edits describes work in progress.
+Never launch a placeholder or "standby" helper, and never hand back with a
+helper or background job still running. `require_helpers_stopped` refuses
+the first hand-back while a launched helper has not stopped. Applies to
+every agent with `Task` in its tools, not only §16 reporter wrappers.
+
 ## Output style (always)
 
 Write terse: answer first, no ceremony, no recap. Drop articles (a/an/the)

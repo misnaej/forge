@@ -14,8 +14,10 @@
 # a subagent wrote, not merely that it wrote: an edit is indistinguishable
 # from the caller's own once it is in the tree. Only tool-based writes
 # carry a path — anything written through a shell command has none, so a
-# reader must treat this as partial evidence, never as an audit. The
-# ledger is append-only and per-workspace (code_health/ is gitignored);
+# reader must treat this as partial evidence, never as an audit.
+# `spawned_agent_id` (Agent/Task launches) is the launched helper's id, so
+# require_helpers_stopped.sh can tell which helpers an agent left running.
+# The ledger is append-only and per-workspace (code_health/ is gitignored);
 # the CLI does the pairing and the statistics — this hook only records.
 #
 # Registered without a matcher on purpose: loop detection needs every
@@ -46,7 +48,9 @@ OUT=$(printf '%s' "$INPUT" | jq -r '(.cwd // "."), ({
     tool_name,
     tool_use_id,
     duration_ms,
-    file_path: (.tool_input.file_path // .tool_input.notebook_path // null)
+    file_path: (.tool_input.file_path // .tool_input.notebook_path // null),
+    spawned_agent_id: (if (.tool_name == "Agent" or .tool_name == "Task")
+        then (.tool_response.agentId? // null) else null end)
 } | tojson)' 2>/dev/null) || exit 0
 CWD=${OUT%%$'\n'*}
 LINE=${OUT#*$'\n'}

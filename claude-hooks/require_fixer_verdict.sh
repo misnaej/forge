@@ -35,19 +35,16 @@ fi
 [ -n "$AGENT_ID" ] || exit 0
 ROOT=${CLAUDE_PROJECT_DIR:-}
 [ -n "$ROOT" ] && [ -e "$ROOT/.git" ] || ROOT=$(git -C "${CWD:-.}" rev-parse --show-toplevel 2>/dev/null) || exit 0
-# Log directory: FORGE_CODE_HEALTH_DIR when set (absolute, or relative to
-# the repo root), else <root>/code_health — the same rule as
-# forge.git_utils.code_health_dir, so this hook and the Python readers agree.
-CH_DIR=${FORGE_CODE_HEALTH_DIR:-code_health}
-case "$CH_DIR" in /*) ;; *) CH_DIR="$ROOT/$CH_DIR" ;; esac
-LEDGER="$CH_DIR/agent_timing.jsonl"
+# Block-once mark, ledger paths: shared lib. Missing lib → fail open (a stop
+# gate must never trap an agent).
+ONCE_LIB="$(dirname "$0")/once_mark.sh"
+[ -r "$ONCE_LIB" ] || exit 0
+# shellcheck source=once_mark.sh
+source "$ONCE_LIB"
+once_mark_paths "$ROOT"
 
 # Already blocked once: let it through so a genuinely stuck agent can stop.
-NEEDLE=$(jq -rn --arg a "$AGENT_ID" '"\"agent_id\":" + ($a | tojson)' 2>/dev/null) || NEEDLE=""
-if [ -n "$NEEDLE" ] && [ -r "$LEDGER" ] \
-    && grep -F '"event":"verdict_block"' "$LEDGER" 2>/dev/null | grep -qF "$NEEDLE"; then
-    exit 0
-fi
+once_mark_seen verdict_block "$AGENT_ID" && exit 0
 
 if command -v forge-precommit >/dev/null 2>&1; then
     set +e
@@ -78,15 +75,8 @@ case "$LAST" in
         ;;
 esac
 
-# The block-once mark must be on disk BEFORE blocking: a block whose mark
-# cannot be written would recur on every stop and never end, so in that
-# case the stop is allowed instead (fail open, never loop).
-mkdir -p "$CH_DIR" 2>/dev/null || exit 0
-LINE=$(jq -cn --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg s "$SESSION_ID" \
-    --arg a "$AGENT_ID" --arg t "$AGENT_TYPE" \
-    '{ts: $ts, event: "verdict_block", session_id: $s, agent_id: $a, agent_type: $t}' \
-    2>/dev/null) || exit 0
-printf '%s\n' "$LINE" >> "$LEDGER" 2>/dev/null || exit 0
+# Mark before blocking; an unwritable mark allows the stop (once_mark.sh).
+once_mark_write verdict_block "$SESSION_ID" "$AGENT_ID" "$AGENT_TYPE" || exit 0
 
 REASON="The pre-commit verdict does not pass, so this hand-back cannot report success. Fix what it names and re-run forge-precommit, or hand back a STUCK block with this output pasted verbatim:
 $VERDICT"
