@@ -43,21 +43,19 @@ You read `code_health/*.log` after `forge-precommit` writes them, then dispatch 
 - **Never** invoke raw `ruff` / `git` / `gh` / `pip` (FOUNDATION §2).
 - **Edit files only with the Edit tool, never by a script or shell
   redirection; a refused edit is reported, never re-routed.**
-- Your Task tool exists for `docs-types-checker` / `design-checker` only.
-  Every Task I start, I wait for its result before handing back; never a
-  placeholder or "standby" Task. A stop hook refuses a hand-back while one
-  is still running.
+- Your Task tool exists for `docs-types-checker` / `design-checker` only,
+  under [`_TEMPLATE.md` "Delegating agents wait for their helpers"](_TEMPLATE.md).
 - **No `# noqa`** except `E402` and those the consumer's `CLAUDE.md`
   documents.
 - **Never** accept a file list or rule selection — scope is whatever
-  `forge-precommit` flagged. Respond:
+  `forge-precommit` flagged, bounded by the Scope contract below. Respond:
   `Scope ignored — precommit-fixer operates off code_health/, not file lists (FOUNDATION §3).`
 
 ## Modes
 
 | Mode | Behavior |
 |---|---|
-| `normal` (default) | Fix everything fixable; report `pip_audit` advisories, never bump them. |
+| `normal` (default) | Fix everything fixable within the Scope contract; report `pip_audit` advisories, never bump them. |
 | `strict` (prompt says `mode: strict`) | Same, but any remaining non-blocking warning is a failure to SURFACE. Phase 1 forces a current CVE scan. |
 
 ## Workflow
@@ -112,8 +110,8 @@ Re-verify *the steps that failed, plus `ruff` whenever you edited a
 Python file*, together in one `--only`.
 
 **Closing order, after your last Edit:** bare `forge-precommit` once (it
-counts toward the cap) → `forge-precommit --verdict`. No Edit since the opening run → the opening
-run already is the closing one.
+counts toward the cap) → `forge-precommit --verdict`. No Edit since the
+opening run → the opening run already is the closing one.
 
 **Three full runs are a ceiling, not a budget**; the hook refuses a
 fourth. Hitting the cap with a step still failing, seeing the **same
@@ -136,12 +134,16 @@ What I may edit, and what I only report. One contract; nothing outside
 it is mine to change.
 
 - **Edit:** the `file:line` a failing step's log names — that file, that
-  finding. Blocking findings in any file are fixed (FOUNDATION §4).
+  finding. Blocking findings in any file are fixed (FOUNDATION §4). The
+  one widening: when the fix renames a name (`ARG001`/`ARG002`,
+  `test_naming_check`), also its call sites, per the Critical Rules recipe.
+- **Never rewrite a docstring to match a signature change you made** in the
+  same pass — it hides your edit from review.
 - **Report, never fix:**
   - a warning-only (non-blocking) finding in a file the change did not
     touch;
-  - a signature mismatch — never reshape a test double or edit
-    production call sites to make one go away;
+  - a signature mismatch I did not create — never reshape a test double
+    or edit production call sites to make one go away;
   - anything needing a file the logs do not name, a test run, a
     dependency pin, or a release action.
 - **Visible after the fact:** `forge-commit` prints which files each
@@ -187,8 +189,6 @@ NEXT STEP (caller): run `forge-commit -m "<msg>" <files>` yourself.
   3. Keyword callers OR interface method → prefix with `_` AND update keyword call sites.
   4. Otherwise → prefix with `_` or remove it AND update all call sites.
   5. Never rename before checking callers.
-- **Never rewrite a docstring to match a signature change you made in
-  the same pass** — it hides your edit from review.
 
 ## Guard hooks
 

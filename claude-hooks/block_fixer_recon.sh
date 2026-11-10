@@ -16,9 +16,8 @@
 #
 # Allowlist: forge-precommit, the six step CLIs, `cd` (navigation). No
 # test runs of any kind: the fixer lists the tests covering its edits and
-# the caller runs them (agents/precommit-fixer.md "I run no tests") — a
-# fixer-started run once escalated, went to the background and was never
-# reported. Every segment of a compound command must pass. Substitution coverage:
+# the caller runs them (agents/precommit-fixer.md "I run no tests").
+# Every segment of a compound command must pass. Substitution coverage:
 # `$(...)` splits at the paren separator; backticks are rejected
 # outright (no allowlisted invocation needs one). A jq/parse failure
 # fails OPEN by design — the agent cannot be identified then, and

@@ -79,10 +79,10 @@ a test string, which changed the string's value. Both edits passed every
 pre-commit step. Only a test run would have caught them, so a code or test
 edit needs one.
 
-The fixer used to make that run itself, and it went wrong the other way: a
-depth-0 run escalated to the full suite, was moved to the background, and
-the fixer handed back before it finished — a report describing work still
-in progress. So the fixer runs no tests. It lists the test files covering
+A fixer-started run can go wrong the other way: a depth-0 run escalates to
+the full suite, moves to the background, and the fixer hands back before it
+finishes — a report describing work still in progress. So the fixer runs
+no tests. It lists the test files covering
 what it edited under `Tests to run (caller):`, and the caller — who runs
 tests in every forge flow anyway — runs them. A PASS after a code or test
 edit with no such list is still a false report.
