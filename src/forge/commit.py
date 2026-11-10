@@ -262,10 +262,29 @@ def committed_paths(root: Path) -> set[str]:
     Args:
         root: Repo root.
 
+    A merge is diffed against its first parent explicitly: ``git show``
+    prints a merge's combined diff, which lists only paths differing from
+    every parent, so a resolved merge read as missing its staged files.
+
+    Args:
+        root: Repo root.
+
     Returns:
-        The repo-relative paths in HEAD's diff against its first parent.
+        The repo-relative paths in HEAD's diff against its first parent
+        (every path, for a root commit).
     """
-    return _git_paths(root, "show", "--name-only", "-z", "--format=", "HEAD")
+    return _git_paths(
+        root,
+        "diff-tree",
+        "-r",
+        "--root",
+        "-m",
+        "--first-parent",
+        "--no-commit-id",
+        "--name-only",
+        "-z",
+        "HEAD",
+    )
 
 
 def push(root: Path, branch: str) -> int:
