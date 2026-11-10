@@ -339,6 +339,48 @@ def test_commit_and_push_named_file_missing_from_commit_refuses(
 
 
 @pytest.mark.usefixtures("_fake_evidence")
+def test_commit_and_push_commits_a_resolved_merge(feature_repo: Path) -> None:
+    """Regression: a resolved merge commits and reports success, not refusal.
+
+    ``git show`` gives a merge's combined diff (only the resolved file), so
+    the post-commit check used to call the other staged paths missing.
+    """
+    (feature_repo / "a.txt").write_text("feature\n", encoding="utf-8")
+    commit_all(feature_repo, "feat: a on branch")
+    git_stdout(feature_repo, "checkout", "-q", "main")
+    (feature_repo / "a.txt").write_text("base\n", encoding="utf-8")
+    (feature_repo / "c.txt").write_text("c\n", encoding="utf-8")
+    commit_all(feature_repo, "feat: base moves")
+    git_stdout(feature_repo, "checkout", "-q", "feat/x")
+    merged = subprocess.run(
+        ["git", "merge", "-q", "main"],
+        cwd=feature_repo,
+        env=GIT_ENV,
+        check=False,
+        capture_output=True,
+    )
+    assert merged.returncode != 0  # a.txt conflicts
+    (feature_repo / "a.txt").write_text("resolved\n", encoding="utf-8")
+    git_stdout(feature_repo, "add", "a.txt")
+    request = Request("chore: merge main", ("a.txt", "c.txt"), push=False)
+
+    assert commit.commit_and_push(feature_repo, request) == commit.EXIT_OK
+
+    assert commit.committed_paths(feature_repo) == {"a.txt", "c.txt"}
+    parents = git_stdout(feature_repo, "log", "-1", "--format=%P").split()
+    assert len(parents) == 2
+
+
+def test_committed_paths_root_commit_lists_every_file(tmp_path: Path) -> None:
+    """A root commit (no parent) lists every file it adds."""
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+    (tmp_path / "x.txt").write_text("x\n", encoding="utf-8")
+    commit_all(tmp_path, "chore: root")
+
+    assert commit.committed_paths(tmp_path) == {"x.txt"}
+
+
+@pytest.mark.usefixtures("_fake_evidence")
 def test_commit_and_push_blocking_hook_refuses(feature_repo: Path) -> None:
     """A failing pre-commit hook refuses the commit with a clear message."""
     hook = feature_repo / ".git" / "hooks" / "pre-commit"
