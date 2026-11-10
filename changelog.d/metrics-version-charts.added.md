@@ -1,2 +1,0 @@
-bump: minor
-`forge-metrics report --html` now groups the numbers by forge version: median new tokens per changed line, active minutes and review rounds per version (one line per repo id), new tokens per PR over time with version changes marked, and a version x repo table of PR counts and medians. PRs without token data show as gaps, never zeros; PRs with no recorded version are grouped as "unknown". The page covers every recorded PR whatever `--last` says; `--last` trims only the terminal table. Charts are drawn inline, readable in light and dark mode and on a phone.
