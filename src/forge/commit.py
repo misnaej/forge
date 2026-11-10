@@ -259,9 +259,6 @@ def stage_exactly(root: Path, paths: tuple[str, ...]) -> None:
 def committed_paths(root: Path) -> set[str]:
     """Paths the HEAD commit changed.
 
-    Args:
-        root: Repo root.
-
     A merge is diffed against its first parent explicitly: ``git show``
     prints a merge's combined diff, which lists only paths differing from
     every parent, so a resolved merge read as missing its staged files.

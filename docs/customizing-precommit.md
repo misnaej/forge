@@ -57,7 +57,7 @@ Code plugin refuses an agent command that changes or overrides
 and a commit, merge or pull whose resolved folder has no
 executable `pre-commit` in a repo that tracks this file.
 
-A conflicted merge is finished with `git commit`, which runs this hook as
-usual. A merge git completes without conflicts runs no local gate, by
+A conflicted merge is finished with `forge-commit`, naming every staged
+path; it runs this hook as usual. A merge git completes without conflicts runs no local gate, by
 design — why, and what checks it instead, is in FOUNDATION §2 (the sync
 ladder).
