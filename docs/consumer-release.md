@@ -221,7 +221,9 @@ Consequences, by design:
 more than one, so writing a fragment means deciding these:
 
 - **Several changes go in as several bullets in the one file.** The
-  bullet, not the file, is the unit of a changelog entry.
+  bullet, not the file, is the unit of a changelog entry. Every body
+  line is a `- ` bullet or an indented continuation; the gate refuses
+  anything else, since the assembler copies the body as written.
 - **The type names the PR as a whole.** It lives in the filename, so a
   PR that fixes one thing and removes another files under the type that
   best describes the whole PR; the minority bullets are grouped under it.
