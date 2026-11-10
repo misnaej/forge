@@ -5676,40 +5676,28 @@ def test_fixer_recon_allows_step_cli() -> None:
     )
 
 
-def test_fixer_recon_allows_targeted_pytest_single_nodeid() -> None:
-    """`pytest tests/foo.py::test_bar` (one explicit node-id) is allowed."""
-    assert (
-        _run_hook(
-            _FIXER_RECON,
-            "pytest tests/foo.py::test_bar",
-            options=HookOptions(agent_type="forge:precommit-fixer"),
-        )
-        == 0
+@pytest.mark.parametrize(
+    "command",
+    [
+        "pytest tests/foo.py::test_bar",
+        "pytest tests/foo.py::test_bar tests/foo.py::test_baz",
+        "python -m pytest tests/foo.py::test_bar",
+        "pytest 'tests/a b.py::x'",
+        "forge-smart-test --depth 0",
+        "forge-smart-test --depth=0",
+    ],
+)
+def test_fixer_recon_blocks_every_test_run(command: str) -> None:
+    """The fixer runs no tests; the refusal points at the caller-run list.
+
+    Args:
+        command: A pytest or smart-test invocation, targeted or not.
+    """
+    proc = _run_hook_proc(
+        _FIXER_RECON, command, options=HookOptions(agent_type="forge:precommit-fixer")
     )
-
-
-def test_fixer_recon_allows_targeted_pytest_multiple_nodeids() -> None:
-    """`pytest` with several explicit node-ids is allowed."""
-    assert (
-        _run_hook(
-            _FIXER_RECON,
-            "pytest tests/foo.py::test_bar tests/foo.py::test_baz",
-            options=HookOptions(agent_type="forge:precommit-fixer"),
-        )
-        == 0
-    )
-
-
-def test_fixer_recon_allows_python_m_pytest_nodeid() -> None:
-    """`python -m pytest` with an explicit node-id is allowed."""
-    assert (
-        _run_hook(
-            _FIXER_RECON,
-            "python -m pytest tests/foo.py::test_bar",
-            options=HookOptions(agent_type="forge:precommit-fixer"),
-        )
-        == 0
-    )
+    assert proc.returncode == 2
+    assert "Tests to run (caller)" in proc.stderr
 
 
 def test_fixer_recon_blocks_backtick_substitution() -> None:
@@ -7264,6 +7252,34 @@ def test_log_agent_timing_post_tool_use_keeps_duration_ms(tmp_path: Path) -> Non
     assert isinstance(event["duration_ms"], int)
 
 
+def test_log_agent_timing_records_spawned_agent_id_for_agent_launches(
+    tmp_path: Path,
+) -> None:
+    """An Agent launch row carries the helper's id; a Bash row carries none."""
+    init_git_repo(tmp_path)
+    launch = {
+        "hook_event_name": "PostToolUse",
+        "session_id": "s1",
+        "agent_id": "P",
+        "tool_name": "Agent",
+        "tool_use_id": "t1",
+        "tool_response": {"agentId": "H1"},
+    }
+    task = {
+        **launch,
+        "tool_name": "Task",
+        "tool_use_id": "t3",
+        "tool_response": {"agentId": "H2"},
+    }
+    bash = {**launch, "tool_name": "Bash", "tool_use_id": "t2"}
+    assert _run_agent_timing_hook(launch, cwd=tmp_path).returncode == 0
+    assert _run_agent_timing_hook(bash, cwd=tmp_path).returncode == 0
+    assert _run_agent_timing_hook(task, cwd=tmp_path).returncode == 0
+    ledger = code_health_dir(tmp_path) / "agent_timing.jsonl"
+    rows = [json.loads(x) for x in ledger.read_text(encoding="utf-8").splitlines()]
+    assert [r["spawned_agent_id"] for r in rows] == ["H1", None, "H2"]
+
+
 def test_log_agent_timing_exit_0_and_no_stdout_always(tmp_path: Path) -> None:
     """The hook never prints and never fails the tool call it observed."""
     init_git_repo(tmp_path)
@@ -7401,31 +7417,6 @@ def test_log_agent_timing_hook_wired_for_all_events() -> None:
 # --- block_fixer_recon.sh: forge-smart-test --depth 0 ----------------------
 
 
-def test_fixer_recon_allows_smart_test_depth_zero() -> None:
-    """`forge-smart-test --depth 0` is the fixer's cheap check, so it is allowed."""
-    assert (
-        _run_hook(
-            _FIXER_RECON,
-            "forge-smart-test --depth 0",
-            options=HookOptions(agent_type="forge:precommit-fixer"),
-        )
-        == 0
-    )
-
-
-@pytest.mark.parametrize(
-    "command", ["forge-smart-test --depth 0", "forge-smart-test --depth=0"]
-)
-def test_fixer_recon_allows_both_depth_zero_spellings(command: str) -> None:
-    """Both the spaced and `=` spellings of depth 0 are allowed.
-
-    Args:
-        command: A depth-0 smart-test invocation.
-    """
-    options = HookOptions(agent_type="forge:precommit-fixer")
-    assert _run_hook(_FIXER_RECON, command, options=options) == 0
-
-
 @pytest.mark.parametrize(
     "command",
     [
@@ -7451,6 +7442,151 @@ def test_fixer_recon_still_blocks_deeper_smart_test_and_git_status() -> None:
     options = HookOptions(agent_type="forge:precommit-fixer")
     assert _run_hook(_FIXER_RECON, "forge-smart-test --depth 2", options=options) == 2
     assert _run_hook(_FIXER_RECON, "git status", options=options) == 2
+
+
+# --- require_helpers_stopped.sh: SubagentStop helper gate ------------------
+
+_REQUIRE_HELPERS = "require_helpers_stopped.sh"
+_HELPER_TYPE = "forge:docs-types-checker"
+
+
+def _write_helper_ledger(repo: Path, *, stopped: bool, launcher: str = "P") -> None:
+    """Write a ledger where *launcher* spawned helper ``H``.
+
+    Args:
+        repo: Repository whose ledger is written.
+        stopped: Whether helper ``H`` also has a SubagentStop row.
+        launcher: ``agent_id`` of the agent that launched ``H``.
+    """
+    rows: list[dict[str, object]] = [
+        {
+            "event": "PostToolUse",
+            "agent_id": launcher,
+            "tool_name": "Agent",
+            "spawned_agent_id": "H",
+        },
+        {"event": "SubagentStart", "agent_id": "H", "agent_type": _HELPER_TYPE},
+    ]
+    if stopped:
+        rows.append({"event": "SubagentStop", "agent_id": "H"})
+    ledger = code_health_dir(repo) / "agent_timing.jsonl"
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+
+def _run_helpers_hook(
+    repo: Path, *, agent_id: str | None = "P", extra_env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Run ``require_helpers_stopped.sh`` with a SubagentStop payload.
+
+    Args:
+        repo: Working directory and payload ``cwd``.
+        agent_id: Stopping agent's id; ``None`` omits the field.
+        extra_env: Extra environment variables.
+
+    Returns:
+        The completed hook process.
+    """
+    payload: dict[str, object] = {
+        "hook_event_name": "SubagentStop",
+        "agent_type": "forge:test-writer",
+        "cwd": str(repo),
+        "session_id": "s1",
+    }
+    if agent_id is not None:
+        payload["agent_id"] = agent_id
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
+    env.update(extra_env or {})
+    return subprocess.run(
+        [_shutil_bash(), str(_HOOKS_DIR / _REQUIRE_HELPERS)],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=repo,
+        env=env,
+    )
+
+
+def _handback_blocks(repo: Path) -> list[dict[str, object]]:
+    """Return ``handback_block`` rows from the repo's ledger."""
+    ledger = code_health_dir(repo) / "agent_timing.jsonl"
+    rows = [json.loads(x) for x in ledger.read_text(encoding="utf-8").splitlines()]
+    return [r for r in rows if r.get("event") == "handback_block"]
+
+
+def test_helpers_hook_blocks_once_while_helper_runs(tmp_path: Path) -> None:
+    """A running helper blocks the first stop, naming it, and marks the ledger."""
+    init_git_repo(tmp_path)
+    _write_helper_ledger(tmp_path, stopped=False)
+    proc = _run_helpers_hook(tmp_path)
+    assert proc.returncode == 0
+    out = json.loads(proc.stdout)
+    assert out["decision"] == "block"
+    assert "H" in out["reason"]
+    assert _HELPER_TYPE in out["reason"]
+    marks = _handback_blocks(tmp_path)
+    assert [m["agent_id"] for m in marks] == ["P"]
+    again = _run_helpers_hook(tmp_path)
+    assert again.returncode == 0
+    assert again.stdout.strip() == ""
+
+
+def test_helpers_hook_allows_when_helper_stopped(tmp_path: Path) -> None:
+    """A helper with a SubagentStop row no longer holds the launcher back."""
+    init_git_repo(tmp_path)
+    _write_helper_ledger(tmp_path, stopped=True)
+    proc = _run_helpers_hook(tmp_path)
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == ""
+    assert _handback_blocks(tmp_path) == []
+
+
+def test_helpers_hook_ignores_another_agents_helper(tmp_path: Path) -> None:
+    """A helper launched by a different agent is not the stopping agent's."""
+    init_git_repo(tmp_path)
+    _write_helper_ledger(tmp_path, stopped=False, launcher="Q")
+    proc = _run_helpers_hook(tmp_path)
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == ""
+    assert _handback_blocks(tmp_path) == []
+
+
+@pytest.mark.parametrize("case", ["no-ledger", "no-agent-id", "timing-off"])
+def test_helpers_hook_fails_open(tmp_path: Path, case: str) -> None:
+    """Missing evidence or the timing switch makes the hook allow silently.
+
+    Args:
+        case: Which fail-open condition to set up.
+    """
+    init_git_repo(tmp_path)
+    if case != "no-ledger":
+        _write_helper_ledger(tmp_path, stopped=False)
+    proc = _run_helpers_hook(
+        tmp_path,
+        agent_id=None if case == "no-agent-id" else "P",
+        extra_env={"FORGE_NO_AGENT_TIMING": "1"} if case == "timing-off" else None,
+    )
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == ""
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
+def test_helpers_hook_allows_when_ledger_unappendable(tmp_path: Path) -> None:
+    """A block that cannot be marked is not issued: mark before block, else allow."""
+    init_git_repo(tmp_path)
+    _write_helper_ledger(tmp_path, stopped=False)
+    ledger = code_health_dir(tmp_path) / "agent_timing.jsonl"
+    before = ledger.read_text(encoding="utf-8")
+    ledger.chmod(0o444)
+    try:
+        proc = _run_helpers_hook(tmp_path)
+    finally:
+        ledger.chmod(0o644)
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == ""
+    assert ledger.read_text(encoding="utf-8") == before
+    assert _handback_blocks(tmp_path) == []
 
 
 # --- require_fixer_verdict.sh: SubagentStop verdict gate -------------------
@@ -8910,9 +9046,6 @@ def test_guards_read_each_shell_word_whole_and_assembled_text_joined(
     ("command", "expected"),
     [
         pytest.param("forge-precommit", _ALLOW, id="precommit"),
-        pytest.param("pytest tests/a.py::x", _ALLOW, id="pytest-node"),
-        pytest.param("pytest 'tests/a b.py::x'", _ALLOW, id="pytest-quoted-node"),
-        pytest.param("forge-smart-test --depth 0", _ALLOW, id="smart-test"),
         pytest.param("'forge-precommit x'", _BLOCK, id="quoted-command-word"),
     ],
 )

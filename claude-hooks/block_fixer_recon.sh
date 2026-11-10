@@ -14,11 +14,9 @@
 # file): the fourth bare `forge-precommit` is refused, `--only` refreshes
 # are free.
 #
-# Allowlist: forge-precommit, the six step CLIs, `cd` (navigation),
-# `forge-smart-test --depth 0` (the edited files' own tests), and
-# targeted test runs — pytest / python -m pytest with explicit `::`
-# node-id selector(s), one or several (the tests being fixed or just
-# written). Untargeted pytest (bare, file, directory) stays blocked.
+# Allowlist: forge-precommit, the six step CLIs, `cd` (navigation). No
+# test runs of any kind: the fixer lists the tests covering its edits and
+# the caller runs them (agents/precommit-fixer.md "I run no tests").
 # Every segment of a compound command must pass. Substitution coverage:
 # `$(...)` splits at the paren separator; backticks are rejected
 # outright (no allowlisted invocation needs one). A jq/parse failure
@@ -53,7 +51,7 @@ fi
 # no allowlisted invocation needs one, so any backtick blocks outright.
 case "$COMMAND" in
     *\`*)
-        echo "BLOCKED: precommit-fixer's Bash is limited to forge-precommit, the step CLIs, and targeted pytest node-ids — backtick substitution is never part of that set. Read the code_health/ logs instead." >&2
+        echo "BLOCKED: precommit-fixer's Bash is limited to forge-precommit and the step CLIs — backtick substitution is never part of that set. Read the code_health/ logs instead." >&2
         exit 2
         ;;
 esac
@@ -77,7 +75,7 @@ fi
 guard_begin
 
 _block() {
-    echo "BLOCKED: precommit-fixer's Bash is limited to forge-precommit, the step CLIs, forge-smart-test --depth 0, and targeted pytest node-ids — the code_health/ logs are the only evidence (agents/precommit-fixer.md, FOUNDATION §3). '$1' is outside that set; do not run reconnaissance, read the logs." >&2
+    echo "BLOCKED: precommit-fixer's Bash is limited to forge-precommit and the step CLIs — the code_health/ logs are the only evidence, and tests are the caller's to run (list them under 'Tests to run (caller)'; agents/precommit-fixer.md, FOUNDATION §3). '$1' is outside that set." >&2
     exit 2
 }
 
@@ -121,24 +119,6 @@ _segment_ok() {
     case "$tok" in
         cd|forge-precommit|fix-forge-ruff|verify-forge-docstrings|verify-forge-repo-structure|verify-forge-test-naming|verify-forge-manifest|verify-forge-plugin-version)
             return 0 ;;
-        forge-smart-test)
-            # Exactly `--depth 0` and nothing else: the tests of the files
-            # just edited — the "re-run the tests a code edit touches"
-            # rule made executable. Matching the whole segment (not a
-            # substring) keeps a later `--depth full`, extra flags or a
-            # redirect from widening it into a sweep.
-            norm=$(printf '%s' "$seg" | tr -s '[:space:]' ' ')
-            norm="${norm% }"
-            case "$norm" in
-                "forge-smart-test --depth 0"|"forge-smart-test --depth=0") return 0 ;;
-            esac
-            return 1 ;;
-        pytest)
-            case "$seg" in *::*) return 0 ;; esac
-            return 1 ;;
-        python|python3)
-            case "$seg" in *-m\ pytest*::*) return 0 ;; esac
-            return 1 ;;
     esac
     return 1
 }

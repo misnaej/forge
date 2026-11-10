@@ -69,22 +69,23 @@ survives the next pass. The classic case is a line only a rename can
 shorten — a semantic change outside the fixer's mandate, so it is named for
 the main agent instead of retried.
 
-## Why tests re-run after a code or test edit
+## Why the fixer names tests instead of running them
 
 `forge-precommit --verdict` reports on the pre-commit steps; it does not
 run the test suite. The fixer has twice reported PASS after an edit broke
 tests: once after bundling a test helper's arguments into a dataclass and
 converting only some of the call sites, once after replacing a dash inside
 a test string, which changed the string's value. Both edits passed every
-pre-commit step. The only evidence that would have caught them is a test
-run, so a code or test edit without one is unverified, and a PASS reported
-over it is a false report.
+pre-commit step. Only a test run would have caught them, so a code or test
+edit needs one.
 
-`forge-smart-test --depth 0` is the run: it selects the tests that import a
-changed module directly, and a changed test file always runs whole at depth
-0, so an edit to a test file re-runs that file without the fixer having to
-name it. It is the only file-scoped test run the fixer may make; any other
-test run is by node-id.
+A fixer-started run can go wrong the other way: a depth-0 run escalates to
+the full suite, moves to the background, and the fixer hands back before it
+finishes — a report describing work still in progress. So the fixer runs
+no tests. It lists the test files covering
+what it edited under `Tests to run (caller):`, and the caller — who runs
+tests in every forge flow anyway — runs them. A PASS after a code or test
+edit with no such list is still a false report.
 
 ## Why test code is handled more cautiously
 

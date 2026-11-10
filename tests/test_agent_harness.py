@@ -153,10 +153,11 @@ def test_translate_payload_field() -> None:
     assert translate_payload_field("agent_type", "claude") == "agent_type"
 
 
-def test_unenforced_vibe_hooks_pins_exactly_five_hooks() -> None:
-    """The unenforced list is exactly the five hooks with no Vibe equivalent."""
+def test_unenforced_vibe_hooks_pins_exactly_the_unenforced_hooks() -> None:
+    """The unenforced list is exactly the hooks with no Vibe equivalent."""
     assert set(UNENFORCED_VIBE_HOOKS) == {
         "require_fixer_verdict.sh",
+        "require_helpers_stopped.sh",
         "caveman_mode.sh",
         "load_continuation.sh",
         "keep_continuation_state.sh",

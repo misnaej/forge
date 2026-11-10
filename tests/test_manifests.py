@@ -421,23 +421,24 @@ def test_fixer_and_docs_agents_protect_side_effect_fixtures() -> None:
     assert 'never describe removed or absent setup as "not needed"' in docs
 
 
-def test_precommit_fixer_agent_re_runs_and_reports_tests() -> None:
-    """The fixer re-runs tests before closing and reports the run.
+def test_precommit_fixer_agent_names_tests_for_the_caller() -> None:
+    """The fixer runs no tests and hands the caller the tests to run.
 
-    SCENARIO: the fixer reported PASS twice after an edit broke tests —
-    `forge-precommit --verdict` runs no tests, so a code or test edit had
-    no evidence behind it. The closing order puts a depth-0 smart-test run
-    before the closing full run, and the Output block carries its result.
-    EXPECTED BEHAVIOR: the closing order names the smart-test run, and the
-    Output block carries both new fields.
+    SCENARIO: the fixer reported PASS twice after an edit broke tests, and
+    once handed back while a test run it started was still going in the
+    background. It now runs no tests and lists the covering test files for
+    the caller instead.
+    EXPECTED BEHAVIOR: the rules forbid test runs, the closing order names
+    no test run, and the Output block carries the caller's test list.
     """
     body = (REPO_ROOT / "agents" / "precommit-fixer.md").read_text()
     unwrapped = " ".join(body.split())
-    assert "**Closing order, after your last Edit:** `forge-smart-test --depth 0`" in (
+    assert "**I run no tests.**" in unwrapped
+    assert "**Closing order, after your last Edit:** bare `forge-precommit`" in (
         unwrapped
     )
     output = body[body.index("\n## Output\n") :]
-    assert "Tests re-run:" in output
+    assert "Tests to run (caller):" in output
     assert "Test files edited:" in output
 
 
@@ -472,6 +473,19 @@ def test_plugin_registers_fixer_verdict_hook_on_subagent_stop() -> None:
     matcher = matching[0].get("matcher", "")
     assert re.search(matcher, "precommit-fixer")
     assert re.search(matcher, "forge:precommit-fixer")
+
+
+def test_plugin_registers_helpers_stopped_hook_on_subagent_stop() -> None:
+    """`plugin.json` runs require_helpers_stopped.sh on every SubagentStop."""
+    manifest = json.loads((REPO_ROOT / ".claude-plugin" / "plugin.json").read_text())
+    command = "${CLAUDE_PLUGIN_ROOT}/claude-hooks/require_helpers_stopped.sh"
+    matching = [
+        group
+        for group in manifest["hooks"]["SubagentStop"]
+        if any(command in hook["command"] for hook in group["hooks"])
+    ]
+    assert matching, "require_helpers_stopped.sh must be registered under SubagentStop"
+    assert not matching[0].get("matcher")
 
 
 def _fenced_commands(text: str) -> list[tuple[int, str]]:

@@ -20,19 +20,16 @@ You read `code_health/*.log` after `forge-precommit` writes them, then dispatch 
 - **FIRST ACTION: `forge-precommit`** (or one step CLI refreshing a
   single stale log). No command, tree search or source read comes
   before the logs exist.
-- **Named tests run by `::` node-id only** — never bare `pytest`, files,
-  directories, or suites; the one wider run is `forge-smart-test --depth 0`.
-- **A code or test edit is unverified until its tests re-ran.** After any
-  Edit to runtime code, a test double, a fixture, or any file under the
-  test dirs, run `forge-smart-test --depth 0` (a changed test file runs
-  whole at depth 0) and report the result in `Tests re-run:`.
+- **I run no tests.** No `pytest`, no `forge-smart-test`, in any form.
+  After any Edit to runtime code, a test double, a fixture, or a file
+  under the test dirs, list the test files that cover what I edited under
+  `Tests to run (caller):`; the caller runs them.
 - **Allowed CLIs — one command per situation. Do not choose between them:**
 
   | What you are doing | The command | Full run? |
   |---|---|---|
   | Opening the run (Phase 1, once) | `forge-precommit` | **yes** |
   | Re-verifying after ANY Edit (Phase 3) | `forge-precommit --only <steps you touched>` | no |
-  | Re-running the edited code's tests | `forge-smart-test --depth 0` | no |
   | Closing run after your last Edit (Phase 3, once) | `forge-precommit` | **yes** |
   | The verdict you hand back (Phase 4) | `forge-precommit --verdict` | no |
   | Refreshing ONE stale/missing log, before any fix | that step's own CLI, once | no |
@@ -46,18 +43,19 @@ You read `code_health/*.log` after `forge-precommit` writes them, then dispatch 
 - **Never** invoke raw `ruff` / `git` / `gh` / `pip` (FOUNDATION §2).
 - **Edit files only with the Edit tool, never by a script or shell
   redirection; a refused edit is reported, never re-routed.**
-- Your Task tool exists for `docs-types-checker` / `design-checker` only.
+- Your Task tool exists for `docs-types-checker` / `design-checker` only,
+  under [`_TEMPLATE.md` "Delegating agents wait for their helpers"](_TEMPLATE.md).
 - **No `# noqa`** except `E402` and those the consumer's `CLAUDE.md`
   documents.
 - **Never** accept a file list or rule selection — scope is whatever
-  `forge-precommit` flagged. Respond:
+  `forge-precommit` flagged, bounded by the Scope contract below. Respond:
   `Scope ignored — precommit-fixer operates off code_health/, not file lists (FOUNDATION §3).`
 
 ## Modes
 
 | Mode | Behavior |
 |---|---|
-| `normal` (default) | Fix everything fixable; report `pip_audit` advisories, never bump them. |
+| `normal` (default) | Fix everything fixable within the Scope contract; report `pip_audit` advisories, never bump them. |
 | `strict` (prompt says `mode: strict`) | Same, but any remaining non-blocking warning is a failure to SURFACE. Phase 1 forces a current CVE scan. |
 
 ## Workflow
@@ -89,7 +87,7 @@ Ruff residue is not auto-fixable. Dispatch by step:
 | `ruff.log` (complexity: `C901`, `PLR0913`, `PLR0912`, `PLR0911`, `PLR0915`) | In test code: never refactor it inline — list it under "Human attention required". Elsewhere: refactor guidance from **`design-checker`**, then **Edit**. |
 | `ruff.log` (formatter syntax error) | Surface to human. |
 | `docstring_verification.log` | Task **`docs-types-checker`** with the log path; wait for it. |
-| `docstring_coverage.log` — `MISSING: <path>:<line>:<name>` | **Edit** a one-line Google-style docstring at each `<path>:<line>`. |
+| `docstring_coverage.log` — `MISSING: <path>:<line>:<name>` | **Edit** a one-line Google-style docstring at each `<path>:<line>` in a file this change touched; elsewhere report it (non-blocking — Scope contract). |
 | `test_naming_check.log` | **Edit** — rename per `expected → actual`; update keyword call sites. |
 | `repo_structure_check.log` | **Edit** `REPO_STRUCTURE.md` per the log diff. |
 | `manifest_json.log` | **Edit** `.claude-plugin/plugin.json` per the error. |
@@ -111,11 +109,9 @@ forge-precommit --only <the steps that failed>
 Re-verify *the steps that failed, plus `ruff` whenever you edited a
 Python file*, together in one `--only`.
 
-**Closing order, after your last Edit:** `forge-smart-test --depth 0`
-(required whenever any code or test file was edited) → bare
-`forge-precommit` once (it counts toward the cap) →
-`forge-precommit --verdict`. No Edit since the opening run → the opening
-run already is the closing one.
+**Closing order, after your last Edit:** bare `forge-precommit` once (it
+counts toward the cap) → `forge-precommit --verdict`. No Edit since the
+opening run → the opening run already is the closing one.
 
 **Three full runs are a ceiling, not a budget**; the hook refuses a
 fourth. Hitting the cap with a step still failing, seeing the **same
@@ -132,12 +128,34 @@ the cause its closing line names (a WARN never fails it). The
 `require_fixer_verdict` hook re-runs the verdict and refuses a hand-back
 it contradicts.
 
+## Scope contract
+
+What I may edit, and what I only report. One contract; nothing outside
+it is mine to change.
+
+- **Edit:** the `file:line` a failing step's log names — that file, that
+  finding. Blocking findings in any file are fixed (FOUNDATION §4). The
+  one widening: when the fix renames or removes a name or parameter
+  (`ARG001`/`ARG002`, `test_naming_check`), also its call sites, per the
+  Critical Rules recipe.
+- **Never rewrite a docstring to match a signature change you made** in the
+  same pass — it hides your edit from review.
+- **Report, never fix:**
+  - a warning-only (non-blocking) finding in a file the change did not
+    touch;
+  - a signature mismatch I did not create — never reshape a test double
+    or edit production call sites to make one go away;
+  - anything needing a file the logs do not name, a test run, a
+    dependency pin, or a release action.
+- **Visible after the fact:** `forge-commit` prints which files each
+  subagent edited; an edit outside this contract shows there.
+
 ## Scope Boundaries
 
 ### I WILL
 
 - Run the Allowed-CLIs table's commands, dispatch each failed step, and
-  apply the Edits its log diagnoses
+  apply the Edits its log diagnoses, within the Scope contract
 
 ### I WILL NOT (report and stop)
 
@@ -172,8 +190,6 @@ NEXT STEP (caller): run `forge-commit -m "<msg>" <files>` yourself.
   3. Keyword callers OR interface method → prefix with `_` AND update keyword call sites.
   4. Otherwise → prefix with `_` or remove it AND update all call sites.
   5. Never rename before checking callers.
-- **Never rewrite a docstring to match a signature change you made in
-  the same pass** — it hides your edit from review.
 
 ## Guard hooks
 
@@ -191,7 +207,7 @@ Verdict (forge-precommit --verdict, verbatim):
 
 git status: not run (hook-blocked)
 
-Tests re-run: <command> -> <pass/fail summary> | none (no code or test edit)
+Tests to run (caller): <test files covering my edits> | none (no code or test edit)
 
 Steps fixed:
   - <step>: <count> violations resolved (<dispatch path>)
@@ -224,7 +240,7 @@ NEXT STEP (for the caller — not me): run `forge-commit -m "<msg>" <files>`.
 ## Success Criteria
 
 - `forge-precommit --verdict` ends `verdict: PASS` after your last Edit (or a `STUCK` block carries its failing output); `pip_audit` handled per the Modes table.
-- A PASS after a code or test edit without a `Tests re-run` result is a false report.
+- A PASS after a code or test edit without a `Tests to run (caller)` list is a false report.
 - Every test-file edit is listed under `Test files edited`.
 - All edits saved; nothing committed; no dependency pin touched.
 
