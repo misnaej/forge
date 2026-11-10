@@ -433,7 +433,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_parse_and_validate_filename(name: str) -> tuple[str, str, list[str]]` _(internal)_ — Validate filename and extract slug and type.
 - `_parse_bump_line_and_body(path: Path, lines: list[str]) -> tuple[str, str, list[str]]` _(internal)_ — Validate bump line and extract level and body.
 - `_check_no_versions_or_headings(name: str, body: str) -> list[str]` _(internal)_ — Check for version-shaped strings and embedded headings.
-- `_check_bullets(name: str, body: str) -> list[str]` _(internal)_ — Check every body line is a ``- `` bullet or an indented continuation.
+- `_check_bullets(name: str, body: str) -> list[str]` _(internal)_ — Check the body starts with a ``- `` bullet and every line continues one.
 - `validate_fragment(path: Path) -> tuple[Fragment | None, list[str]]` — Parse *path* into a :class:`Fragment`, collecting every violation.
 - `_validate_fragment_text(path: Path, text: str) -> tuple[Fragment | None, list[str]]` _(internal)_ — Apply :func:`validate_fragment`'s contract to *text* as *path*'s content.
 - `discover_fragments(root: Path) -> list[Path]` — Return pending fragment files under ``changelog.d/``, filename-sorted.

@@ -233,8 +233,8 @@ def test_validate_fragment_empty_body(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "body",
-    ["New thing ships.\n", "- first\nwrapped without indent\n"],
-    ids=["no-bullet", "unindented-continuation"],
+    ["New thing ships.\n", "- first\nwrapped without indent\n", "  indented first\n"],
+    ids=["no-bullet", "unindented-continuation", "indented-first-line"],
 )
 def test_validate_fragment_body_line_not_bullet(tmp_path: Path, body: str) -> None:
     """Regression: a body line that is neither a bullet nor indented is rejected.

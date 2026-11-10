@@ -198,7 +198,8 @@ changelog.d/<slug>.<type>.md     # type: upgrade|added|changed|fixed|removed|doc
 whose first line is `bump: patch|minor|major` — the semver LEVEL only.
 A concrete version number anywhere in a fragment (filename or body) is
 invalid and gate-rejected: versions are written exactly once, by the
-assembler. The rest of the file is the entry's markdown, verbatim.
+assembler. The rest of the file is the entry: `- ` bullets (or indented
+continuations), copied verbatim.
 
 Consequences, by design:
 
@@ -211,7 +212,7 @@ Consequences, by design:
   fragments mode" below), grouping fragments by type in fixed order. No CI step or tool may read the
   changelog as a version/bump signal in this mode — the
   `changelog_version` step becomes the *fragment gate* (fragments parse,
-  levels valid, no version strings), and `changelog_updated` requires a
+  levels valid, no version strings, every body line a bullet), and `changelog_updated` requires a
   fragment instead of a CHANGELOG edit. The stranded-entries race cannot
   occur: fragments carry no version to strand.
 - The trade-off: the changelog is no longer release-ready at all times —

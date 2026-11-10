@@ -274,27 +274,36 @@ def _check_no_versions_or_headings(name: str, body: str) -> list[str]:
 
 
 def _check_bullets(name: str, body: str) -> list[str]:
-    """Check every body line is a ``- `` bullet or an indented continuation.
+    """Check the body starts with a ``- `` bullet and every line continues one.
 
     The assembler copies bodies verbatim under the group heading, so a
-    line that is neither renders as loose prose between entries.
+    line that is neither a bullet nor an indented continuation renders as
+    loose prose between entries, and an indented first line as a code block.
 
     Args:
         name: Fragment filename (for error messages).
-        body: The fragment body text.
+        body: The fragment body text (stripped, so its first line is not blank).
 
     Returns:
-        One error naming the first offending line, or none.
+        One error naming the first offending line and how many there are,
+        or none.
     """
-    for line in body.splitlines():
-        if line.strip() and not line.startswith(("- ", " ", "\t")):
-            return [
-                (
-                    f"{name}: body line is not a '- ' bullet or an indented "
-                    f"continuation: {line[:60]!r}"
-                )
-            ]
-    return []
+    lines = body.splitlines()
+    bad = [
+        line
+        for i, line in enumerate(lines)
+        if line.strip()
+        and not line.startswith("- ")
+        and (i == 0 or not line.startswith((" ", "\t")))
+    ]
+    if not bad:
+        return []
+    return [
+        (
+            f"{name}: {len(bad)} body line(s) not a '- ' bullet or an indented "
+            f"continuation, first: {bad[0][:60]!r} — prefix each entry with '- '"
+        )
+    ]
 
 
 def validate_fragment(path: Path) -> tuple[Fragment | None, list[str]]:
