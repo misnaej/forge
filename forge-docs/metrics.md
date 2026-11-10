@@ -183,17 +183,26 @@ run them in, by hand, so versions can be compared on equal work.
   before, through forge's no-force push seam. The repo name is kept in
   `<data dir>/bench.json` (local only, never in the database). Every
   later command checks again that the sandbox is private and yours.
-- `forge-metrics bench start <task> [--clone DIR]` — in your local clone
-  of the sandbox (default `<data dir>/bench/sandbox`, cloned on first
-  use): fetch, then, **only if the working tree is clean** (a dirty clone
-  is refused, nothing is discarded), create branch `bench/<task>-<n>` at
-  the base tag and write the task's setup files. It prints the line to
-  start a session (`cd <clone> && claude`) and the prompt to paste. The
-  run in progress is kept in `<data dir>/bench-run.json`; one at a time.
-- Run the prompt in that session. Install the forge version you want to
-  measure in the clone's `.venv` first (and its plugin, as for any
-  consumer); the prompt asks for the normal workflow up to a posted
-  wrap-up, without questions.
+- `forge-metrics bench start <task> --forge X.Y.Z [--clone DIR]` — in
+  your local clone of the sandbox (default `<data dir>/bench/sandbox`,
+  cloned on first use): fetch, then, **only if the working tree is
+  clean** (a dirty clone is refused, nothing is discarded), create branch
+  `bench/<task>-<n>` at the base tag and write the task's setup files. It
+  prints the line to start a session (`cd <clone> && claude`) and the
+  prompt to paste. The run in progress is kept in
+  `<data dir>/bench-run.json`; one at a time.
+- `--forge` names the forge release to measure (`1.2.3` or `v1.2.3`; it
+  must be a published release). Before the setup files, `start` pins that
+  release in the sandbox's `pyproject.toml` and commits the pin as the
+  branch's first commit, builds the clone's `.venv` with it (kept as is
+  when it already holds that release), and installs the matching Claude
+  Code plugin. If the plugin step fails, for example because `claude` is
+  not installed, `start` says the plugin is not on that release, prints
+  the command to run by hand before the session and carries on; `finish`
+  warns about such a run again. The pin commit is not counted in the
+  run's lines or commits.
+- Run the prompt in that session; it asks for the normal workflow up to
+  a posted wrap-up, without questions.
 - `forge-metrics bench finish [--clone DIR]` — records the run, closes
   its PR unmerged, deletes its branch on GitHub (lease-pinned, never the
   base branch; the local branch is kept) and clears the run file. Then
@@ -246,12 +255,12 @@ a stop after the wrap-up, and carries outcome checks (test files added
 only while `finish` checks, a symbol or text that must exist).
 
 Stored per run, in `bench_runs` and `bench_tokens` (keyed by a random
-`run_id`): the forge version measured (forge-scripts in the clone's
-`.venv`, else the clone's pin; empty when neither tells), task, run
+`run_id`): the forge version measured (the release `start` installed in
+the clone's `.venv`), task, run
 number, model, base tag, start and finish time, PR opened, wrap-ups
 posted, sandbox tests green, task checks held / total,
 `forge-precommit --verdict`, files and lines changed and commits since
-the base tag, review rounds, pre-commit and smart-test runs, active and
+the pin commit, review rounds, pre-commit and smart-test runs, active and
 wall time, and tokens per agent type (folded as for PRs). Tokens and
 time are the run's branch in the clone's transcripts since `start`. No
 sandbox name, branch or path is stored. `export` does not include bench

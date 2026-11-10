@@ -1565,6 +1565,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `read_sandbox() -> Sandbox | None` — The sandbox ``init`` recorded, if any.
 - `write_sandbox(sandbox: Sandbox) -> None` — Save *sandbox* to ``bench.json``.
 - `class Marker` — The run between ``start`` and ``finish`` (local only).
+- `class RunRequest` — What the user asked ``start`` for, beside the task.
 - `marker_path() -> Path` — The local ``bench-run.json``.
 - `read_marker() -> Marker | None` — The run in progress, if any.
 - `default_clone_dir() -> Path` — Where ``start`` keeps the sandbox clone unless told otherwise.
@@ -1578,10 +1579,16 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_ready_clone(sandbox: Sandbox, clone: Path, seams: Seams) -> None` _(internal)_ — Make sure *clone* is a clean, fetched clone of the sandbox.
 - `_free_branch(clone: Path, task_id: str, first_n: int) -> tuple[str, int]` _(internal)_ — The first ``bench/<task>-<n>`` branch name not taken locally or on origin.
 - `class Seams` — The external-command seams a run uses; tests replace them.
-- `start_run(task: Task, *, data: Path, first_n: int, clone: Path | None = None, seams: Seams = DEFAULT_SEAMS) -> tuple[Marker, str]` — Put the sandbox clone on a fresh branch for *task* and record the marker.
+- `require_release(value: str, tag_lookup: Callable[[str], TagLookup]) -> str` — The forge release *value* names, checked to be tagged upstream.
+- `_pin_forge(clone: Path, version: str) -> str` _(internal)_ — Pin forge ``v<version>`` in the clone's dev extra and commit it.
+- `_ensure_env(clone: Path, version: str, runner: Runner) -> bool` _(internal)_ — Give the clone a ``.venv`` running forge *version*, reusing a matching one.
+- `plugin_sync_command(clone: str | Path) -> str` — The command that installs the clone's pinned plugin by hand.
+- `_sync_plugin(clone: Path, runner: Runner) -> bool` _(internal)_ — Install the pinned release's Claude Code plugin for the clone.
+- `_install_forge(clone: Path, branch: str, version: str, runner: Runner) -> tuple[str, bool]` _(internal)_ — Pin, install and sync forge *version* in the clone on *branch*.
+- `start_run(task: Task, request: RunRequest, *, data: Path, seams: Seams = DEFAULT_SEAMS) -> tuple[Marker, str]` — Put the sandbox clone on a fresh branch for *task* and record the marker.
 - `session_line(marker: Marker) -> str` — The command to paste to start the session.
 - `class BenchOutcome` — What one run measured, as the database writer stores it.
-- `clone_forge_version(clone: Path) -> str | None` — The forge release the clone runs: its ``.venv``'s, else its pin.
+- `_venv_forge_version(clone: Path) -> str | None` _(internal)_ — The forge release installed in the clone's ``.venv``.
 - `_clone_tool(clone: Path, name: str) -> list[str]` _(internal)_ — Argv running *name* from the clone's ``.venv``, else the running forge.
 - `_pytest(clone: Path) -> list[str]` _(internal)_ — Argv running the clone's tests quietly, writing no cache into it.
 - `_numstat(clone: Path, base: str) -> tuple[int, int, int]` _(internal)_ — Files, lines added and removed since *base*, uncommitted work included.
@@ -2204,7 +2211,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `pinned_ref(pyproject_text: str) -> str | None` — The forge-scripts ref a ``pyproject.toml``'s text pins, if any.
 - `find_pin(repo_root: Path) -> Pin | None` — Locate the ``forge-scripts`` pin in *repo_root*'s dependency files.
 - `_rewrite_pin(pin: Pin, new_ref: str) -> str` _(internal)_ — Return the file content with *pin*'s line rewritten to *new_ref*.
-- `_git_url_for(auth_mode: AuthMode, ref: str) -> str` _(internal)_ — Return the ``git+...`` URL pip should resolve for *ref* under *auth_mode*.
+- `git_url_for(auth_mode: AuthMode, ref: str) -> str` — Return the ``git+...`` URL pip should resolve for *ref* under *auth_mode*.
 - `uses_pixi_lock(repo_root: Path) -> bool` — Return whether *repo_root* installs its environment from a pixi lock.
 - `install_command(repo_root: Path, ref: str, *, auth_mode: AuthMode = 'https-anonymous') -> str` — Return the command that installs *ref* the way this repo installs.
 - `pip_command(ref: str, *, auth_mode: AuthMode = 'https-anonymous') -> str` — Return the exact ``pip install`` line for a given pin ref.

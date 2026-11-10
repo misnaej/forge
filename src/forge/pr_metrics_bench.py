@@ -7,14 +7,16 @@ work cheaper. The bench gives five fixed tasks (package data under
 - ``init`` fills an empty private GitHub repo (created by the owner) with
   a sample Python project, sets it up as a forge consumer, pushes ``main``
   and tags it ``bench-base-1``;
-- ``start <task>`` puts a local clone of the sandbox on a fresh branch at
-  the base tag and prints the task's prompt; the owner runs it in a normal
-  Claude Code session in that clone;
+- ``start <task> --forge X.Y.Z`` puts a local clone of the sandbox on a
+  fresh branch at the base tag, commits a pin of that forge release on it,
+  installs it in the clone's ``.venv`` with its plugin, and prints the
+  task's prompt; the owner runs it in a normal Claude Code session in that
+  clone;
 - ``finish`` collects what the run did, hands it to the database writer,
   closes the PR unmerged and deletes the branch on GitHub.
 
-The forge version measured is the one installed in the clone's ``.venv``
-(else the clone's pin). Rows are keyed by a random run id — no sandbox
+The forge version measured is the one ``start`` installed in the clone's
+``.venv``, as its run marker records it. Rows are keyed by a random run id — no sandbox
 name, branch or path is stored. The sandbox slug lives only in
 ``bench.json`` and the run in progress in ``bench-run.json``, both beside
 the database. Python data files ship with a ``.tmpl`` suffix so forge's
@@ -57,7 +59,8 @@ from forge.git_utils import (
     release_of,
     run_git,
 )
-from forge.upgrade import pinned_ref
+from forge.plugin_sync import TagLookup, resolve_commit
+from forge.upgrade import git_url_for
 
 
 if TYPE_CHECKING:
@@ -91,6 +94,8 @@ _GH_TIMEOUT_S: Final = 60
 _TAIL_CHARS: Final = 400
 #: The dist-info directory name ``pip`` gives forge-scripts.
 _DIST_INFO = re.compile(r"forge_scripts-(?P<version>[^-]+)\.dist-info")
+#: The sample's quoted ``forge-scripts`` dev entry, bare or already pinned.
+_DEV_ENTRY = re.compile(r"""(?P<q>["'])forge-scripts(?:\s*@\s*git\+[^"']*)?(?P=q)""")
 
 
 class BenchError(RuntimeError):
@@ -404,6 +409,39 @@ class Marker:
     started_at: str
     branch: str
     clone: str
+    #: The commit pinning forge on the branch; the run's work starts after it.
+    setup_commit: str
+    #: Forge release ``X.Y.Z`` installed in the clone's ``.venv``; the run
+    #: is recorded under it.
+    forge_version: str
+    #: Whether ``start`` installed that release's Claude Code plugin.
+    plugin_synced: bool
+
+
+@dataclass(frozen=True)
+class RunRequest:
+    """What the user asked ``start`` for, beside the task.
+
+    Attributes:
+        forge: Forge release to measure, ``X.Y.Z`` or ``vX.Y.Z``.
+        first_n: The lowest run number to use (one past the recorded runs).
+        clone: The local clone; :func:`default_clone_dir` when ``None``.
+    """
+
+    forge: str
+    first_n: int
+    clone: Path | None = None
+
+
+_MARKER_TEXT: Final = (
+    "task_id",
+    "base_tag",
+    "started_at",
+    "branch",
+    "clone",
+    "setup_commit",
+    "forge_version",
+)
 
 
 def marker_path() -> Path:
@@ -422,12 +460,11 @@ def read_marker() -> Marker | None:
         It, or ``None`` when no run is started or the file is unreadable.
     """
     raw = _read_json(marker_path()) or {}
-    text = {
-        key: raw.get(key)
-        for key in ("task_id", "base_tag", "started_at", "branch", "clone")
-    }
-    run_n = raw.get("run_n")
-    if not isinstance(run_n, int) or not all(isinstance(v, str) for v in text.values()):
+    text = {key: raw.get(key) for key in _MARKER_TEXT}
+    run_n, synced = raw.get("run_n"), raw.get("plugin_synced")
+    if not isinstance(run_n, int) or not isinstance(synced, bool):
+        return None
+    if not all(isinstance(v, str) for v in text.values()):
         return None
     return Marker(
         task_id=str(text["task_id"]),
@@ -436,6 +473,9 @@ def read_marker() -> Marker | None:
         started_at=str(text["started_at"]),
         branch=str(text["branch"]),
         clone=str(text["clone"]),
+        setup_commit=str(text["setup_commit"]),
+        forge_version=str(text["forge_version"]),
+        plugin_synced=synced,
     )
 
 
@@ -703,36 +743,211 @@ class Seams:
 
     runner: Runner = run_command
     origin_slug: Callable[[Path], str | None] = github_slug
+    #: Asks GitHub about forge's release tag ``v<X.Y.Z>``.
+    tag_lookup: Callable[[str], TagLookup] = resolve_commit
 
 
 DEFAULT_SEAMS: Final = Seams()
 
 
+def require_release(value: str, tag_lookup: Callable[[str], TagLookup]) -> str:
+    """The forge release *value* names, checked to be tagged upstream.
+
+    Args:
+        value: ``X.Y.Z`` or ``vX.Y.Z``.
+        tag_lookup: Asks GitHub about tag ``v<X.Y.Z>``.
+
+    Returns:
+        ``X.Y.Z``.
+
+    Raises:
+        BenchError: *value* is not an exact release, GitHub could not be
+            asked, or forge has no such tag.
+    """
+    version = value.removeprefix("v")
+    if release_of(version) != version:
+        msg = f"forge-metrics bench: --forge {value!r} is not a release (X.Y.Z)"
+        raise BenchError(msg)
+    found = tag_lookup(version)
+    if not found.reached:
+        msg = f"forge-metrics bench: cannot ask GitHub for forge tag v{version}"
+        raise BenchError(msg)
+    if found.commit is None:
+        msg = f"forge-metrics bench: forge has no release tag v{version}"
+        raise BenchError(msg)
+    return version
+
+
+def _pin_forge(clone: Path, version: str) -> str:
+    """Pin forge ``v<version>`` in the clone's dev extra and commit it.
+
+    The pin is what ``forge-plugin-sync`` reads to pick the plugin release.
+
+    Args:
+        clone: The sandbox clone, on the run's fresh branch.
+        version: Forge release ``X.Y.Z``.
+
+    Returns:
+        The setup commit's sha.
+
+    Raises:
+        BenchError: The clone's ``pyproject.toml`` has no ``forge-scripts``
+            entry, or the commit was refused.
+    """
+    pyproject = clone / "pyproject.toml"
+    url = git_url_for("https-anonymous", f"v{version}")
+    text, found = _DEV_ENTRY.subn(
+        lambda m: f"{m['q']}forge-scripts @ {url}{m['q']}",
+        pyproject.read_text(encoding="utf-8"),
+        count=1,
+    )
+    if not found:
+        msg = f"forge-metrics bench: no forge-scripts entry in {pyproject}"
+        raise BenchError(msg)
+    pyproject.write_text(text, encoding="utf-8")
+    run_git("add", "pyproject.toml", cwd=clone)
+    try:
+        create_commit(clone, f"chore(bench): pin forge v{version}")
+    except subprocess.CalledProcessError as exc:
+        msg = f"forge-metrics bench: pin commit refused (exit {exc.returncode})"
+        raise BenchError(msg) from exc
+    return run_git("rev-parse", "HEAD", cwd=clone).strip()
+
+
+def _ensure_env(clone: Path, version: str, runner: Runner) -> bool:
+    """Give the clone a ``.venv`` running forge *version*, reusing a matching one.
+
+    Args:
+        clone: The sandbox clone, its pin already rewritten.
+        version: Forge release ``X.Y.Z``.
+        runner: Command runner.
+
+    Returns:
+        ``True`` when the ``.venv`` was (re)built, ``False`` when reused.
+
+    Raises:
+        BenchError: ``.venv`` is a symlink, building it failed, or it ended
+            up with another forge.
+    """
+    if _venv_forge_version(clone) == version:
+        return False
+    venv = clone / ".venv"
+    if venv.is_symlink():
+        # ``venv --clear`` would empty the link's target, outside the clone.
+        msg = f"forge-metrics bench: {venv} is a symlink; remove it and retry"
+        raise BenchError(msg)
+    # A disposable per-checkout env for the sandbox: allowed by FOUNDATION §2.
+    steps = (
+        [sys.executable, "-m", "venv", "--clear", str(venv)],
+        [str(venv / "bin" / "python"), "-m", "pip", "install", "-q", "-e", ".[dev]"],
+    )
+    for argv in steps:
+        done = runner(argv, cwd=clone, timeout=_SETUP_TIMEOUT_S)
+        if not done.ok:
+            msg = f"forge-metrics bench: {shlex.join(argv[:3])} failed: {_tail(done)}"
+            raise BenchError(msg)
+    installed = _venv_forge_version(clone)
+    if installed != version:
+        msg = f"forge-metrics bench: .venv holds forge {installed}, not {version}"
+        raise BenchError(msg)
+    return True
+
+
+def plugin_sync_command(clone: str | Path) -> str:
+    """The command that installs the clone's pinned plugin by hand.
+
+    Args:
+        clone: The sandbox clone.
+
+    Returns:
+        ``cd <clone> && <forge-plugin-sync>``.
+    """
+    argv = _clone_tool(Path(clone), "forge-plugin-sync")
+    return f"cd {shlex.quote(str(clone))} && {shlex.join(argv)}"
+
+
+def _sync_plugin(clone: Path, runner: Runner) -> bool:
+    """Install the pinned release's Claude Code plugin for the clone.
+
+    A failure (no ``claude`` CLI, say) only warns: the run can still start
+    and the user can sync by hand.
+
+    Args:
+        clone: The sandbox clone, its ``.venv`` ready.
+        runner: Command runner.
+
+    Returns:
+        Whether the plugin was installed.
+    """
+    argv = _clone_tool(clone, "forge-plugin-sync")
+    synced = runner(argv, cwd=clone, timeout=_SETUP_TIMEOUT_S)
+    if not synced.ok:
+        logger.warning(
+            "forge-metrics bench: plugin not synced (%s); run by hand: %s",
+            _tail(synced),
+            plugin_sync_command(clone),
+        )
+    return synced.ok
+
+
+def _install_forge(
+    clone: Path, branch: str, version: str, runner: Runner
+) -> tuple[str, bool]:
+    """Pin, install and sync forge *version* in the clone on *branch*.
+
+    Args:
+        clone: The sandbox clone, on the run's fresh branch.
+        branch: That branch.
+        version: Forge release ``X.Y.Z``.
+        runner: Command runner.
+
+    Returns:
+        The setup commit's sha, and whether the plugin was installed.
+
+    Raises:
+        BenchError: Pinning or the environment failed; the message says
+            what was left behind.
+    """
+    try:
+        setup = _pin_forge(clone, version)
+        if _ensure_env(clone, version, runner):
+            logger.info("forge-metrics bench: forge %s installed in .venv", version)
+    except BenchError as exc:
+        msg = (
+            f"{exc}\n  left: branch {branch} in {clone}, its pyproject.toml "
+            f"pin committed or not; switch back to {SANDBOX_BASE} and delete "
+            "it. No run started."
+        )
+        raise BenchError(msg) from exc
+    return setup, _sync_plugin(clone, runner)
+
+
 def start_run(
     task: Task,
+    request: RunRequest,
     *,
     data: Path,
-    first_n: int,
-    clone: Path | None = None,
     seams: Seams = DEFAULT_SEAMS,
 ) -> tuple[Marker, str]:
     """Put the sandbox clone on a fresh branch for *task* and record the marker.
 
     The clone is moved to the base tag only when its working tree is clean;
-    a dirty clone is refused, never reset.
+    a dirty clone is refused, never reset. The branch's first commit pins
+    the requested forge release; the clone's ``.venv`` and plugin are set
+    to it.
 
     Args:
         task: The task.
+        request: Forge release, first run number and clone asked for.
         data: The bench data directory.
-        first_n: The lowest run number to use (one past the recorded runs).
-        clone: The local clone; :func:`default_clone_dir` when ``None``.
-        seams: Command runner and origin reader.
+        seams: Command runner, origin reader and release-tag lookup.
 
     Returns:
         The marker and the prompt to paste.
 
     Raises:
-        BenchError: No sandbox, a run already started, or the clone refused.
+        BenchError: No sandbox, a run already started, the release not
+            tagged, the clone refused, or forge not installed.
     """
     sandbox = _require_sandbox()
     current = read_marker()
@@ -742,16 +957,28 @@ def start_run(
             "started; `bench finish` it first"
         )
         raise BenchError(msg)
-    clone = (clone or default_clone_dir()).resolve()
+    version = require_release(request.forge, seams.tag_lookup)
+    clone = (request.clone or default_clone_dir()).resolve()
     check_access(
         sandbox.slug, seams.runner, clone.parent if not clone.is_dir() else clone
     )
     _ready_clone(sandbox, clone, seams)
-    branch, n = _free_branch(clone, task.id, first_n)
+    branch, n = _free_branch(clone, task.id, request.first_n)
     run_git("checkout", "--quiet", "-b", branch, sandbox.base_tag, cwd=clone)
+    setup, synced = _install_forge(clone, branch, version, seams.runner)
     for dest, src in task.setup.items():
         install_file(data / "files" / src, clone / dest)
-    marker = Marker(task.id, n, sandbox.base_tag, _now(), branch, str(clone))
+    marker = Marker(
+        task.id,
+        n,
+        sandbox.base_tag,
+        _now(),
+        branch,
+        str(clone),
+        setup_commit=setup,
+        forge_version=version,
+        plugin_synced=synced,
+    )
     _write_private(marker_path(), asdict(marker))
     return marker, task_prompt(task, data, branch)
 
@@ -798,25 +1025,21 @@ class BenchOutcome:
     summary: BranchSummary | None = None
 
 
-def clone_forge_version(clone: Path) -> str | None:
-    """The forge release the clone runs: its ``.venv``'s, else its pin.
+def _venv_forge_version(clone: Path) -> str | None:
+    """The forge release installed in the clone's ``.venv``.
 
     Args:
         clone: The sandbox clone.
 
     Returns:
-        ``X.Y.Z``, or ``None`` when neither tells.
+        ``X.Y.Z``, or ``None`` when the ``.venv`` holds no forge-scripts.
     """
     for info in sorted(clone.glob(".venv/lib/python*/site-packages/*.dist-info")):
         match = _DIST_INFO.fullmatch(info.name)
         release = release_of(match.group("version")) if match else None
         if release:
             return release
-    try:
-        text = (clone / "pyproject.toml").read_text(encoding="utf-8")
-    except OSError:
-        return None
-    return release_of(pinned_ref(text))
+    return None
 
 
 def _clone_tool(clone: Path, name: str) -> list[str]:
@@ -861,7 +1084,7 @@ def _numstat(clone: Path, base: str) -> tuple[int, int, int]:
 
     Args:
         clone: The sandbox clone.
-        base: The base tag.
+        base: Where the run's work starts (its setup commit).
 
     Returns:
         ``(files, additions, deletions)``.
@@ -1003,9 +1226,9 @@ def collect(
             marker.branch, after=since
         )
     outcome.files, outcome.additions, outcome.deletions = _numstat(
-        clone, marker.base_tag
+        clone, marker.setup_commit
     )
-    count = run_git("rev-list", "--count", f"{marker.base_tag}..HEAD", cwd=clone)
+    count = run_git("rev-list", "--count", f"{marker.setup_commit}..HEAD", cwd=clone)
     outcome.commits = int(count) if count.isdigit() else 0
     suite = _pytest(clone)
     outcome.tests_green = runner(suite, cwd=clone, timeout=_CHECK_TIMEOUT_S).ok
@@ -1105,9 +1328,16 @@ def finish_run(
         msg = f"forge-metrics bench: {marker.clone} is not a clone of the sandbox"
         raise BenchError(msg)
     check_access(sandbox.slug, runner, Path(marker.clone))
+    if not marker.plugin_synced:
+        logger.warning(
+            "forge-metrics bench: start could not install the forge %s plugin; "
+            "unless you ran `%s` before the session, this run used another one",
+            marker.forge_version,
+            plugin_sync_command(marker.clone),
+        )
     outcome = BenchOutcome(
         run_id=uuid.uuid4().hex,
-        version=clone_forge_version(Path(marker.clone)),
+        version=marker.forge_version,
         task_id=task.id,
         run_n=marker.run_n,
         base_tag=marker.base_tag,
