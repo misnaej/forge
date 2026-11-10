@@ -411,7 +411,26 @@ def test_start_rebuilds_a_venv_on_another_release(
     runner = _owned(seeded_origin)
     _start(data, runner, clone)
     assert len(_installs(runner)) == 2
-    assert pr_metrics_bench.clone_forge_version(clone) == FORGE
+    site = clone / ".venv/lib/python3.12/site-packages"
+    assert [p.name for p in site.iterdir()] == [f"forge_scripts-{FORGE}.dist-info"]
+
+
+def test_start_refuses_a_symlinked_venv(
+    seeded_origin: Path, data: Path, tmp_path: Path
+) -> None:
+    """Behavior: a .venv symlink is refused; its target is never cleared."""
+    clone = tmp_path / "clone"
+    _git(tmp_path, "clone", "--quiet", str(seeded_origin), str(clone))
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "keep.txt").write_text("mine\n", encoding="utf-8")
+    (clone / ".venv").symlink_to(elsewhere, target_is_directory=True)
+    runner = _owned(seeded_origin)
+    with pytest.raises(BenchError, match="symlink"):
+        _start(data, runner, clone)
+    assert _installs(runner) == []
+    assert (elsewhere / "keep.txt").read_text(encoding="utf-8") == "mine\n"
+    assert read_marker() is None
 
 
 @pytest.mark.parametrize(
@@ -457,6 +476,7 @@ def test_start_warns_and_continues_when_plugin_sync_fails(
     with caplog.at_level(logging.WARNING, logger=pr_metrics_bench.__name__):
         marker, _ = _start(data, runner, tmp_path / "clone")
     assert read_marker() == marker
+    assert marker.plugin_synced is False
     assert "no claude CLI" in caplog.text
     assert "forge-plugin-sync" in caplog.text
     assert f"cd {marker.clone}" in caplog.text
@@ -520,6 +540,26 @@ def test_finish_records_closes_the_pr_and_deletes_the_branch(
     dump = "\n".join(conn.iterdump())
     for name in (SLUG, "someone", "bench-sandbox", marker.branch, str(tmp_path)):
         assert name not in dump
+
+
+def test_finish_warns_when_start_did_not_sync_the_plugin(
+    seeded_origin: Path,
+    data: Path,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Behavior: a run started without its plugin is flagged before recording."""
+    failing = (("forge-plugin-sync",), Completed(1, "", "no claude CLI"))
+    _start(data, _owned(seeded_origin, failing), tmp_path / "clone")
+    recorded: list[BenchOutcome] = []
+    with caplog.at_level(logging.WARNING, logger=pr_metrics_bench.__name__):
+        finish_run(
+            data=data,
+            record=recorded.append,
+            seams=Seams(_owned(seeded_origin), lambda _p: SLUG),
+        )
+    assert [o.version for o in recorded] == [FORGE]
+    assert f"could not install the forge {FORGE} plugin" in caplog.text
 
 
 def test_finish_refuses_a_clone_of_another_repo(

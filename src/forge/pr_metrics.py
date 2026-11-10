@@ -83,6 +83,7 @@ from forge.pr_metrics_bench import (
     finish_run,
     init_sandbox,
     load_tasks,
+    plugin_sync_command,
     read_sandbox,
     session_line,
     start_run,
@@ -1530,6 +1531,12 @@ def _bench_start(conn: sqlite3.Connection, data: Path, args: argparse.Namespace)
     marker, prompt = start_run(task, request, data=data)
     emit(f"forge-metrics bench: {task.id} run {marker.run_n} on {marker.branch}")
     emit(f"forge-metrics bench: forge {marker.forge_version} in the clone's .venv")
+    if not marker.plugin_synced:
+        emit(
+            f"forge-metrics bench: the clone's Claude Code plugin is NOT on forge "
+            f"{marker.forge_version}; the run will not measure that version "
+            f"until you run:\n    {plugin_sync_command(marker.clone)}"
+        )
     emit("\nStart a session in the clone:\n")
     emit(f"    {session_line(marker)}")
     emit("\nPaste this prompt, then run `forge-metrics bench finish` when done:\n")

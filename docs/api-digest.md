@@ -1582,13 +1582,13 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `require_release(value: str, tag_lookup: Callable[[str], TagLookup]) -> str` — The forge release *value* names, checked to be tagged upstream.
 - `_pin_forge(clone: Path, version: str) -> str` _(internal)_ — Pin forge ``v<version>`` in the clone's dev extra and commit it.
 - `_ensure_env(clone: Path, version: str, runner: Runner) -> bool` _(internal)_ — Give the clone a ``.venv`` running forge *version*, reusing a matching one.
-- `_sync_plugin(clone: Path, runner: Runner) -> None` _(internal)_ — Install the pinned release's Claude Code plugin for the clone.
-- `_install_forge(clone: Path, branch: str, version: str, runner: Runner) -> str` _(internal)_ — Pin, install and sync forge *version* in the clone on *branch*.
+- `plugin_sync_command(clone: str | Path) -> str` — The command that installs the clone's pinned plugin by hand.
+- `_sync_plugin(clone: Path, runner: Runner) -> bool` _(internal)_ — Install the pinned release's Claude Code plugin for the clone.
+- `_install_forge(clone: Path, branch: str, version: str, runner: Runner) -> tuple[str, bool]` _(internal)_ — Pin, install and sync forge *version* in the clone on *branch*.
 - `start_run(task: Task, request: RunRequest, *, data: Path, seams: Seams = DEFAULT_SEAMS) -> tuple[Marker, str]` — Put the sandbox clone on a fresh branch for *task* and record the marker.
 - `session_line(marker: Marker) -> str` — The command to paste to start the session.
 - `class BenchOutcome` — What one run measured, as the database writer stores it.
 - `_venv_forge_version(clone: Path) -> str | None` _(internal)_ — The forge release installed in the clone's ``.venv``.
-- `clone_forge_version(clone: Path) -> str | None` — The forge release the clone runs: its ``.venv``'s, else its pin.
 - `_clone_tool(clone: Path, name: str) -> list[str]` _(internal)_ — Argv running *name* from the clone's ``.venv``, else the running forge.
 - `_pytest(clone: Path) -> list[str]` _(internal)_ — Argv running the clone's tests quietly, writing no cache into it.
 - `_numstat(clone: Path, base: str) -> tuple[int, int, int]` _(internal)_ — Files, lines added and removed since *base*, uncommitted work included.

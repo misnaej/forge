@@ -15,8 +15,8 @@ work cheaper. The bench gives five fixed tasks (package data under
 - ``finish`` collects what the run did, hands it to the database writer,
   closes the PR unmerged and deletes the branch on GitHub.
 
-The forge version measured is the one installed in the clone's ``.venv``
-(else the clone's pin). Rows are keyed by a random run id — no sandbox
+The forge version measured is the one ``start`` installed in the clone's
+``.venv``, as its run marker records it. Rows are keyed by a random run id — no sandbox
 name, branch or path is stored. The sandbox slug lives only in
 ``bench.json`` and the run in progress in ``bench-run.json``, both beside
 the database. Python data files ship with a ``.tmpl`` suffix so forge's
@@ -60,7 +60,7 @@ from forge.git_utils import (
     run_git,
 )
 from forge.plugin_sync import TagLookup, resolve_commit
-from forge.upgrade import git_url_for, pinned_ref
+from forge.upgrade import git_url_for
 
 
 if TYPE_CHECKING:
@@ -411,8 +411,11 @@ class Marker:
     clone: str
     #: The commit pinning forge on the branch; the run's work starts after it.
     setup_commit: str
-    #: Forge release ``X.Y.Z`` installed in the clone's ``.venv``.
+    #: Forge release ``X.Y.Z`` installed in the clone's ``.venv``; the run
+    #: is recorded under it.
     forge_version: str
+    #: Whether ``start`` installed that release's Claude Code plugin.
+    plugin_synced: bool
 
 
 @dataclass(frozen=True)
@@ -458,8 +461,10 @@ def read_marker() -> Marker | None:
     """
     raw = _read_json(marker_path()) or {}
     text = {key: raw.get(key) for key in _MARKER_TEXT}
-    run_n = raw.get("run_n")
-    if not isinstance(run_n, int) or not all(isinstance(v, str) for v in text.values()):
+    run_n, synced = raw.get("run_n"), raw.get("plugin_synced")
+    if not isinstance(run_n, int) or not isinstance(synced, bool):
+        return None
+    if not all(isinstance(v, str) for v in text.values()):
         return None
     return Marker(
         task_id=str(text["task_id"]),
@@ -470,6 +475,7 @@ def read_marker() -> Marker | None:
         clone=str(text["clone"]),
         setup_commit=str(text["setup_commit"]),
         forge_version=str(text["forge_version"]),
+        plugin_synced=synced,
     )
 
 
@@ -820,11 +826,16 @@ def _ensure_env(clone: Path, version: str, runner: Runner) -> bool:
         ``True`` when the ``.venv`` was (re)built, ``False`` when reused.
 
     Raises:
-        BenchError: Building it failed, or it ended up with another forge.
+        BenchError: ``.venv`` is a symlink, building it failed, or it ended
+            up with another forge.
     """
     if _venv_forge_version(clone) == version:
         return False
     venv = clone / ".venv"
+    if venv.is_symlink():
+        # ``venv --clear`` would empty the link's target, outside the clone.
+        msg = f"forge-metrics bench: {venv} is a symlink; remove it and retry"
+        raise BenchError(msg)
     # A disposable per-checkout env for the sandbox: allowed by FOUNDATION §2.
     steps = (
         [sys.executable, "-m", "venv", "--clear", str(venv)],
@@ -842,7 +853,20 @@ def _ensure_env(clone: Path, version: str, runner: Runner) -> bool:
     return True
 
 
-def _sync_plugin(clone: Path, runner: Runner) -> None:
+def plugin_sync_command(clone: str | Path) -> str:
+    """The command that installs the clone's pinned plugin by hand.
+
+    Args:
+        clone: The sandbox clone.
+
+    Returns:
+        ``cd <clone> && <forge-plugin-sync>``.
+    """
+    argv = _clone_tool(Path(clone), "forge-plugin-sync")
+    return f"cd {shlex.quote(str(clone))} && {shlex.join(argv)}"
+
+
+def _sync_plugin(clone: Path, runner: Runner) -> bool:
     """Install the pinned release's Claude Code plugin for the clone.
 
     A failure (no ``claude`` CLI, say) only warns: the run can still start
@@ -851,19 +875,24 @@ def _sync_plugin(clone: Path, runner: Runner) -> None:
     Args:
         clone: The sandbox clone, its ``.venv`` ready.
         runner: Command runner.
+
+    Returns:
+        Whether the plugin was installed.
     """
     argv = _clone_tool(clone, "forge-plugin-sync")
     synced = runner(argv, cwd=clone, timeout=_SETUP_TIMEOUT_S)
     if not synced.ok:
         logger.warning(
-            "forge-metrics bench: plugin not synced (%s); run by hand: cd %s && %s",
+            "forge-metrics bench: plugin not synced (%s); run by hand: %s",
             _tail(synced),
-            shlex.quote(str(clone)),
-            shlex.join(argv),
+            plugin_sync_command(clone),
         )
+    return synced.ok
 
 
-def _install_forge(clone: Path, branch: str, version: str, runner: Runner) -> str:
+def _install_forge(
+    clone: Path, branch: str, version: str, runner: Runner
+) -> tuple[str, bool]:
     """Pin, install and sync forge *version* in the clone on *branch*.
 
     Args:
@@ -873,7 +902,7 @@ def _install_forge(clone: Path, branch: str, version: str, runner: Runner) -> st
         runner: Command runner.
 
     Returns:
-        The setup commit's sha.
+        The setup commit's sha, and whether the plugin was installed.
 
     Raises:
         BenchError: Pinning or the environment failed; the message says
@@ -890,8 +919,7 @@ def _install_forge(clone: Path, branch: str, version: str, runner: Runner) -> st
             "it. No run started."
         )
         raise BenchError(msg) from exc
-    _sync_plugin(clone, runner)
-    return setup
+    return setup, _sync_plugin(clone, runner)
 
 
 def start_run(
@@ -937,11 +965,19 @@ def start_run(
     _ready_clone(sandbox, clone, seams)
     branch, n = _free_branch(clone, task.id, request.first_n)
     run_git("checkout", "--quiet", "-b", branch, sandbox.base_tag, cwd=clone)
-    setup = _install_forge(clone, branch, version, seams.runner)
+    setup, synced = _install_forge(clone, branch, version, seams.runner)
     for dest, src in task.setup.items():
         install_file(data / "files" / src, clone / dest)
     marker = Marker(
-        task.id, n, sandbox.base_tag, _now(), branch, str(clone), setup, version
+        task.id,
+        n,
+        sandbox.base_tag,
+        _now(),
+        branch,
+        str(clone),
+        setup_commit=setup,
+        forge_version=version,
+        plugin_synced=synced,
     )
     _write_private(marker_path(), asdict(marker))
     return marker, task_prompt(task, data, branch)
@@ -1004,25 +1040,6 @@ def _venv_forge_version(clone: Path) -> str | None:
         if release:
             return release
     return None
-
-
-def clone_forge_version(clone: Path) -> str | None:
-    """The forge release the clone runs: its ``.venv``'s, else its pin.
-
-    Args:
-        clone: The sandbox clone.
-
-    Returns:
-        ``X.Y.Z``, or ``None`` when neither tells.
-    """
-    installed = _venv_forge_version(clone)
-    if installed:
-        return installed
-    try:
-        text = (clone / "pyproject.toml").read_text(encoding="utf-8")
-    except OSError:
-        return None
-    return release_of(pinned_ref(text))
 
 
 def _clone_tool(clone: Path, name: str) -> list[str]:
@@ -1311,9 +1328,16 @@ def finish_run(
         msg = f"forge-metrics bench: {marker.clone} is not a clone of the sandbox"
         raise BenchError(msg)
     check_access(sandbox.slug, runner, Path(marker.clone))
+    if not marker.plugin_synced:
+        logger.warning(
+            "forge-metrics bench: start could not install the forge %s plugin; "
+            "unless you ran `%s` before the session, this run used another one",
+            marker.forge_version,
+            plugin_sync_command(marker.clone),
+        )
     outcome = BenchOutcome(
         run_id=uuid.uuid4().hex,
-        version=clone_forge_version(Path(marker.clone)),
+        version=marker.forge_version,
         task_id=task.id,
         run_n=marker.run_n,
         base_tag=marker.base_tag,
