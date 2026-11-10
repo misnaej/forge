@@ -1808,7 +1808,9 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_gather_inputs(root: Path, args: argparse.Namespace) -> ComposeInputs` _(internal)_ — Collect everything ``compose`` renders from.
 - `_cmd_compose(args: argparse.Namespace) -> int` _(internal)_ — Write ``code_health/pr_wrapup.md`` with slots for the author to fill.
 - `_is_emergency_post(root: Path, text: str, pr: int) -> bool` _(internal)_ — Return whether *text* is the recorded emergency PR's own wrap-up.
+- `_emit_post_notes(pr: int, view: dict[str, object], follow_ups: list[int]) -> None` _(internal)_ — Print what the caller should know once a wrap-up has posted.
 - `_cmd_post(args: argparse.Namespace, text: str, path: Path) -> int` _(internal)_ — Gate, refresh, post and record a validated wrap-up.
+- `_gate_post(root: Path, view: dict[str, object], text: str, pr: int) -> list[str]` _(internal)_ — Run the post gates, emit their notes and refusals, return the refusals.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Build the ``forge-pr-wrapup`` argument parser.
 - `main(argv: list[str] | None = None) -> int` — Run ``compose``, ``validate`` or ``post``.
 

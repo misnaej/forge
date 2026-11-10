@@ -6717,27 +6717,33 @@ def test_hook_registered_in_plugin_json_pre_tool_use(hook: str) -> None:
 _WARN_STALE_WRAPUP = "warn_stale_wrapup.sh"
 
 
+_STUB_VERIFIED_AT = "0000000"
+_STUB_HEAD_OID = "0123456789abcdef0123456789abcdef01234567"
+
+
 def _stub_wrapup_freshness_clis(
     tmp_path: Path,
     *,
     pr: str | None,
     fresh: str | None,
-    verified_at: str = "0000000",
-    head_oid: str = "0123456789abcdef0123456789abcdef01234567",
+    draft: bool = False,
 ) -> dict[str, str]:
     """Build `gh` and `forge-pr-plan` stubs on one PATH-prepended dir.
 
+    The freshness JSON always reports `_STUB_VERIFIED_AT` and
+    `_STUB_HEAD_OID`.
+
     Args:
         tmp_path: Directory to build the stubs and RECORD file under.
-        pr: The PR number the `gh pr view --json number --jq .number`
-            stub prints, or `None` to simulate no open PR — the stub then
-            exits 1 printing nothing, as `gh` does off a branch with no PR.
+        pr: The PR number the `gh pr view --json number,isDraft` stub
+            prints (as `<number> <isDraft>`), or `None` to simulate no
+            open PR — the stub then exits 1 printing nothing, as `gh`
+            does off a branch with no PR.
         fresh: The `fresh` field value the `forge-pr-plan --freshness`
             stub's JSON reports (`"true"` / `"false"`), or `None` to omit
             the key entirely — the hook must read a missing key as
             "cannot tell", never as staleness.
-        verified_at: The `latest_verified_at` field value in the stub's JSON.
-        head_oid: The `head_oid` field value in the stub's JSON.
+        draft: Whether the stubbed PR reports `isDraft` true.
 
     Returns:
         An environment whose `PATH` finds both stubs first; `RECORD`
@@ -6750,13 +6756,14 @@ def _stub_wrapup_freshness_clis(
     if pr is None:
         gh_stub.write_text("#!/usr/bin/env bash\nexit 1\n")
     else:
-        gh_stub.write_text(f"#!/usr/bin/env bash\necho '{pr}'\n")
+        is_draft = "true" if draft else "false"
+        gh_stub.write_text(f"#!/usr/bin/env bash\necho '{pr} {is_draft}'\n")
     gh_stub.chmod(0o755)
 
     fresh_field = "" if fresh is None else f'"fresh": {fresh}, '
     payload = (
-        f'{{{fresh_field}"latest_verified_at": "{verified_at}", '
-        f'"head_oid": "{head_oid}"}}'
+        f'{{{fresh_field}"latest_verified_at": "{_STUB_VERIFIED_AT}", '
+        f'"head_oid": "{_STUB_HEAD_OID}"}}'
     )
     plan_stub = stub_dir / "forge-pr-plan"
     plan_stub.write_text(
@@ -6818,6 +6825,38 @@ def test_warn_stale_wrapup_prints_reminder_when_stale(tmp_path: Path) -> None:
     assert "0000000" in proc.stdout
     assert "0123456" in proc.stdout
     assert "/pr 42" in proc.stdout
+
+
+@pytest.mark.parametrize(
+    ("draft", "expect_undo"),
+    [
+        pytest.param(False, True, id="ready_pr_gets_draft_hint"),
+        pytest.param(True, False, id="draft_pr_gets_no_hint"),
+    ],
+)
+def test_warn_stale_wrapup_suggests_draft_only_for_ready_pr(
+    tmp_path: Path, *, draft: bool, expect_undo: bool
+) -> None:
+    """SCENARIO: a stale-wrap-up push on a ready vs a draft PR.
+
+    MOCK SETUP: `gh pr view` stub reports PR #42 with the given `isDraft`;
+    `forge-pr-plan --freshness` reports `fresh: false`.
+    EXPECTED BEHAVIOR: both get the `/pr 42` reminder; only the ready PR is
+    told to `gh pr ready 42 --undo`.
+
+    Args:
+        draft: Whether the stubbed PR is a draft.
+        expect_undo: Whether the draft hint must appear.
+    """
+    env = _stub_wrapup_freshness_clis(tmp_path, pr="42", fresh="false", draft=draft)
+    proc = _run_hook_proc(
+        _WARN_STALE_WRAPUP,
+        "git push origin my-branch",
+        options=HookOptions(cwd=tmp_path, env=env),
+    )
+    assert proc.returncode == 0
+    assert "/pr 42" in proc.stdout
+    assert ("gh pr ready 42 --undo" in proc.stdout) is expect_undo
 
 
 def test_warn_stale_wrapup_silent_when_fresh(tmp_path: Path) -> None:

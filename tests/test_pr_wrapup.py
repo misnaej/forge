@@ -1164,6 +1164,50 @@ def test_main_post_clean_run_writes_refreshed_body_posts_and_appends_continuatio
     assert continuation_calls == [(tmp_path, True)]
 
 
+@pytest.mark.parametrize(
+    "is_draft",
+    [
+        pytest.param(True, id="draft_pr_gets_ready_note"),
+        pytest.param(False, id="ready_pr_gets_no_note"),
+    ],
+)
+def test_main_post_notes_a_still_draft_pr(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    clean_wrapup_body: str,
+    *,
+    is_draft: bool,
+) -> None:
+    """SCENARIO: a clean post on a PR that is (or is not) still draft.
+
+    MOCK SETUP: as the clean-run test, with `gh_pr_view` reporting `isDraft`.
+    EXPECTED BEHAVIOR: exit 0; a draft PR gets a note naming
+    `gh pr ready 61` after the post, a ready PR gets none.
+
+    Args:
+        is_draft: The `isDraft` value the faked PR view reports; the
+            still-draft note must appear exactly when it is true.
+    """
+    path = tmp_path / "wrapup.md"
+    path.write_text(clean_wrapup_body, encoding="utf-8")
+    monkeypatch.setattr(mod, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        mod, "gh_pr_view", lambda *_a, **_kw: _pr_view(isDraft=is_draft)
+    )
+    monkeypatch.setattr(mod, "fetch_quietly", lambda *_a, **_kw: True)
+    monkeypatch.setattr(mod, "behind_ahead", lambda *_a, **_kw: (0, 1))
+    monkeypatch.setattr(mod, "post_wrapup", lambda *_a, **_kw: 0)
+    monkeypatch.setattr(mod, "refresh_state", lambda *_a, **_kw: 0)
+
+    rc = mod.main(["post", "--pr", "61", "--body-file", str(path)])
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert ("is still draft" in out) is is_draft
+    assert ("gh pr ready 61" in out) is is_draft
+
+
 def test_main_post_names_only_the_pr_bodys_closing_refs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, clean_wrapup_body: str
 ) -> None:

@@ -413,6 +413,13 @@ Verification is done, fixes are committed, and the wrap-up is authored
    close it on merge.
 3. **Draft opened in Step 0** → `gh pr ready <PR#>` — unless the user asked
    to keep it draft.
+4. **Refresh after a rework** (the PR was returned to draft per FOUNDATION
+   §6 "A rework returns a ready PR to draft") → `gh pr ready <PR#>` once
+   Step 4 posts the refreshed wrap-up; `forge-pr-wrapup post` reminds you
+   when the PR is still draft. Why the draft: a ready, green PR over a tree
+   being rewritten invites review of content about to disappear and
+   misinforms the merge decision. Answering review comments is not a
+   rework — the reviewer is mid-conversation, so the PR stays ready.
 
 ## Step 4: Post with the CLIs (MANDATORY)
 
