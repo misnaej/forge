@@ -29,7 +29,7 @@ forge's checks passed.
 set -euo pipefail
 
 # Repo-specific: run mypy on changed Python files (runs first)
-mypy --strict $(git diff --cached --name-only --diff-filter=ACM | grep '\.py$') || exit 1
+mypy --strict $(git diff --cached --no-renames --name-only --diff-filter=ACM | grep '\.py$') || exit 1
 
 # Repo-specific: secret scan
 gitleaks protect --staged --quiet || exit 1
