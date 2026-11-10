@@ -12,7 +12,7 @@ line naming the semver LEVEL only (:data:`FRAGMENT_LEVELS`) — a concrete
 version number anywhere in a fragment is INVALID by design: versions are
 computed once, by the assembler, from the latest tag; a version inside
 fragments would recreate the exact next-slot collision fragments exist
-to remove. The rest of the body is the entry's markdown, verbatim.
+to remove. The rest of the body is ``- `` bullets, copied verbatim.
 
 Direction of truth is one-way: fragments → assembler → CHANGELOG +
 version. In fragment mode nothing may read ``CHANGELOG.md`` as a
