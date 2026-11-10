@@ -16,8 +16,8 @@ checkout it publishes, so the branch is not a guess — it is where the
 process is standing. It verifies that checkout's own wrap-up against that
 checkout's own HEAD, earns the light, light-release and emergency escapes
 in the same place, refuses a branch with no CVE scan since it left its
-base (in every mode, emergency included), and only then creates the pull
-request. The guard's
+base (in every mode, emergency included) or one behind or conflicting with
+that base, and only then creates the pull request. The guard's
 job shrinks to refusing the raw command, which is a question about the
 command's *name* and needs no understanding of its arguments.
 
@@ -59,7 +59,7 @@ from forge.git_utils import (
 )
 from forge.pr_delta import extract_verified_shas, unlisted_closing_refs
 from forge.pr_plan import classify
-from forge.pr_wrapup import WRAPUP_NAME, behind_refusal, conflict_refusal
+from forge.pr_wrapup import WRAPUP_NAME, base_sync_verdict
 from forge.precommit import install_refresh_hint, resolve_steps
 
 
@@ -463,9 +463,9 @@ def _base_sync_refusal(root: Path, base: str, *, emergency: bool) -> str | None:
     the pull request is public and reviewers are notified; refusing here,
     before it exists, costs nothing to retry. The base can move during
     verification, so the ``/pr`` base-sync gate that ran earlier does not
-    cover this. Same rule as the post: an emergency publication may be
-    behind, never conflicting; an unreadable base is a warning, not a
-    refusal.
+    cover this. The rule itself is :func:`forge.pr_wrapup.base_sync_verdict`,
+    shared with the post; an unreadable base or an untestable merge is a
+    warning, not a refusal.
 
     Args:
         root: Checkout holding the branch.
@@ -481,25 +481,23 @@ def _base_sync_refusal(root: Path, base: str, *, emergency: bool) -> str | None:
             base,
         )
         return None
-    if merge_tree_clean(root, f"origin/{base}", "HEAD") is False:
-        return conflict_refusal(base, "/pr")
+    clean = merge_tree_clean(root, f"origin/{base}", "HEAD")
+    if clean is None:
+        logger.warning(
+            "could not test a merge with origin/%s; conflict check skipped", base
+        )
     counts = behind_ahead(root, f"origin/{base}")
-    if counts is None:
-        logger.warning(
-            "could not compare with origin/%s; behind-base check skipped", base
-        )
-        return None
-    behind = counts[0]
-    if behind > 0 and emergency:
-        logger.warning(
-            "the branch is %d commit(s) behind origin/%s; allowed for an emergency "
-            "publication",
-            behind,
-            base,
-        )
-        return None
-    if behind > 0:
-        return behind_refusal(behind, base, "/pr")
+    refusals, notes = base_sync_verdict(
+        conflicting=clean is False,
+        behind=counts[0] if counts is not None else None,
+        emergency=emergency,
+        base=base,
+        rerun="/pr",
+    )
+    if refusals:
+        return refusals[0]
+    for note in notes:
+        logger.warning("%s", note)
     return None
 
 

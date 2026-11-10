@@ -1799,8 +1799,9 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_section_bounds(lines: list[str], title: str) -> tuple[int, int] | None` _(internal)_ — Return the ``(heading, end)`` line indexes of section *title*.
 - `follow_up_refs(text: str) -> list[int]` — Return the issues the wrap-up's findings were deferred to or filed as.
 - `refresh_sections(text: str, *, ci_status: str, issue_management: str) -> str` — Replace the CI Status and Issue Management bodies, leaving the rest as is.
-- `conflict_refusal(base: str, rerun: str) -> str` — The refusal for a branch that conflicts with its base.
-- `behind_refusal(behind: int, base: str, rerun: str) -> str` — The refusal for a branch that is behind its base.
+- `_conflict_refusal(base: str, rerun: str) -> str` _(internal)_ — Return the refusal for a branch that conflicts with its base.
+- `_behind_refusal(behind: int, base: str, rerun: str) -> str` _(internal)_ — Return the refusal for a branch that is behind its base.
+- `base_sync_verdict(*, conflicting: bool, behind: int | None, emergency: bool, base: str, rerun: str) -> tuple[list[str], list[str]]` — Judge a branch against its base: the one rule create and post share.
 - `post_gates(view: Mapping[str, object], verified_sha: str, *, behind: int | None, emergency: bool) -> tuple[list[str], list[str]]` — Decide whether a wrap-up may be published on the PR as it is now.
 - `_read_optional(path: Path | None) -> str | None` _(internal)_ — Read *path* when given.
 - `_load_plan(root: Path, args: argparse.Namespace) -> tuple[str, tuple[str, ...], tuple[str, ...]]` _(internal)_ — Return the plan's ``(mode, reporters, reasons)``.

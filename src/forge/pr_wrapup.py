@@ -625,8 +625,8 @@ def refresh_sections(text: str, *, ci_status: str, issue_management: str) -> str
     return "\n".join(lines)
 
 
-def conflict_refusal(base: str, rerun: str) -> str:
-    """The refusal for a branch that conflicts with its base.
+def _conflict_refusal(base: str, rerun: str) -> str:
+    """Return the refusal for a branch that conflicts with its base.
 
     Shared by ``forge-pr-create`` (before publication) and
     ``forge-pr-wrapup post`` so both name the same remedy.
@@ -645,8 +645,8 @@ def conflict_refusal(base: str, rerun: str) -> str:
     )
 
 
-def behind_refusal(behind: int, base: str, rerun: str) -> str:
-    """The refusal for a branch that is behind its base.
+def _behind_refusal(behind: int, base: str, rerun: str) -> str:
+    """Return the refusal for a branch that is behind its base.
 
     Shared by ``forge-pr-create`` and ``forge-pr-wrapup post``.
 
@@ -662,6 +662,50 @@ def behind_refusal(behind: int, base: str, rerun: str) -> str:
         f"the branch is {behind} commit(s) behind origin/{base}: run "
         f"`git merge origin/{base}`, then re-verify with {rerun}"
     )
+
+
+def base_sync_verdict(
+    *,
+    conflicting: bool,
+    behind: int | None,
+    emergency: bool,
+    base: str,
+    rerun: str,
+) -> tuple[list[str], list[str]]:
+    """Judge a branch against its base: the one rule create and post share.
+
+    Conflicting is refused in every mode; behind is refused unless the
+    publication is an emergency (then noted); an unknown behind count is
+    noted, never refused. ``forge-pr-create`` applies it before the pull
+    request exists, ``forge-pr-wrapup post`` after — one function, so the
+    two gates cannot drift apart. An undetermined conflict state is passed
+    as ``False`` and noted by the caller, whose source for it differs
+    (GitHub's mergeability vs a local merge probe).
+
+    Args:
+        conflicting: Whether merging the base is known to conflict.
+        behind: Commits behind ``origin/<base>``; ``None`` when unknown.
+        emergency: Whether this is an emergency publication.
+        base: The base branch name.
+        rerun: The re-verification command to name (``/pr`` or ``/pr <N>``).
+
+    Returns:
+        ``(refusals, notes)``.
+    """
+    refusals: list[str] = []
+    notes: list[str] = []
+    if conflicting:
+        refusals.append(_conflict_refusal(base, rerun))
+    if behind is None:
+        notes.append(f"could not compare with origin/{base}; behind-base check skipped")
+    elif behind > 0 and emergency:
+        notes.append(
+            f"the branch is {behind} commit(s) behind origin/{base}; allowed "
+            "for the emergency publication"
+        )
+    elif behind > 0:
+        refusals.append(_behind_refusal(behind, base, rerun))
+    return refusals, notes
 
 
 def post_gates(
@@ -700,19 +744,17 @@ def post_gates(
             f"{head[:12] or 'unknown'} — re-verify with {rerun} (delta)"
         )
     sync = base_sync(str(view.get("mergeable") or ""), behind)
-    if sync.conflicting:
-        refusals.append(conflict_refusal(base, rerun))
-    elif sync.mergeable_unknown:
+    if sync.mergeable_unknown:
         notes.append("GitHub has not computed mergeability yet (UNKNOWN)")
-    if behind is None:
-        notes.append(f"could not compare with origin/{base}; behind-base check skipped")
-    elif behind > 0 and emergency:
-        notes.append(
-            f"the branch is {behind} commit(s) behind origin/{base}; allowed "
-            "for the recorded emergency PR"
-        )
-    elif behind > 0:
-        refusals.append(behind_refusal(behind, base, rerun))
+    sync_refusals, sync_notes = base_sync_verdict(
+        conflicting=sync.conflicting,
+        behind=behind,
+        emergency=emergency,
+        base=base,
+        rerun=rerun,
+    )
+    refusals.extend(sync_refusals)
+    notes.extend(sync_notes)
     rollup = view.get("statusCheckRollup")
     if isinstance(rollup, list) and rollup_not_run(rollup):
         cause = (
