@@ -112,9 +112,8 @@ or option, state in plain English: problem solved, what happens today,
 what reader gets after. Written for product user, not codebase reader: no
 class, function, flag or hook names; consequence before mechanism. Same as
 §6's `## Summary` rule, one stage earlier: reader who can't tell what a
-change is *for* can't judge its shape. Bare change list satisfies "files,
-order, side effects" fully, so context is part of the contract, not left
-to judgment. Technical detail follows immediately after.
+change is *for* can't judge its shape. Context is part of the contract.
+Technical detail follows.
 
 **And it closes with one line saying what will be done.** After detail,
 state whole intended change in one sentence reader can repeat back.
@@ -136,13 +135,9 @@ the first; next only after its answer, which may change or drop it. One
 question per `AskUserQuestion` call. Batch only where nobody answers live
 (PR, issue comment).
 
-**Authorized work starts in the same turn.** Go-ahead given and agent
-says it will do the work → it does, in that turn. Turn ending on an
-announcement ("starting now", "I'll show the diff") with no tool call
-toward that work = null turn: reads as progress, user learns otherwise
-only by asking. Work cannot start → say what blocks it, never announce
-it. Ending a turn on work genuinely in flight (background job started,
-bounded per §6) is not an announcement.
+**Authorized work starts in the same turn.** Go-ahead given → do it now,
+or say what blocks it. Turn ending on an announcement of unstarted work =
+null turn; started, bounded background job (§6) is not one.
 
 ### Ask before acting on ambiguity
 
@@ -425,7 +420,7 @@ Mechanics (modes, commands, templates): the `/pr` skill. Rules:
   - `forge-pr-wrapup post` refuses: unreadable PR, wrap-up not naming PR head, branch conflicting with or behind base.
   - `block_unverified_pr_create` hook refuses raw create, names `forge-pr-create`. That command runs in checkout it publishes; refuses unless that checkout's wrap-up names its `HEAD`. `wrapup-mode: light` / `wrapup-mode: light-release` re-earned by fail-closed `forge-pr-plan` re-run (must agree light-code / light-release). `FORGE_SKIP_WRAPUP_GATE=1` on explicit user request only.
   - **Draft PR** = escape hatch for early visibility.
-  - **A rework returns a ready PR to draft.** Revision round on a published non-draft PR — new commits changing what posted wrap-up describes — → convert to draft (`gh pr ready <N> --undo`), say so; mark ready again when refreshed wrap-up posts. Answering review comments is not a revision round: PR stays ready, reviewer is mid-conversation. Why: ready + green over a tree being rewritten invites review of dead content and misinforms the merge decision.
+  - **A rework returns a ready PR to draft** (commits changing what posted wrap-up describes): `gh pr ready <N> --undo`, say so; ready again when refreshed wrap-up posts. Review-comment fixes are no rework.
   - Genuine emergency → **`forge-emergency`**: one human-armed, ledger-backed `wrapup-mode: emergency` publication. Defers only verification ceremony — never a §2 hook, never publish-time CVE-scan-since-fork check, and of pre-commit only steps already self-skipping in CI. Owes retroactive verification after delivery. Agents arm it only on explicit user instruction.
 - **Verification starts itself.** Implementation commits done → run finalization reviews automatically (read-only, no permission). Stopping at "ready to finalize?" unverified = too early. Commit, push, open PR: no pause after verification. Merging, force ops, cutting release, publishing package: pause. Every §2 bypass keeps own confirmation.
 - **The wrap-up never waits on CI.** Post when checks done; state plainly when CI incomplete — unqualified wrap-up reads "all green", false.
@@ -434,14 +429,14 @@ Mechanics (modes, commands, templates): the `/pr` skill. Rules:
   - Job agent starts: bound declared up front, sized in good faith, never already exceeded.
   - Exceeding = **finding**: what ran, how long, what remains. Never silence, never wait.
   - Bound limits *waiting*, not obligation — §4 "fix ALL violations" and §1 "every failure requires investigation" outrank it.
-- **Before commissioning verification, establish what is already verified.** Binds agent about to *ask* for evidence (previous bullet binds agent *handed* it). Re-run is expensive default, chosen by reflex after tree moves. Check: prior `verified-at:` on PR, and whether changes since fall inside what it covers. Determination is **a CLI call, never prose** — `forge-pr-plan`, run and followed. **State the verdict in one line before any reporter starts.** Thresholds, blast-radius paths, modes: `/pr` skill + `forge.pr_delta`.
-- Why: wrap-up posted at one SHA, read at another, describes a dead tree — `verified-at:` header (reporter contract, `agents/_TEMPLATE.md`) makes drift detectable.
-- **The flow does not end at posting — monitor the PR.** Canonical monitor description; skills point here, state only call-site delta. Default: after wrap-up posts, one background monitor per open PR, five signals:
+- **Before commissioning verification, establish what is already verified.** Binds agent about to *ask* for evidence (previous bullet binds agent *handed* it). Check: prior `verified-at:` on PR, and whether changes since fall inside what it covers. Determination is **a CLI call, never prose** — `forge-pr-plan`, run and followed. **State the verdict in one line before any reporter starts.** Thresholds, blast-radius paths, modes: `/pr` skill + `forge.pr_delta`.
+- `verified-at:` header (reporter contract, `agents/_TEMPLATE.md`) makes wrap-up drift detectable.
+- **The flow does not end at posting — monitor the PR.** Canonical; skills state only call-site delta. Default: after wrap-up posts, one background monitor per open PR, five signals:
   - **New review comments** → surface.
   - **Merged / closed** → on merge: local cleanup (sync base, prune merged local branch, `forge-metrics record` — `/next` cleanup phase) **and** `issue-triage` `post-pr` mode (closed-issue tier-label removal + Backlog Index regeneration).
   - **`mergeable == CONFLICTING`** → alert only; **the monitor never syncs the branch it watches** (read-only watcher).
   - **A CI run concluding in failure** → surface, investigate (§1); never auto-push fixes.
-  - **Wrap-up staleness** — `forge-pr-plan --freshness --pr <N>` → `fresh: false` (newest comment's *header* `verified-at:` no longer prefixes PR head; quoted reporter stamps below it don't count) → alert **once per new head**, naming both SHAs. Refresh = `/pr <N>` (delta mode) by whoever picks up work; newer `verified-at:` clears signal. `fresh: null` (no `gh`, no wrap-up yet) = unknown for now: skip poll, never alert, retry next cycle (first poll of a finalization-spawned monitor expected null). **The monitor never posts the refresh.** `warn_stale_wrapup` Claude Code hook runs same verdict after every agent `git push` (at-the-cause); monitor covers pushes elsewhere. Both read-only.
+  - **Wrap-up staleness** — `forge-pr-plan --freshness --pr <N>` → `fresh: false` → alert **once per new head**, naming both SHAs. Refresh = `/pr <N>` (delta mode) by whoever picks up work; newer `verified-at:` clears signal. `fresh: null` (no `gh`, no wrap-up yet) = unknown: skip poll, never alert, retry next cycle. **The monitor never posts the refresh.** `warn_stale_wrapup` Claude Code hook runs same verdict after every agent `git push` (at-the-cause); monitor covers pushes elsewhere. Both read-only.
 
   **Resolving a conflict** — whoever picks up work, never monitor: plain `git merge origin/<base>` (§2: never rebase; dirty tree → §2 sync ladder, never `reset --hard`). No permission needed — merge commit destroys nothing. Care goes into resolution: read each side's intent, keep both, ask only when a side's purpose is undeterminable (question about code, not permission). Forge-generated artifacts (api-digest, cli-reference, FOUNDATION, C4 model) are pure functions of merged tree → `regenerate()`, never textual merge: `forge-resync --resolve-conflicts` (refuses if anything else conflicts); `warn_generated_conflicts` hook names it after merge.
 
