@@ -495,7 +495,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `current_branch(root: Path) -> str` — The checked-out branch, refused when protected or detached.
 - `check_verdict(root: Path) -> None` — Refuse unless the latest pre-commit verdict passed on this tree.
 - `_git_paths(root: Path, *args: str) -> set[str]` _(internal)_ — Run a ``-z`` path-listing git command and return its paths.
-- `_staged(root: Path) -> set[str]` _(internal)_ — Paths currently staged.
+- `_staged(root: Path, *diff_filter: str) -> set[str]` _(internal)_ — Paths currently staged, a rename counted as its old and new path.
 - `stage_exactly(root: Path, paths: tuple[str, ...]) -> None` — Stage *paths* and refuse when the index then holds anything else.
 - `committed_paths(root: Path) -> set[str]` — Paths the HEAD commit changed.
 - `push(root: Path, branch: str) -> int` — Push *branch*, retrying briefly when GitHub is momentarily unavailable.
