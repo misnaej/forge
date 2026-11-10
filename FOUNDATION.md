@@ -416,8 +416,8 @@ Pin change (floor, cap, new pin — advisory or not) never rides a feature/fix P
 Mechanics (modes, commands, templates): the `/pr` skill. Rules:
 
 - **Verification precedes publication.** Finalization reviews (design / security / docs reporters + strict pre-commit) run on local tree about to be pushed → findings fixed in PR's own commits, changelog heading settles pre-publish. Order: verify → fix → commit → **compose and fill the wrap-up, author the squash message** → push → open PR → post.
-  - `forge-pr-wrapup post` refuses: unreadable PR, wrap-up not naming PR head, branch conflicting with or behind base.
-  - `block_unverified_pr_create` hook refuses raw create, names `forge-pr-create`. That command runs in checkout it publishes; refuses unless that checkout's wrap-up names its `HEAD`. `wrapup-mode: light` / `wrapup-mode: light-release` re-earned by fail-closed `forge-pr-plan` re-run (must agree light-code / light-release). `FORGE_SKIP_WRAPUP_GATE=1` on explicit user request only.
+  - `forge-pr-create` and `forge-pr-wrapup post` refuse a branch behind or conflicting with base; post also an unreadable PR or wrap-up not naming head.
+  - `block_unverified_pr_create` hook refuses raw create, names `forge-pr-create`. Runs in checkout it publishes; refuses unless its wrap-up names `HEAD`. `wrapup-mode: light` / `wrapup-mode: light-release` re-earned by fail-closed `forge-pr-plan` re-run (must agree light-code / light-release). `FORGE_SKIP_WRAPUP_GATE=1` on explicit user request only.
   - **Draft PR** = escape hatch for early visibility.
   - **A rework returns a ready PR to draft** (commits changing what posted wrap-up describes): `gh pr ready <N> --undo`, say so; ready again when refreshed wrap-up posts. Review-comment fixes are no rework.
   - Genuine emergency → **`forge-emergency`**: one human-armed, ledger-backed `wrapup-mode: emergency` publication. Defers only verification ceremony — never a §2 hook, never publish-time CVE-scan-since-fork check, and of pre-commit only steps already self-skipping in CI. Owes retroactive verification after delivery. Agents arm it only on explicit user instruction.

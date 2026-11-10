@@ -16,8 +16,8 @@ checkout it publishes, so the branch is not a guess — it is where the
 process is standing. It verifies that checkout's own wrap-up against that
 checkout's own HEAD, earns the light, light-release and emergency escapes
 in the same place, refuses a branch with no CVE scan since it left its
-base (in every mode, emergency included), and only then creates the pull
-request. The guard's
+base (in every mode, emergency included) or one behind or conflicting with
+that base, and only then creates the pull request. The guard's
 job shrinks to refusing the raw command, which is a question about the
 command's *name* and needs no understanding of its arguments.
 
@@ -47,16 +47,19 @@ from typing import Final, cast
 from forge import emergency, pip_audit_json
 from forge.config import load_config
 from forge.git_utils import (
+    behind_ahead,
     code_health_dir,
     configure_cli_logging,
+    fetch_quietly,
     fork_point_time,
+    merge_tree_clean,
     repo_root,
     resolve_current_branch,
     run_git,
 )
 from forge.pr_delta import extract_verified_shas, unlisted_closing_refs
 from forge.pr_plan import classify
-from forge.pr_wrapup import WRAPUP_NAME
+from forge.pr_wrapup import WRAPUP_NAME, base_sync_verdict
 from forge.precommit import install_refresh_hint, resolve_steps
 
 
@@ -453,6 +456,51 @@ def _cve_scan_refusal(root: Path, base: str) -> str | None:
     )
 
 
+def _base_sync_refusal(root: Path, base: str, *, emergency: bool) -> str | None:
+    """Refuse a branch that is behind or conflicting with ``origin/<base>``.
+
+    ``forge-pr-wrapup post`` refuses the same branch minutes later, after
+    the pull request is public and reviewers are notified; refusing here,
+    before it exists, costs nothing to retry. The base can move during
+    verification, so the ``/pr`` base-sync gate that ran earlier does not
+    cover this. The rule itself is :func:`forge.pr_wrapup.base_sync_verdict`,
+    shared with the post; an unreadable base or an untestable merge is a
+    warning, not a refusal.
+
+    Args:
+        root: Checkout holding the branch.
+        base: Base branch name.
+        emergency: Whether the wrap-up declares an emergency publication.
+
+    Returns:
+        A refusal reason, or ``None``.
+    """
+    if not fetch_quietly(root, "origin", base):
+        logger.warning(
+            "could not fetch origin/%s; publishing without the base-sync check",
+            base,
+        )
+        return None
+    clean = merge_tree_clean(root, f"origin/{base}", "HEAD")
+    if clean is None:
+        logger.warning(
+            "could not test a merge with origin/%s; conflict check skipped", base
+        )
+    counts = behind_ahead(root, f"origin/{base}")
+    refusals, notes = base_sync_verdict(
+        conflicting=clean is False,
+        behind=counts[0] if counts is not None else None,
+        emergency=emergency,
+        base=base,
+        rerun="/pr",
+    )
+    if refusals:
+        return refusals[0]
+    for note in notes:
+        logger.warning("%s", note)
+    return None
+
+
 def _gate(root: Path, branch: str, base: str) -> tuple[str | None, bool]:
     """Return why publication is refused, and whether it is an emergency.
 
@@ -463,7 +511,8 @@ def _gate(root: Path, branch: str, base: str) -> tuple[str | None, bool]:
     recognised here; the bypass is claimed later, as the last step before
     publishing, so no refusal can follow a claim. Every mode, emergency
     included, also needs a CVE scan since the branch left its base
-    (:func:`_cve_scan_refusal`).
+    (:func:`_cve_scan_refusal`) and a branch current with that base
+    (:func:`_base_sync_refusal`).
 
     Args:
         root: Checkout holding the branch.
@@ -486,7 +535,13 @@ def _gate(root: Path, branch: str, base: str) -> tuple[str | None, bool]:
     scan_refusal = _cve_scan_refusal(root, base)
     if scan_refusal is not None:
         return scan_refusal, False
-    if re.search(r"^wrapup-mode:[ \t]*emergency[ \t]*$", text, re.MULTILINE):
+    is_emergency = bool(
+        re.search(r"^wrapup-mode:[ \t]*emergency[ \t]*$", text, re.MULTILINE)
+    )
+    sync_refusal = _base_sync_refusal(root, base, emergency=is_emergency)
+    if sync_refusal is not None:
+        return sync_refusal, False
+    if is_emergency:
         return None, True
     for declared in EARNED_WRAPUP_MODES:
         marker = rf"^wrapup-mode:[ \t]*{re.escape(declared)}[ \t]*$"

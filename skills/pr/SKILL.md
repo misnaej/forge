@@ -96,6 +96,10 @@ minor|major` when the change deserves more than a patch slot), commit,
 and re-run from Step 0.5. (`forge-rebump` is the plugin-repo tool —
 rolling-next manifest repos only; manifest-less repos use `restrand`.)
 
+The base can move while verification runs, so `forge-pr-create` repeats
+this check at publication and refuses a branch behind or conflicting with
+its base before the PR exists — merge the base, re-verify, publish.
+
 Merging the base re-triggers CI. Do **not** wait for it: per FOUNDATION §6
 "PR finalization", the wrap-up never blocks on CI — it posts as soon as the
 checks are done and states CI's status plainly.
