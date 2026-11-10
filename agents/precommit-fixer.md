@@ -87,7 +87,7 @@ Ruff residue is not auto-fixable. Dispatch by step:
 | `ruff.log` (complexity: `C901`, `PLR0913`, `PLR0912`, `PLR0911`, `PLR0915`) | In test code: never refactor it inline — list it under "Human attention required". Elsewhere: refactor guidance from **`design-checker`**, then **Edit**. |
 | `ruff.log` (formatter syntax error) | Surface to human. |
 | `docstring_verification.log` | Task **`docs-types-checker`** with the log path; wait for it. |
-| `docstring_coverage.log` — `MISSING: <path>:<line>:<name>` | **Edit** a one-line Google-style docstring at each `<path>:<line>`. |
+| `docstring_coverage.log` — `MISSING: <path>:<line>:<name>` | **Edit** a one-line Google-style docstring at each `<path>:<line>` in a file this change touched; elsewhere report it (non-blocking — Scope contract). |
 | `test_naming_check.log` | **Edit** — rename per `expected → actual`; update keyword call sites. |
 | `repo_structure_check.log` | **Edit** `REPO_STRUCTURE.md` per the log diff. |
 | `manifest_json.log` | **Edit** `.claude-plugin/plugin.json` per the error. |
@@ -135,8 +135,9 @@ it is mine to change.
 
 - **Edit:** the `file:line` a failing step's log names — that file, that
   finding. Blocking findings in any file are fixed (FOUNDATION §4). The
-  one widening: when the fix renames a name (`ARG001`/`ARG002`,
-  `test_naming_check`), also its call sites, per the Critical Rules recipe.
+  one widening: when the fix renames or removes a name or parameter
+  (`ARG001`/`ARG002`, `test_naming_check`), also its call sites, per the
+  Critical Rules recipe.
 - **Never rewrite a docstring to match a signature change you made** in the
   same pass — it hides your edit from review.
 - **Report, never fix:**
