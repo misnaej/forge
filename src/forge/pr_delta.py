@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import re
 from fnmatch import fnmatch
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Literal
 
 from forge import config
 from forge.changelog_fragments import FRAGMENTS_DIR, _parse_and_validate_filename
@@ -33,6 +33,7 @@ from forge.rebump import CHANGELOG_PATH, PLUGIN_PATH
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
 
@@ -107,6 +108,78 @@ REGEN_COMMANDS: Final[dict[str, tuple[str, ...]]] = {
     "docs/api-digest.md": ("forge-gen-api-digest",),
     "docs/architecture.dsl": ("forge-gen-c4",),
 }
+
+
+# Every forge-generated artifact, as a set: a path here is a pure function
+# of the merged tree, so a merge touching it changes no plan's premise and
+# two PRs both touching it do not entangle.
+GENERATED_PATHS: Final[frozenset[str]] = frozenset(REGEN_COMMANDS)
+
+
+# Shared ("hub") files nearly every change touches in passing. A merge
+# changing one is noted by the plan checks but never makes a plan stale on
+# its own. Unlike HIGH_BLAST_RADIUS_PATHS (directory prefixes forcing a
+# full PR re-review), these are fnmatch globs tested against the full path
+# and the basename, so ``CLAUDE.md`` covers every nested CLAUDE.md.
+# FOUNDATION.md is a hub here although REGEN_COMMANDS lists it: in forge
+# it is hand-edited source. Consumers add globs via
+# ``[tool.forge.plan_check].hub_paths``.
+HUB_PATHS: Final[tuple[str, ...]] = (
+    "CLAUDE.md",
+    "pyproject.toml",
+    "pixi.lock",
+    "uv.lock",
+    "poetry.lock",
+    "package-lock.json",
+    "README.md",
+    "CHANGELOG.md",
+    "REPO_STRUCTURE.md",
+    "FOUNDATION.md",
+    ".claude-plugin/plugin.json",
+    "src/forge/data/plugin-roster.toml",
+    "docs/agent-architecture.md",
+)
+
+
+# How the plan checks weigh a changed path: regenerated, shared, or real.
+PathClass = Literal["generated", "hub", "other"]
+
+
+def path_classifier(extra_hub: Sequence[str] = ()) -> Callable[[str], PathClass]:
+    """Return a classifier sorting a path into generated, hub or other.
+
+    Hub is checked first so a hand-edited file that is also a regen
+    target (FOUNDATION.md in forge) counts as shared, not regenerated.
+    Matching is case-insensitive against both the full path and its
+    basename.
+
+    Args:
+        extra_hub: Additional hub globs (``[tool.forge.plan_check].hub_paths``),
+            added to :data:`HUB_PATHS`.
+
+    Returns:
+        A callable mapping a repo-relative path to its class.
+    """
+    globs = tuple(g.casefold() for g in (*HUB_PATHS, *extra_hub))
+
+    def classify(path: str) -> PathClass:
+        """Return *path*'s class.
+
+        Args:
+            path: Repo-relative path.
+
+        Returns:
+            ``"hub"``, ``"generated"`` or ``"other"``.
+        """
+        folded = path.casefold()
+        base = folded.rsplit("/", 1)[-1]
+        if any(fnmatch(folded, g) or fnmatch(base, g) for g in globs):
+            return "hub"
+        if path in GENERATED_PATHS:
+            return "generated"
+        return "other"
+
+    return classify
 
 
 # The pre-commit steps that byte-verify MANAGED_REGEN_PATHS against the

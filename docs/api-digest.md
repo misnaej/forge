@@ -1272,6 +1272,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _forge-plan-check — the command line over the plan checks._
 
+- `_classifier(root: Path) -> Callable[[str], PathClass]` _(internal)_ — Return the path classifier: built-in hub globs plus configured ones.
+- `_overlap_classifier() -> Callable[[str], PathClass]` _(internal)_ — Return the classifier for ``overlap``, which needs no checkout.
 - `_since_arg(value: str) -> datetime` _(internal)_ — Argparse type for ``--since``: an ISO-8601 timestamp.
 - `_add_base(parser: argparse.ArgumentParser) -> None` _(internal)_ — Add the shared ``--base`` option to *parser*.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Return the ``forge-plan-check`` argument parser.
@@ -1319,17 +1321,19 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `parse_timestamp(value: str) -> datetime` — Parse an ISO-8601 timestamp, reading a naive one as UTC.
 - `parse_merge_log(raw: str) -> list[Merge]` — Parse ``git log --name-only -z --format=%x1e%H%x1f%cI%x1f%s`` output.
 - `class WriterCheck` — Tri-state write-access predicate over a :class:`PermissionSource`, cached.
-- `record_lookup(lookup: PlanLookup, number: int, report: Report) -> bool` — Write a plan lookup's notes into *report*; ``False`` when it is unknown.
+- `record_lookup(lookup: PlanLookup, number: int, report: Report, *, kind: str = 'plan') -> bool` — Write a comment lookup's notes into *report*; ``False`` when it is unknown.
 - `issue_and_plan(source: GitHubSource, number: int, report: Report) -> tuple[Issue, Comment | None] | None` — Fetch issue *number* and its authenticated plan, recording failures.
 - `_requires_texts(issue: Issue, plan: Comment | None) -> list[str]` _(internal)_ — Return the texts whose ``Requires:`` lines count: body, then plan.
 - `_statuses(source: GitHubSource, refs: Iterable[int], report: Report) -> dict[int, RefStatus]` _(internal)_ — Look up each prerequisite, recording an unknown line per failure.
 - `check_prerequisites(source: GitHubSource, number: int) -> Report` — Check that every prerequisite of issue *number* has landed.
-- `_drift_window(issue: Issue, plan: Comment | None, since: datetime | None, report: Report) -> tuple[list[str], datetime] | None` _(internal)_ — Return the paths and cut-off drift checks, or None after a refusal.
-- `_report_merges(merges: Iterable[Merge], since: datetime, delivered: Mapping[int, int], report: Report) -> None` _(internal)_ — Record each merge after *since*: a note when it delivers a prerequisite.
-- `check_drift(source: GitHubSource, number: int, *, since: datetime | None, log_merges: Callable[[list[str]], list[Merge] | None]) -> Report` — List base-branch merges that touched the plan's files since *since*.
-- `drift_from(source: GitHubSource, issue: Issue, plan: Comment | None, *, since: datetime | None, log_merges: Callable[[list[str]], list[Merge] | None]) -> Report` — Run the drift check on an already-fetched issue and plan.
-- `_check_overlap_issue(issue: Issue, files: set[str], is_writer: WriterCheck, report: Report) -> bool` _(internal)_ — Record whether open *issue*'s planned files intersect *files*.
-- `check_overlap(source: GitHubSource, pr_number: int) -> Report` — List open issues whose plan names a file merged PR *pr_number* changed.
+- `_recheck_start(issue: Issue, plan_time: datetime, is_writer: Callable[[str], bool | None], report: Report) -> datetime | None` _(internal)_ — Return the drift window's start: the plan, or a newer recheck clearance.
+- `_drift_window(issue: Issue, plan: Comment | None, since: datetime | None, report: Report, is_writer: Callable[[str], bool | None]) -> tuple[list[str], datetime] | None` _(internal)_ — Return the paths and cut-off drift checks, or None after a refusal.
+- `_report_classified(merge: Merge, head: str, classify: Callable[[str], PathClass], report: Report) -> None` _(internal)_ — Record one merge by the kind of files it changed.
+- `_report_merges(merges: Iterable[Merge], since: datetime, delivered: Mapping[int, int], report: Report, classify: Callable[[str], PathClass]) -> None` _(internal)_ — Record each merge after *since*: a note when it delivers a prerequisite.
+- `check_drift(source: GitHubSource, number: int, *, since: datetime | None, log_merges: Callable[[list[str]], list[Merge] | None], classify: Callable[[str], PathClass] | None = None) -> Report` — List base-branch merges that touched the plan's files since *since*.
+- `drift_from(source: GitHubSource, fetched: tuple[Issue, Comment | None], *, since: datetime | None, log_merges: Callable[[list[str]], list[Merge] | None], classify: Callable[[str], PathClass] | None = None) -> Report` — Run the drift check on an already-fetched issue and plan.
+- `_check_overlap_issue(issue: Issue, files: set[str], is_writer: WriterCheck, report: Report, classify: Callable[[str], PathClass]) -> bool` _(internal)_ — Record whether open *issue*'s planned files intersect *files*.
+- `check_overlap(source: GitHubSource, pr_number: int, *, classify: Callable[[str], PathClass] | None = None) -> Report` — List open issues whose plan names a file merged PR *pr_number* changed.
 - `git_merge_log(root: Path, base_ref: str) -> Callable[[list[str]], list[Merge] | None]` — Return a ``log_merges`` callable over *base_ref*'s first-parent history.
 
 ## `forge.plan_staleness_gh`
@@ -1381,7 +1385,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `check_track_members(source: GitHubSource, track: str) -> Report` — Report which open issues belong to track *track*, and why others do not.
 - `_restricted(merges: list[Merge] | None) -> Callable[[list[str]], list[Merge] | None]` _(internal)_ — Return a ``log_merges`` callable answering from one listing.
 - `_verdict_line(number: int, part: Report) -> str` _(internal)_ — Return the one-line per-issue verdict of the ``current`` check.
-- `check_current(source: GitHubSource, numbers: Sequence[int], *, log_merges: Callable[[list[str]], list[Merge] | None]) -> Report` — Run the drift check of each issue since it was filed, listing history once.
+- `_is_weak_line(line: str) -> bool` _(internal)_ — Return whether *line* records a merge of only generated or shared files.
+- `check_current(source: GitHubSource, numbers: Sequence[int], *, log_merges: Callable[[list[str]], list[Merge] | None], classify: Callable[[str], PathClass] | None = None) -> Report` — Run the drift check of each issue since it was filed, listing history once.
 - `class _Entanglement` _(internal)_ — What the probes found about one PR: partner PR number to the reason.
   - `weight(self) -> tuple[int, int, int]` — Order PRs entangled with nothing first and the most entangled last.
 - `_probe_base(pr: OpenPR, base_ref: str, probe: Callable[[str, str], bool | None], report: Report) -> bool | None` _(internal)_ — Probe *pr* against the base, recording the outcome.
@@ -1446,6 +1451,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _pr_delta — thresholds and helpers for pr-manager finalization short-circuits._
 
+- `path_classifier(extra_hub: Sequence[str] = ()) -> Callable[[str], PathClass]` — Return a classifier sorting a path into generated, hub or other.
 - `extract_verified_shas(text: str) -> list[str]` — Return every ``verified-at:`` SHA referenced in *text*.
 - `fenced_line_indexes(lines: list[str]) -> set[int]` — Return the indexes of *lines* inside fenced code blocks, delimiters included.
 - `strip_fences(lines: list[str]) -> list[str]` — Return *lines* without fenced code blocks (fence lines included).

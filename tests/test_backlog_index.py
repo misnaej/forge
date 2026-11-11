@@ -324,6 +324,14 @@ def test_recheck_from_label_only() -> None:
     assert body.count("- #6 ") == 1
 
 
+def test_plan_ready_and_needs_recheck_is_listed_only_under_recheck() -> None:
+    """Behavior: an issue with both labels leaves the Plan-Ready lane."""
+    body = _body([_issue(6, "both", "tier-2-high", "plan-ready", "needs-recheck")])
+    assert body.count("- #6 ") == 1
+    assert "validated:" not in body
+    assert "- #6 " in body.partition("## 🔁 Needs Recheck")[2]
+
+
 def test_status_issue_leaves_tier_section_and_lane_shows_tier() -> None:
     """Behavior: a plan-ready issue leaves its tier section; its lane names the tier."""
     body = _body(

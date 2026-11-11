@@ -14,7 +14,8 @@ or PRs (``tracks``, ``current``, ``merge-order``) in
     merged PR behind it, still blocks; ``Requires: nothing`` is satisfied.
 ``drift <issue> [--since ISO]``
     Lists merges on the base branch, since the authenticated plan was
-    posted (or *--since*), that touched a file the plan names. Merges
+    posted — or a newer write-access ``[sentinel] recheck cleared:``
+    comment — (or *--since*), that touched a file the plan names. Merges
     that deliver the issue's own ``Requires:`` entries are expected and
     reported as notes, not drift. Refuses an issue labelled both
     ``blocked`` and ``plan-ready``.
@@ -29,6 +30,11 @@ or PRs (``tracks``, ``current``, ``merge-order``) in
 Both ``drift`` and ``overlap`` take an issue's files from one rule
 (:func:`plan_paths`): the authenticated plan's, or the issue body's only
 when the plan names none — said in a ``note:`` line when it happens.
+Both also classify each changed file (:func:`~forge.pr_delta.path_classifier`):
+a generated artifact never counts (a ``note:``), a shared hub file
+(:data:`~forge.pr_delta.HUB_PATHS` plus ``[tool.forge.plan_check].hub_paths``)
+is listed — a ``weak:`` line in drift, a ``note:`` in overlap — but never
+a finding; only other files are drift or overlap.
 
 A plan comment counts only when it opens with ``[issue-triage]
 plan-validated:`` and its author has write, maintain or admin access per
@@ -55,13 +61,13 @@ from __future__ import annotations
 import logging
 import re
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final, Protocol
 
 from forge.git_utils import run_git, wrap_in_code_fence
 from forge.plan_staleness_gh import WRITE_PERMISSIONS
-from forge.pr_delta import ISSUE_REF_RE, strip_fences
+from forge.pr_delta import ISSUE_REF_RE, path_classifier, strip_fences
 from forge.text_clip import truncate
 
 
@@ -70,11 +76,20 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from forge.plan_staleness_gh import Comment, Issue, MergedPR, OpenPR, RefStatus
+    from forge.pr_delta import PathClass
 
 
 logger = logging.getLogger(__name__)
 
 PLAN_MARKER: Final[str] = "[issue-triage] plan-validated:"
+# A write-access comment opening with this moves the drift window's start:
+# the sentinel read every merge before it and found the planned logic intact.
+RECHECK_CLEARED_MARKER: Final[str] = "[sentinel] recheck cleared:"
+# Prefix of a drift line naming a merge that changed only shared files.
+WEAK_PREFIX: Final[str] = "weak:"
+# Word marking a drift note for a merge that changed only generated files.
+# Paths never hold spaces, so the spaced form cannot come from a path.
+REGENERATED_WORD: Final[str] = " regenerated "
 PLAN_READY: Final[str] = "plan-ready"
 BLOCKED: Final[str] = "blocked"
 
@@ -615,25 +630,28 @@ class WriterCheck:
         return self._cache[login]
 
 
-def record_lookup(lookup: PlanLookup, number: int, report: Report) -> bool:
-    """Write a plan lookup's notes into *report*; ``False`` when it is unknown.
+def record_lookup(
+    lookup: PlanLookup, number: int, report: Report, *, kind: str = "plan"
+) -> bool:
+    """Write a comment lookup's notes into *report*; ``False`` when it is unknown.
 
     Args:
         lookup: The lookup outcome.
         number: Issue number.
         report: Report to write into.
+        kind: What the looked-up comment is, as the lines name it.
 
     Returns:
         Whether the lookup is usable.
     """
     for comment_id in lookup.ignored:
         report.note(
-            f"note: ignored plan comment {comment_id} on #{number}; "
+            f"note: ignored {kind} comment {comment_id} on #{number}; "
             "its author lacks write access"
         )
     if lookup.unresolved is not None:
         report.unknown(
-            f"unknown: could not check the access of plan comment "
+            f"unknown: could not check the access of {kind} comment "
             f"{lookup.unresolved}'s author on #{number}"
         )
         return False
@@ -651,8 +669,9 @@ def issue_and_plan(
         report: Report that receives an unknown line on failure.
 
     Returns:
-        The issue and its authenticated plan comment (None when absent), or
-        None when the issue or its plan could not be determined.
+        The issue, carrying its comments, and its authenticated plan
+        comment (None when absent), or None when the issue or its plan
+        could not be determined.
     """
     issue = source.issue(number)
     comments = source.comments(number) if issue is not None else None
@@ -666,7 +685,7 @@ def issue_and_plan(
         report.note(f"plan: no authenticated plan-validated comment on #{number}")
     else:
         report.note(f"plan: comment {lookup.plan.id} posted {lookup.plan.created_at}")
-    return issue, lookup.plan
+    return replace(issue, comments=tuple(comments)), lookup.plan
 
 
 def _requires_texts(issue: Issue, plan: Comment | None) -> list[str]:
@@ -744,19 +763,72 @@ def check_prerequisites(source: GitHubSource, number: int) -> Report:
     return report
 
 
+def _recheck_start(
+    issue: Issue,
+    plan_time: datetime,
+    is_writer: Callable[[str], bool | None],
+    report: Report,
+) -> datetime | None:
+    """Return the drift window's start: the plan, or a newer recheck clearance.
+
+    A write-access comment opening with :data:`RECHECK_CLEARED_MARKER`
+    records that the sentinel read every merge before it beside the plan,
+    so those merges no longer count. Stranger comments are ignored; one
+    whose author's access cannot be looked up makes the start unknown.
+
+    Args:
+        issue: The issue, carrying its comments.
+        plan_time: When the authenticated plan was posted.
+        is_writer: Tri-state permission predicate for a login.
+        report: Report that receives notes and unknowns.
+
+    Returns:
+        The later of *plan_time* and the newest clearance, or None when
+        the start is unknown.
+    """
+    lookup = authenticated_comment(issue.comments, is_writer, RECHECK_CLEARED_MARKER)
+    if not record_lookup(lookup, issue.number, report, kind="recheck-cleared"):
+        return None
+    cleared = lookup.plan
+    if cleared is None:
+        return plan_time
+    try:
+        cleared_time = parse_timestamp(cleared.created_at)
+    except ValueError:
+        report.unknown(
+            f"unknown: recheck-cleared comment {cleared.id} on #{issue.number} "
+            "has an unreadable time"
+        )
+        return None
+    if cleared_time <= plan_time:
+        return plan_time
+    report.note(
+        f"note: recheck cleared by comment {cleared.id} posted "
+        f"{cleared.created_at}; window starts there"
+    )
+    return cleared_time
+
+
 def _drift_window(
-    issue: Issue, plan: Comment | None, since: datetime | None, report: Report
+    issue: Issue,
+    plan: Comment | None,
+    since: datetime | None,
+    report: Report,
+    is_writer: Callable[[str], bool | None],
 ) -> tuple[list[str], datetime] | None:
     """Return the paths and cut-off drift checks, or None after a refusal.
 
     Args:
         issue: The issue.
         plan: Its authenticated plan, if any.
-        since: Caller's cut-off, or None for the plan's post time.
+        since: Caller's cut-off, or None for the plan's post time (moved
+            later by a newer recheck clearance).
         report: Report that receives refusals and notes.
+        is_writer: Tri-state permission predicate for recheck-clearance
+            authors.
 
     Returns:
-        ``(paths, cut-off)``, or None when the check is refused.
+        ``(paths, cut-off)``, or None when the check is refused or unknown.
     """
     number = issue.number
     if BLOCKED in issue.labels and PLAN_READY in issue.labels:
@@ -774,8 +846,45 @@ def _drift_window(
         if plan is None:
             report.unknown("refused: no authenticated plan to date from; pass --since")
             return None
-        since = parse_timestamp(plan.created_at)
+        start = _recheck_start(
+            issue, parse_timestamp(plan.created_at), is_writer, report
+        )
+        if start is None:
+            return None
+        since = start
     return paths, since
+
+
+def _report_classified(
+    merge: Merge, head: str, classify: Callable[[str], PathClass], report: Report
+) -> None:
+    """Record one merge by the kind of files it changed.
+
+    Only generated files → a note (regenerated, never drift); only
+    generated or shared files → a ``weak:`` line (listed, never a
+    finding); any other file → a ``drift:`` finding naming those files.
+
+    Args:
+        merge: The merge, its paths narrowed to the plan's files.
+        head: The merge's ``<sha> <date> <PR>`` label.
+        classify: Path classifier (:func:`~forge.pr_delta.path_classifier`).
+        report: Report to write into.
+    """
+    kinds = {path: classify(path) for path in merge.paths}
+    other = [p for p, k in kinds.items() if k == "other"]
+    hub = [p for p, k in kinds.items() if k == "hub"]
+    generated = [p for p, k in kinds.items() if k == "generated"]
+    if other or not merge.paths:
+        weak = hub + generated
+        extra = f"; also shared or generated: {', '.join(weak)}" if weak else ""
+        report.finding(f"drift: {head} changed {', '.join(other)}{extra}")
+    elif hub:
+        extra = f"; regenerated {', '.join(generated)}" if generated else ""
+        report.note(
+            f"{WEAK_PREFIX} {head} changed shared file(s) {', '.join(hub)}{extra}"
+        )
+    else:
+        report.note(f"note: {head}{REGENERATED_WORD}{', '.join(generated)}; not drift")
 
 
 def _report_merges(
@@ -783,6 +892,7 @@ def _report_merges(
     since: datetime,
     delivered: Mapping[int, int],
     report: Report,
+    classify: Callable[[str], PathClass],
 ) -> None:
     """Record each merge after *since*: a note when it delivers a prerequisite.
 
@@ -791,6 +901,7 @@ def _report_merges(
         since: Cut-off.
         delivered: Merged PR number to the prerequisite it delivered.
         report: Report to write into.
+        classify: Path classifier sorting generated, shared and other files.
     """
     for merge in merges:
         if merge.date <= since:
@@ -803,7 +914,7 @@ def _report_merges(
             )
             continue
         pr = f"PR #{merge.pr}" if merge.pr else "no PR number in subject"
-        report.finding(f"drift: {head} {pr} changed {', '.join(merge.paths)}")
+        _report_classified(merge, f"{head} {pr}", classify, report)
 
 
 def check_drift(
@@ -812,6 +923,7 @@ def check_drift(
     *,
     since: datetime | None,
     log_merges: Callable[[list[str]], list[Merge] | None],
+    classify: Callable[[str], PathClass] | None = None,
 ) -> Report:
     """List base-branch merges that touched the plan's files since *since*.
 
@@ -823,29 +935,36 @@ def check_drift(
     Args:
         source: GitHub reads.
         number: Issue number.
-        since: Cut-off; ``None`` uses the authenticated plan's post time.
+        since: Cut-off; ``None`` uses the authenticated plan's post time,
+            or a newer write-access ``[sentinel] recheck cleared:`` comment.
         log_merges: Returns the base branch's first-parent commits touching
             the given paths, or ``None`` when git failed.
+        classify: Path classifier; ``None`` uses the default
+            :func:`~forge.pr_delta.path_classifier`.
 
     Returns:
-        The report; a finding per merge.
+        The report; a finding per merge that changed a planned file other
+        than a generated or shared one.
     """
     report = Report()
     fetched = issue_and_plan(source, number, report)
     if fetched is None:
         return report
-    issue, plan = fetched
-    report.absorb(drift_from(source, issue, plan, since=since, log_merges=log_merges))
+    report.absorb(
+        drift_from(
+            source, fetched, since=since, log_merges=log_merges, classify=classify
+        )
+    )
     return report
 
 
 def drift_from(
     source: GitHubSource,
-    issue: Issue,
-    plan: Comment | None,
+    fetched: tuple[Issue, Comment | None],
     *,
     since: datetime | None,
     log_merges: Callable[[list[str]], list[Merge] | None],
+    classify: Callable[[str], PathClass] | None = None,
 ) -> Report:
     """Run the drift check on an already-fetched issue and plan.
 
@@ -853,17 +972,22 @@ def drift_from(
     checking a set fetches each issue once and lists history once.
 
     Args:
-        source: GitHub reads (prerequisite statuses).
-        issue: The issue.
-        plan: Its authenticated plan, if any.
-        since: Cut-off; ``None`` uses the plan's post time.
+        source: GitHub reads (prerequisite statuses, comment authors' access).
+        fetched: The issue, carrying its comments, and its authenticated plan
+            if any, as from ``issue_and_plan``.
+        since: Cut-off; ``None`` uses the plan's post time, or a newer
+            recheck clearance.
         log_merges: Base-branch history reader, as for :func:`check_drift`.
+        classify: Path classifier; ``None`` uses the default
+            :func:`~forge.pr_delta.path_classifier`.
 
     Returns:
-        The report; a finding per merge.
+        The report; a finding per merge that changed a planned file other
+        than a generated or shared one.
     """
+    issue, plan = fetched
     report = Report()
-    window = _drift_window(issue, plan, since, report)
+    window = _drift_window(issue, plan, since, report, WriterCheck(source))
     if window is None:
         return report
     paths, cutoff = window
@@ -881,38 +1005,53 @@ def drift_from(
     if merges is None:
         report.unknown("unknown: git could not list the base branch history")
         return report
-    _report_merges(merges, cutoff, delivered, report)
+    _report_merges(merges, cutoff, delivered, report, classify or path_classifier())
     return report
 
 
 def _check_overlap_issue(
-    issue: Issue, files: set[str], is_writer: WriterCheck, report: Report
+    issue: Issue,
+    files: set[str],
+    is_writer: WriterCheck,
+    report: Report,
+    classify: Callable[[str], PathClass],
 ) -> bool:
     """Record whether open *issue*'s planned files intersect *files*.
 
     An issue without an authenticated plan is never flagged: there is no
     plan to re-check, and flagging it filled the Backlog Index with noise.
+    Only changed files classified ``other`` flag a plan; a plan whose only
+    changed files are generated or shared gets one note.
 
     Args:
         issue: Open issue to inspect.
         files: Paths the merged PR changed.
         is_writer: Plan-author access check.
         report: Report to write into.
+        classify: Path classifier sorting generated, shared and other files.
 
     Returns:
-        Whether the issue has no plan yet its body names a changed file.
+        Whether the issue has no plan yet its body names a changed file
+        that is neither generated nor shared.
     """
     lookup = authenticated_plan(issue.comments, is_writer)
     if not record_lookup(lookup, issue.number, report):
         return False
     paths, from_body = plan_paths(lookup.plan, issue.body)
     hits = sorted(files.intersection(paths))
+    other = [hit for hit in hits if classify(hit) == "other"]
     if not hits:
         return False
     if lookup.plan is None:
-        return True
+        return bool(other)
+    if not other:
+        report.note(
+            f"note: #{issue.number} names only generated or shared changed "
+            f"file(s) {', '.join(hits)}; not flagged"
+        )
+        return False
     marker = " plan-ready" if PLAN_READY in issue.labels else ""
-    report.finding(f"overlap: #{issue.number}{marker} names {', '.join(hits)}")
+    report.finding(f"overlap: #{issue.number}{marker} names {', '.join(other)}")
     if from_body:
         report.note(
             f"note: #{issue.number} paths come from the issue body, "
@@ -921,16 +1060,25 @@ def _check_overlap_issue(
     return False
 
 
-def check_overlap(source: GitHubSource, pr_number: int) -> Report:
+def check_overlap(
+    source: GitHubSource,
+    pr_number: int,
+    *,
+    classify: Callable[[str], PathClass] | None = None,
+) -> Report:
     """List open issues whose plan names a file merged PR *pr_number* changed.
 
     Args:
         source: GitHub reads.
         pr_number: The merged PR.
+        classify: Path classifier; ``None`` uses the default
+            :func:`~forge.pr_delta.path_classifier`. Generated and shared
+            files never flag an issue.
 
     Returns:
         The report; a finding per overlapping issue.
     """
+    classifier = classify or path_classifier()
     report = Report()
     pr = source.pull_request(pr_number)
     if pr is None:
@@ -948,7 +1096,7 @@ def check_overlap(source: GitHubSource, pr_number: int) -> Report:
     files = set(pr.files)
     is_writer = WriterCheck(source)
     unplanned = sum(
-        _check_overlap_issue(issue, files, is_writer, report)
+        _check_overlap_issue(issue, files, is_writer, report, classifier)
         for issue in issues
         if issue.number not in pr.closes
     )

@@ -90,6 +90,7 @@ by `forge-gen-config-doc`; the sections below explain each key.
 | `[tool.forge.audit_agents].reporter_with_artifact_agents` | `[]` |
 | `[tool.forge.audit_agents].exclude` | `[]` |
 | `[tool.forge.pr].docs_only_globs` | `[]` |
+| `[tool.forge.plan_check].hub_paths` | `[]` |
 | `[tool.forge.layering].paths` | unset (source_dirs → auto-detect) |
 | `[tool.forge.layering].layer` | unset (audit + step skipped) |
 | `[tool.forge.layering].require_all_classified` | `False` |

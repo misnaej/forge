@@ -826,8 +826,9 @@ their **colors** (`src/forge/install_labels.py` `CANONICAL_LABELS`).
   non-collaborator, not yet endorsed — see "Plan-readiness pipeline"),
   `plan-ready` (validated plan attached as `plan-validated` comment; cleared
   for autonomous execution; never alongside `blocked`), `needs-recheck` (a
-  merge changed files its plan names; re-plan before execution — recording a
-  new plan clears it).
+  merge changed a file its plan names; `/sentinel` reads the diff before
+  pickup — clears it when the planned logic is untouched, else drops
+  `plan-ready` for re-planning; a new plan clears it).
 - **Type** — `bug`, `feature`, `refactor` (no behavior change), `docs`,
   `tech-debt` (cleanup / consolidation), `security`, `research` (spike).
 - **Surface** — `quick-win` (easy + isolated + low-risk), `architecture`
@@ -892,10 +893,8 @@ passed into a subagent prompt, and above all written to
 drafts several issues concurrently through agents forbidden to mutate
 anything, relays each draft for validation; gate and `/sentinel`'s
 one-at-a-time execution rule untouched. Groups issues into tracks (one
-validated plan, one PR, several issues). Issues a PR files are placed into
-tracks as it finishes by `issue-triage`'s `placement` mode — asks rather than
-guesses on conflicting placements, never acts beyond labelling issues that PR
-filed.
+validated plan, one PR, several issues); placement of a PR's new issues:
+[`forge-docs/backlog-tracks.md`](forge-docs/backlog-tracks.md).
 
 ### Decision trail
 
@@ -907,7 +906,8 @@ reversible, no silent state. Issue body never edited. Comment kinds:
   posted only by `issue-triage` on delegation from `/plan-issue`, alongside
   `plan-ready` label.
 - `[sentinel]` — `taken up — branch <name>, <date>` at pickup, `PR #N opened`
-  at wrap-up; shows who holds an issue. Pickup without later PR = in execution
+  at wrap-up, `recheck cleared:` (restarts drift window); shows who holds
+  an issue. Pickup without later PR = in execution
   for the `plan-readiness` screen and any second sentinel. Like the payload,
   trusted only from a write-access author — a stranger's comment never vetoes
   a pickup.

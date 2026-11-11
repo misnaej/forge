@@ -22,6 +22,7 @@ from forge.pr_delta import (
     find_closing_refs,
     find_loose_closing_refs,
     light_wrapup_decision,
+    path_classifier,
     regen_commands,
     regen_only_diff,
     release_assembly_diff,
@@ -836,3 +837,27 @@ def test_closing_scans_ignore_an_oversized_issue_number() -> None:
 def test_unlisted_closing_refs_empty_for_bare_closing_lines() -> None:
     """A body in forge's bare-line style has nothing unlisted."""
     assert unlisted_closing_refs("## Summary\nText.\n\nCloses #5\nFixes #6\n") == []
+
+
+@pytest.mark.parametrize(
+    ("path", "extra", "expected"),
+    [
+        ("docs/api-digest.md", (), "generated"),
+        ("FOUNDATION.md", (), "hub"),  # hub wins over its regen-target status
+        ("sub/CLAUDE.md", (), "hub"),  # matched by basename
+        ("deploy/Makefile.inc", ("*.inc",), "hub"),
+        ("deploy/Makefile.inc", (), "other"),
+        ("src/forge/a.py", (), "other"),
+    ],
+)
+def test_path_classifier_sorts_generated_hub_and_other(
+    path: str, extra: tuple[str, ...], expected: str
+) -> None:
+    """Behavior: hub is checked first; extra globs add to the built-in set.
+
+    Args:
+        path: File path to classify.
+        extra: Extra hub globs passed to the classifier.
+        expected: Expected class: ``generated``, ``hub``, or ``other``.
+    """
+    assert path_classifier(extra)(path) == expected

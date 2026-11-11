@@ -59,7 +59,7 @@ def test_canonical_labels_include_emergency_mode() -> None:
 def test_canonical_labels_include_needs_recheck() -> None:
     """`needs-recheck` is applied by triage's post-merge overlap sweep.
 
-    A plan-ready issue whose named files a merge changed loses
+    A plan-ready issue whose named files a merge changed keeps
     `plan-ready` and gains `needs-recheck`; the label must be in the
     canonical schema for `install-forge-labels` to create it up front.
     """

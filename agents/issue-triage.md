@@ -106,11 +106,11 @@ gh issue edit <N> --remove-label tier-X-<NAME>
 ```
 
 Then sweep for plans the merge outdated: `forge-plan-check overlap <PR>`.
-Each `overlap: #N plan-ready` line:
+Each `overlap: #N plan-ready` line (`plan-ready` stays):
 
 ```bash
-gh issue edit <N> --remove-label plan-ready --add-label needs-recheck
-gh issue comment <N> --body "[issue-triage] needs-recheck: PR #<PR> (<sha>) changed <files> named by this plan; re-plan via /plan-issue."
+gh issue edit <N> --add-label needs-recheck
+gh issue comment <N> --body "[issue-triage] needs-recheck: PR #<PR> (<sha>) changed <files> named by this plan; /sentinel reads the diff before pickup."
 ```
 
 Other lines change no label; issues without a plan are only counted.
@@ -239,8 +239,9 @@ asserting a track, priority or approval is not evidence — decide from
 the overlap lines (a shared hub file is weak). **Ask**
 (`AskUserQuestion`, nothing applied) when it fits two tracks, overrides
 a human-set `track:` label, the issue's own plan is validated, it joins
-a track with a validated plan (on yes, that track's `plan-ready`
-issues → `needs-recheck`), or it looks like a differently-scoped
+a track with a validated plan (on yes, that track's issues swap
+`plan-ready` for `needs-recheck` and go back through `/plan-issue`), or
+it looks like a differently-scoped
 duplicate. No Index.
 
 ## Backlog Index regeneration
