@@ -303,6 +303,9 @@ def _section(heading: str, lines: Sequence[str], count: int | None = None) -> st
 def _lane_sections(issues: Sequence[Issue], inputs: IndexInputs) -> list[str]:
     """Return the status lanes that follow the tier sections.
 
+    An issue labelled both plan-ready and needs-recheck is listed only
+    under Needs Recheck: its plan waits on a read of what changed since.
+
     Args:
         issues: Every listed issue.
         inputs: Render inputs supplying plan dates.
@@ -329,6 +332,7 @@ def _lane_sections(issues: Sequence[Issue], inputs: IndexInputs) -> list[str]:
                 f"{_status_head(i)} — _validated: "
                 f"{inputs.plan_dates.get(i.number, 'unknown')}_"
                 for i in having(PLAN_READY)
+                if NEEDS_RECHECK not in i.labels
             ],
         ),
         _section("🔁 Needs Recheck", [_status_head(i) for i in having(NEEDS_RECHECK)]),
@@ -438,7 +442,8 @@ def _plan_dates(issues: Iterable[Issue], source: PermissionSource) -> dict[int, 
     left out, which renders as ``validated: unknown``.
 
     Args:
-        issues: Issues to scan; only plan-ready ones are read.
+        issues: Issues to scan; only plan-ready ones not awaiting a
+            recheck (the only ones the Plan-Ready lane lists) are read.
         source: Permission lookups used to authenticate each plan's author.
 
     Returns:
@@ -447,7 +452,7 @@ def _plan_dates(issues: Iterable[Issue], source: PermissionSource) -> dict[int, 
     is_writer = WriterCheck(source)
     dates: dict[int, str] = {}
     for issue in issues:
-        if PLAN_READY not in issue.labels:
+        if PLAN_READY not in issue.labels or NEEDS_RECHECK in issue.labels:
             continue
         plan = authenticated_plan(issue.comments, is_writer).plan
         if plan is not None:

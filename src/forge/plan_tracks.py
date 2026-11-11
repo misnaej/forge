@@ -25,7 +25,8 @@ which order open PRs should merge so one does not invalidate another.
     The drift check of each issue since it was *filed*: merges on the base
     branch that touched its files, so a fix that already landed shows up
     before anyone plans it. The base history is listed once for the union
-    of every issue's files.
+    of every issue's files. Generated and shared files are classified as
+    in ``drift``: they never make the verdict say re-check.
 ``merge-order [pr ...]``
     Probes every open PR against the base and against each other with
     ``git merge-tree`` (nothing is checked out or written to a ref) and
@@ -52,6 +53,8 @@ from forge.git_utils import fetch_quietly, merge_tree_clean
 from forge.plan_staleness import (
     PLAN_MARKER,
     PLAN_READY,
+    REGENERATED_WORD,
+    WEAK_PREFIX,
     Report,
     WriterCheck,
     authenticated_comment,
@@ -64,9 +67,10 @@ from forge.plan_staleness import (
 )
 from forge.pr_delta import (
     FOLLOW_UPS_LABEL,
+    GENERATED_PATHS,
     ISSUE_REF_RE,
-    REGEN_COMMANDS,
     fenced_line_indexes,
+    path_classifier,
     strip_fences,
 )
 
@@ -77,6 +81,7 @@ if TYPE_CHECKING:
 
     from forge.plan_staleness import GitHubSource, Merge
     from forge.plan_staleness_gh import Comment, Issue, OpenPR
+    from forge.pr_delta import PathClass
 
 
 logger = logging.getLogger(__name__)
@@ -100,9 +105,6 @@ _PLAN_TRACK_LINE_RE: Final[re.Pattern[str]] = re.compile(r"track: (?P<name>\S+)"
 _SHA_RE: Final[re.Pattern[str]] = re.compile(r"[0-9a-f]{40}")
 # The lines that place an issue next to another issue or an open PR.
 _PLACEMENT_PREFIXES: Final[tuple[str, ...]] = ("overlap:", "pr-overlap:", "shared:")
-# Generated artifacts are a pure function of the merged tree (regenerated,
-# never hand-merged), so two PRs both touching one do not entangle.
-_GENERATED_PATHS: Final[frozenset[str]] = frozenset(REGEN_COMMANDS)
 
 
 @dataclass(frozen=True)
@@ -712,7 +714,23 @@ def _verdict_line(number: int, part: Report) -> str:
         return f"current: #{number} unknown"
     if part.findings:
         return f"current: #{number} files changed since filing; re-check it"
+    if any(_is_weak_line(line) for line in part.lines):
+        return f"current: #{number} only generated or shared files changed since filing"
     return f"current: #{number} no merge touched its files since filing"
+
+
+def _is_weak_line(line: str) -> bool:
+    """Return whether *line* records a merge of only generated or shared files.
+
+    Args:
+        line: One drift report line.
+
+    Returns:
+        ``True`` for a ``weak:`` line or a regenerated-only note.
+    """
+    return line.startswith(WEAK_PREFIX) or (
+        line.startswith("note:") and REGENERATED_WORD in line
+    )
 
 
 def check_current(
@@ -720,6 +738,7 @@ def check_current(
     numbers: Sequence[int],
     *,
     log_merges: Callable[[list[str]], list[Merge] | None],
+    classify: Callable[[str], PathClass] | None = None,
 ) -> Report:
     """Run the drift check of each issue since it was filed, listing history once.
 
@@ -728,11 +747,14 @@ def check_current(
         numbers: Issues to check.
         log_merges: Base-branch history reader (see
             :func:`~forge.plan_staleness.check_drift`); called once.
+        classify: Path classifier; ``None`` uses the default
+            :func:`~forge.pr_delta.path_classifier`.
 
     Returns:
         The report: each issue's lines under an ``issue:`` line, closed by
         a ``current:`` verdict line.
     """
+    classifier = classify or path_classifier()
     fetched: list[tuple[int, Report, tuple[Issue, Comment | None] | None]] = []
     union: list[str] = []
     for number in numbers:
@@ -746,14 +768,19 @@ def check_current(
     report = Report()
     for number, part, pair in fetched:
         if pair is not None:
-            issue, plan = pair
             try:
-                filed = parse_timestamp(issue.created_at)
+                filed = parse_timestamp(pair[0].created_at)
             except ValueError:
                 part.unknown(f"unknown: #{number} has an unreadable creation time")
             else:
                 part.absorb(
-                    drift_from(source, issue, plan, since=filed, log_merges=reader)
+                    drift_from(
+                        source,
+                        pair,
+                        since=filed,
+                        log_merges=reader,
+                        classify=classifier,
+                    )
                 )
         report.note(f"issue: #{number}")
         report.absorb(part)
@@ -824,7 +851,7 @@ def _probe_pairs(
 
     A pair that merges cleanly but changes common files still entangles:
     whichever merges second was verified against a base without the other.
-    Generated artifacts (:data:`~forge.pr_delta.REGEN_COMMANDS`) do not
+    Generated artifacts (:data:`~forge.pr_delta.GENERATED_PATHS`) do not
     count towards that: their merged content is regenerated, never
     reconciled. A conflict still counts wherever it arises.
 
@@ -836,7 +863,7 @@ def _probe_pairs(
     for left, right in combinations(found, 2):
         a, b = left.pr, right.pr
         clean = probe(a.head_sha, b.head_sha)
-        shared = len((set(a.files) & set(b.files)) - _GENERATED_PATHS)
+        shared = len((set(a.files) & set(b.files)) - GENERATED_PATHS)
         if clean is None:
             report.unknown(
                 f"unknown: git could not probe PR #{a.number} with PR #{b.number}"

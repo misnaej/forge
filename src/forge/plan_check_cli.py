@@ -14,7 +14,7 @@ import logging
 import sys
 from typing import TYPE_CHECKING
 
-from forge.config import load_config
+from forge.config import load_config, read_tool_forge_section
 from forge.git_utils import (
     configure_cli_logging,
     emit,
@@ -40,17 +40,59 @@ from forge.plan_tracks import (
     fetch_pr_heads,
     git_merge_probe,
 )
+from forge.pr_delta import path_classifier
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from datetime import datetime
     from pathlib import Path
 
     from forge.plan_staleness import GitHubSource
+    from forge.pr_delta import PathClass
 
 
 configure_cli_logging()
 logger = logging.getLogger(__name__)
+
+
+def _classifier(root: Path) -> Callable[[str], PathClass]:
+    """Return the path classifier: built-in hub globs plus configured ones.
+
+    Args:
+        root: Repository root holding ``pyproject.toml``.
+
+    Returns:
+        The classifier; a malformed ``[tool.forge.plan_check].hub_paths``
+        is ignored with a warning, leaving the built-in globs.
+    """
+    extra = read_tool_forge_section(root, "plan_check").get("hub_paths", [])
+    if not (isinstance(extra, list) and all(isinstance(g, str) for g in extra)):
+        logger.warning(
+            "warning: [tool.forge.plan_check].hub_paths is not a list of "
+            "strings; using the built-in shared-file globs only"
+        )
+        extra = []
+    return path_classifier(extra)
+
+
+def _overlap_classifier() -> Callable[[str], PathClass]:
+    """Return the classifier for ``overlap``, which needs no checkout.
+
+    ``overlap`` reads only GitHub; outside a checkout there is no
+    ``pyproject.toml`` to add shared-file globs from, so the built-in
+    ones apply, said in a warning.
+
+    Returns:
+        The classifier.
+    """
+    try:
+        return _classifier(repo_root())
+    except SystemExit:
+        logger.warning(
+            "warning: not in a git checkout; using the built-in shared-file globs only"
+        )
+        return path_classifier()
 
 
 def _since_arg(value: str) -> datetime:
@@ -198,7 +240,11 @@ def _run_drift(args: argparse.Namespace, source: GitHubSource) -> Report:
         return resolved
     base_ref = resolved[1]
     report = check_drift(
-        source, args.issue, since=args.since, log_merges=git_merge_log(root, base_ref)
+        source,
+        args.issue,
+        since=args.since,
+        log_merges=git_merge_log(root, base_ref),
+        classify=_classifier(root),
     )
     return _local_note(report, base_ref)
 
@@ -219,7 +265,10 @@ def _run_current(args: argparse.Namespace, source: GitHubSource) -> Report:
         return resolved
     base_ref = resolved[1]
     report = check_current(
-        source, args.issues, log_merges=git_merge_log(root, base_ref)
+        source,
+        args.issues,
+        log_merges=git_merge_log(root, base_ref),
+        classify=_classifier(root),
     )
     return _local_note(report, base_ref)
 
@@ -275,7 +324,7 @@ def main(argv: list[str] | None = None, source: GitHubSource | None = None) -> i
     runners = {
         "prerequisites": lambda: check_prerequisites(gh, args.issue),
         "drift": lambda: _run_drift(args, gh),
-        "overlap": lambda: check_overlap(gh, args.pr),
+        "overlap": lambda: check_overlap(gh, args.pr, classify=_overlap_classifier()),
         "tracks": lambda: (
             check_tracks(gh, args.issues, focus=args.focus)
             if args.from_pr is None

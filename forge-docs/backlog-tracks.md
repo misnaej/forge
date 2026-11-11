@@ -114,7 +114,16 @@ code has already fixed — flagged to the user, never closed.
 
 A track with a validated plan is never extended silently: adding an
 issue to it changes what was validated, so the user is asked and the
-track's `plan-ready` members go back to `needs-recheck` for re-planning.
+track's members lose `plan-ready` and go back through `/plan-issue`.
+
+Drift and overlap sort each changed file before anything is flagged:
+regenerated artifacts (`pr_delta.GENERATED_PATHS`) never count; shared
+files (`pr_delta.HUB_PATHS` plus `[tool.forge.plan_check].hub_paths`)
+are listed as `weak:` / `note:` lines and never flag; any other file the
+plan names does. A flagged plan keeps `plan-ready` and gains
+`needs-recheck`; `/sentinel` reads the diff at pickup and either clears
+it (`[sentinel] recheck cleared:`, which restarts the drift window) or
+returns the issue for re-planning.
 
 ## Placement after a PR
 

@@ -438,6 +438,97 @@ def test_drift_reports_merge_after_plan_time() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("path", "prefix", "exit_code", "fragment"),
+    [
+        ("docs/api-digest.md", "note:", ps.EXIT_CLEAN, "regenerated"),
+        ("pyproject.toml", "weak:", ps.EXIT_CLEAN, "shared file(s) pyproject.toml"),
+        ("src/forge/a.py", "drift:", ps.EXIT_FINDING, "changed src/forge/a.py"),
+    ],
+    ids=["generated", "shared", "source"],
+)
+def test_drift_weighs_merged_files_by_kind(
+    path: str, prefix: str, exit_code: int, fragment: str
+) -> None:
+    """Behavior: only a source-file merge is drift; generated/shared are noted.
+
+    Args:
+        path: Merged file, classified generated, shared, or source.
+        prefix: Expected line prefix (``note:``, ``weak:``, ``drift:``).
+        exit_code: Expected report exit code.
+        fragment: Substring the expected report line carries.
+    """
+    gh = _source("", [_plan(f"Edit `{path}`.")])
+    report = ps.check_drift(
+        gh, 10, since=None, log_merges=LogRecorder([_merge("20", path)])
+    )
+    (line,) = [ln for ln in report.lines if fragment in ln]
+    assert line.startswith(prefix)
+    assert report.exit_code == exit_code
+    if prefix == "note:":
+        assert "not drift" in line
+    assert bool(report_lines(report, "drift:")) == (prefix == "drift:")
+
+
+def _cleared(at: str, *, author: str = "maintainer", cid: int = 2) -> Comment:
+    """Build a write-access recheck-clearance comment.
+
+    Args:
+        at: Timestamp the clearance was posted.
+        author: Comment author login.
+        cid: Comment id.
+
+    Returns:
+        The clearance comment.
+    """
+    return Comment(
+        cid, f"{ps.RECHECK_CLEARED_MARKER} read merges, plan intact", at, author
+    )
+
+
+def test_drift_window_moves_to_a_writers_recheck_cleared_comment() -> None:
+    """Behavior: merges before a write-access clearance no longer count."""
+    gh = _source(
+        "",
+        [_plan("Edit `src/forge/a.py`."), _cleared("2026-09-18T00:00:00Z")],
+    )
+    log = LogRecorder([_merge("20", "src/forge/a.py"), _merge("16", "src/forge/a.py")])
+    report = ps.check_drift(gh, 10, since=None, log_merges=log)
+    assert len(report_lines(report, "drift:")) == 1
+    assert "2026-09-20" in report_lines(report, "drift:")[0]
+    assert any("recheck cleared by comment 2" in ln for ln in report.lines)
+
+
+def test_drift_window_ignores_a_strangers_recheck_cleared_comment() -> None:
+    """Behavior: a clearance without write access leaves the window at the plan."""
+    gh = _source(
+        "",
+        [
+            _plan("Edit `src/forge/a.py`."),
+            _cleared("2026-09-18T00:00:00Z", author="stranger"),
+        ],
+    )
+    log = LogRecorder([_merge("16", "src/forge/a.py")])
+    report = ps.check_drift(gh, 10, since=None, log_merges=log)
+    assert len(report_lines(report, "drift:")) == 1
+    assert any("ignored recheck-cleared comment 2" in ln for ln in report.lines)
+
+
+def test_drift_window_with_unresolvable_clearance_author_is_unknown() -> None:
+    """Behavior: an author whose access cannot be read makes the window unknown."""
+    gh = _source(
+        "",
+        [
+            _plan("Edit `src/forge/a.py`."),
+            _cleared("2026-09-18T00:00:00Z", author="ghost"),
+        ],
+    )
+    log = LogRecorder([_merge("20", "src/forge/a.py")])
+    report = ps.check_drift(gh, 10, since=None, log_merges=log)
+    assert report.exit_code == ps.EXIT_UNKNOWN
+    assert log.seen == []
+
+
 def test_drift_without_merges_is_clean() -> None:
     """No merge after the plan on its files exits 0."""
     gh = _source("", [_plan("Edit `src/forge/a.py`.")])
@@ -753,6 +844,44 @@ def test_overlap_lists_issues_naming_changed_files() -> None:
     )
     assert report_lines(report, "merge:") == ["merge: PR #50 changed 1 file(s)"]
     assert report.exit_code == ps.EXIT_FINDING
+
+
+def test_overlap_notes_generated_and_shared_hits_instead_of_flagging() -> None:
+    """Behavior: a plan hit only on shared/generated files is one note, no finding.
+
+    An unplanned issue whose body names only a shared file is not counted
+    among the unplanned either.
+    """
+    planned = Issue(
+        2,
+        "",
+        (),
+        PLAN_TIME,
+        (_plan("Edit `pyproject.toml` and `docs/api-digest.md`."),),
+    )
+    gh = FakeGitHub(
+        permissions={"maintainer": "write"},
+        prs={
+            50: MergedPR(
+                50,
+                merged=True,
+                merge_sha="",
+                closes=(),
+                files=("pyproject.toml", "docs/api-digest.md"),
+            )
+        },
+        open_listing=[planned, _issue(3, "Touches `pyproject.toml`.")],
+    )
+    report = ps.check_overlap(gh, 50)
+    assert report_lines(report, "overlap:") == []
+    assert report_lines(report, "note: #2 names only generated or shared") == [
+        (
+            "note: #2 names only generated or shared changed file(s) "
+            "docs/api-digest.md, pyproject.toml; not flagged"
+        )
+    ]
+    assert "without a validated plan" not in report.render()
+    assert report.exit_code == ps.EXIT_CLEAN
 
 
 def test_overlap_refuses_unmerged_pr_and_failed_listing() -> None:

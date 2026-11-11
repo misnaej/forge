@@ -488,6 +488,29 @@ def test_current_lists_history_once_and_flags_only_the_drifted_issue() -> None:
     assert "no merge touched" in report_lines(report, "current: #11")[0]
 
 
+@pytest.mark.parametrize("path", ["docs/api-digest.md", "pyproject.toml"])
+def test_current_verdict_for_only_generated_or_shared_changes(path: str) -> None:
+    """Behavior: weak/regenerated-only changes get their own clean verdict.
+
+    Args:
+        path: The only file changed since filing; generated or shared.
+    """
+    issue = make_open_issue(10, path)
+    gh = FakeGitHub(
+        issues={10: issue},
+        comment_lists={10: list(issue.comments)},
+        permissions=PLAN_PERMISSIONS,
+    )
+    landed = ps.Merge("a" * 40, datetime(2026, 9, 12, 12, tzinfo=UTC), 5, (path,))
+
+    report = pt.check_current(gh, [10], log_merges=LogRecorder([landed]))
+
+    assert report.exit_code == ps.EXIT_CLEAN
+    assert report_lines(report, "current: #10") == [
+        "current: #10 only generated or shared files changed since filing"
+    ]
+
+
 # --------------------------------------------------------------------------
 # merge-order
 # --------------------------------------------------------------------------

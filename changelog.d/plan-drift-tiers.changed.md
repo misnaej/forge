@@ -1,0 +1,4 @@
+bump: minor
+- `forge-plan-check drift`, `current` and `overlap` sort each changed file before flagging a plan: regenerated artifacts never count, shared files (any `CLAUDE.md`, `pyproject.toml`, lock files, `README.md`, `CHANGELOG.md`, `REPO_STRUCTURE.md`, `FOUNDATION.md`, the plugin manifest and roster) are listed as non-blocking `weak:` / `note:` lines, and only other files a plan names make it drift. Repos add their own shared files with `[tool.forge.plan_check].hub_paths`.
+- A merge that touches a planned file keeps `plan-ready` and adds `needs-recheck`. At pickup `/sentinel` reads the diff: when the planned logic is untouched it posts `[sentinel] recheck cleared:` (which restarts the drift window), removes `needs-recheck` and proceeds; when it changed, it removes `plan-ready` and the issue goes back to `/plan-issue`. The sentinel never grants `plan-ready`.
+- The Backlog Index lists an issue carrying both labels only under Needs Recheck.

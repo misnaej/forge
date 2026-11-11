@@ -331,6 +331,15 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "review-skip to every non-blast-radius path.",
     ),
     ConfigKey(
+        ("tool", "forge", "plan_check", "hub_paths"),
+        default=[],
+        description="Extra fnmatch globs (matched against the full path "
+        "and the basename) for shared files forge-plan-check drift / "
+        "overlap list but never count as plan drift — additive to the "
+        "built-in set (CLAUDE.md, pyproject.toml, lock files, README.md, "
+        "CHANGELOG.md, REPO_STRUCTURE.md, FOUNDATION.md, ...).",
+    ),
+    ConfigKey(
         ("tool", "forge", "changelog", "precommit_enforce"),
         default=True,
         description="Gate changelog_updated at every local commit (default; "
