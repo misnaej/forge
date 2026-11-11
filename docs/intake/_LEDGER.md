@@ -6,3 +6,4 @@ Entries filed as issues, then retired.
 |---|---|---|---|---|
 | 2026-11-03 | `precommit-fixer hands back while its delegated docs-types-checker is still running` | https://github.com/misnaej/forge/issues/879 | Occurrences: 2, on 2 branches | 2 |
 | 2026-11-05 | `git-commit-push stops or proceeds on the same stale --only logs depending on the run` | https://github.com/misnaej/forge/issues/894 | Occurrences: 1, on 1 branch | 1 |
+| 2026-11-11 | `block_force_push does not cover a server-side ref rewrite via gh api` | https://github.com/misnaej/forge/pull/964 | Occurrences: 1, on 1 branch | 1 |
