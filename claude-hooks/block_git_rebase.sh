@@ -5,7 +5,7 @@
 # which forces a force-push (itself blocked by block_force_push.sh) and
 # discards the exact commits a reviewer saw. forge squash-merges every PR,
 # so a feature branch's commit shape never reaches the base branch — a plain
-# merge of the base branch (`git merge origin/<base>`) resolves "sync my
+# merge of the base branch (`forge-update-branch`) resolves "sync my
 # branch" without rewriting anything.
 #
 # No agent bypass. A human who truly needs a
@@ -15,7 +15,7 @@ INPUT=$(cat)
 COMMAND=$(jq -r '.tool_input.command // empty' <<< "$INPUT")
 
 _block() {
-    echo "BLOCKED: '$1' is forbidden for agents. Rebasing rewrites published history and forces a force-push; forge squash-merges PRs, so sync a branch with a plain merge of the base branch instead (e.g. \`git merge origin/main\`). If a human truly needs to rebase, run it yourself with: ! $COMMAND" >&2
+    echo "BLOCKED: '$1' is forbidden for agents. Rebasing rewrites published history and forces a force-push; forge squash-merges PRs, so sync a branch by merging the base branch instead: \`forge-update-branch\`. If a human truly needs to rebase, run it yourself with: ! $COMMAND" >&2
     exit 2
 }
 

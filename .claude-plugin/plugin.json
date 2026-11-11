@@ -254,7 +254,7 @@
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/warn_generated_conflicts.sh",
+            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/warn_merge_conflicts.sh",
             "timeout": 20
           }
         ]

@@ -58,27 +58,18 @@ silently merge.** Which variant depends on Step 0:
   `<base>` is the branch the PR will target (`[tool.forge].base_branch`
   when set, else the repo default branch).
 
-- **`mergeable: CONFLICTING`** → do not finalize yet. Resolve by
-  merging the base in (`git merge origin/<base>`, resolve conflicts
-  with care per FOUNDATION §6's resolution rule), then re-run from Step
-  0.5. When the conflict is
-  confined to `.claude-plugin/plugin.json` + `CHANGELOG.md` (the
-  rolling-next version-slot collision), run **`forge-rebump`** instead
-  of hand-resolving: it classifies the branch's bump intent, takes the
-  next open slot, restacks the changelog (shared-heading mode), and
-  stages — refusing loudly if any other file conflicts. **Fragments
-  mode**: rebump refuses here by design — a manifest conflict is a
-  racing release PR; follow the refusal's recovery (base side of both
-  files, restore consumed fragments from the merge base, re-run
-  `forge-changelog release`). When the conflict is confined to
-  forge-generated artifacts (`docs/api-digest.md`,
-  `docs/cli-reference.md`, `FOUNDATION.md`, `docs/architecture.dsl`),
-  never hand-merge: run **`forge-resync --resolve-conflicts`** — it
-  regenerates each from the merged tree, verifies with the generator's
-  `--check`, and stages; you commit the merge with `forge-commit`,
-  naming every staged path. It refuses if any other path conflicts.
-- **Behind but clean** (left count > 0, not conflicting) → merge the
-  base in and proceed, saying what was done — **no confirmation
+- **`mergeable: CONFLICTING`** → do not finalize yet. Run
+  **`forge-update-branch --base <base>`**: it resolves generated
+  artifacts, the version slot and files the branch already holds (every
+  stacked child after its parent's squash), and commits. Exit 3 → spawn
+  `forge:merge-resolver` for the listed files (FOUNDATION §6's
+  resolution rule), which finishes with `--continue`; then re-run from
+  Step 0.5. **Fragments mode**: a manifest conflict is a racing release
+  PR, which the version-slot resolver refuses by design; follow its
+  recovery (base side of both files, restore consumed fragments from the
+  merge base, re-run `forge-changelog release`).
+- **Behind but clean** (left count > 0, not conflicting) → run
+  `forge-update-branch --base <base>` and proceed, saying what was done — **no confirmation
   needed** (FOUNDATION §6's resolution rule governs): it refreshes the
   branch so verification reflects the real merge result and re-triggers
   CI.

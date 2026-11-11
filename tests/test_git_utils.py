@@ -2265,7 +2265,7 @@ def test_unmerged_paths_lists_conflicted_files_mid_merge(tmp_path: Path) -> None
     Same diverged-branches shape as ``merge_in_progress`` above, except
     both branches edit the SAME file (``shared.txt``) so the merge
     actually conflicts rather than auto-merging cleanly —
-    ``forge-rebump`` and ``forge-resync --resolve-conflicts`` both read
+    ``forge-rebump`` and ``forge-update-branch`` both read
     this list to agree on what "conflicted" means.
     """
     _init_git_repo(tmp_path)

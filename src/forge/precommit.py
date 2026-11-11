@@ -2840,8 +2840,8 @@ def step_changelog_version(repo_root: Path) -> StepResult:
             f"Stale branch: tag {latest} exists on the base branch "
             f"'{cfg.base_branch}' but not on this branch — no commit can "
             "pass until the base is merged in. Cure: "
-            f"`git merge origin/{cfg.base_branch}` (never rebase). Dirty "
-            "tree: the sync ladder in forge-docs/git-safety.md. "
+            f"`forge-update-branch --base {cfg.base_branch}` (never rebase; it "
+            "checkpoints a dirty tree itself). "
             "Hand-adding the missing headings or a [no-version] marker "
             "will not work — both are rejected by this gate."
         )
@@ -4143,6 +4143,16 @@ def main() -> int:
             emit(line)
         return 0 if passed else 1
 
+    # forge-update-branch commits a merge it resolved itself without the
+    # gate, like a merge git completes on its own; honoured only mid-merge,
+    # and agents cannot type it (check_commit_format refuses it).
+    if os.environ.get("FORGE_MERGE_SYNC") == "1" and merge_in_progress(get_repo_root()):
+        emit(
+            f"{YELLOW}base merge resolved by forge-update-branch — no local "
+            f"gate; CI and the next commit check the merged tree.{NC}"
+        )
+        return 0
+
     if os.environ.get("FORGE_WIP_SYNC") == "1":
         emit(
             f"{YELLOW}wip-sync checkpoint — full gate deferred to the next "
@@ -4150,7 +4160,7 @@ def main() -> int:
         )
         emit(
             "This commit only secures in-progress work before a base merge "
-            "(FOUNDATION §2 sync ladder); every non-wip commit and the PR "
+            "(FOUNDATION §2 base sync); every non-wip commit and the PR "
             "squash still run the full battery."
         )
         return 0

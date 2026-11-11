@@ -338,21 +338,17 @@ def test_commit_and_push_named_file_missing_from_commit_refuses(
         commit.commit_and_push(feature_repo, Request("fix: a", ("a.txt",), push=False))
 
 
-@pytest.mark.usefixtures("_fake_evidence")
-def test_commit_and_push_commits_a_resolved_merge(feature_repo: Path) -> None:
-    """Regression: a resolved merge commits and reports success, not refusal.
+@pytest.fixture
+def merging_repo(feature_repo: Path) -> Path:
+    """``feature_repo`` with a conflicted merge of ``main`` in progress.
 
-    ``git show`` gives a merge's combined diff (only the resolved file), so
-    the post-commit check used to call the other staged paths missing.
-    ``b.txt`` changes only on the branch: a diff against every parent would
-    list it as extra and refuse the merge.
+    Returns:
+        The repo root, mid-merge (``a.txt`` unmerged).
     """
     (feature_repo / "a.txt").write_text("feature\n", encoding="utf-8")
-    (feature_repo / "b.txt").write_text("feature only\n", encoding="utf-8")
-    commit_all(feature_repo, "feat: a and b on branch")
+    commit_all(feature_repo, "feat: a on branch")
     git_stdout(feature_repo, "checkout", "-q", "main")
     (feature_repo / "a.txt").write_text("base\n", encoding="utf-8")
-    (feature_repo / "c.txt").write_text("c\n", encoding="utf-8")
     commit_all(feature_repo, "feat: base moves")
     git_stdout(feature_repo, "checkout", "-q", "feat/x")
     merged = subprocess.run(
@@ -363,15 +359,32 @@ def test_commit_and_push_commits_a_resolved_merge(feature_repo: Path) -> None:
         capture_output=True,
     )
     assert merged.returncode != 0  # a.txt conflicts
-    (feature_repo / "a.txt").write_text("resolved\n", encoding="utf-8")
-    git_stdout(feature_repo, "add", "a.txt")
-    request = Request("chore: merge main", ("a.txt", "c.txt"), push=False)
+    return feature_repo
 
-    assert commit.commit_and_push(feature_repo, request) == commit.EXIT_OK
 
-    assert commit.committed_paths(feature_repo) == {"a.txt", "c.txt"}
-    parents = git_stdout(feature_repo, "log", "-1", "--format=%P").split()
-    assert len(parents) == 2
+@pytest.mark.usefixtures("_fake_evidence")
+def test_commit_and_push_refuses_mid_merge(merging_repo: Path) -> None:
+    """Mid-merge commits belong to forge-update-branch; commit_and_push refuses."""
+    (merging_repo / "a.txt").write_text("resolved\n", encoding="utf-8")
+    git_stdout(merging_repo, "add", "a.txt")
+    head = git_stdout(merging_repo, "rev-parse", "HEAD")
+
+    with pytest.raises(CommitRefusedError, match=r"forge-update-branch --continue"):
+        commit.commit_and_push(
+            merging_repo, Request("chore: merge main", ("a.txt",), push=False)
+        )
+
+    assert git_stdout(merging_repo, "rev-parse", "HEAD") == head
+
+
+def test_checkpoint_refuses_mid_merge(merging_repo: Path) -> None:
+    """A wip-sync checkpoint refuses mid-merge and names the remedy."""
+    head = git_stdout(merging_repo, "rev-parse", "HEAD")
+
+    with pytest.raises(CommitRefusedError, match=r"forge-update-branch --continue"):
+        commit.checkpoint(merging_repo, "wip-sync: mid merge", push_after=False)
+
+    assert git_stdout(merging_repo, "rev-parse", "HEAD") == head
 
 
 @pytest.mark.usefixtures("_fake_evidence")
@@ -418,32 +431,6 @@ def test_commit_and_push_commits_a_plain_filesystem_rename(
     assert commit.commit_and_push(feature_repo, request) == commit.EXIT_OK
 
     assert commit.committed_paths(feature_repo) == {"a.txt", "moved.txt"}
-
-
-@pytest.mark.usefixtures("_fake_evidence")
-def test_commit_and_push_commits_a_merge_carrying_a_rename(
-    feature_repo: Path,
-) -> None:
-    """SCENARIO: clean merge brings in a base-side rename; both paths commit.
-
-    MOCK SETUP: none beyond the passing-evidence fixture; git runs for real.
-    EXPECTED BEHAVIOR: staged read lists old and new path, the merge commit
-    (first-parent diff) lists the same two, commit succeeds.
-    """
-    (feature_repo / "a.txt").write_text("feature\n", encoding="utf-8")
-    commit_all(feature_repo, "feat: change a")
-    git_stdout(feature_repo, "checkout", "-q", "main")
-    git_stdout(feature_repo, "mv", "b.txt", "renamed_b.txt")
-    commit_all(feature_repo, "refactor: rename b")
-    git_stdout(feature_repo, "checkout", "-q", "feat/x")
-    git_stdout(feature_repo, "merge", "-q", "--no-commit", "--no-ff", "main")
-    assert commit._staged(feature_repo) == {"b.txt", "renamed_b.txt"}
-
-    request = Request("chore: merge main", ("b.txt", "renamed_b.txt"), push=False)
-    assert commit.commit_and_push(feature_repo, request) == commit.EXIT_OK
-
-    assert commit.committed_paths(feature_repo) == {"b.txt", "renamed_b.txt"}
-    assert len(git_stdout(feature_repo, "log", "-1", "--format=%P").split()) == 2
 
 
 def test_committed_paths_root_commit_lists_every_file(tmp_path: Path) -> None:
