@@ -114,7 +114,8 @@ code has already fixed — flagged to the user, never closed.
 
 A track with a validated plan is never extended silently: adding an
 issue to it changes what was validated, so the user is asked and the
-track's members lose `plan-ready` and go back through `/plan-issue`.
+track's members swap `plan-ready` for `needs-recheck` and go back
+through `/plan-issue` — without `plan-ready` no sentinel picks them up.
 
 Drift and overlap sort each changed file before anything is flagged:
 regenerated artifacts (`pr_delta.GENERATED_PATHS`) never count; shared

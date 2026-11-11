@@ -88,7 +88,8 @@ there. An issue the code has already fixed is **flagged to the user**
 with the merge that fixed it; never close it, and drop it from the
 queue. A verdict that only generated or shared files changed is
 current — read the `weak:` lines only when the issue is about one of
-those files. Exit 2 is unknown, not current: say so and re-check by reading.
+those files. Exit 2 is unknown, not current: say so and re-check by
+reading.
 
 ## Step 1.6: Group into tracks
 

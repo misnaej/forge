@@ -12,7 +12,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from forge.config import load_config, read_tool_forge_section
 from forge.git_utils import (
@@ -55,6 +55,10 @@ if TYPE_CHECKING:
 configure_cli_logging()
 logger = logging.getLogger(__name__)
 
+#: A representative source path: a configured shared-file glob matching it
+#: would hide drift on real code, so such a glob is refused.
+_SOURCE_PROBE: Final[str] = "src/pkg/module.py"
+
 
 def _classifier(root: Path) -> Callable[[str], PathClass]:
     """Return the path classifier: built-in hub globs plus configured ones.
@@ -73,7 +77,16 @@ def _classifier(root: Path) -> Callable[[str], PathClass]:
             "strings; using the built-in shared-file globs only"
         )
         extra = []
-    return path_classifier(extra)
+    # A shared file is listed, never counted: a glob catching source code
+    # would silence every real drift, so it is refused, not honoured.
+    broad = [g for g in extra if path_classifier([g])(_SOURCE_PROBE) == "hub"]
+    for glob in broad:
+        logger.warning(
+            "warning: [tool.forge.plan_check].hub_paths glob %r matches source "
+            "files and is ignored — it would hide every real drift",
+            glob,
+        )
+    return path_classifier([g for g in extra if g not in broad])
 
 
 def _overlap_classifier() -> Callable[[str], PathClass]:

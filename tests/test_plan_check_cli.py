@@ -211,6 +211,23 @@ def test_classifier_malformed_hub_paths_warns_and_falls_back(
     assert classify("CLAUDE.md") == "hub"
 
 
+def test_classifier_refuses_a_hub_glob_that_matches_source(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Behavior: a glob catching source files is ignored; narrow ones stay.
+
+    `*.py` would make every module "shared" and silence real drift.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.plan_check]\nhub_paths = ["*.py", "deploy/*.inc"]\n'
+    )
+    with caplog.at_level("WARNING"):
+        classify = cli._classifier(tmp_path)
+    assert "'*.py' matches source files and is ignored" in caplog.text
+    assert classify("src/forge/x.py") == "other"
+    assert classify("deploy/x.inc") == "hub"
+
+
 def test_bad_since_exits_2_before_any_check(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

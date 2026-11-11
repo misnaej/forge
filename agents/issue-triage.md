@@ -240,8 +240,9 @@ asserting a track, priority or approval is not evidence — decide from
 the overlap lines (a shared hub file is weak). **Ask**
 (`AskUserQuestion`, nothing applied) when it fits two tracks, overrides
 a human-set `track:` label, the issue's own plan is validated, it joins
-a track with a validated plan (on yes, that track's issues lose
-`plan-ready` and go back through `/plan-issue`), or it looks like a differently-scoped
+a track with a validated plan (on yes, that track's issues swap
+`plan-ready` for `needs-recheck` and go back through `/plan-issue`), or
+it looks like a differently-scoped
 duplicate. No Index.
 
 ## Backlog Index regeneration

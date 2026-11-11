@@ -906,7 +906,8 @@ reversible, no silent state. Issue body never edited. Comment kinds:
   posted only by `issue-triage` on delegation from `/plan-issue`, alongside
   `plan-ready` label.
 - `[sentinel]` — `taken up — branch <name>, <date>` at pickup, `PR #N opened`
-  at wrap-up, `recheck cleared:` (restarts drift window); shows who holds an issue. Pickup without later PR = in execution
+  at wrap-up, `recheck cleared:` (restarts drift window); shows who holds
+  an issue. Pickup without later PR = in execution
   for the `plan-readiness` screen and any second sentinel. Like the payload,
   trusted only from a write-access author — a stranger's comment never vetoes
   a pickup.

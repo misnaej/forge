@@ -337,7 +337,9 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "and the basename) for shared files forge-plan-check drift / "
         "overlap list but never count as plan drift — additive to the "
         "built-in set (CLAUDE.md, pyproject.toml, lock files, README.md, "
-        "CHANGELOG.md, REPO_STRUCTURE.md, FOUNDATION.md, ...).",
+        "CHANGELOG.md, REPO_STRUCTURE.md, FOUNDATION.md, ...). A glob "
+        "that matches source files (`*`, `*.py`, `src/*`) is refused with "
+        "a warning: it would hide every real drift.",
     ),
     ConfigKey(
         ("tool", "forge", "changelog", "precommit_enforce"),
