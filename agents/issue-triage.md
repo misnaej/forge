@@ -113,8 +113,8 @@ gh issue edit <N> --remove-label plan-ready --add-label needs-recheck
 gh issue comment <N> --body "[issue-triage] needs-recheck: PR #<PR> (<sha>) changed <files> named by this plan; re-plan via /plan-issue."
 ```
 
-Every other `overlap: #N` line becomes `--recheck N=<PR>` on the
-Index regeneration. Exit 2 → report it, change no label. Then re-run
+Other lines change no label; issues without a plan are only counted.
+Exit 2 → report it, change no label. Then re-run
 `placement` for the PR (`--from-pr <PR>`) — the merge may have moved
 its follow-ups.
 
@@ -246,10 +246,10 @@ duplicate. No Index.
 ## Backlog Index regeneration
 
 `forge-backlog-index` renders the body from live GitHub data and
-overwrites the Index — never hand-edit it. Pass `--recheck <N>=<PR>`
-per `post-pr` overlap and any `--lane LABEL=HEADING` the caller asks
-for. Exit 1 (short listing, zero or several `📋 Backlog Index` issues,
-empty body, tiers 1–2 alone over GitHub's size limit) leaves the old
+overwrites the Index — never hand-edit it. Pass any
+`--lane LABEL=HEADING` the caller asks for. Exit 1 (short listing,
+zero or several `📋 Backlog Index` issues, empty body, tiers 1–2
+alone over GitHub's size limit) leaves the old
 Index standing; exit 2 means GitHub was unreadable. Relay a refusal
 verbatim, never route around it; report any `trimmed:` line.
 

@@ -583,7 +583,9 @@ def test_incident_replay_drift_flags_premise_changed_before_approval(
         closes=(),
         files=("agents/git-commit-push.md",),
     )
-    gh.open_listing = [Issue(10, body, (), PLAN_TIME, ())]
+    gh.open_listing = [
+        Issue(10, body, (), PLAN_TIME, (_plan("Delete `agents/git-commit-push.md`."),))
+    ]
     assert ps.check_overlap(gh, 2).exit_code == ps.EXIT_FINDING
 
 
@@ -693,6 +695,7 @@ def test_main_overlap_exit_codes() -> None:
         open_listing=[],
     )
     assert cli.main(["overlap", "50"], source=gh) == ps.EXIT_CLEAN
+    assert "without a validated plan" not in ps.check_overlap(gh, 50).render()
     assert cli.main(["overlap", "51"], source=gh) == ps.EXIT_UNKNOWN
 
 
@@ -743,9 +746,11 @@ def test_overlap_lists_issues_naming_changed_files() -> None:
     report = ps.check_overlap(gh, 50)
     assert report_lines(report, "overlap:") == [
         "overlap: #2 plan-ready names src/forge/a.py",
-        "overlap: #4 names src/forge/a.py",
     ]
-    assert report_lines(report, "note: #4 paths come from the issue body")
+    assert report_lines(
+        report,
+        "note: 1 issue(s) without a validated plan name changed files; not flagged",
+    )
     assert report_lines(report, "merge:") == ["merge: PR #50 changed 1 file(s)"]
     assert report.exit_code == ps.EXIT_FINDING
 
