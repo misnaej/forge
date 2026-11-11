@@ -953,20 +953,13 @@ options:
 ## forge-resync
 
 ```text
-usage: forge-resync [-h] [--resolve-conflicts] [--dry-run]
+usage: forge-resync [-h]
 
 Regenerate forge-managed artifacts and open a dedup-guarded resync PR when
 they drifted.
 
 options:
-  -h, --help           show this help message and exit
-  --resolve-conflicts  Mid-merge: when every conflicted path is a forge-
-                       generated artifact, regenerate each from the merged
-                       tree, verify with its --check, and stage it (the merge
-                       commit stays yours). Refuses, touching nothing, if any
-                       other path conflicts.
-  --dry-run            With --resolve-conflicts: report the verdict only (exit
-                       0 = resolvable).
+  -h, --help  show this help message and exit
 ```
 
 ## forge-scratch-repo
@@ -1068,6 +1061,24 @@ options:
   --history      print the run-history trend table from
                  code_health/telemetry_history.log and exit (no command, no
                  psutil)
+```
+
+## forge-update-branch
+
+```text
+usage: forge-update-branch [-h] [--continue] [--base BASE] [--no-push]
+
+Merge the base into the current branch, resolve the predictable conflicts, and
+commit the merge (exit 0 done, 1 refused, 2 push failed, 3 stopped on
+conflicts that need judgment).
+
+options:
+  -h, --help   show this help message and exit
+  --continue   Finish a merge in progress after resolving its remaining
+               conflicts.
+  --base BASE  Branch to merge from (default: [tool.forge].base_branch); a
+               stacked branch passes its parent.
+  --no-push    Commit only.
 ```
 
 ## forge-upgrade

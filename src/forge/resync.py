@@ -25,12 +25,9 @@ adoption-required changes; ``forge-upgrade --check`` lists those.
 Invocation surfaces: manual run, a scheduled CI workflow
 (``forge-docs/ci-recipe.md``), and ``/next`` offering it on detected drift.
 
-``--resolve-conflicts`` is a second, unrelated mode: mid-merge, when
-every conflicted path is a forge-generated artifact, it regenerates
-each from the merged tree, verifies with the generator's ``--check``,
-and stages it (the merge commit stays the caller's); it refuses,
-touching nothing, if any other path also conflicts. ``--dry-run``
-reports the verdict only. See :func:`_resolve_conflicts`.
+:func:`regenerate_artifact` is also the generated-artifact half of
+``forge-update-branch``'s conflict resolution: a generated file's
+post-merge content is regenerated from the merged tree, never merged.
 """
 
 from __future__ import annotations
@@ -49,16 +46,14 @@ from forge.git_utils import (
     create_commit,
     find_open_pr_by_head_prefix,
     forge_cli_argv,
-    merge_in_progress,
     push_branch,
     repo_root,
     require_cli,
     run_gate_evidence,
     run_git,
-    unmerged_paths,
 )
 from forge.install_bootstrap import run_in_process as _bootstrap_run
-from forge.pr_delta import PROVENANCE_GATE_STEPS, regen_commands
+from forge.pr_delta import PROVENANCE_GATE_STEPS
 from forge.run_context import progress_logger
 
 
@@ -249,8 +244,13 @@ def _publish_resync(root: Path, version: str, base_branch: str) -> int:
     return 0
 
 
-def _regenerate(root: Path, path: str, argv: tuple[str, ...]) -> bool:
+def regenerate_artifact(root: Path, path: str, argv: tuple[str, ...]) -> bool:
     """Regenerate one artifact from the merged tree and byte-verify it.
+
+    The correct post-merge content of a generated file is ``regenerate()``
+    from the merged source tree — never a textual merge of two sides,
+    which can only be right by coincidence. Run once every other conflict
+    is resolved, so the generator reads the settled sources.
 
     Args:
         root: Repo root passed to the generator as cwd.
@@ -262,7 +262,7 @@ def _regenerate(root: Path, path: str, argv: tuple[str, ...]) -> bool:
     """
     # From the running install, never by PATH name (see forge_cli_argv).
     launch = [
-        *forge_cli_argv(argv[0], caller="forge-resync --resolve-conflicts"),
+        *forge_cli_argv(argv[0], caller="forge-update-branch"),
         *argv[1:],
     ]
     gen = subprocess.run(launch, cwd=root, capture_output=True, text=True, check=False)
@@ -286,73 +286,13 @@ def _regenerate(root: Path, path: str, argv: tuple[str, ...]) -> bool:
     return True
 
 
-def _resolve_conflicts(root: Path, *, dry_run: bool) -> int:
-    """Resolve a merge whose only conflicts are forge-generated artifacts.
-
-    The correct post-merge content of a generated file is
-    ``regenerate()`` from the merged source tree — never a textual merge
-    of two sides, which can only be right by coincidence. By the time git
-    reports the conflict every non-conflicting path is already merged in
-    the working tree, so regenerating here reads the right sources (a
-    git merge driver would not: git invokes drivers before the rest of
-    the tree settles). Mirrors ``forge-rebump``'s refusal contract: any
-    other conflicted path means this tool touches nothing.
-
-    Args:
-        root: Repo root.
-        dry_run: Report the verdict without regenerating or staging — the
-            ``warn_generated_conflicts`` hook's probe.
-
-    Returns:
-        ``0`` when every conflicted path is a known generated artifact
-        (and, unless *dry_run*, each was regenerated, verified, and
-        staged — the merge commit stays the caller's); ``2`` when no merge
-        is in progress, nothing is conflicted, a non-generated path
-        conflicts, or a generator fails.
-    """
-    if not merge_in_progress(root):
-        logger.error("forge-resync: no merge in progress — nothing to resolve.")
-        return 2
-    conflicted = unmerged_paths(root)
-    if not conflicted:
-        logger.error("forge-resync: merge in progress but nothing is conflicted.")
-        return 2
-    commands = regen_commands(root)
-    foreign = [p for p in conflicted if p not in commands]
-    if foreign:
-        logger.error(
-            "forge-resync: refusing — non-generated path(s) also conflict, resolve "
-            "those by hand first: %s",
-            ", ".join(foreign),
-        )
-        return 2
-    if dry_run:
-        logger.info(
-            "forge-resync: only generated artifacts conflict (%s) — "
-            "`forge-resync --resolve-conflicts` regenerates and stages them.",
-            ", ".join(conflicted),
-        )
-        return 0
-    for path in conflicted:
-        if not _regenerate(root, path, commands[path]):
-            return 2
-        run_git("add", path, cwd=root)
-    logger.info(
-        "✓ staged %d regenerated artifact(s); finish the merge with "
-        "forge-commit, naming every staged path.",
-        len(conflicted),
-    )
-    return 0
-
-
 def main() -> int:
     """Run the resync loop; see the module docstring for the steps.
 
     Returns:
         ``0`` when in sync, deduplicated, or the PR was opened; ``1`` on
         a dirty tree or failed PR creation; the bootstrap's exit code
-        when regeneration itself fails. With ``--resolve-conflicts``:
-        :func:`_resolve_conflicts`'s codes.
+        when regeneration itself fails.
     """
     parser = argparse.ArgumentParser(
         prog="forge-resync",
@@ -361,28 +301,9 @@ def main() -> int:
             "resync PR when they drifted."
         ),
     )
-    parser.add_argument(
-        "--resolve-conflicts",
-        action="store_true",
-        help=(
-            "Mid-merge: when every conflicted path is a forge-generated "
-            "artifact, regenerate each from the merged tree, verify with its "
-            "--check, and stage it (the merge commit stays yours). Refuses, "
-            "touching nothing, if any other path conflicts."
-        ),
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="With --resolve-conflicts: report the verdict only (exit 0 = resolvable).",
-    )
-    args = parser.parse_args()
-    if args.dry_run and not args.resolve_conflicts:
-        parser.error("--dry-run only applies with --resolve-conflicts")
+    parser.parse_args()
 
     root = repo_root()
-    if args.resolve_conflicts:
-        return _resolve_conflicts(root, dry_run=args.dry_run)
     require_cli(
         "gh",
         caller="forge-resync",

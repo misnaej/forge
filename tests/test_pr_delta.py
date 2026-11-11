@@ -339,7 +339,7 @@ def test_release_assembly_diff_source_path_disqualifies() -> None:
 def test_regen_commands_pins_literal_contents() -> None:
     """The generator argv per artifact is pinned.
 
-    `forge-resync --resolve-conflicts` and every `forge-precommit`
+    `forge-update-branch` and every `forge-precommit`
     `*_check` step key off this dict verbatim — a silent rename or
     reorder here would desync them without either failing loudly.
     """

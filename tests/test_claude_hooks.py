@@ -21,7 +21,13 @@ from typing import TYPE_CHECKING
 import pytest
 
 from forge.git_utils import code_health_dir
-from tests.conftest import GIT_ENV, init_git_repo, init_single_track_repo
+from tests.conftest import (
+    GIT_ENV,
+    commit_all,
+    git_stdout,
+    init_git_repo,
+    init_single_track_repo,
+)
 
 
 if TYPE_CHECKING:
@@ -6182,6 +6188,30 @@ def test_commit_format_blocks_wip_sync_prefix_without_env() -> None:
     assert "BLOCKED" in proc.stderr
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        'FORGE_MERGE_SYNC=1 git commit -m "feat: x"',
+        'export FORGE_MERGE_SYNC=1; git commit -m "feat: x"',
+    ],
+)
+def test_commit_format_blocks_merge_sync_env(command: str) -> None:
+    """FORGE_MERGE_SYNC is set only by forge-update-branch; typing it is blocked.
+
+    Args:
+        command: Shell command that sets FORGE_MERGE_SYNC before `git commit`.
+    """
+    proc = _run_hook_proc(_COMMIT_FORMAT, command)
+    assert proc.returncode == 2
+    assert "forge-update-branch" in proc.stderr
+
+
+def test_commit_format_allows_plain_conventional_without_merge_sync() -> None:
+    """A plain conventional commit is untouched by the FORGE_MERGE_SYNC guard."""
+    proc = _run_hook_proc(_COMMIT_FORMAT, 'git commit -m "feat: x"')
+    assert proc.returncode == 0
+
+
 def test_commit_format_blocks_env_with_no_message() -> None:
     """FORGE_WIP_SYNC=1 with no `-m` at all has nothing to pair against — blocked."""
     proc = _run_hook_proc(_COMMIT_FORMAT, "FORGE_WIP_SYNC=1 git commit")
@@ -6965,113 +6995,89 @@ def test_warn_stale_wrapup_fires_in_compound_command(tmp_path: Path) -> None:
     assert "PR #42" in proc.stdout
 
 
-# --- warn_generated_conflicts.sh: post-merge generated-artifact instruction -
+# --- warn_merge_conflicts.sh: post-merge `--continue` instruction ----------
 
-_WARN_GENERATED_CONFLICTS = "warn_generated_conflicts.sh"
+_WARN_MERGE_CONFLICTS = "warn_merge_conflicts.sh"
 
 
-def _stub_forge_resync(tmp_path: Path, exit_code: int) -> dict[str, str]:
-    """Build a `forge-resync` stub on one PATH-prepended dir.
+def _repo_merging(tmp_path: Path, *, conflict: bool) -> Path:
+    """Build a real repo with a merge of `other` in progress.
 
     Args:
-        tmp_path: Directory to build the stub and RECORD file under.
-        exit_code: The `--resolve-conflicts --dry-run` probe's exit code —
-            0 means "only generated artifacts conflict", non-zero means
-            "not mechanically resolvable" (git_utils's own contract).
+        tmp_path: Directory to build the repo in.
+        conflict: Whether both sides edit the same line (merge stops on
+            conflicts) or `other` adds an unrelated file (clean, uncommitted).
 
     Returns:
-        An environment whose `PATH` finds the stub first; `RECORD` points
-        at the invocation log (read via `_record`).
+        The repo root, mid-merge.
     """
-    stub_dir = tmp_path / "stub_bin"
-    stub_dir.mkdir()
-    stub = stub_dir / "forge-resync"
-    stub.write_text(f'#!/usr/bin/env bash\necho "$@" >> "$RECORD"\nexit {exit_code}\n')
-    stub.chmod(0o755)
+    init_git_repo(tmp_path)
+    (tmp_path / "f.txt").write_text("base\n", encoding="utf-8")
+    commit_all(tmp_path, "seed")
+    git_stdout(tmp_path, "checkout", "-q", "-b", "other")
+    if conflict:
+        (tmp_path / "f.txt").write_text("other\n", encoding="utf-8")
+    else:
+        (tmp_path / "g.txt").write_text("g\n", encoding="utf-8")
+    commit_all(tmp_path, "other side")
+    git_stdout(tmp_path, "checkout", "-q", "main")
+    if conflict:
+        (tmp_path / "f.txt").write_text("main\n", encoding="utf-8")
+        commit_all(tmp_path, "main side")
+    subprocess.run(
+        ["git", "merge", "--no-commit", "--no-ff", "other"],
+        cwd=tmp_path,
+        env=GIT_ENV,
+        check=False,
+        capture_output=True,
+    )
+    return tmp_path
 
-    env = dict(os.environ)
-    env["PATH"] = f"{stub_dir}{os.pathsep}{env['PATH']}"
-    env["RECORD"] = str(tmp_path / "argv.log")
-    return env
 
-
-def test_warn_generated_conflicts_prints_instruction_when_resolvable(
+def test_warn_merge_conflicts_names_continue_when_merge_stopped(
     tmp_path: Path,
 ) -> None:
-    """SCENARIO: a merge leaves only forge-generated artifacts conflicted.
+    """SCENARIO: `git merge` left unmerged paths behind.
 
-    MOCK SETUP: `forge-resync --resolve-conflicts --dry-run` stub exits 0.
-    EXPECTED BEHAVIOR: the hook prints the mechanical-fix instruction
-    naming `forge-resync --resolve-conflicts` and exits 0.
+    EXPECTED BEHAVIOR: the hook prints the `forge-update-branch --continue`
+    instruction and exits 0 (read-only, never blocks).
     """
-    env = _stub_forge_resync(tmp_path, 0)
+    repo = _repo_merging(tmp_path, conflict=True)
     proc = _run_hook_proc(
-        _WARN_GENERATED_CONFLICTS,
+        _WARN_MERGE_CONFLICTS,
         "git merge other",
-        options=HookOptions(cwd=tmp_path, env=env),
+        options=HookOptions(cwd=repo),
     )
     assert proc.returncode == 0
-    assert "forge-resync --resolve-conflicts" in proc.stdout
-    assert "--resolve-conflicts --dry-run" in _record(env)
+    assert "forge-update-branch --continue" in proc.stdout
 
 
-def test_warn_generated_conflicts_silent_when_not_resolvable(tmp_path: Path) -> None:
-    """SCENARIO: the merge's conflicts are not all forge-generated artifacts.
+def test_warn_merge_conflicts_silent_when_merge_is_clean(tmp_path: Path) -> None:
+    """SCENARIO: the merge is in progress but nothing is unmerged.
 
-    MOCK SETUP: the dry-run probe stub exits 2 (git_utils's refusal code).
-    EXPECTED BEHAVIOR: no instruction is printed — a merge with real
-    source conflicts gets no mechanical-fix suggestion.
+    EXPECTED BEHAVIOR: no instruction — only conflicts are worth a line.
     """
-    env = _stub_forge_resync(tmp_path, 2)
+    repo = _repo_merging(tmp_path, conflict=False)
     proc = _run_hook_proc(
-        _WARN_GENERATED_CONFLICTS,
+        _WARN_MERGE_CONFLICTS,
         "git merge other",
-        options=HookOptions(cwd=tmp_path, env=env),
+        options=HookOptions(cwd=repo),
     )
     assert proc.returncode == 0
     assert proc.stdout == ""
 
 
-def test_warn_generated_conflicts_ignores_non_merge_command(tmp_path: Path) -> None:
-    """SCENARIO: an ordinary Bash call with no `git merge` in it.
+def test_warn_merge_conflicts_ignores_non_merge_command(tmp_path: Path) -> None:
+    """SCENARIO: conflicted tree, but the Bash call is not a `git merge`.
 
-    MOCK SETUP: the probe stub is ready to answer "resolvable".
-    EXPECTED BEHAVIOR: the hook exits before ever probing `forge-resync` —
-    this hook fires on every Bash call, so the non-match path must cost
-    nothing.
+    EXPECTED BEHAVIOR: silent — the hook fires on every Bash call and
+    must not nag after unrelated commands.
     """
-    env = _stub_forge_resync(tmp_path, 0)
+    repo = _repo_merging(tmp_path, conflict=True)
     proc = _run_hook_proc(
-        _WARN_GENERATED_CONFLICTS,
+        _WARN_MERGE_CONFLICTS,
         "git status",
-        options=HookOptions(cwd=tmp_path, env=env),
-    )
-    assert proc.returncode == 0
-    assert proc.stdout == ""
-    assert _record(env) == ""
-
-
-def test_warn_generated_conflicts_silent_when_forge_resync_missing(
-    tmp_path: Path,
-) -> None:
-    """SCENARIO: `forge-resync` is unreachable (older forge, broken install).
-
-    MOCK SETUP: PATH is stripped of every directory that resolves a real
-    `forge-resync` binary — same technique as
-    `test_warn_stale_wrapup_silent_when_forge_pr_plan_missing`.
-    EXPECTED BEHAVIOR: the hook's `command -v forge-resync` guard exits
-    before ever probing — no instruction is printed.
-    """
-    stripped_path = os.pathsep.join(
-        d
-        for d in os.environ.get("PATH", "").split(os.pathsep)
-        if not (Path(d) / "forge-resync").is_file()
-    )
-    env = {**os.environ, "PATH": stripped_path}
-    proc = _run_hook_proc(
-        _WARN_GENERATED_CONFLICTS,
-        "git merge other",
-        options=HookOptions(cwd=tmp_path, env=env),
+        options=HookOptions(cwd=repo),
     )
     assert proc.returncode == 0
     assert proc.stdout == ""
@@ -7082,7 +7088,7 @@ def test_warn_generated_conflicts_silent_when_forge_resync_missing(
     [
         pytest.param(_KEEP_SQUASH_LAST, id="keep_squash_last"),
         pytest.param(_WARN_STALE_WRAPUP, id="warn_stale_wrapup"),
-        pytest.param(_WARN_GENERATED_CONFLICTS, id="warn_generated_conflicts"),
+        pytest.param(_WARN_MERGE_CONFLICTS, id="warn_merge_conflicts"),
     ],
 )
 def test_hook_registered_as_a_post_tool_hook(hook: str) -> None:

@@ -1,6 +1,6 @@
 # Git safety
 
-Procedure behind [`FOUNDATION.md` §2](../FOUNDATION.md#2-core-safety-rules) git rules: gate kinds, guard bypass, destructive forms, dirty-tree sync ladder. Rules live in §2; this page is how.
+Procedure behind [`FOUNDATION.md` §2](../FOUNDATION.md#2-core-safety-rules) git rules: gate kinds, guard bypass, destructive forms, base sync. Rules live in §2; this page is how.
 
 ## Gate kinds
 
@@ -98,39 +98,57 @@ not yours.
   `/branches/{branch}/protection` endpoint alone (FOUNDATION §1 "Absence of
   evidence").
 
-## Sync ladder
 
-Sanctioned dirty-tree base sync. Never `git reset --hard`, never stash
-(stash is in no sanctioned procedure).
+## Base sync
 
-1. **Probe**: `git merge-tree --write-tree origin/<base> HEAD`. Does real
-   merge, touches neither tree nor index. Judge by **exit status**
-   (0 clean / 1 conflicts), never output emptiness.
-2. **Probe clean and index clean** → plain `git merge origin/<base>`. Git's
-   own dirty-overlap guard is backstop.
-3. **Otherwise** secure work as **checkpoint commit** first:
-   `forge-commit --wip-sync -m "wip-sync: <what>"` — stages the whole tree
-   (untracked included) and commits with the gate deferred to the next real
-   commit; add `--no-push` to keep it local. PR squash erases the
-   checkpoint. Then merge on clean tree. Humans may type the inline form
-   instead: `git add -A`, then `FORGE_WIP_SYNC=1 git commit -m "wip-sync: <what>"`.
+One command: `forge-update-branch` (`--base <parent>` for a stacked
+branch, `--no-push` to keep it local). Never rebase, never stash, never
+`git reset --hard`.
+
+1. Refuses on the protected branch or a detached HEAD; fetches the base;
+   already up to date → exit 0.
+2. Dirty tree → a `wip-sync:` checkpoint commit first (the whole tree,
+   untracked included; gate deferred to the next real commit; the PR
+   squash erases it). `forge-commit --wip-sync -m "wip-sync: <what>"` is
+   the same checkpoint by hand.
+3. Merges without committing, then resolves what is mechanical:
+   - **files the branch already holds** — the base's version appears in
+     this branch's own history, so the base brings nothing new and the
+     branch side wins;
+   - **generated artifacts** — regenerated from the merged tree once no
+     source conflicts remain, never textually merged;
+   - **the version slot** — `forge-rebump`'s resolution.
+4. All resolved → commits the merge (no local gate, like a merge git
+   completes itself: CI and the next commit check it) and pushes.
+5. Otherwise exit 3: the merge stays in progress, the paths are listed,
+   an intake lesson records the stop. `forge:merge-resolver` edits the
+   files (or the main agent does), then `forge-update-branch --continue`
+   stages marker-free files, re-runs step 3, refuses any staged change
+   outside the conflicted files, and commits — through the pre-commit
+   gate when a file was edited by hand. The main agent adds why the
+   conflict needed judgment to the intake lesson; a recurring class is
+   filed as an issue.
+
+`forge-commit` refuses while a merge is in progress and names
+`--continue`: a merge is mostly reviewed base work, which no list of the
+caller's own files describes.
+
+**Stacked PRs conflict on every parent landing — expected, not a
+mistake.** Forge squash-merges, and a squash commit shares no ancestry
+with the parent branch, so when the child syncs, git cannot tell the
+child already holds the parent's changes, and every file the child
+changed after the parent conflicts. The base side there is exactly the
+parent's final version, already in the child's history, so step 3
+resolves it; only files the base changed beyond the parent reach a
+person.
 
 Notes:
 
-- Merge git completes itself commits through `pre-merge-commit`, a hook
-  forge does not install → no local gate, by design: CI runs
-  `forge-precommit` on every PR and push, next commit's gate checks merged
-  state, check logs are tree-stamped so `--freshness` and PR evidence read
-  pre-merge logs as stale.
-- Conflicted merge → resolve, stage, then `forge-commit -m "<msg>" <paths>`
-  naming every staged path (`git diff --cached --no-renames --name-only`
-  — lists both halves of a rename, as `forge-commit` requires); gated as
-  usual.
+- `FORGE_MERGE_SYNC` (the merge commit's gate deferral) is set only by
+  the command and honoured only mid-merge; `check_commit_format` refuses
+  it typed. Humans: never `export FORGE_WIP_SYNC` in a persistent shell —
+  it silently defers the gate on every later commit.
 - `git merge --abort` permitted **only after** a checkpoint secured work
   (git documents it lossy for uncommitted changes).
-- Humans: never `export FORGE_WIP_SYNC` in a persistent shell — silently
-  defers gate on every later commit. Use inline, once.
-- Who runs it: main agent (agents never type `git commit`). A `wip-sync:`
-  checkpoint is the one commit whose gate legitimately defers.
-- Stranded-changelog recovery mid-branch: `git merge origin/<base>` via
-  this ladder first, then `forge-changelog restrand`.
+- Stranded-changelog recovery mid-branch: `forge-update-branch` first,
+  then `forge-changelog restrand`.

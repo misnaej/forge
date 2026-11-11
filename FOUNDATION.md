@@ -163,7 +163,7 @@ never bypasses that gate.
 
 ## 2. Core Safety Rules
 
-Git procedures (gate kinds, destructive forms, sync ladder):
+Git procedures (gate kinds, destructive forms, base sync):
 [`forge-docs/git-safety.md`](forge-docs/git-safety.md).
 
 - **NEVER install dependencies** (`pip install`, `conda install`). Tell user
@@ -210,12 +210,10 @@ Git procedures (gate kinds, destructive forms, sync ladder):
   work, forced switch, commit-dropping branch reset, or `git stash` beyond
   `list` / `show`. They un-commit published history or destroy work that,
   in a shared checkout, may not be yours. Unstage with
-  `git restore --staged <path>`. Dirty-tree base sync = **sync ladder**
-  (probe `git merge-tree --write-tree`, merge, else `wip-sync:` checkpoint
-  commit via `forge-commit --wip-sync`; `git merge --abort` only after
-  that checkpoint); stash is in no sanctioned
+  `git restore --staged <path>`. Base sync = **`forge-update-branch`**
+  (checkpoints a dirty tree itself); stash is in no sanctioned
   procedure. `block_git_destructive` enforces, **no bypass**; human:
-  `! git ...`. Full form list, allowed exceptions, ladder:
+  `! git ...`. Full form list, allowed exceptions, base sync:
   [`forge-docs/git-safety.md`](forge-docs/git-safety.md).
 - **On deviation: STOP and report.** State not as expected → halt,
   surface — never undo, rewind, or clean. Unwanted commit is fixable;
@@ -273,8 +271,8 @@ forbidden.
 ### Agent naming convention
 
 Foundation agents resolve as `forge:<name>`; bare name fails with
-`Agent type '<name>' not found`. The twelve:
-`forge:design-checker`, `forge:docs-types-checker`, `forge:issue-triage`, `forge:knowledge-search`, `forge:perf-optimizer`,
+`Agent type '<name>' not found`. The thirteen:
+`forge:design-checker`, `forge:docs-types-checker`, `forge:issue-triage`, `forge:knowledge-search`, `forge:merge-resolver`, `forge:perf-optimizer`,
 `forge:pr-manager`, `forge:precommit-fixer`, `forge:prior-art`,
 `forge:security-checker`, `forge:test-advisor`, `forge:test-writer`,
 `forge:weekly-summary`.
@@ -290,6 +288,7 @@ delegate per §16 Pattern A.
 | Edit existing file | `forge:design-checker` (or delegating `design-checker-<repo>` wrapper) | **BEFORE** writing code |
 | Clear pre-commit failures | `forge:precommit-fixer` | Before commit |
 | Commit + push | `forge-commit` command (no agent) | After `forge:precommit-fixer` |
+| Merge conflict needing judgment | `forge:merge-resolver` | `forge-update-branch` exit 3 |
 | Plan test coverage / review tests | `forge:test-advisor` | Before writing tests; after, to review |
 | Write tests | `forge:test-writer` | After `forge:test-advisor` (advise) |
 | Design / security review | `forge:design-checker` / `forge:security-checker` | Reports only — main agent acts |
@@ -437,7 +436,7 @@ Mechanics (modes, commands, templates): the `/pr` skill. Rules:
   - **A CI run concluding in failure** → surface, investigate (§1); never auto-push fixes.
   - **Wrap-up staleness** — `forge-pr-plan --freshness --pr <N>` → `fresh: false` → alert **once per new head**, naming both SHAs. Refresh = `/pr <N>` (delta mode) by whoever picks up work; newer `verified-at:` clears signal. `fresh: null` (no `gh`, no wrap-up yet) = unknown: skip poll, never alert, retry next cycle. **The monitor never posts the refresh.** `warn_stale_wrapup` Claude Code hook runs same verdict after every agent `git push` (at-the-cause); monitor covers pushes elsewhere. Both read-only.
 
-  **Resolving a conflict** — whoever picks up work, never monitor: plain `git merge origin/<base>` (§2: never rebase; dirty tree → §2 sync ladder, never `reset --hard`). No permission needed — merge commit destroys nothing. Care goes into resolution: read each side's intent, keep both, ask only when a side's purpose is undeterminable (question about code, not permission). Forge-generated artifacts (api-digest, cli-reference, FOUNDATION, C4 model) are pure functions of merged tree → `regenerate()`, never textual merge: `forge-resync --resolve-conflicts` (refuses if anything else conflicts); `warn_generated_conflicts` hook names it after merge.
+  **Resolving a conflict** — whoever picks up work, never monitor: `forge-update-branch` (§2: never rebase). No permission needed — merge commit destroys nothing. It resolves the mechanical conflicts itself (generated artifacts regenerated, never textually merged; version slot; files the branch already holds — every stacked child after its parent's squash) and stops on the rest: `forge:merge-resolver` reads each side's intent, keeps both, escalates when a side's purpose is undeterminable; then `forge-update-branch --continue` commits.
 
   Main session stays free. Skip only on explicit user request or `forge.run_context.is_ci()` — never `is_non_interactive()` (§15).
 
@@ -636,7 +635,7 @@ note holds what they don't: where work stands now, and why.
      too), by `forge-pr-wrapup post`, and by a `PreCompact` hook before
      compaction.
    - Not written in CI, by `forge-precommit --only` or `--skip` runs, by a
-     `FORGE_WIP_SYNC` checkpoint (none is a real attempt), or when note is
+     checkpoint or `forge-update-branch` merge (none is a real attempt), or when note is
      not gitignored — that refusal is logged, never silent.
 2. **The written section** — everything outside panel, written by main
    agent: intent, decisions and why, what was rejected, open question,

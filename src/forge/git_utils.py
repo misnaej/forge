@@ -1231,8 +1231,8 @@ def unmerged_paths(repo_root: Path) -> list[str]:
     The conflicted set of an in-progress merge — what ``git status`` lists
     as "both modified". Shared by every tool that resolves a known class
     of conflict mechanically (``forge-rebump`` for the version slot,
-    ``forge-resync --resolve-conflicts`` for generated artifacts) so they
-    agree on what "conflicted" means.
+    ``forge-update-branch`` for generated artifacts and already-merged
+    files) so they agree on what "conflicted" means.
 
     Args:
         repo_root: Git repo root.

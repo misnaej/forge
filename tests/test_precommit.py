@@ -1095,6 +1095,51 @@ def test_main_wip_sync_env_unset_runs_normal_path(
     assert len(calls) == 1
 
 
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param((True, "1", True), id="mid-merge"),
+        pytest.param((False, "1", False), id="no-merge-in-progress"),
+        pytest.param((True, "true", False), id="near-miss-value"),
+    ],
+)
+def test_main_merge_sync_env_honoured_only_mid_merge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    case: tuple[bool, str, bool],
+) -> None:
+    """FORGE_MERGE_SYNC=1 skips the battery only while a merge is in progress.
+
+    SCENARIO: forge-update-branch commits its resolved merge with the env
+    set; a stray export outside a merge must not disable the gate.
+    MOCK SETUP: get_repo_root pinned to tmp_path; merge_in_progress forced;
+    run_all replaced with a spy.
+    EXPECTED BEHAVIOR: mid-merge returns 0 with the banner and no run_all
+    call; otherwise run_all fires once.
+
+    Args:
+        case: Whether a merge is in progress, the FORGE_MERGE_SYNC value,
+            and whether the battery is expected to be skipped.
+    """
+    merging, env_value, gate_skipped = case
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(precommit, "merge_in_progress", lambda _root: merging)
+    monkeypatch.setenv("FORGE_MERGE_SYNC", env_value)
+    spy, calls = _run_all_spy()
+    monkeypatch.setattr(precommit, "run_all", spy)
+    with patch.object(precommit.sys, "argv", ["forge-precommit"]):
+        rc = precommit.main()
+    assert rc == 0
+    out = capsys.readouterr().out
+    if gate_skipped:
+        assert "forge-update-branch" in out
+        assert calls == []
+    else:
+        assert "forge-update-branch" not in out
+        assert len(calls) == 1
+
+
 @pytest.mark.parametrize("value", ["true", "0"])
 def test_main_wip_sync_near_miss_values_run_normal_path(
     value: str,
@@ -7073,7 +7118,7 @@ def test_step_changelog_version_stale_branch_guidance_when_tag_only_on_base(
     assert not result.passed
     assert not result.non_blocking
     assert "Stale branch:" in result.output
-    assert "git merge origin/main" in result.output
+    assert "forge-update-branch --base main" in result.output
     assert "will not work" in result.output
 
 

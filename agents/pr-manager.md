@@ -108,7 +108,7 @@ gh pr view <PR#> --json mergeable,baseRefName
 git rev-list --left-right --count origin/<base>...HEAD   # left = behind
 ```
 
-`CONFLICTING` → **stop and report** (caller resolves + re-invokes; when only forge-generated artifacts conflict the caller runs `forge-resync --resolve-conflicts` — never a hand-merge of a generated file); behind-but-clean → merge the base and proceed, disclosed per Output — **no confirmation needed** (FOUNDATION §6's resolution rule; /pr Step 0.5).
+`CONFLICTING` → **stop and report** (caller runs `forge-update-branch`, then `forge:merge-resolver` on an exit 3, and re-invokes); behind-but-clean → `forge-update-branch` and proceed, disclosed per Output — **no confirmation needed** (FOUNDATION §6's resolution rule; /pr Step 0.5).
 
 **Two modes.** *Evidence-supplied* ("Supplied evidence" above): every step below whose
 evidence was handed over is skipped. *Direct

@@ -26,10 +26,13 @@ Usage:
 
 - ``forge-commit -m "fix: x" path/a path/b`` — commit, then push.
 - ``forge-commit -m "fix: x" --no-push path/a`` — commit only.
-- ``forge-commit --push-only`` — push commits that already exist (a merge
-  commit, work committed earlier).
+- ``forge-commit --push-only`` — push commits that already exist.
 - ``forge-commit --wip-sync -m "wip-sync: <what>"`` — checkpoint the whole
-  dirty tree before a base merge (sync ladder); the gate is deferred.
+  dirty tree; the gate is deferred (``forge-update-branch`` takes one
+  itself before merging the base).
+
+Merges are not commits of the caller's own edits: while one is in
+progress every form refuses and names ``forge-update-branch --continue``.
 """
 
 from __future__ import annotations
@@ -51,6 +54,7 @@ from forge.git_utils import (
     configure_cli_logging,
     create_commit,
     git_env_overrides_removed,
+    merge_in_progress,
     push_branch,
     repo_root,
     run_git,
@@ -182,6 +186,27 @@ def current_branch(root: Path) -> str:
     return branch
 
 
+def refuse_mid_merge(root: Path) -> None:
+    """Refuse while a merge is in progress: merges belong to ``forge-update-branch``.
+
+    A merge is mostly work already reviewed on the base, so a list of the
+    caller's own files cannot describe it; ``forge-update-branch
+    --continue`` checks and commits it instead.
+
+    Args:
+        root: Repo root.
+
+    Raises:
+        CommitRefusedError: When ``MERGE_HEAD`` exists.
+    """
+    if merge_in_progress(root):
+        msg = (
+            "a merge is in progress; forge-commit commits your own edits, not "
+            "merges. Finish it with `forge-update-branch --continue`."
+        )
+        raise CommitRefusedError(msg)
+
+
 def check_verdict(root: Path) -> None:
     """Refuse unless the latest pre-commit verdict passed on this tree.
 
@@ -291,25 +316,21 @@ def stage_exactly(root: Path, paths: tuple[str, ...]) -> None:
 def committed_paths(root: Path) -> set[str]:
     """Paths the HEAD commit changed.
 
-    A merge is diffed against its first parent explicitly: ``git show``
-    prints a merge's combined diff, which lists only paths differing from
-    every parent, so a resolved merge read as missing its staged files.
-    ``--diff-merges=first-parent``, not ``-m --first-parent``: ``-m`` emits
-    one diff per parent, so the paths became the union of both sides.
+    Never a merge: :func:`refuse_mid_merge` sends those to
+    ``forge-update-branch``.
 
     Args:
         root: Repo root.
 
     Returns:
-        The repo-relative paths in HEAD's diff against its first parent
-        (every path, for a root commit).
+        The repo-relative paths in HEAD's diff against its parent (every
+        path, for a root commit).
     """
     return _git_paths(
         root,
         "diff-tree",
         "-r",
         "--root",
-        "--diff-merges=first-parent",
         "--no-commit-id",
         "--name-only",
         "-z",
@@ -373,6 +394,7 @@ def commit_and_push(root: Path, request: Request) -> int:
         CommitRefusedError: When any guard refuses; nothing is committed then.
     """
     branch = current_branch(root)
+    refuse_mid_merge(root)
     check_message(request.message)
     # Stage before reading the verdict: a new file is untracked until now,
     # pre-commit passes over untracked files, and the verdict would refuse
@@ -410,10 +432,10 @@ def commit_and_push(root: Path, request: Request) -> int:
 def checkpoint(root: Path, message: str, *, push_after: bool) -> int:
     """Commit the whole working tree as a ``wip-sync:`` checkpoint.
 
-    The sync ladder's step 3 (``forge-docs/git-safety.md``): secure dirty
-    work before merging the base in. The gate is deferred, as for the
-    human ``FORGE_WIP_SYNC=1`` form — the pre-commit hook reads that
-    variable and runs no steps — and the next real commit and the PR squash
+    Secures dirty work before merging the base in; ``forge-update-branch``
+    calls it itself (``forge-docs/git-safety.md`` "Base sync"). The gate is
+    deferred, as for the human ``FORGE_WIP_SYNC=1`` form: the pre-commit hook
+    reads that variable and runs no steps, and the next real commit and the PR squash
     run the full battery. So no verdict is read and no file list is
     compared: the checkpoint takes everything, untracked files included.
 
@@ -431,6 +453,7 @@ def checkpoint(root: Path, message: str, *, push_after: bool) -> int:
             AI attribution, or a clean tree.
     """
     branch = current_branch(root)
+    refuse_mid_merge(root)
     if not message.startswith(WIP_SYNC_PREFIX):
         msg = f"a checkpoint message must start with {WIP_SYNC_PREFIX!r}."
         raise CommitRefusedError(msg)
