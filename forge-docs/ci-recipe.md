@@ -199,6 +199,14 @@ Notes:
   the snippet above, there is nothing else to look at — with several,
   name the job that runs the tests and know that its siblings are not
   part of the evidence.
+- **The base is not part of the match.** The run is identified by the
+  pull request's head commit, branch and repository, not by what it was
+  merging into. One head commit can belong to two pull requests with
+  different bases — a retarget, or a reopen against another base — and
+  each run tested the merge with its own base. GitHub produces no new
+  run for a bare retarget (the `pull_request` trigger here has no
+  `edited` type), so the exposure is narrow, but the gate cannot tell
+  those runs apart.
 - **The job's success is what gets trusted, so the test step must carry
   no condition of its own** beyond the gate's output. A job concludes
   success with a step skipped by its own `if:`, or passing under

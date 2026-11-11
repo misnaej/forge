@@ -390,19 +390,30 @@ def _workflow_path(workflow_ref: str | None) -> str | None:
     return path if path.endswith((".yml", ".yaml")) else None
 
 
-def _run_is_this_pulls(run: dict[str, object], origin: tuple[str, str]) -> bool:
+def _run_is_this_pulls(
+    run: dict[str, object],
+    origin: tuple[str, str],
+    pr_head: str,
+) -> bool:
     """Whether *run* belongs to the pull request *origin* describes.
+
+    The commit is re-checked here even though the query already asks the
+    server for one ``head_sha``: a branch and a repository do not pin a
+    commit, so an earlier push to the same branch matches both halves of
+    the origin. Repeating the comparison locally means the guarantee is
+    in this function rather than in a query parameter.
 
     Args:
         run: A workflow-run object from the API.
         origin: The pull request's ``(repository full name, branch)``.
+        pr_head: The pull request's head commit SHA.
 
     Returns:
-        True when the run's head repository and branch are that pull
-        request's. A run missing either field is not this one.
+        True when the run's head commit, repository and branch are that
+        pull request's. A run missing any of them is not this one.
     """
     full_name, ref = origin
-    if run.get("head_branch") != ref:
+    if run.get("head_sha") != pr_head or run.get("head_branch") != ref:
         return False
     repo = run.get("head_repository")
     return isinstance(repo, dict) and repo.get("full_name") == full_name
@@ -451,7 +462,7 @@ def _matching_run(
         for r in runs
         if isinstance(r, dict)
         and r.get("path") == workflow_path
-        and _run_is_this_pulls(r, origin)
+        and _run_is_this_pulls(r, origin, pr_head)
     ]
     if not mine:
         return f"no {workflow_path} run for this pull request's head"

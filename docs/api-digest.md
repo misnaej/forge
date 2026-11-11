@@ -495,7 +495,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_head_tree(slug: str, pr_head: str) -> str | None` _(internal)_ — Return the tree SHA of *pr_head*, read from the API.
 - `_parent_is_contained(slug: str, pr_head: str, parent_sha: str) -> bool | None` _(internal)_ — Whether *parent_sha* is an ancestor of *pr_head*.
 - `_workflow_path(workflow_ref: str | None) -> str | None` _(internal)_ — Read the workflow file's path out of a ``$GITHUB_WORKFLOW_REF`` value.
-- `_run_is_this_pulls(run: dict[str, object], origin: tuple[str, str]) -> bool` _(internal)_ — Whether *run* belongs to the pull request *origin* describes.
+- `_run_is_this_pulls(run: dict[str, object], origin: tuple[str, str], pr_head: str) -> bool` _(internal)_ — Whether *run* belongs to the pull request *origin* describes.
 - `_matching_run(slug: str, pr_head: str, workflow_path: str, origin: tuple[str, str]) -> dict[str, object] | str` _(internal)_ — Find this workflow's own pull-request run for *pr_head*.
 - `_run_jobs(slug: str, run_id: int) -> list[dict[str, object]] | str` _(internal)_ — List the job objects of run *run_id*, or the reason the list is unusable.
 - `_job_verdict(slug: str, run_id: int, check_name: str) -> str | None` _(internal)_ — Judge the job called *check_name* inside run *run_id*.

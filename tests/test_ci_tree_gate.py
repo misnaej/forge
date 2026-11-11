@@ -70,30 +70,45 @@ class Raw:
 
 def _workflow_run(
     run_id: int | str,
-    *,
-    path: str = WORKFLOW_PATH,
-    created_at: str = "2026-01-01T00:00:00Z",
-    head_branch: str = PR_BRANCH,
-    head_repo: str = SLUG,
+    **overrides: str,
 ) -> dict[str, object]:
     """Build one workflow-run object as the runs endpoint returns it.
 
     Args:
         run_id: The run's id.
-        path: The workflow file path the run came from.
-        created_at: ISO-8601 creation time.
-        head_branch: The branch the run's head commit was on.
-        head_repo: Full name of the repository holding that branch.
+        **overrides: Any of these keyword fields, each defaulting to the
+            happy value: ``path`` (``WORKFLOW_PATH``), ``created_at``
+            (``"2026-01-01T00:00:00Z"``), ``head_branch`` (``PR_BRANCH``),
+            ``head_repo`` (``SLUG``; full name of the repository holding
+            the branch), ``head_sha`` (``PR_HEAD``; the commit the run was
+            made for).
 
     Returns:
         The run object.
+
+    Raises:
+        TypeError: An override names a field this helper does not know, so a
+            typo cannot silently leave the happy value in place.
     """
+    fields = {
+        "path": WORKFLOW_PATH,
+        "created_at": "2026-01-01T00:00:00Z",
+        "head_branch": PR_BRANCH,
+        "head_repo": SLUG,
+        "head_sha": PR_HEAD,
+    }
+    unknown = overrides.keys() - fields.keys()
+    if unknown:
+        msg = f"unknown workflow-run field(s): {sorted(unknown)}"
+        raise TypeError(msg)
+    fields.update(overrides)
     return {
         "id": run_id,
-        "path": path,
-        "created_at": created_at,
-        "head_branch": head_branch,
-        "head_repository": {"full_name": head_repo},
+        "path": fields["path"],
+        "created_at": fields["created_at"],
+        "head_sha": fields["head_sha"],
+        "head_branch": fields["head_branch"],
+        "head_repository": {"full_name": fields["head_repo"]},
     }
 
 
@@ -578,6 +593,16 @@ def test_verified_tree_skips_suite_with_full_evidence(
             _set_workflow_runs([_run_without("head_branch")]),
             NO_RUN_REASON,
             id="run-without-head-branch",
+        ),
+        pytest.param(
+            _set_workflow_runs([_workflow_run(RUN_ID, head_sha="c" * 40)]),
+            NO_RUN_REASON,
+            id="run-of-an-earlier-push-to-the-same-branch",
+        ),
+        pytest.param(
+            _set_workflow_runs([_run_without("head_sha")]),
+            NO_RUN_REASON,
+            id="run-without-head-sha",
         ),
         pytest.param(
             _set_workflow_runs([_workflow_run("4242")]),
