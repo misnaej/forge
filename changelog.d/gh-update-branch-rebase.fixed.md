@@ -1,0 +1,4 @@
+bump: patch
+- Agents can no longer rebase a published branch through GitHub. `gh pr update-branch --rebase` asks GitHub to rebase a pull request's branch on the server, which rewrites the exact commits a reviewer saw — the thing forge forbids — but it does it without a local rebase and without a push, so neither of the two guards meant to prevent it ever saw the command. `block_git_rebase` now refuses that form, and the GraphQL mutation behind it, with no bypass; a human still runs it with `! gh pr update-branch <N> --rebase`.
+- The same command without `--rebase` stays allowed: it merges the base branch in and rewrites nothing. `forge-update-branch` remains the way to sync a branch.
+- The guard's own message no longer claims every rebase forces a force-push, which was untrue of the server-side form. Every blocked and allowed form is now listed in `forge-docs/git-safety.md`.

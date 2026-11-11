@@ -89,7 +89,8 @@ _TRANSIENT_PUSH: Final = re.compile(
     r"Permission denied \(publickey\)|Internal Server Error|fatal error in commit_refs"
     r"|Could not read from remote repository|Connection (?:reset|closed|timed out)",
 )
-#: The message marker of a sync-ladder checkpoint commit.
+#: The message marker of a checkpoint commit (`forge-commit --wip-sync`, which
+#: `forge-update-branch` calls to secure a dirty tree before it syncs).
 WIP_SYNC_PREFIX: Final = "wip-sync:"
 PUSH_ATTEMPTS: Final = 4
 PUSH_RETRY_DELAY_S: Final = 20

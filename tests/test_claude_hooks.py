@@ -1674,6 +1674,7 @@ def test_gh_guards_block_a_repo_override_before_the_subcommand(
         pytest.param("block_claude_attribution.sh", id="attribution"),
         pytest.param("block_raw_wrapup_post.sh", id="raw_wrapup_post"),
         pytest.param("block_unverified_pr_create.sh", id="unverified_pr_create"),
+        pytest.param("block_git_rebase.sh", id="git_rebase"),
     ],
 )
 def test_gh_guards_see_an_option_between_group_and_action(hook: str) -> None:
@@ -1696,6 +1697,7 @@ def test_gh_guards_see_an_option_between_group_and_action(hook: str) -> None:
             "gh pr -R o/n comment 5 --body-file code_health/pr_wrapup.md"
         ),
         "block_unverified_pr_create.sh": "gh pr -R o/n create --title x",
+        "block_git_rebase.sh": "gh pr -R o/n update-branch 5 --rebase",
     }[hook]
     assert _run_hook(hook, command) == 2
 
@@ -1747,6 +1749,95 @@ def test_rebase_allows_merge() -> None:
 def test_rebase_ignores_word_in_commit_message() -> None:
     """The word "rebase" inside a quoted commit body does not false-positive."""
     assert _run_hook(_REBASE, 'git commit -m "explain why we avoid rebase here"') == 0
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("gh pr update-branch 5 --rebase", id="cli-rebase-flag"),
+        pytest.param(
+            "gh -R o/r pr update-branch 5 --rebase", id="cli-rebase-with-repo-option"
+        ),
+        pytest.param(
+            "gh api graphql -f query='mutation{updatePullRequestBranch"
+            "(input:{updateMethod: REBASE}){x}}'",
+            id="graphql-mutation-then-rebase",
+        ),
+        pytest.param(
+            "gh api graphql -f query='mutation($m:PullRequestBranchUpdateMethod)"
+            "{updatePullRequestBranch(input:{updateMethod:$m}){x}}' -f m=REBASE",
+            id="graphql-rebase-then-mutation-order",
+        ),
+        pytest.param(
+            "gh pr update-branch $(gh pr view --json number -q .number) --rebase",
+            id="pr-number-from-substitution",
+        ),
+        pytest.param(
+            'gh pr update-branch "$(gh pr view -q .number)" --rebase',
+            id="pr-number-from-quoted-substitution",
+        ),
+        pytest.param(
+            "gh pr update-branch `gh pr view -q .number` --rebase",
+            id="pr-number-from-backticks",
+        ),
+    ],
+)
+def test_rebase_blocks_server_side_rebase_of_a_branch(command: str) -> None:
+    """SCENARIO: a server-side rebase of a PR branch is refused.
+
+    `gh pr update-branch --rebase` and the GraphQL `updatePullRequestBranch`
+    mutation with `REBASE` (either token order) rewrite published history
+    just like `git rebase`.
+
+    The substitution rows guard a closed hole: naming the PR by
+    `$(gh pr view …)` puts a `)` between the verb and the flag, and the
+    family's usual `[^;&|)]*` segment bound ended there, so the flag went
+    unseen. This stage drops `)` from its bound for that reason, and these
+    rows fail if it is ever restored.
+
+    Args:
+        command: Bash command that requests a server-side rebase.
+    """
+    assert _run_hook(_REBASE, command) == 2
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        pytest.param("gh pr update-branch 5", id="cli-merge-form"),
+        pytest.param(
+            "gh api -X PUT repos/o/r/pulls/5/update-branch", id="rest-endpoint"
+        ),
+        pytest.param(
+            "gh api graphql -f query='mutation{updatePullRequestBranch"
+            "(input:{updateMethod: MERGE}){x}}'",
+            id="graphql-merge-method",
+        ),
+        pytest.param(
+            "gh pr update-branch 5; echo --rebase", id="cli-rebase-after-separator"
+        ),
+        pytest.param(
+            "gh api graphql -f query='mutation{updatePullRequestBranch"
+            "(input:{updateMethod: MERGE}){x}}'; echo REBASE",
+            id="graphql-rebase-after-separator",
+        ),
+    ],
+)
+def test_rebase_allows_update_branch_forms_that_do_not_rewrite(command: str) -> None:
+    """SCENARIO: update-branch forms that only merge the base stay allowed.
+
+    A base sync rewrites nothing, so it is not this guard's business; a
+    branch that is merely behind is an agent's own to resolve (FOUNDATION
+    §6, through `forge-update-branch`). REST cannot rebase at all — its
+    update-branch endpoint takes only `expected_head_sha`. Tightening to
+    "block all update-branch" must fail here rather than silently refuse a
+    sync an agent is allowed to do. The separator rows pin that a
+    `--rebase` / `REBASE` after `;` belongs to another command.
+
+    Args:
+        command: Bash command that syncs a branch without rebasing it.
+    """
+    assert _run_hook(_REBASE, command) == 0
 
 
 _FORCE_PUSH = "block_force_push.sh"
@@ -8154,6 +8245,12 @@ _POSITION_CASES = [
         'zsh -c "git rebase main"',
         _BLOCK,
         id="zsh-c-rebase",
+    ),
+    pytest.param(
+        "block_git_rebase.sh",
+        'bash -c "gh pr update-branch 5 --rebase"',
+        _BLOCK,
+        id="bash-c-update-branch-rebase",
     ),
     pytest.param(
         "block_git_destructive.sh",
