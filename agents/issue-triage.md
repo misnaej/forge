@@ -106,8 +106,7 @@ gh issue edit <N> --remove-label tier-X-<NAME>
 ```
 
 Then sweep for plans the merge outdated: `forge-plan-check overlap <PR>`.
-Each `overlap: #N plan-ready` line (regenerated and shared files never
-produce one) — `plan-ready` stays; `/sentinel` reads the diff at pickup:
+Each `overlap: #N plan-ready` line (`plan-ready` stays):
 
 ```bash
 gh issue edit <N> --add-label needs-recheck
