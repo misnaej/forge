@@ -386,6 +386,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `safe_title(title: str) -> str` — Return *title* as inert single-line markdown.
 - `_tier_of(issue: Issue) -> str | None` _(internal)_ — Return the highest tier label *issue* carries, if any.
 - `_head(issue: Issue) -> str` _(internal)_ — Return the ``- #N — Title`` start every Index line shares.
+- `_status_head(issue: Issue) -> str` _(internal)_ — Return a status-lane line start naming *issue*'s tier, if it has one.
 - `_tier_line(issue: Issue, hidden: frozenset[str]) -> str` _(internal)_ — Return *issue*'s tier-section line, without labels the page already states.
 - `_more_line(tier: str, count: int, slug: str | None) -> str` _(internal)_ — Return the line standing in for *count* trimmed entries of *tier*.
 - `_blocker(issue: Issue) -> str` _(internal)_ — Return what *issue* waits on, read from its ``Requires:`` line.
@@ -401,7 +402,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_checked_render(listed: list[Issue], inputs: IndexInputs, max_chars: int) -> Rendered` _(internal)_ — Render the body, refusing one that is oversized or empty.
 - `run(source: BacklogSource, options: RunOptions, write: Callable[[int, str], int] = gh_issue_edit) -> int` — Read the backlog, render the Index and write it when every guard passes.
 - `_lane_arg(value: str) -> Lane` _(internal)_ — Argparse type for ``--lane LABEL=HEADING``.
-- `_recheck_arg(value: str) -> tuple[int, int]` _(internal)_ — Argparse type for ``--recheck ISSUE=PR``.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Return the ``forge-backlog-index`` argument parser.
 - `main(argv: list[str] | None = None, source: BacklogSource | None = None, write: Callable[[int, str], int] = gh_issue_edit) -> int` — Run ``forge-backlog-index``.
 
@@ -1328,8 +1328,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_report_merges(merges: Iterable[Merge], since: datetime, delivered: Mapping[int, int], report: Report) -> None` _(internal)_ — Record each merge after *since*: a note when it delivers a prerequisite.
 - `check_drift(source: GitHubSource, number: int, *, since: datetime | None, log_merges: Callable[[list[str]], list[Merge] | None]) -> Report` — List base-branch merges that touched the plan's files since *since*.
 - `drift_from(source: GitHubSource, issue: Issue, plan: Comment | None, *, since: datetime | None, log_merges: Callable[[list[str]], list[Merge] | None]) -> Report` — Run the drift check on an already-fetched issue and plan.
-- `_check_overlap_issue(issue: Issue, files: set[str], is_writer: WriterCheck, report: Report) -> None` _(internal)_ — Record whether open *issue*'s files intersect *files*.
-- `check_overlap(source: GitHubSource, pr_number: int) -> Report` — List open issues naming a file merged PR *pr_number* changed.
+- `_check_overlap_issue(issue: Issue, files: set[str], is_writer: WriterCheck, report: Report) -> bool` _(internal)_ — Record whether open *issue*'s planned files intersect *files*.
+- `check_overlap(source: GitHubSource, pr_number: int) -> Report` — List open issues whose plan names a file merged PR *pr_number* changed.
 - `git_merge_log(root: Path, base_ref: str) -> Callable[[list[str]], list[Merge] | None]` — Return a ``log_merges`` callable over *base_ref*'s first-parent history.
 
 ## `forge.plan_staleness_gh`

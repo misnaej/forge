@@ -305,8 +305,7 @@ options:
 ## forge-backlog-index
 
 ```text
-usage: forge-backlog-index [-h] [--lane LABEL=HEADING] [--recheck ISSUE=PR]
-                           [--dry-run]
+usage: forge-backlog-index [-h] [--lane LABEL=HEADING] [--dry-run]
 
 Render the 📋 Backlog Index from live GitHub data and write it (exit 0 written,
 1 refused, 2 GitHub unreadable).
@@ -315,8 +314,6 @@ options:
   -h, --help            show this help message and exit
   --lane LABEL=HEADING  Extra section for issues carrying LABEL; they leave
                         the tier sections.
-  --recheck ISSUE=PR    List ISSUE under Needs Recheck as touched by merged
-                        PR.
   --dry-run             Print the body and its size; write nothing.
 ```
 
