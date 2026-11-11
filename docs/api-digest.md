@@ -500,7 +500,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_staged(root: Path, *diff_filter: str) -> set[str]` _(internal)_ — Paths currently staged, a rename counted as its old and new path.
 - `stage_exactly(root: Path, paths: tuple[str, ...]) -> None` — Stage *paths* and refuse when the index then holds anything else.
 - `committed_paths(root: Path) -> set[str]` — Paths the HEAD commit changed.
-- `push(root: Path, branch: str) -> int` — Push *branch*, retrying briefly when GitHub is momentarily unavailable.
+- `push(root: Path, branch: str, *, tool: str = 'forge-commit') -> int` — Push *branch*, retrying briefly when GitHub is momentarily unavailable.
 - `commit_and_push(root: Path, request: Request) -> int` — Run the guarded commit, then the push.
 - `checkpoint(root: Path, message: str, *, push_after: bool) -> int` — Commit the whole working tree as a ``wip-sync:`` checkpoint.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — The CLI surface.
@@ -2223,7 +2223,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `class Resolution` — What one resolve pass did, and what it left.
   - `automatic(self) -> list[str]` — Every path this pass resolved, in report order.
 - `_stage_blobs(root: Path, path: str) -> dict[int, str]` _(internal)_ — Return the index stage blobs of an unmerged *path* (1 base, 2 ours, 3 theirs).
-- `_history_blobs(root: Path, path: str) -> set[str]` _(internal)_ — Return every blob *path* has held in ``HEAD``'s history.
+- `_branch_blobs(root: Path, path: str) -> set[str]` _(internal)_ — Return the versions of *path* this branch wrote and the base never had.
 - `_take_ours(root: Path, path: str) -> None` _(internal)_ — Resolve *path* to the branch side and stage it.
 - `_has_markers(path: Path) -> bool` _(internal)_ — Return whether *path* still holds a git conflict marker line.
 - `stage_hand_resolved(root: Path) -> list[str]` — Stage conflicted files whose markers are gone, so a resolver only edits.
@@ -2235,7 +2235,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_message(base_ref: str, branch: str, done: Resolution) -> str` _(internal)_ — Return the merge commit message, naming every automatic resolution.
 - `_blob(root: Path, rev: str, path: str) -> str | None` _(internal)_ — Return the blob *path* holds at *rev*, or ``None`` when absent.
 - `_conflicted_and_automerge(root: Path) -> tuple[set[str], str]` _(internal)_ — Return the paths the merge conflicts on and git's automatic merge tree.
-- `_check_resolution(root: Path, automatic: set[str]) -> list[str]` _(internal)_ — Check the staged result and return the paths edited by hand.
+- `_check_resolution(root: Path, done: Resolution) -> list[str]` _(internal)_ — Check the staged result and return the paths edited by hand.
 - `_commit(root: Path, message: str, *, gated: bool) -> None` _(internal)_ — Commit the merge, with or without the pre-commit gate.
 - `_finish(root: Path, base_ref: str, done: Resolution, *, push_after: bool) -> int` _(internal)_ — Check, commit and push a fully resolved merge.
 - `_stop(root: Path, base_ref: str, done: Resolution) -> int` _(internal)_ — Report the conflicts that need judgment and leave the merge in progress.

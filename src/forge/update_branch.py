@@ -98,7 +98,9 @@ _TREE_RE: Final = re.compile(r"^[0-9a-f]{40,64}$")
 _OURS: Final = 2
 _THEIRS: Final = 3
 #: Line openings git writes into a conflicted text file.
-_MARKERS: Final = ("<<<<<<< ", "=======", ">>>>>>> ", "||||||| ")
+_MARKERS: Final = ("<<<<<<< ", ">>>>>>> ", "||||||| ")
+#: Characters an intake record never takes from a file name.
+_UNSAFE_NAME_RE: Final = re.compile(r"[`\x00-\x1f\x7f]")
 
 
 class UpdateRefusedError(Exception):
@@ -139,27 +141,31 @@ def _stage_blobs(root: Path, path: str) -> dict[int, str]:
     return blobs
 
 
-def _history_blobs(root: Path, path: str) -> set[str]:
-    """Return every blob *path* has held in ``HEAD``'s history.
+def _branch_blobs(root: Path, path: str) -> set[str]:
+    """Return the versions of *path* this branch wrote and the base never had.
 
-    ``-m`` lists merge commits too, so a version the branch only received
-    through a merge of its parent branch still counts as seen.
+    Only non-merge commits in ``MERGE_HEAD..HEAD`` count, and only the
+    blob each one produced: a version the branch held before it forked,
+    or received by merging the base, is base history, so the base going
+    back to it is a real change (a revert), never "already seen". A
+    stacked branch's parent commits are in the range — the base holds
+    only their squash — so the parent's final version counts.
 
     Args:
-        root: Repo root.
+        root: Repo root, mid-merge.
         path: Repo-relative path.
 
     Returns:
-        Blob ids from the raw diff lines touching *path*.
+        Blob ids the branch's own commits produced for *path*.
     """
     out = run_git(
         "log",
-        "-m",
+        "--no-merges",
         "--raw",
         "--no-abbrev",
         "--no-renames",
         "--format=",
-        "HEAD",
+        "MERGE_HEAD..HEAD",
         "--",
         path,
         cwd=root,
@@ -169,7 +175,7 @@ def _history_blobs(root: Path, path: str) -> set[str]:
     for line in out.splitlines():
         parts = line.split("\t", 1)[0].split()
         if len(parts) >= _RAW_FIELDS and line.startswith(":"):
-            blobs.update(parts[2:4])
+            blobs.add(parts[3])
     return blobs
 
 
@@ -244,7 +250,7 @@ def resolve(root: Path) -> Resolution:
     for path in unmerged_paths(root):
         blobs = _stage_blobs(root, path)
         theirs, ours = blobs.get(_THEIRS), blobs.get(_OURS)
-        if theirs and ours and theirs in _history_blobs(root, path):
+        if theirs and ours and theirs in _branch_blobs(root, path):
             _take_ours(root, path)
             done.seen.append(path)
     commands = regen_commands(root)
@@ -332,12 +338,19 @@ def _record_stop(root: Path, base_ref: str, done: Resolution) -> Path | None:
             "forge-update-branch: could not write the intake record: %s", exc
         )
         return None
+
+    # Paths come from the base, which anyone with push access there wrote:
+    # strip what could close the code span or start a new line.
+    def inert(name: str) -> str:
+        return _UNSAFE_NAME_RE.sub("?", name)
+
     happened = [
         f"Merging {base_ref} stopped on paths that need judgment:",
-        *(f"- `{p}`" for p in done.remaining),
+        *(f"- `{inert(p)}`" for p in done.remaining),
     ]
     if done.automatic:
-        happened.append(f"Resolved automatically: {', '.join(done.automatic)}.")
+        resolved = ", ".join(f"`{inert(p)}`" for p in done.automatic)
+        happened.append(f"Resolved automatically: {resolved}.")
     happened.append("Why they needed judgment: (main agent fills this in.)")
     text = path.read_text(encoding="utf-8").replace(
         "## What happened\n", "## What happened\n\n" + "\n".join(happened) + "\n", 1
@@ -450,12 +463,16 @@ def _conflicted_and_automerge(root: Path) -> tuple[set[str], str]:
     return {p for p in sections[1:] if p}, sections[0]
 
 
-def _check_resolution(root: Path, automatic: set[str]) -> list[str]:
+def _check_resolution(root: Path, done: Resolution) -> list[str]:
     """Check the staged result and return the paths edited by hand.
+
+    A run that stopped already resolved some paths, which ``--continue``
+    no longer sees as unmerged; those taken as already seen are added to
+    *done* again so the merge commit message lists every one.
 
     Args:
         root: Repo root, mid-merge, nothing unmerged.
-        automatic: Paths this command resolved.
+        done: This run's automatic resolutions; extended in place.
 
     Returns:
         Conflicted paths whose staged content matches neither side.
@@ -465,6 +482,13 @@ def _check_resolution(root: Path, automatic: set[str]) -> list[str]:
             from git's automatic merge.
     """
     conflicted, automerge = _conflicted_and_automerge(root)
+    for path in sorted(conflicted - set(done.automatic)):
+        theirs = _blob(root, "MERGE_HEAD", path)
+        if _blob(root, "", path) == _blob(
+            root, "HEAD", path
+        ) and theirs in _branch_blobs(root, path):
+            done.seen.append(path)
+    automatic = set(done.automatic)
     staged = run_git("write-tree", cwd=root).strip()
     differing = {
         p
@@ -509,7 +533,8 @@ def _commit(root: Path, message: str, *, gated: bool) -> None:
     Raises:
         UpdateRefusedError: When the commit fails; the merge stays in progress.
     """
-    env = None if gated else {MERGE_SYNC_ENV: "1"}
+    # Gated: pin the deferral off, so an inherited value cannot skip the gate.
+    env = {MERGE_SYNC_ENV: "0" if gated else "1"}
     try:
         create_commit(root, message, env=env)
     except subprocess.CalledProcessError as exc:
@@ -536,7 +561,7 @@ def _finish(root: Path, base_ref: str, done: Resolution, *, push_after: bool) ->
         An exit code.
     """
     branch = current_branch(root)
-    hand = _check_resolution(root, set(done.automatic))
+    hand = _check_resolution(root, done)
     if hand:
         logger.info(
             "forge-update-branch: hand-edited %s — running the pre-commit gate.",
@@ -545,7 +570,7 @@ def _finish(root: Path, base_ref: str, done: Resolution, *, push_after: bool) ->
     _commit(root, _message(base_ref, branch, done), gated=bool(hand))
     sha = run_git("rev-parse", "--short", "HEAD", cwd=root).strip()
     logger.info("forge-update-branch: merged %s into %s (%s).", base_ref, branch, sha)
-    return push(root, branch) if push_after else EXIT_OK
+    return push(root, branch, tool="forge-update-branch") if push_after else EXIT_OK
 
 
 def _stop(root: Path, base_ref: str, done: Resolution) -> int:

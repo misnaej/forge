@@ -3011,8 +3011,8 @@ def test_destructive_reset_flag_in_other_compound_segment_stays_scoped() -> None
 def test_destructive_blocks_stash_push_untracked() -> None:
     """`git stash -u` is blocked (#404) — it runs `git clean` internally.
 
-    FOUNDATION §2's sync ladder (probe, direct merge, or a wip-sync
-    checkpoint commit) is the sanctioned dirty-tree sync now.
+    forge-update-branch (which takes a wip-sync
+    checkpoint commit itself) is the sanctioned dirty-tree sync now.
     """
     assert _run_hook(_DESTRUCTIVE, "git stash -u") == 2
 

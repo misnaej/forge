@@ -198,7 +198,7 @@ Git procedures (gate kinds, destructive forms, base sync):
   first (git-safety.md). `block_force_push` covers every forced form.
   Human: `! git push ...`.
 - **NEVER rebase** from an agent — rewrites published history, forces
-  (blocked) force-push. Sync with plain **merge**: `git merge origin/<base>`
+  (blocked) force-push. Sync by **merge**: `forge-update-branch`
   (forge squash-merges every PR). `block_git_rebase` blocks `git rebase`
   and `git pull --rebase` / `-r`, **no bypass**. Human: `! git rebase ...`.
 - **NEVER amend a pushed commit** — make a **new commit** instead.

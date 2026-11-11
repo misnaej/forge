@@ -64,7 +64,7 @@ if TYPE_CHECKING:
 def _clear_wip_sync_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Strip FORGE_WIP_SYNC from the environment before every test.
 
-    main()'s wip-sync short-circuit (#404 sync ladder) reads this var
+    main()'s wip-sync short-circuit (base sync) reads this var
     directly from os.environ, so an ambient value left over from a real
     wip-sync checkpoint commit in the developer's shell would silently
     short-circuit every main()-calling test in this module. Tests that
@@ -1019,7 +1019,7 @@ def test_main_prints_per_step_elapsed_and_total_line(
 
 
 # ---------------------------------------------------------------------------
-# FORGE_WIP_SYNC short-circuit (#404 sync ladder): main() defers the full
+# FORGE_WIP_SYNC short-circuit (base sync): main() defers the full
 # battery for a wip-sync checkpoint commit, before run_all ever executes.
 # ---------------------------------------------------------------------------
 
@@ -1051,7 +1051,7 @@ def test_main_wip_sync_env_short_circuits_before_run_all(
     """FORGE_WIP_SYNC=1 returns 0 with the checkpoint banner and never calls run_all.
 
     SCENARIO: a wip-sync checkpoint commit sets FORGE_WIP_SYNC=1 to defer
-    the full battery to the next real commit (FOUNDATION §2 sync ladder).
+    the full battery to the next real commit (base sync).
     MOCK SETUP: get_repo_root is pinned to tmp_path; run_all is replaced
     with a spy that must never fire; sys.argv drives the bare
     `forge-precommit` invocation.

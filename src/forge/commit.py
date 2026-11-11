@@ -338,7 +338,7 @@ def committed_paths(root: Path) -> set[str]:
     )
 
 
-def push(root: Path, branch: str) -> int:
+def push(root: Path, branch: str, *, tool: str = "forge-commit") -> int:
     """Push *branch*, retrying briefly when GitHub is momentarily unavailable.
 
     Never forces and never deletes (:func:`forge.git_utils.push_branch`).
@@ -347,6 +347,7 @@ def push(root: Path, branch: str) -> int:
     Args:
         root: Repo root.
         branch: The branch to push.
+        tool: The command named in the log lines (the caller's own name).
 
     Returns:
         :data:`EXIT_OK` when pushed, :data:`EXIT_PUSH_FAILED` otherwise
@@ -363,16 +364,17 @@ def push(root: Path, branch: str) -> int:
     for attempt in range(1, PUSH_ATTEMPTS + 1):
         result = push_branch(root, branch, set_upstream=not upstream)
         if result.ok:
-            logger.info("forge-commit: pushed %s to origin/%s.", branch, branch)
+            logger.info("%s: pushed %s to origin/%s.", tool, branch, branch)
             return EXIT_OK
         transient = bool(_TRANSIENT_PUSH.search(result.stderr or ""))
         if not transient or attempt == PUSH_ATTEMPTS:
             logger.error(
-                "forge-commit: push failed (commits stay local): %s", result.stderr
+                "%s: push failed (commits stay local): %s", tool, result.stderr
             )
             return EXIT_PUSH_FAILED
         logger.warning(
-            "forge-commit: push attempt %d failed (transient); retrying in %ds.",
+            "%s: push attempt %d failed (transient); retrying in %ds.",
+            tool,
             attempt,
             PUSH_RETRY_DELAY_S,
         )
@@ -496,8 +498,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "--wip-sync",
         action="store_true",
         help=(
-            "Checkpoint the whole working tree before a base merge (sync "
-            "ladder): no files named, message starts 'wip-sync:', gate "
+            "Checkpoint the whole working tree (forge-update-branch takes one "
+            "itself): no files named, message starts 'wip-sync:', gate "
             "deferred to the next real commit."
         ),
     )

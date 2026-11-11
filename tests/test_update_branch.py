@@ -147,6 +147,49 @@ def test_start_merges_pushes_and_is_idempotent(tmp_path: Path) -> None:
     assert git_stdout(repo, "rev-parse", "HEAD").strip() == head
 
 
+def test_start_logs_the_calling_tool_when_pushing(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """SCENARIO: clean merge pushed to the bare origin.
+
+    EXPECTED BEHAVIOR: the push log names `forge-update-branch`, not the
+    `forge-commit` default.
+    """
+    repo, origin = _repo_with_origin(tmp_path)
+    _advance_origin(tmp_path, origin, {"unrelated.txt": "moved\n"})
+
+    with caplog.at_level("INFO"):
+        assert update_branch.start(repo, None, push_after=True) == 0
+
+    assert "forge-update-branch: pushed" in caplog.text
+
+
+def test_start_does_not_take_a_base_revert_as_already_seen(tmp_path: Path) -> None:
+    """SCENARIO: base reverts a file to a version the branch held before forking.
+
+    Base sets `shared.txt` to Y, the branch forks there and edits it to Z,
+    base reverts it to the original X. X is in the branch's history only
+    through base commits.
+    EXPECTED BEHAVIOR: exit 3, merge in progress, `shared.txt` still
+    unmerged. Without the `MERGE_HEAD..HEAD` range limit the rule would
+    take the branch side silently.
+    """
+    repo, origin = _repo_with_origin(tmp_path)
+    _advance_origin(tmp_path, origin, {"shared.txt": "one\nY\nthree\n"})
+    git_stdout(repo, "fetch", "-q", "origin", "main")
+    git_stdout(repo, "merge", "-q", "--ff-only", "origin/main")
+    (repo / "shared.txt").write_text("one\nZ\nthree\n")
+    commit_all(repo, "branch edits shared")
+    _advance_origin(tmp_path, origin, {"shared.txt": _SHARED})
+
+    assert (
+        update_branch.start(repo, None, push_after=False) == update_branch.EXIT_STOPPED
+    )
+
+    assert _merge_in_progress(repo)
+    assert unmerged_paths(repo) == ["shared.txt"]
+
+
 def test_start_checkpoints_a_dirty_tree_before_merging(tmp_path: Path) -> None:
     """SCENARIO: uncommitted work present when the base moved.
 
@@ -236,7 +279,7 @@ def _stub_gate(repo: Path, tmp_path: Path) -> Path:
 @pytest.mark.parametrize(
     ("resolved", "gate_seen"),
     [
-        pytest.param("one\nmerged\nthree\n", "unset", id="hand-edited-is-gated"),
+        pytest.param("one\nmerged\nthree\n", "0", id="hand-edited-is-gated"),
         pytest.param("one\nbranch\nthree\n", "1", id="one-side-exactly-is-ungated"),
         pytest.param("one\nmain\nthree\n", "1", id="other-side-exactly-is-ungated"),
     ],
@@ -248,13 +291,12 @@ def test_resume_commits_a_hand_resolved_merge(
 
     MOCK SETUP: stub pre-commit hook records `FORGE_MERGE_SYNC`.
     EXPECTED BEHAVIOR: marker-free file is staged by resume, merge commit
-    created and pushed. New content runs the gate (env unset); content
+    created and pushed. New content runs the gate (`FORGE_MERGE_SYNC=0`); content
     equal to a side commits ungated (`FORGE_MERGE_SYNC=1`). Without the
     stage step the commit would see an unmerged index; without the env
     split both cases would record the same value.
 
     Args:
-        tmp_path: Pytest's per-test temporary directory.
         resolved: Hand-written content for the conflicted file.
         gate_seen: Expected `FORGE_MERGE_SYNC` value the hook recorded.
     """
@@ -270,6 +312,42 @@ def test_resume_commits_a_hand_resolved_merge(
     assert record.read_text().strip() == gate_seen
     head = git_stdout(repo, "rev-parse", "HEAD").strip()
     assert git_stdout(origin, "rev-parse", "feature/x").strip() == head
+
+
+def test_resume_gates_a_hand_edit_even_when_the_env_defers_the_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: `FORGE_MERGE_SYNC=1` exported in the caller's environment.
+
+    MOCK SETUP: stub pre-commit hook records `FORGE_MERGE_SYNC`.
+    EXPECTED BEHAVIOR: a hand-edited resume still runs the gate with the
+    deferral pinned off (hook records `0`, not the inherited `1`).
+    """
+    monkeypatch.setenv("FORGE_MERGE_SYNC", "1")
+    repo, _ = _conflicted_repo(tmp_path)
+    assert update_branch.start(repo, None, push_after=False) == 3
+    record = _stub_gate(repo, tmp_path)
+    (repo / "shared.txt").write_text("one\nmerged\nthree\n")
+
+    assert update_branch.resume(repo, None, push_after=False) == 0
+
+    assert record.read_text().strip() == "0"
+
+
+def test_resume_stages_a_file_with_a_bare_equals_line(tmp_path: Path) -> None:
+    """SCENARIO: hand-resolved file holds a `=======` line (RST underline).
+
+    EXPECTED BEHAVIOR: not mistaken for a conflict marker; resume stages it
+    and commits the merge.
+    """
+    repo, _ = _conflicted_repo(tmp_path)
+    assert update_branch.start(repo, None, push_after=False) == 3
+    (repo / "shared.txt").write_text("one\nTitle\n=======\nthree\n")
+
+    assert update_branch.resume(repo, None, push_after=False) == 0
+
+    assert not _merge_in_progress(repo)
+    assert "=======" in (repo / "shared.txt").read_text()
 
 
 def _foreign_merge(repo: Path) -> None:
@@ -326,9 +404,6 @@ def test_continue_refuses_and_names_a_remedy(
     refusal names the remedy possible in that state.
 
     Args:
-        tmp_path: Pytest's per-test temporary directory.
-        monkeypatch: Pytest monkeypatch, used to pin `repo_root`.
-        caplog: Pytest log capture, asserted for the refusal text.
         setup: Callable that leaves the repo in the state under test, or None.
         remedy: Substring the refusal must name.
     """
