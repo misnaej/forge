@@ -197,10 +197,10 @@ Git procedures (gate kinds, destructive forms, base sync):
 - **NEVER force push** without explicit user approval. Check divergence
   first (git-safety.md). `block_force_push` covers every forced form.
   Human: `! git push ...`.
-- **NEVER rebase** from an agent — rewrites published history, forces
-  (blocked) force-push. Sync by **merge**: `forge-update-branch`
-  (forge squash-merges every PR). `block_git_rebase` blocks `git rebase`
-  and `git pull --rebase` / `-r`, **no bypass**. Human: `! git rebase ...`.
+- **NEVER rebase** from an agent — rewrites published history, locally or
+  on the server. Sync by **merge**: `forge-update-branch`
+  (forge squash-merges every PR). `block_git_rebase` blocks every form
+  git-safety.md lists, **no bypass**. Human: `! <blocked form>`.
 - **NEVER amend a pushed commit** — make a **new commit** instead.
   Amending *unpushed* stays allowed. `block_amend_pushed_commit` blocks
   `git commit --amend` when `HEAD` is on a remote-tracking ref, **no

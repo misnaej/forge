@@ -52,6 +52,54 @@ not classified.
 - Recurring bypass = evidence guard is wrong or too costly. Never grounds
   to loosen rule.
 
+## Rebase forms
+
+Authority: `claude-hooks/block_git_rebase.sh` (header comment + code); hook
+wins on any disagreement. **No bypass**; human runs blocked form via `! …`.
+
+What is forbidden is **rewriting branch history**, not the tool or transport
+that reaches it.
+
+Blocked:
+
+- `git rebase` — any form, `-i` included. A bare `--help` is allowed.
+- `git pull --rebase` / `-r`.
+- `gh pr update-branch --rebase` — GitHub rewrites the PR branch
+  server-side. No local rebase and no push, so neither the git stages nor
+  `block_force_push` can see it; the hook's gh stages are what cover it.
+- `gh api graphql` carrying `updatePullRequestBranch` with
+  `updateMethod: REBASE` — the mutation gh calls for that flag, either token
+  order (REBASE often arrives as a separate `-f` variable).
+
+Allowed:
+
+- `gh pr update-branch` without the flag, and the REST endpoint
+  `PUT …/pulls/<N>/update-branch` (takes only `expected_head_sha`, cannot
+  rebase). Both merge the base in, rewriting nothing, so neither is a
+  rewrite for this guard to refuse — and a branch that is merely behind is
+  an agent's own to resolve (§6, through `forge-update-branch`). Forge does
+  not *use* them: GitHub authors a merge commit no local pre-commit gate
+  sees, and the PR head moves with no push for `warn_stale_wrapup` to
+  notice. A process cost, not a reason to block.
+- `updateMethod: MERGE` in the same mutation.
+
+Blind spots. Tripwires on the routes agents take, not a sandbox:
+
+- A **pipe inside a command substitution** before the flag ends the matched
+  segment: `gh pr update-branch $(gh pr view -q .n | head -1) --rebase`
+  passes. A substitution without a pipe is covered.
+- A GraphQL query read from a file (`-F query=@q.graphql`), from stdin
+  (`--input -`), from a shell variable or from a substitution. A `<<<`
+  here-string IS visible and blocks.
+- The verb held in a variable: `G=gh; $G pr update-branch 5 --rebase`.
+- Wrappers `git_anchor.sh` does not model — `watch`, `parallel`, `flock`,
+  `su -c` — in front of the command.
+- A `gh alias` standing for the blocked command.
+
+Why: a rebase discards the exact commits a reviewer saw. Forge squash-merges
+every PR, so a branch's commit shape never reaches the base branch anyway —
+`forge-update-branch` syncs by merge and rewrites nothing.
+
 ## Destructive git forms
 
 Authority: `claude-hooks/block_git_destructive.sh` (shipped in the forge plugin)

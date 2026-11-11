@@ -127,6 +127,10 @@
   "positions": "zsh -c ;git rebase main;\n",
   "words": "zsh -c ;git rebase main;\n"
  },
+ "bash -c \"gh pr update-branch 5 --rebase\"": {
+  "positions": "bash -c ;gh pr update-branch 5 --rebase;\n",
+  "words": "bash -c ;gh pr update-branch 5 --rebase;\n"
+ },
  "bash -c \"git reset --hard\"": {
   "positions": "bash -c ;git reset --hard;\n",
   "words": "bash -c ;git reset --hard;\n"
