@@ -118,6 +118,8 @@ graph LR
   cli_forge_precommit[("forge-precommit<br/>CLI")]
   cli_forge_smart_test[("forge-smart-test<br/>CLI")]
   cli_forge_commit[("forge-commit<br/>CLI")]
+  cli_forge_update_branch[("forge-update-branch<br/>CLI")]
+  merge_resolver["merge-resolver<br/>AI agent"]
   knowledge_search["knowledge-search<br/>AI agent"]
   perf_optimizer["perf-optimizer<br/>AI agent"]
   prior_art["prior-art<br/>AI agent"]
@@ -147,6 +149,9 @@ graph LR
   perf_optimizer -->|delegates| design_checker
   sk_commit -->|invokes| precommit_fixer
   sk_commit -->|invokes| cli_forge_commit
+  main_agent -->|base sync| cli_forge_update_branch
+  main_agent -. on a conflict stop .-> merge_resolver
+  merge_resolver -->|--continue| cli_forge_update_branch
   sk_fix -->|invokes| precommit_fixer
   sk_test -->|invokes| test_advisor
   sk_test -->|invokes| test_writer
@@ -173,6 +178,9 @@ graph LR
   class cli_forge_precommit cli
   class cli_forge_smart_test cli
   class cli_forge_commit cli
+  class cli_forge_update_branch cli
+  class merge_resolver agent
+  class merge_resolver mutator
   class knowledge_search agent
   class knowledge_search reporter
   class perf_optimizer agent

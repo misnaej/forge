@@ -12,7 +12,8 @@ Checked on every commit by `verify-forge-repo-structure`: every listed file and 
    - emergency.py: `forge-emergency` — one-shot deferred-verification bypass (start/status/record-pr/end): ledger issue first, gitignored sentinel, `forge-pr-create` claims the single allowed `wrapup-mode: emergency` publication and spends it once the PR exists, retroactive verification closes the ledger after delivery; pre-commit and §2 hooks never relieved
    - rebump.py: `forge-rebump` — mechanical post-merge version-slot resolver: classifies a feature branch's bump intent from its fork-point manifest delta (merge stages mid-merge, merge-base on a clean tree), takes the next open slot above the latest tag, restacks/retitles the CHANGELOG in shared-heading mode (fragments mode: no-op), stages, never commits; refuses on unrelated conflicts
    - release.py: `forge-release` — single-track release orchestrator for tag-versioned (setuptools-scm) consumer repos: guards (clean tree, on base branch, single-track model, CHANGELOG entry) → annotated tag + push (exempt in `cli_wiring_exempt.toml`)
-   - commit.py: `forge-commit` — commits exactly the named files with the caller's message, then pushes; enforces in code the guards hooks cannot see in a CLI (protected/detached branch, passing pre-commit verdict, conventional ≤50-word message without AI attribution, index and commit equal to the named files, no force, bounded retry on transient push failures); `--no-push`, `--push-only` (exempt in `cli_wiring_exempt.toml` until its callers switch over)
+   - update_branch.py: `forge-update-branch` — bring a branch up to date with its base: checkpoint a dirty tree, merge, resolve files the branch already holds, generated artifacts and the version slot, stop (exit 3, intake lesson) on conflicts needing judgment; `--continue` checks and commits the merge (gated only when files were hand-edited), then pushes
+   - commit.py: `forge-commit` — commits exactly the named files with the caller's message, then pushes; enforces in code the guards hooks cannot see in a CLI (protected/detached branch, passing pre-commit verdict, conventional ≤50-word message without AI attribution, index and commit equal to the named files, no force, bounded retry on transient push failures); `--no-push`, `--push-only` (exempt in `cli_wiring_exempt.toml` until its callers switch over); refuses while a merge is in progress (`forge-update-branch --continue` owns merges)
    - continuation.py: `forge-continuation` — `state [--with-pr] [--attempt …]` rewrites `.plan/CONTINUATION.md`'s generated status panel (PR mergeability, CI and wrap-up freshness read from GitHub with `--with-pr`, otherwise carried forward with their as-of SHA); `check` reports the written section's line usage against `judgment_max_lines`; called by `forge-pr-wrapup post` and the PreCompact hook
    - continuation_state.py: the status panel's format, git-only fields and byte-preserving rewrite (sanitised values, fixed size, legacy-ledger migration, gitignore and CI guards) — split from `continuation.py` so `forge-precommit` records every commit attempt in-process without importing the GitHub readers, whose modules import `forge.precommit`
    - pr_create.py: `forge-pr-create` — publishes a pull request from the checkout holding the branch, so the branch is where the process stands rather than inferred from command text; verifies that checkout's wrap-up against its own HEAD, re-runs the classifier for a `wrapup-mode: light` wrap-up and consumes the sentinel for an `emergency` one, refuses (in every mode) a branch with no CVE scan since it left its base, and forwards only an allowlist of extra flags so nothing it sets itself can be overridden
@@ -91,7 +92,7 @@ Checked on every commit by `verify-forge-repo-structure`: every listed file and 
    - vibe_metadata.py: identity of one Vibe unified session store entry (CURRENT → latest generation's runtime-state.json, meta.json fallback) — kind, parent, cwd, agent name/model from the profile frontmatter; tolerant of corrupt files
    - vibe_sessions.py: folds Vibe session journals (`child-*/journal/*.jsonl`) into per-subagent runs for `forge-agent-profile` (turns, tool calls, token usage, wall/active time), repo-matched by cwd like `repo_transcript_dirs`; keyed `vibe:<session_id>`
    - upgrade.py: `forge-upgrade` — two-phase consumer upgrade flow (rewrite pin → user runs pip → `--continue` re-syncs artifacts)
-   - resync.py: `forge-resync` — regenerate forge-managed artifacts and open a dedup-guarded resync PR (companion to `upgrade.py`'s pin-rewrite flow); `--resolve-conflicts [--dry-run]` resolves a merge whose only conflicts are forge-generated artifacts by regenerating each from the merged tree (`pr_delta.REGEN_COMMANDS`), verifying with its `--check`, and staging — refusing if any other path conflicts
+   - resync.py: `forge-resync` — regenerate forge-managed artifacts and open a dedup-guarded resync PR (companion to `upgrade.py`'s pin-rewrite flow); `regenerate_artifact` regenerates one generated file from the merged tree and verifies it (`forge-update-branch` resolves generated conflicts with it)
    - git_utils.py: shared git helpers and CLI logging setup (public API for consumers: `latest_v_tag`, `parse_semver`, `next_version`, `run_git`, `configure_cli_logging`)
    - changelog.py: shared `## vX.Y.Z` CHANGELOG heading recognition (`release_headings`, `changelog_lacks_entry`) — single source for release and the changelog_updated step; public API for consumers
    - import_graph.py: `forge.import_graph` — shared AST import primitives (`extract_import_targets`, `resolve_module_name`, `closest_known`) used by `audit.deps` and `smart_test.dependencies`
@@ -141,6 +142,7 @@ ownership model) — see [FOUNDATION §11](FOUNDATION.md#11-agent-boundary-proto
 - docs-types-checker.md: docs and type-hint checker agent
 - issue-triage.md: GitHub issue triage agent
 - knowledge-search.md: grounded knowledge retrieval agent
+- merge-resolver.md: resolves the conflicts `forge-update-branch` stops on (exit 3) by reading both sides, escalates what it cannot determine, finishes with `--continue`
 - perf-optimizer.md: performance optimization agent
 - pr-manager.md: PR lifecycle agent
 - prior-art.md: run before creating a file or top-level symbol — REUSE / EXTEND / NEW verdict grounded in named queries against the api-digest and dup log
@@ -214,7 +216,7 @@ enforcement:
 - keep_squash_comment_last.sh: PostToolUse — after any command that comments on a PR, re-post the squash-merge comment so it stays the newest one (silent no-op when it already is, when the PR has none yet, or when `-R`/`--repo` names another repository)
 - log_agent_timing.sh: SubagentStart + SubagentStop + PostToolUse (no matcher) — append one JSON line per event to `code_health/agent_timing.jsonl`, the ledger `forge-agent-profile` reads; never blocks, never prints; `FORGE_NO_AGENT_TIMING=1` switches it off
 - warn_stale_wrapup.sh: PostToolUse — after a `git push` on a branch with an open PR, print a reminder when `forge-pr-plan --freshness` says the posted wrap-up no longer names the head (silent when fresh, unknowable, or a refresh is already authored for HEAD)
-- warn_generated_conflicts.sh: PostToolUse — after a `git merge` whose only conflicts are forge-generated artifacts (probe: `forge-resync --resolve-conflicts --dry-run`), print the instruction to run `forge-resync --resolve-conflicts`; silent otherwise, never regenerates or stages
+- warn_merge_conflicts.sh: PostToolUse — after a `git merge` that left unmerged paths, print the instruction to run `forge-update-branch --continue` (and `forge:merge-resolver` for what it cannot resolve); silent otherwise, never resolves or stages
 - wrapup_anchor.sh: sourced library, not a hook — the `wrapup_names_head` predicate, used by `warn_stale_wrapup`; `forge-pr-create` carries the Python equivalent for the publish path
 
 ## Plugin Manifest (`.claude-plugin/`)
@@ -242,6 +244,7 @@ Pytest suite mirroring the `src/forge/` layout:
 
    - conftest.py: shared pytest fixtures
    - _plan_fakes.py: `forge-plan-check` fakes and builders (a fake GitHub, history and merge-probe stand-ins), imported explicitly by the plan_staleness, plan_tracks and plan_check_cli suites
+   - test_update_branch.py: tests for update_branch (real git: clean merge, checkpoint, stacked branch after a parent squash, stop and `--continue`, refusals)
    - test_commit.py: tests for commit (the `forge-commit` guards, staging/commit file checks, push retry and exit codes)
    - test_config.py: tests for config (model/tool-root resolution)
    - test_config_parity.py: config parity — every `[tool.forge.*]` key read in source is declared in `CONFIG_KEYS`, and the reverse
@@ -378,7 +381,7 @@ repos by `install-forge-claude-md` (guarded there by a README notice + the
 - smart-test.md: usage guide for `forge-smart-test` — depth model, consumer guarantees, opt-in correctness extensions
 - backlog-tracks.md: backlog tracks — `track:<name>` naming, the `track:` plan line, membership via `forge-plan-check track-members`, placement limits, hub-file evidence, first run vs re-align
 - precommit-fixer.md: rationale behind `forge:precommit-fixer`'s rules — the loop and its evidence, narrow re-verify vs closing run, why tests re-run after a code or test edit, test-code caution, report-only steps
-- git-safety.md: procedure behind FOUNDATION §2's git rules — gate kinds, guard bypass, destructive git forms, the dirty-tree sync ladder
+- git-safety.md: procedure behind FOUNDATION §2's git rules — gate kinds, guard bypass, destructive git forms, base sync (`forge-update-branch`, stacked branches)
 - plugin-staleness.md: how a running session ends up on an old forge plugin, how to spot it, and how to recover
 - metrics.md: `forge-metrics` — what is recorded per merged PR, what is not stored, where the database and the repo-id map live, legacy migration
 

@@ -172,7 +172,7 @@ fi
 # moves work out of a checkout that other sessions may be editing, a
 # `pop` can conflict or land on the wrong branch, `drop`/`clear` delete,
 # and `-u`/`-a` run `git clean` internally. No sanctioned procedure uses
-# stash: FOUNDATION §2's sync ladder secures dirty work with a checkpoint
+# stash: forge-update-branch secures dirty work with a checkpoint
 # commit, and "does this failure predate my change?" is answered in a
 # forge-scratch-repo copy. The subcommand is the first non-flag word
 # after `stash`; a bare `git stash` is a push.
@@ -190,7 +190,7 @@ _stash_blocked() {
     return 1
 }
 if _guarded 'stash\b' && _stash_blocked; then
-    _block "git stash" "Stash moves uncommitted work out of a checkout other sessions may share, and pop/drop/-u can lose it. Only \`git stash list\` / \`git stash show\` are allowed. To secure dirty work use FOUNDATION §2's sync ladder: \`forge-commit --wip-sync -m \"wip-sync: <what>\"\` checkpoints the whole tree; to check whether a failure predates your change use \`git show <base>:<path>\` or a \`forge-scratch-repo snapshot --ref <base>\` copy."
+    _block "git stash" "Stash moves uncommitted work out of a checkout other sessions may share, and pop/drop/-u can lose it. Only \`git stash list\` / \`git stash show\` are allowed. To secure dirty work before a base sync run \`forge-update-branch\` (it checkpoints the tree itself) or \`forge-commit --wip-sync -m \"wip-sync: <what>\"\`; to check whether a failure predates your change use \`git show <base>:<path>\` or a \`forge-scratch-repo snapshot --ref <base>\` copy."
 fi
 
 # Restores that overwrite a path's working copy — `git checkout [<ref>]

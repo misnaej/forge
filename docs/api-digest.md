@@ -494,12 +494,13 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `check_message(message: str) -> None` — Refuse a commit message forge's rules forbid.
 - `check_budget_and_attribution(message: str) -> None` — Refuse a message past the word ceiling or carrying AI attribution.
 - `current_branch(root: Path) -> str` — The checked-out branch, refused when protected or detached.
+- `refuse_mid_merge(root: Path) -> None` — Refuse while a merge is in progress: merges belong to ``forge-update-branch``.
 - `check_verdict(root: Path) -> None` — Refuse unless the latest pre-commit verdict passed on this tree.
 - `_git_paths(root: Path, *args: str) -> set[str]` _(internal)_ — Run a ``-z`` path-listing git command and return its paths.
 - `_staged(root: Path, *diff_filter: str) -> set[str]` _(internal)_ — Paths currently staged, a rename counted as its old and new path.
 - `stage_exactly(root: Path, paths: tuple[str, ...]) -> None` — Stage *paths* and refuse when the index then holds anything else.
 - `committed_paths(root: Path) -> set[str]` — Paths the HEAD commit changed.
-- `push(root: Path, branch: str) -> int` — Push *branch*, retrying briefly when GitHub is momentarily unavailable.
+- `push(root: Path, branch: str, *, tool: str = 'forge-commit') -> int` — Push *branch*, retrying briefly when GitHub is momentarily unavailable.
 - `commit_and_push(root: Path, request: Request) -> int` — Run the guarded commit, then the push.
 - `checkpoint(root: Path, message: str, *, push_after: bool) -> int` — Commit the whole working tree as a ``wip-sync:`` checkpoint.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — The CLI surface.
@@ -2013,8 +2014,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_run_bootstrap() -> int` _(internal)_ — Run ``install-forge-bootstrap`` in-process and return its exit code.
 - `_provenance_evidence(root: Path) -> tuple[bool, str]` _(internal)_ — Run the provenance gates and format PR-body evidence.
 - `_publish_resync(root: Path, version: str, base_branch: str) -> int` _(internal)_ — Branch, commit, push the regen diff and open the resync PR.
-- `_regenerate(root: Path, path: str, argv: tuple[str, ...]) -> bool` _(internal)_ — Regenerate one artifact from the merged tree and byte-verify it.
-- `_resolve_conflicts(root: Path, *, dry_run: bool) -> int` _(internal)_ — Resolve a merge whose only conflicts are forge-generated artifacts.
+- `regenerate_artifact(root: Path, path: str, argv: tuple[str, ...]) -> bool` — Regenerate one artifact from the merged tree and byte-verify it.
 - `main() -> int` — Run the resync loop; see the module docstring for the steps.
 
 ## `forge.run_context`
@@ -2214,6 +2214,35 @@ A compact index of this codebase's symbols — every top-level function and clas
 > _Shared "keep N characters, then add a marker" text cut._
 
 - `truncate(text: str, limit: int, *, suffix: str = '…') -> str` — Return *text* cut to *limit* characters plus *suffix* when longer.
+
+## `forge.update_branch`
+
+> _forge-update-branch — bring a feature branch up to date with its base._
+
+- `class UpdateRefusedError` — A guard refused; the message names the remedy possible in this state.
+- `class Resolution` — What one resolve pass did, and what it left.
+  - `automatic(self) -> list[str]` — Every path this pass resolved, in report order.
+- `_stage_blobs(root: Path, path: str) -> dict[int, str]` _(internal)_ — Return the index stage blobs of an unmerged *path* (1 base, 2 ours, 3 theirs).
+- `_branch_blobs(root: Path, path: str) -> set[str]` _(internal)_ — Return the versions of *path* this branch wrote and the base never had.
+- `_take_ours(root: Path, path: str) -> None` _(internal)_ — Resolve *path* to the branch side and stage it.
+- `_has_markers(path: Path) -> bool` _(internal)_ — Return whether *path* still holds a git conflict marker line.
+- `stage_hand_resolved(root: Path) -> list[str]` — Stage conflicted files whose markers are gone, so a resolver only edits.
+- `resolve(root: Path) -> Resolution` — Resolve every conflicted path whose answer is mechanical, and stage it.
+- `_base_ref(root: Path, base: str | None) -> tuple[str, str]` _(internal)_ — Return the base branch name and its remote-tracking ref.
+- `_dirty(root: Path) -> bool` _(internal)_ — Return whether the tree has any change, untracked files included.
+- `_record_stop(root: Path, base_ref: str, done: Resolution) -> Path | None` _(internal)_ — Write an intake lesson for a stop, so the escape's use is measured.
+- `_listed(paths: list[str]) -> str` _(internal)_ — Return *paths* comma-joined, capped for a commit message.
+- `_message(base_ref: str, branch: str, done: Resolution) -> str` _(internal)_ — Return the merge commit message, naming every automatic resolution.
+- `_blob(root: Path, rev: str, path: str) -> str | None` _(internal)_ — Return the blob *path* holds at *rev*, or ``None`` when absent.
+- `_conflicted_and_automerge(root: Path) -> tuple[set[str], str]` _(internal)_ — Return the paths the merge conflicts on and git's automatic merge tree.
+- `_check_resolution(root: Path, done: Resolution) -> list[str]` _(internal)_ — Check the staged result and return the paths edited by hand.
+- `_commit(root: Path, message: str, *, gated: bool) -> None` _(internal)_ — Commit the merge, with or without the pre-commit gate.
+- `_finish(root: Path, base_ref: str, done: Resolution, *, push_after: bool) -> int` _(internal)_ — Check, commit and push a fully resolved merge.
+- `_stop(root: Path, base_ref: str, done: Resolution) -> int` _(internal)_ — Report the conflicts that need judgment and leave the merge in progress.
+- `start(root: Path, base: str | None, *, push_after: bool) -> int` — Merge the base into the current branch and resolve what is mechanical.
+- `resume(root: Path, base: str | None, *, push_after: bool) -> int` — Finish a merge in progress once its judgment conflicts are resolved.
+- `_build_parser() -> argparse.ArgumentParser` _(internal)_ — The CLI surface.
+- `main(argv: list[str] | None = None) -> int` — Entry point for ``forge-update-branch``.
 
 ## `forge.upgrade`
 

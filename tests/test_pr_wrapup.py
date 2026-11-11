@@ -893,7 +893,7 @@ def test_post_gates_head_mismatch_refuses_naming_both_shas() -> None:
 
 
 def test_post_gates_conflicting_refuses_naming_the_remedy() -> None:
-    """A CONFLICTING branch refuses, naming the merge and the resync escape hatch."""
+    """A CONFLICTING branch refuses, naming forge-update-branch and its `--continue`."""
     view = {
         "number": 61,
         "headRefOid": "7ab3e4e999",
@@ -902,8 +902,7 @@ def test_post_gates_conflicting_refuses_naming_the_remedy() -> None:
     }
     refusals, _notes = mod.post_gates(view, "7ab3e4e", behind=0, emergency=False)
     assert any(
-        "git merge origin/main" in r and "forge-resync --resolve-conflicts" in r
-        for r in refusals
+        "forge-update-branch --base main" in r and "--continue" in r for r in refusals
     )
 
 
@@ -916,7 +915,10 @@ def test_post_gates_behind_base_refuses() -> None:
         "mergeable": "MERGEABLE",
     }
     refusals, _notes = mod.post_gates(view, "7ab3e4e", behind=3, emergency=False)
-    assert any("3 commit(s) behind origin/main" in r for r in refusals)
+    assert any(
+        "3 commit(s) behind origin/main" in r and "forge-update-branch" in r
+        for r in refusals
+    )
 
 
 def test_post_gates_emergency_exempts_the_behind_base_refusal() -> None:

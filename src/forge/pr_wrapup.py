@@ -639,9 +639,9 @@ def _conflict_refusal(base: str, rerun: str) -> str:
         The refusal text.
     """
     return (
-        f"the branch conflicts with {base}: run `git merge origin/{base}` "
-        "(only generated files conflict: `forge-resync --resolve-conflicts`), "
-        f"then re-verify with {rerun}"
+        f"the branch conflicts with {base}: run `forge-update-branch --base {base}` "
+        "(it stops on conflicts that need judgment; resolve them, then "
+        f"`--continue`), then re-verify with {rerun}"
     )
 
 
@@ -660,7 +660,7 @@ def _behind_refusal(behind: int, base: str, rerun: str) -> str:
     """
     return (
         f"the branch is {behind} commit(s) behind origin/{base}: run "
-        f"`git merge origin/{base}`, then re-verify with {rerun}"
+        f"`forge-update-branch --base {base}`, then re-verify with {rerun}"
     )
 
 
