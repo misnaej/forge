@@ -85,6 +85,19 @@ jobs:
       # limits live in forge-docs/ci-recipe.md. It must follow the
       # editable install, which provides the CLI.
       #
+      # Skipping is only sound for a suite the tree determines, and this
+      # one was checked, not assumed: the whole suite was run twice in a
+      # scratch snapshot of one tree — same commit, branch renamed
+      # between runs — and gave 6188 passed both times. Branch name is
+      # the axis with a real incident here (a hook test once read the
+      # checkout's branch, so `main` diverged from the PR). Version
+      # derivation is stubbed in the tests that touch it. NOT probed:
+      # the clock, the commit SHA and tag distance. Nothing enforces any
+      # of this, so a test that starts reading `git describe` or the
+      # clock would break the assumption silently — `forge-precommit`
+      # above still runs unskipped on `main`, and a scheduled full run
+      # is the backstop this repo does not yet have.
+      #
       # `continue-on-error` is the backstop: the gate is an optimisation,
       # so a bug inside it must cost a redundant test run and never a red
       # `main`. No `verified=true` written means the suite runs.

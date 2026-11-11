@@ -8,13 +8,13 @@ tree is in fact identical, so a workflow can skip that execution and
 still report green on the commit.
 
 **"Only the tree" is an assumption about the suite, not a fact about
-tests.** A suite can read what a squash changed: this very repository
-checks out with ``fetch-depth: 0`` so setuptools-scm can derive a version
-from tag distance and commit SHA, and tests elsewhere read tags, the
-clock, the 48-hour full-run stamp, the 30-day lifecycle window or the
-network. None of that is tree-determined. A repo whose tests assert on
-any of it should not adopt the skip, and
-``forge-docs/ci-recipe.md`` says so where a consumer will read it.
+tests.** A suite can read what a squash changed: a version setuptools-scm
+derives from tag distance and commit SHA, tags, the clock, the 48-hour
+full-run stamp, the 30-day lifecycle window, the network. None of that is
+tree-determined. A repo whose tests assert on any of it should not adopt
+the skip, and ``forge-docs/ci-recipe.md`` says so where a consumer will
+read it. Why this repository adopts it anyway, and what that rests on:
+the gate step's comment in ``.github/workflows/ci.yml``.
 
 Tree identity as the join is not new here:
 :func:`forge.git_utils.get_tree_sha` already uses it to recognise the
@@ -29,11 +29,11 @@ redundant test run is the cost of a false negative; a false positive
 ships untested code behind a green tick, so only a completely evidenced
 match skips.
 
-Two traps this has to avoid, both of which look fine until they ship:
+Three traps this has to avoid, each of which looks fine until it ships:
 
 - **A pull-request run tests the merge ref, not the head.** GitHub checks
   out ``refs/pull/N/merge`` — the merge of the base at that moment with
-  the head — while check-runs attach to the head SHA. Tree equality
+  the head — while the run is recorded against the head SHA. Tree equality
   between the squash commit and the head therefore proves what was
   *tested* only when the head already contained the base.
   :func:`_parent_is_contained` establishes that; without it, a behind
@@ -287,6 +287,35 @@ def _pr_head_sha(pull: dict[str, object]) -> str | None:
     return sha if isinstance(sha, str) and sha else None
 
 
+def _pr_head_origin(found: dict[str, object]) -> tuple[str, str] | None:
+    """The repository and branch a pull request's head commit lived on.
+
+    Needed because a workflow run is found by head SHA, and a SHA does
+    not belong to one pull request: two pull requests can share a head
+    commit with different bases, and a fork's pull request appears among
+    this repository's runs. Each run tested the merge of *its own* base
+    with that head, so only the run whose head matches this pull
+    request's own branch is evidence about this merge.
+
+    Args:
+        found: The merged pull request object.
+
+    Returns:
+        ``(repository full name, branch)``, or None when the payload does
+        not carry both — a deleted fork leaves ``repo`` null, which
+        refuses rather than guesses.
+    """
+    head = found.get("head")
+    if not isinstance(head, dict):
+        return None
+    ref = head.get("ref")
+    repo = head.get("repo")
+    if not isinstance(ref, str) or not isinstance(repo, dict):
+        return None
+    full_name = repo.get("full_name")
+    return (full_name, ref) if isinstance(full_name, str) else None
+
+
 def _head_tree(slug: str, pr_head: str) -> str | None:
     """Return the tree SHA of *pr_head*, read from the API.
 
@@ -361,10 +390,29 @@ def _workflow_path(workflow_ref: str | None) -> str | None:
     return path if path.endswith((".yml", ".yaml")) else None
 
 
+def _run_is_this_pulls(run: dict[str, object], origin: tuple[str, str]) -> bool:
+    """Whether *run* belongs to the pull request *origin* describes.
+
+    Args:
+        run: A workflow-run object from the API.
+        origin: The pull request's ``(repository full name, branch)``.
+
+    Returns:
+        True when the run's head repository and branch are that pull
+        request's. A run missing either field is not this one.
+    """
+    full_name, ref = origin
+    if run.get("head_branch") != ref:
+        return False
+    repo = run.get("head_repository")
+    return isinstance(repo, dict) and repo.get("full_name") == full_name
+
+
 def _matching_run(
     slug: str,
     pr_head: str,
     workflow_path: str,
+    origin: tuple[str, str],
 ) -> dict[str, object] | str:
     """Find this workflow's own pull-request run for *pr_head*.
 
@@ -376,6 +424,9 @@ def _matching_run(
         slug: `owner/repo`.
         pr_head: The pull request's head commit SHA.
         workflow_path: Repository-relative path of this workflow file.
+        origin: The pull request's ``(repository full name, branch)``, so
+            a run for the same commit on another pull request or a fork
+            is not mistaken for this one.
 
     Returns:
         The newest matching run, or the reason there is none to trust.
@@ -395,9 +446,15 @@ def _matching_run(
         return API_UNAVAILABLE
     if total > len(runs):
         return "workflow runs truncated"
-    mine = [r for r in runs if isinstance(r, dict) and r.get("path") == workflow_path]
+    mine = [
+        r
+        for r in runs
+        if isinstance(r, dict)
+        and r.get("path") == workflow_path
+        and _run_is_this_pulls(r, origin)
+    ]
     if not mine:
-        return f"no {workflow_path} run for the pull request head"
+        return f"no {workflow_path} run for this pull request's head"
     # Several entries mean the workflow was dispatched more than once for
     # that head; a re-run raises the attempt on one entry instead. The
     # newest is the verdict that stands, and `created_at` is ISO-8601 Z,
@@ -463,6 +520,7 @@ def _job_evidence(
     *,
     check_name: str | None,
     workflow_path: str | None,
+    origin: tuple[str, str],
 ) -> _Job | str:
     """Establish that a named job of this workflow passed on *pr_head*.
 
@@ -477,6 +535,8 @@ def _job_evidence(
             unset off Actions), so it must not be the permissive case.
         workflow_path: This workflow's path. Falsy refuses for the same
             reason: without it, any workflow's job of that name counts.
+        origin: The pull request's ``(repository full name, branch)``,
+            passed through to :func:`_matching_run`.
 
     Returns:
         The passing job, or the reason there is none.
@@ -485,7 +545,7 @@ def _job_evidence(
         return "no check name"
     if not workflow_path:
         return "no workflow path (GITHUB_WORKFLOW_REF unset?)"
-    run = _matching_run(slug, pr_head, workflow_path)
+    run = _matching_run(slug, pr_head, workflow_path, origin)
     if isinstance(run, str):
         return run
     run_id = run.get("id")
@@ -555,11 +615,16 @@ def _against_pull(
     if differs:
         return _run(differs)
 
+    origin = _pr_head_origin(found)
+    if origin is None:
+        return _run("pull request head origin unknown")
+
     job = _job_evidence(
         local.slug,
         pr_head,
         check_name=check_name,
         workflow_path=workflow_path,
+        origin=origin,
     )
     if isinstance(job, str):
         return _run(job)

@@ -32,6 +32,9 @@ SLUG = "acme/widget"
 PR_HEAD = "b" * 40
 OTHER_TREE = "f" * 40
 PR_NUMBER = 7
+PR_BRANCH = "feat/widget-change"
+OTHER_BRANCH = "feat/another-change"
+FORK_SLUG = "fork-owner/widget"
 # Run ids differ from PR_NUMBER so an id/number mix-up shows in the evidence.
 RUN_ID = 4242
 OLDER_RUN_ID = 9000  # largest id on purpose: max-by-id must not win
@@ -44,6 +47,8 @@ WORKFLOW_PATH = ".github/workflows/ci.yml"
 OTHER_WORKFLOW_PATH = ".github/workflows/other.yml"
 WORKFLOW_REF = f"{SLUG}/{WORKFLOW_PATH}@refs/heads/main"
 API_DOWN = mod.API_UNAVAILABLE
+NO_RUN_REASON = f"no {WORKFLOW_PATH} run for this pull request's head"
+ORIGIN_UNKNOWN = "pull request head origin unknown"
 RUNS_ROUTE = f"actions/runs?head_sha={PR_HEAD}&event=pull_request&per_page=100"
 
 
@@ -68,6 +73,8 @@ def _workflow_run(
     *,
     path: str = WORKFLOW_PATH,
     created_at: str = "2026-01-01T00:00:00Z",
+    head_branch: str = PR_BRANCH,
+    head_repo: str = SLUG,
 ) -> dict[str, object]:
     """Build one workflow-run object as the runs endpoint returns it.
 
@@ -75,11 +82,31 @@ def _workflow_run(
         run_id: The run's id.
         path: The workflow file path the run came from.
         created_at: ISO-8601 creation time.
+        head_branch: The branch the run's head commit was on.
+        head_repo: Full name of the repository holding that branch.
 
     Returns:
         The run object.
     """
-    return {"id": run_id, "path": path, "created_at": created_at}
+    return {
+        "id": run_id,
+        "path": path,
+        "created_at": created_at,
+        "head_branch": head_branch,
+        "head_repository": {"full_name": head_repo},
+    }
+
+
+def _run_without(field: str) -> dict[str, object]:
+    """Build the happy run with one field absent.
+
+    Args:
+        field: The run key to drop.
+
+    Returns:
+        The run object, minus *field*.
+    """
+    return {k: v for k, v in _workflow_run(RUN_ID).items() if k != field}
 
 
 def _job(
@@ -136,7 +163,11 @@ class FakeGitHub:
                     "number": PR_NUMBER,
                     "merged_at": "2026-01-01T00:00:00Z",
                     "merge_commit_sha": facts.head,
-                    "head": {"sha": PR_HEAD},
+                    "head": {
+                        "sha": PR_HEAD,
+                        "ref": PR_BRANCH,
+                        "repo": {"full_name": SLUG},
+                    },
                 },
             ],
             "commit": {"commit": {"tree": {"sha": facts.tree}}},
@@ -525,8 +556,28 @@ def test_verified_tree_skips_suite_with_full_evidence(
         ),
         pytest.param(
             _only_a_foreign_workflow_ran,
-            f"no {WORKFLOW_PATH} run for the pull request head",
+            NO_RUN_REASON,
             id="runs-only-foreign-workflow",
+        ),
+        pytest.param(
+            _set_workflow_runs([_workflow_run(RUN_ID, head_branch=OTHER_BRANCH)]),
+            NO_RUN_REASON,
+            id="run-of-another-pr-sharing-the-head-commit",
+        ),
+        pytest.param(
+            _set_workflow_runs([_workflow_run(RUN_ID, head_repo=FORK_SLUG)]),
+            NO_RUN_REASON,
+            id="run-from-a-fork",
+        ),
+        pytest.param(
+            _set_workflow_runs([_run_without("head_repository")]),
+            NO_RUN_REASON,
+            id="run-without-head-repository",
+        ),
+        pytest.param(
+            _set_workflow_runs([_run_without("head_branch")]),
+            NO_RUN_REASON,
+            id="run-without-head-branch",
         ),
         pytest.param(
             _set_workflow_runs([_workflow_run("4242")]),
@@ -619,6 +670,7 @@ def test_newest_run_of_this_workflow_is_the_verdict(
                 FOREIGN_RUN_ID,
                 path=OTHER_WORKFLOW_PATH,
                 created_at="2026-03-01T00:00:00Z",
+                head_branch=OTHER_BRANCH,
             ),
             _workflow_run(OLDER_RUN_ID, created_at="2026-01-01T00:00:00Z"),
             _workflow_run(RUN_ID, created_at="2026-02-01T00:00:00Z"),
@@ -634,6 +686,47 @@ def test_newest_run_of_this_workflow_is_the_verdict(
 
     assert not decision.verified
     assert decision.reason == "job ci not success (failure)"
+
+
+@pytest.mark.parametrize(
+    "head",
+    [
+        pytest.param({"sha": PR_HEAD, "ref": PR_BRANCH}, id="head-without-repo"),
+        pytest.param(
+            {"sha": PR_HEAD, "ref": PR_BRANCH, "repo": None},
+            id="head-repo-deleted-fork",
+        ),
+        pytest.param(
+            {"sha": PR_HEAD, "ref": PR_BRANCH, "repo": {}},
+            id="head-repo-without-full-name",
+        ),
+        pytest.param(
+            {"sha": PR_HEAD, "repo": {"full_name": SLUG}},
+            id="head-without-ref",
+        ),
+    ],
+)
+def test_unknown_pull_request_origin_refuses_without_asking_actions(
+    squash_commit_repo: Path,
+    merged_pr_with_green_ci_run: FakeGitHub,
+    head: dict[str, object],
+) -> None:
+    """SCENARIO: A PR payload missing its head repo or branch cannot verify.
+
+    MOCK SETUP: The default green runs and jobs; the PR's ``head`` altered.
+    EXPECTED BEHAVIOR: Not verified with the origin reason, and no Actions
+    endpoint is called: without an origin no run can be tied to this PR.
+
+    Args:
+        head: The PR payload's ``head`` object.
+    """
+    _edit_pull(head=head)(merged_pr_with_green_ci_run)
+
+    decision = _decide(squash_commit_repo)
+
+    assert not decision.verified
+    assert decision.reason == ORIGIN_UNKNOWN
+    assert not any(c.startswith("actions/") for c in merged_pr_with_green_ci_run.calls)
 
 
 @pytest.mark.parametrize(

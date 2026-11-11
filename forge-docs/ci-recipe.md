@@ -56,6 +56,11 @@ on:
 # resync / tag-on-merge workflows below) declare their own overrides.
 permissions:
   contents: read
+  # Both read-only, and both only for the tree gate below: it asks which
+  # pull request produced this commit, and whether that pull request's
+  # own run of this workflow passed. Drop them and the gate declines.
+  pull-requests: read
+  actions: read
 
 jobs:
   test:
@@ -114,10 +119,13 @@ That output goes to the job log, where it is as visible as the log is. It is cap
         run: forge-slow-tests-report --log code_health/pytest.log --out code_health/slow_tests.log
 ```
 
-The gate needs `permissions: pull-requests: read` and `actions: read`
-alongside `contents: read` — both read scopes. Without them `gh api`
-fails, the gate prints `api unavailable (token/permissions?)` and the
-suite runs, so the only symptom is that nothing is ever skipped.
+The gate needs `pull-requests: read` and `actions: read` — both read
+scopes — which is why the `permissions:` block in the snippet above
+carries them alongside `contents: read`. Without them `gh api` fails,
+the gate prints `api unavailable (token/permissions?)` and the suite
+runs, so the only symptom is that nothing is ever skipped. Adopt the
+gate and those two lines together, or the optimisation is dead on
+arrival.
 
 Notes:
 
@@ -146,10 +154,10 @@ Notes:
   the step that feeds it are gated on the same output, since that report
   has no log to read when the suite did not run.
   It is fail-closed at every branch and names its reason in one line;
-  `forge-tree-verified --help` and the module's own header carry the
-  rationale and the full list, so neither drifts from the code. A skip
-  names its evidence — tree, pull request, head, check — to be re-checked
-  by hand.
+  the module's own docstring carries the rationale and the full list of
+  refusals, so neither drifts from the code (`--help` carries the flags,
+  not the reasoning). A skip names its evidence — tree, pull request,
+  head, workflow, run, job — to be re-checked by hand.
 - **Decide first whether your suite is tree-determined.** The whole
   argument is that an identical tree gives an identical result, and that
   is a claim about *your tests*, not about tests in general. A suite that
@@ -186,6 +194,11 @@ Notes:
   those will not match `$GITHUB_JOB`, so the gate declines with
   `job <name> not found` and the optimisation quietly does nothing. Pass
   the displayed name explicitly in those cases.
+- **Only the named job is read, not the whole run.** Other jobs of the
+  same run may have failed; the gate does not look. With one job, as in
+  the snippet above, there is nothing else to look at — with several,
+  name the job that runs the tests and know that its siblings are not
+  part of the evidence.
 - **The job's success is what gets trusted, so the test step must carry
   no condition of its own** beyond the gate's output. A job concludes
   success with a step skipped by its own `if:`, or passing under
