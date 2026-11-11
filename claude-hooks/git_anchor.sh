@@ -17,7 +17,15 @@
 #     source "$(dirname "$0")/git_anchor.sh"
 #
 # GIT_ANCHOR matches a real `git <subcommand>` invocation at line-start or
-# after a shell separator (`;` `&` `|` `(`). It tolerates:
+# after a shell separator (`;` `&` `|` `(` `)`). `)` is a separator because
+# a `case` arm starts its command there — `case x in x) git push -f …` —
+# and without it every locating guard missed what a case pattern
+# introduced. The other `)` shapes are read the same way and that is a
+# deliberate over-read, not a claim about the shell: `$(id) git push -f`
+# runs git only when the expansion is empty, and `(cd x) git …` is a syntax
+# error, but a word the hook cannot prove harmless is judged as a command.
+# The cost is a `!` on shapes like `cp $(x) ruff`, where a guarded name is
+# only an argument. It tolerates:
 # - a leading run of `VAR=val` assignments, `command`/`env`/`exec`/
 #   `builtin`/`sudo`/`doas`/`nohup`/`nice`/`time`/`timeout`/`setsid`/
 #   `ionice`/`stdbuf`/`taskset`/`chrt`/`xargs` wrappers — with their
@@ -130,7 +138,7 @@ GUARD_BINPATH='([^[:space:];&|()<>]*[/])?'
 GUARD_WRAPPERS='command|env|exec|builtin|sudo|nohup|nice|time|timeout|setsid|ionice|stdbuf|taskset|chrt|doas|xargs'
 _GUARD_PREFIX='(([[:alnum:]_]+=[^[:space:]]+|'"${GUARD_BINPATH}"'('"${GUARD_WRAPPERS}"')|'"${GUARD_BINPATH}"'(timeout|ionice|stdbuf|taskset|chrt)([[:space:]]+-[^[:space:]]+([[:space:]]+[^[:space:]]+)?)*[[:space:]]+[^[:space:]]+|then|do|else|elif|[{!]|-[^[:space:]]+([[:space:]]+[^[:space:]]+)?|'"${GUARD_REDIR}"')[[:space:]]+)*'
 _GUARD_GIT_OPTS='((-c|-C|--git-dir|--work-tree|--namespace|--exec-path|--config-env)[[:space:]]+[^[:space:]]+[[:space:]]+|--?[a-zA-Z][^[:space:]]*[[:space:]]+|'"${GUARD_REDIR}"'[[:space:]]+)*'
-GIT_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"'git[[:space:]]+'"${_GUARD_GIT_OPTS}"
+GIT_ANCHOR='(^|[;&|()])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"'git[[:space:]]+'"${_GUARD_GIT_OPTS}"
 # GIT_UNKNOWN_ANCHOR is GIT_ANCHOR with the command word replaced by a
 # word that starts with `$` and holds no `/` (spelled as the characters
 # it may hold, since a bare `/` is barred here), or a whole `${…}`
@@ -151,7 +159,7 @@ GIT_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"'git[[:spac
 # prefix. `[$]`, not a backslash, for the same awk -v and sed reasons as
 # GUARD_REDIR.
 # shellcheck disable=SC2034  # consumed by sourcing hooks
-GIT_UNKNOWN_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}"'([$]([{][^}[:space:]]*[}]|[][[:alnum:]_{}:#%@*!?=+.,~^-]*)|_)[[:space:]]+'"${_GUARD_GIT_OPTS}"
+GIT_UNKNOWN_ANCHOR='(^|[;&|()])[[:space:]]*'"${_GUARD_PREFIX}"'([$]([{][^}[:space:]]*[}]|[][[:alnum:]_{}:#%@*!?=+.,~^-]*)|_)[[:space:]]+'"${_GUARD_GIT_OPTS}"
 
 # GH_ANCHOR is the same shape for `gh`: a real invocation at line-start
 # (leading whitespace included — the hand-rolled `^gh` patterns this
@@ -172,7 +180,7 @@ GIT_UNKNOWN_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}"'([$]([{][^}[:space
 # shellcheck disable=SC2034  # consumed by sourcing hooks
 GH_OPTS='(-[^[:space:]]+[[:space:]]+([^[:space:]]+[[:space:]]+)?|'"${GUARD_REDIR}"'[[:space:]]+)*'
 # shellcheck disable=SC2034  # consumed by sourcing hooks
-GH_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"'gh[[:space:]]+'"${GH_OPTS}"
+GH_ANCHOR='(^|[;&|()])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"'gh[[:space:]]+'"${GH_OPTS}"
 
 # ---- Command positions ----------------------------------------------------
 #

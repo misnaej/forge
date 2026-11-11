@@ -199,7 +199,7 @@ if echo "$WORDS" | grep -qiE 'hookspath|section|alias|GIT_CONFIG_'; then
     # `export GIT_CONFIG_PARAMETERS=…`): the value names the key or an
     # alias, or holds a `$` / substitution whose value only exists at run
     # time.
-    if echo "$WORDS" | grep -qiE "(^|[;&|(])[[:space:]]*${_GUARD_PREFIX}((export|declare|typeset|readonly|local)[[:space:]]+([^[:space:];&|()]+[[:space:]]+)*)?GIT_CONFIG_(KEY_[0-9]+|PARAMETERS)=[^[:space:];&|()]*(core\.hookspath|alias\.|[\$(])"; then
+    if echo "$WORDS" | grep -qiE "(^|[;&|()])[[:space:]]*${_GUARD_PREFIX}((export|declare|typeset|readonly|local)[[:space:]]+([^[:space:];&|()]+[[:space:]]+)*)?GIT_CONFIG_(KEY_[0-9]+|PARAMETERS)=[^[:space:];&|()]*(core\.hookspath|alias\.|[\$(])"; then
         _block_hooks_path
     fi
     # `git config` writes, one awk pass over every invocation. A write flag

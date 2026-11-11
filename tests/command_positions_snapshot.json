@@ -147,6 +147,10 @@
   "positions": "bash -c ;git push origin :main;\n",
   "words": "bash -c ;git push origin :main;\n"
  },
+ "bash -c \"gh api -X PATCH repos/o/r/git/refs/heads/main -F force=true\"": {
+  "positions": "bash -c ;gh api -X PATCH repos/o/r/git/refs/heads/main -F force=true;\n",
+  "words": "bash -c ;gh api -X PATCH repos/o/r/git/refs/heads/main -F force=true;\n"
+ },
  "bash -c \"rm -rf .plan\"": {
   "positions": "bash -c ;rm -rf .plan;\n",
   "words": "bash -c ;rm -rf .plan;\n"
@@ -214,6 +218,46 @@
  "cat <<'EOF' | bash\ngit push -f\nEOF": {
   "positions": "cat <<_ | bash\ngit push -f\n",
   "words": "cat <<_ | bash\ngit push -f\n"
+ },
+ "case x in x) git push -f origin main ;; esac": {
+  "positions": "case x in x) git push -f origin main ;; esac\n",
+  "words": "case x in x) git push -f origin main ;; esac\n"
+ },
+ "case x in x) git reset --hard HEAD~1 ;; esac": {
+  "positions": "case x in x) git reset --hard HEAD~1 ;; esac\n",
+  "words": "case x in x) git reset --hard HEAD~1 ;; esac\n"
+ },
+ "case x in x) gh pr merge 5 --squash ;; esac": {
+  "positions": "case x in x) gh pr merge 5 --squash ;; esac\n",
+  "words": "case x in x) gh pr merge 5 --squash ;; esac\n"
+ },
+ "case x in x) git rebase origin/main ;; esac": {
+  "positions": "case x in x) git rebase origin/main ;; esac\n",
+  "words": "case x in x) git rebase origin/main ;; esac\n"
+ },
+ "case x in x) ruff check . ;; esac": {
+  "positions": "case x in x) ruff check . ;; esac\n",
+  "words": "case x in x) ruff check . ;; esac\n"
+ },
+ "case x in x) rm .plan/CONTINUATION.md ;; esac": {
+  "positions": "case x in x) rm .plan/CONTINUATION.md ;; esac\n",
+  "words": "case x in x) rm .plan/CONTINUATION.md ;; esac\n"
+ },
+ "case x in x) git commit --no-verify -m x ;; esac": {
+  "positions": "case x in x) git commit --no-verify -m x ;; esac\n",
+  "words": "case x in x) git commit --no-verify -m x ;; esac\n"
+ },
+ "(cd /tmp) git push -f origin main": {
+  "positions": "(cd /tmp) git push -f origin main\n",
+  "words": "(cd /tmp) git push -f origin main\n"
+ },
+ "echo $(git rev-parse HEAD) && git push origin main": {
+  "positions": "echo $(git rev-parse HEAD) && git push origin main\n",
+  "words": "echo $(git rev-parse HEAD) && git push origin main\n"
+ },
+ "echo \"$(git status --short)\"": {
+  "positions": "echo _(git status --short)\n",
+  "words": "echo (git status --short)\n"
  },
  "git revert HEAD": {
   "positions": "git revert HEAD\n",

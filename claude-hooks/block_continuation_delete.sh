@@ -48,7 +48,7 @@ guard_begin
 # `truncate`, and emptying the file with a redirection (`: > …`) — and
 # a delete whose target is generated rather than named (`find .plan
 # -exec rm {} \;`).
-RM_ANCHOR='(^|[;&|(])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"'(rm|unlink)([[:space:]]|$)'
+RM_ANCHOR='(^|[;&|()])[[:space:]]*'"${_GUARD_PREFIX}${GUARD_BINPATH}"'(rm|unlink)([[:space:]]|$)'
 if ! command_positions "$COMMAND" | grep -qE "${RM_ANCHOR}"; then
     exit 0
 fi

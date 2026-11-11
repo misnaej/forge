@@ -13,7 +13,7 @@ Found while closing the `gh pr update-branch --rebase` gap (#957). Probed
     gh api -X PATCH repos/o/r/git/refs/heads/main -F sha=abc -F force=true
 
 exits 0 — allowed. Guard matches a `git push` verb only
-(`claude-hooks/block_force_push.sh:42`), so no stage sees a ref moved
+(`claude-hooks/block_force_push.sh:50`), so no stage sees a ref moved
 through the REST API.
 
 Same class as the gap #957 closed: server-side history rewrite, no local
