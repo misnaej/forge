@@ -20,8 +20,18 @@ on:
 # Defense-in-depth: workflow only reads (no artifact uploads, no PR comments,
 # no label mutations). Tagging lives in the separate tag-release.yml
 # workflow, keeping every job here read-only by construction.
+#
+# `pull-requests` and `actions` are read by the tree gate below, which asks
+# which PR produced this commit and whether this workflow's own job passed
+# on that PR's head. Both are read scopes, so the read-only property above
+# still holds. Without them `gh api` fails, the gate reports
+# `api unavailable (token/permissions?)` and the suite runs — the safe
+# direction, but the optimisation is dead, so that reason string is worth
+# watching for in the log.
 permissions:
   contents: read
+  pull-requests: read
+  actions: read
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -69,6 +79,22 @@ jobs:
       - name: forge-precommit (pre-commit hook sequence)
         run: forge-precommit
 
+      # On a push to `main` the squash commit's tree is the tree the PR
+      # already tested, so its suite has nothing new to learn. The gate
+      # decides whether that holds and prints its evidence; rationale and
+      # limits live in forge-docs/ci-recipe.md. It must follow the
+      # editable install, which provides the CLI.
+      #
+      # `continue-on-error` is the backstop: the gate is an optimisation,
+      # so a bug inside it must cost a redundant test run and never a red
+      # `main`. No `verified=true` written means the suite runs.
+      - name: forge-tree-verified (has this tree already passed?)
+        id: tree_gate
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: forge-tree-verified --github-output
+
       # Full suite with the durations sections the slow-tests reporter
       # consumes (flags live in [tool.pytest.ini_options] addopts; the
       # tee follows the documented CI recipe except for where the log
@@ -82,14 +108,23 @@ jobs:
       # code_health/: forge's own suite fails the session when anything
       # writes the real code_health/ while it runs, and a tee writing
       # there during the run is exactly such a write.
-      - name: pytest (full suite, durations captured)
+      # Skipped only when the gate proved this exact tree already passed in
+      # the PR that landed it. `!= 'true'` rather than `== 'false'` so any
+      # unset or malformed output still runs the suite.
+      - name: pytest (full suite; skipped when the tree already passed)
+        if: steps.tree_gate.outputs.verified != 'true'
         shell: bash
         run: pytest -q | tee "$RUNNER_TEMP/pytest.log"
 
       # Perf visibility on every run, pass or fail — a slow AND failing
       # suite is when the ranking matters most. Reporter never gates.
+      # `always()` so a slow AND failing suite still gets ranked — but the
+      # log only exists when pytest ran, so the gate's verdict is part of
+      # the condition: a skipped suite would leave this step reading a log
+      # never written, comparing nothing and printing a misleading
+      # "no timing data" line on a run that has none.
       - name: forge-slow-tests-report (slowest tests + baseline compare)
-        if: always()
+        if: always() && steps.tree_gate.outputs.verified != 'true'
         run: forge-slow-tests-report --log "$RUNNER_TEMP/pytest.log" --baseline
 
       # Same drift check the post-merge / post-checkout hooks run locally:
