@@ -19,7 +19,8 @@ or PRs (``tracks``, ``current``, ``merge-order``) in
     reported as notes, not drift. Refuses an issue labelled both
     ``blocked`` and ``plan-ready``.
 ``overlap <merged-pr>``
-    Lists open issues with an authenticated plan naming a file the merged
+    Lists open issues with an authenticated plan whose files (the plan's,
+    or the issue body's when the plan names none) include one the merged
     PR changed, skipping the issues that PR itself closes, and marks the
     ones carrying ``plan-ready``. Issues without a plan have nothing to
     re-plan: those naming a changed file are only counted, in one

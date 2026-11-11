@@ -247,8 +247,9 @@ duplicate. No Index.
 
 `forge-backlog-index` renders the body from live GitHub data and
 overwrites the Index — never hand-edit it. Pass any
-`--lane LABEL=HEADING` the caller asks for. Exit 1 (short listing, zero or several `📋 Backlog Index` issues,
-empty body, tiers 1–2 alone over GitHub's size limit) leaves the old
+`--lane LABEL=HEADING` the caller asks for. Exit 1 (short listing,
+zero or several `📋 Backlog Index` issues, empty body, tiers 1–2
+alone over GitHub's size limit) leaves the old
 Index standing; exit 2 means GitHub was unreadable. Relay a refusal
 verbatim, never route around it; report any `trimmed:` line.
 
