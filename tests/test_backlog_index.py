@@ -316,18 +316,28 @@ def test_plan_ready_date_from_authenticated_plan(
     assert writes.calls == []
 
 
-def test_recheck_rendering() -> None:
-    """Behavior: a mapped recheck names the PR; a bare label lists the head alone."""
+def test_recheck_from_label_only() -> None:
+    """Behavior: a needs-recheck issue is listed in its lane, with its tier, only."""
+    body = _body([_issue(6, "labelled", "tier-2-high", "needs-recheck")])
+    recheck_section = body.partition("## 🔁 Needs Recheck")[2].partition("## 🤝")[0]
+    assert "- #6 — labelled — `tier-2-high`" in recheck_section
+    assert body.count("- #6 ") == 1
+
+
+def test_status_issue_leaves_tier_section_and_lane_shows_tier() -> None:
+    """Behavior: a plan-ready issue leaves its tier section; its lane names the tier."""
     body = _body(
         [
-            _issue(5, "mapped", "tier-2-high"),
-            _issue(6, "labelled", "tier-2-high", "needs-recheck"),
-        ],
-        recheck={5: 700},
+            _issue(1, "ready", "tier-1-critical", "plan-ready"),
+            _issue(2, "plain", "tier-1-critical"),
+        ]
     )
-    assert "- #5 — mapped — _touched by PR #700_" in body
-    recheck_section = body.partition("## 🔁 Needs Recheck")[2].partition("## 🤝")[0]
-    assert "- #6 — labelled\n" in recheck_section
+    assert body.count("## 🔥 Tier 1 — Critical (1)") == 1
+    assert body.count("- #1 ") == 1
+    plan_ready = body.partition("## ✅ Plan-Ready")[2].partition("## 🔁")[0]
+    assert "- #1 " in plan_ready
+    assert "`tier-1-critical`" in _line_of(body, 1)
+    assert "- #2 " not in plan_ready
 
 
 @pytest.mark.parametrize(
@@ -478,7 +488,7 @@ def test_trimming_drops_tier4_then_tier3_oldest_first() -> None:
     assert "- #10 " not in partial.body
     assert "- #12 " in partial.body
     assert "## 🌱 Tier 4 — Low Priority (3)" in partial.body
-    assert "…and 1 more" in partial.body
+    assert "…and 1 more trimmed" in partial.body
     assert "- #20 " in partial.body
     assert "- #21 " in partial.body
 
@@ -522,40 +532,20 @@ def test_refuses_when_tiers_one_and_two_alone_exceed_limit(
     assert writes.calls == []
 
 
-@pytest.mark.parametrize(
-    ("argv", "expected"),
-    [
-        (["--lane", "a=B c"], "## B c (1)"),
-        (["--recheck", "5=700"], "touched by PR #700"),
-        (["--recheck", "#5=#700"], "touched by PR #700"),
-    ],
-)
-def test_cli_accepts_lane_and_recheck_forms(
-    argv: list[str], expected: str, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """Behavior: the documented --lane and --recheck forms parse and shape the page.
-
-    Args:
-        argv: Command-line options under test.
-        expected: Text the rendered body must contain.
-    """
+def test_cli_accepts_lane_form(capsys: pytest.CaptureFixture[str]) -> None:
+    """Behavior: the documented --lane form parses and shapes the page."""
     source = FakeBacklog(issues=[_index(), _issue(5, "t", "tier-2-high", "a")])
     writes = Writes()
-    assert bi.main([*argv, "--dry-run"], source=source, write=writes) == bi.EXIT_OK
-    assert expected in capsys.readouterr().out
+    argv = ["--lane", "a=B c", "--dry-run"]
+    assert bi.main(argv, source=source, write=writes) == bi.EXIT_OK
+    assert "## B c (1)" in capsys.readouterr().out
     assert writes.calls == []
 
 
-@pytest.mark.parametrize(
-    "argv",
-    [["--lane", "noequals"], ["--recheck", "x=y"], ["--recheck", "5"]],
-)
-def test_cli_rejects_malformed_pairs(argv: list[str]) -> None:
-    """Behavior: a malformed pair is a usage error, not a silent default.
-
-    Args:
-        argv: Malformed command-line options.
-    """
+def test_cli_rejects_malformed_pairs() -> None:
+    """Behavior: a malformed --lane pair is a usage error, not a silent default."""
     with pytest.raises(SystemExit) as excinfo:
-        bi.main([*argv, "--dry-run"], source=FakeBacklog(), write=Writes())
+        bi.main(
+            ["--lane", "noequals", "--dry-run"], source=FakeBacklog(), write=Writes()
+        )
     assert excinfo.value.code == 2

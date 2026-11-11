@@ -19,10 +19,11 @@ or PRs (``tracks``, ``current``, ``merge-order``) in
     reported as notes, not drift. Refuses an issue labelled both
     ``blocked`` and ``plan-ready``.
 ``overlap <merged-pr>``
-    Lists open issues naming a file the merged PR changed — the files of
-    their authenticated plan, or of the issue body when the plan names
-    none (said in a note) — skipping the issues that PR itself closes,
-    and marks the ones carrying ``plan-ready``.
+    Lists open issues with an authenticated plan naming a file the merged
+    PR changed, skipping the issues that PR itself closes, and marks the
+    ones carrying ``plan-ready``. Issues without a plan have nothing to
+    re-plan: those naming a changed file are only counted, in one
+    ``note:`` line.
 
 Both ``drift`` and ``overlap`` take an issue's files from one rule
 (:func:`plan_paths`): the authenticated plan's, or the issue body's only
@@ -885,22 +886,30 @@ def drift_from(
 
 def _check_overlap_issue(
     issue: Issue, files: set[str], is_writer: WriterCheck, report: Report
-) -> None:
-    """Record whether open *issue*'s files intersect *files*.
+) -> bool:
+    """Record whether open *issue*'s planned files intersect *files*.
+
+    An issue without an authenticated plan is never flagged: there is no
+    plan to re-check, and flagging it filled the Backlog Index with noise.
 
     Args:
         issue: Open issue to inspect.
         files: Paths the merged PR changed.
         is_writer: Plan-author access check.
         report: Report to write into.
+
+    Returns:
+        Whether the issue has no plan yet its body names a changed file.
     """
     lookup = authenticated_plan(issue.comments, is_writer)
     if not record_lookup(lookup, issue.number, report):
-        return
+        return False
     paths, from_body = plan_paths(lookup.plan, issue.body)
     hits = sorted(files.intersection(paths))
     if not hits:
-        return
+        return False
+    if lookup.plan is None:
+        return True
     marker = " plan-ready" if PLAN_READY in issue.labels else ""
     report.finding(f"overlap: #{issue.number}{marker} names {', '.join(hits)}")
     if from_body:
@@ -908,10 +917,11 @@ def _check_overlap_issue(
             f"note: #{issue.number} paths come from the issue body, "
             "not an authenticated plan"
         )
+    return False
 
 
 def check_overlap(source: GitHubSource, pr_number: int) -> Report:
-    """List open issues naming a file merged PR *pr_number* changed.
+    """List open issues whose plan names a file merged PR *pr_number* changed.
 
     Args:
         source: GitHub reads.
@@ -936,9 +946,16 @@ def check_overlap(source: GitHubSource, pr_number: int) -> Report:
     report.note(f"merge: PR #{pr_number}{sha} changed {len(pr.files)} file(s)")
     files = set(pr.files)
     is_writer = WriterCheck(source)
-    for issue in issues:
-        if issue.number not in pr.closes:
-            _check_overlap_issue(issue, files, is_writer, report)
+    unplanned = sum(
+        _check_overlap_issue(issue, files, is_writer, report)
+        for issue in issues
+        if issue.number not in pr.closes
+    )
+    if unplanned:
+        report.note(
+            f"note: {unplanned} issue(s) without a validated plan name "
+            "changed files; not flagged"
+        )
     return report
 
 

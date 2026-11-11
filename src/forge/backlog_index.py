@@ -8,13 +8,18 @@ that protect the write live in code instead of prose an agent may skip.
 
 The body is rebuilt from scratch on every run and never read back. Tier
 lines omit the labels the page already states — the tier, which the
-section heading names, and the labels each lane exists to show — so the
-page grows as slowly as it can with the backlog.
+section heading names, and the labels each lane exists to show — and
+an issue a status lane lists (plan-ready, needs recheck, needs
+endorsement, blocked or waiting) leaves its tier section, its tier shown
+on the lane line instead, so the page grows as slowly as it can with the
+backlog. Every section is read off labels alone, so the same backlog
+always measures the same size.
 
 Nothing is written unless the listing is provably complete, exactly one
 open issue carries the Index title, and the body is non-empty and within
 GitHub's limit. A body over the limit first sheds its lowest-tier lines,
-oldest activity first, each tier's dropped lines replaced by one count;
+oldest activity first, each tier's dropped lines replaced by one
+"trimmed" count;
 when tiers 1 and 2 alone do not fit, the run refuses and the old Index
 stands. Issue titles are world-writable, so they are neutralised before
 they reach the posted body: no mention pings, no planted references.
@@ -85,16 +90,15 @@ TIERS: Final[tuple[tuple[str, str], ...]] = (
 # Trimmed first to last; tiers 1 and 2 are never trimmed.
 TRIMMABLE_TIERS: Final[tuple[str, ...]] = ("tier-4-low", "tier-3-standard")
 
-# Labels a tier line never repeats: its own section heading or a lane states them.
+# Labels whose status lane lists an issue in place of its tier section.
+_STATUS_LABELS: Final[frozenset[str]] = frozenset(
+    {PLAN_READY, NEEDS_RECHECK, NEEDS_ENDORSEMENT, BLOCKED, WAITING_UPSTREAM}
+)
+
+# Labels a tier line never repeats: its section heading states the tier, and
+# an issue carrying a status or lane label is listed in that lane instead.
 _STATED_LABELS: Final[frozenset[str]] = frozenset(
-    {
-        *(label for label, _ in TIERS),
-        BLOCKED,
-        PLAN_READY,
-        NEEDS_RECHECK,
-        NEEDS_ENDORSEMENT,
-        NEEDS_TRIAGE,
-    }
+    {*(label for label, _ in TIERS), NEEDS_TRIAGE}
 )
 
 _ZWSP: Final[str] = "\u200b"
@@ -152,7 +156,6 @@ class IndexInputs:
 
     today: str
     lanes: tuple[Lane, ...] = ()
-    recheck: Mapping[int, int] = field(default_factory=dict)
     plan_dates: Mapping[int, str] = field(default_factory=dict)
     slug: str | None = None
 
@@ -212,6 +215,22 @@ def _head(issue: Issue) -> str:
     return f"- #{issue.number} — {safe_title(issue.title)}"
 
 
+def _status_head(issue: Issue) -> str:
+    """Return a status-lane line start naming *issue*'s tier, if it has one.
+
+    A status-lane issue is left out of its tier section, so the lane line
+    is the only place its priority shows.
+
+    Args:
+        issue: Issue listed in a status lane.
+
+    Returns:
+        :func:`_head`, followed by the tier label in backticks when present.
+    """
+    tier = _tier_of(issue)
+    return f"{_head(issue)} — `{tier}`" if tier else _head(issue)
+
+
 def _tier_line(issue: Issue, hidden: frozenset[str]) -> str:
     """Return *issue*'s tier-section line, without labels the page already states.
 
@@ -246,7 +265,7 @@ def _more_line(tier: str, count: int, slug: str | None) -> str:
         where = f"[full list](https://github.com/{slug}/issues?q={quote_plus(query)})"
     else:
         where = f"`gh issue list --label {tier}`"
-    return f"- _…and {count} more — {where}_"
+    return f"- _…and {count} more trimmed — {where}_"
 
 
 def _blocker(issue: Issue) -> str:
@@ -286,7 +305,7 @@ def _lane_sections(issues: Sequence[Issue], inputs: IndexInputs) -> list[str]:
 
     Args:
         issues: Every listed issue.
-        inputs: Render inputs supplying recheck overlaps and plan dates.
+        inputs: Render inputs supplying plan dates.
 
     Returns:
         One section per status lane.
@@ -303,32 +322,24 @@ def _lane_sections(issues: Sequence[Issue], inputs: IndexInputs) -> list[str]:
         """
         return [i for i in issues if label in i.labels]
 
-    recheck = [
-        i for i in issues if NEEDS_RECHECK in i.labels or i.number in inputs.recheck
-    ]
     return [
         _section(
             "✅ Plan-Ready",
             [
-                f"{_head(i)} — _validated: "
+                f"{_status_head(i)} — _validated: "
                 f"{inputs.plan_dates.get(i.number, 'unknown')}_"
                 for i in having(PLAN_READY)
             ],
         ),
+        _section("🔁 Needs Recheck", [_status_head(i) for i in having(NEEDS_RECHECK)]),
         _section(
-            "🔁 Needs Recheck",
-            [
-                f"{_head(i)} — _touched by PR #{inputs.recheck[i.number]}_"
-                if i.number in inputs.recheck
-                else _head(i)
-                for i in recheck
-            ],
+            "🤝 Needs Endorsement",
+            [_status_head(i) for i in having(NEEDS_ENDORSEMENT)],
         ),
-        _section("🤝 Needs Endorsement", [_head(i) for i in having(NEEDS_ENDORSEMENT)]),
         _section(
             "🚫 Blocked / Waiting",
             [
-                f"{_head(i)} — _blocker: {_blocker(i)}_"
+                f"{_status_head(i)} — _blocker: {_blocker(i)}_"
                 for i in issues
                 if BLOCKED in i.labels or WAITING_UPSTREAM in i.labels
             ],
@@ -349,12 +360,11 @@ def _compose(
         issues: Every listed issue, in number order.
         tiers: Issues per tier label, most recently active first.
         keep: Number of lines each tier keeps.
-        inputs: Render inputs (date, lanes, slug, recheck, plan dates).
+        inputs: Render inputs (date, lanes, slug, plan dates).
 
     Returns:
         The full Index body.
     """
-    hidden = _STATED_LABELS | {lane.label for lane in inputs.lanes}
     parts = [
         (
             "> **Auto-generated by `forge-backlog-index`. Do not edit by hand.**\n"
@@ -365,7 +375,7 @@ def _compose(
     for label, heading in TIERS:
         members = tiers[label]
         shown = members[: keep[label]]
-        lines = [_tier_line(i, hidden) for i in shown]
+        lines = [_tier_line(i, _STATED_LABELS) for i in shown]
         if len(shown) < len(members):
             lines.append(_more_line(label, len(members) - len(shown), inputs.slug))
         parts.append(_section(heading, lines, count=len(members)))
@@ -384,7 +394,7 @@ def render(
 
     Args:
         issues: Open issues to list (the Index issue itself excluded).
-        inputs: Date, extra lanes, recheck overlaps, plan dates and slug.
+        inputs: Date, extra lanes, plan dates and slug.
         max_chars: Body limit in characters.
 
     Returns:
@@ -392,7 +402,7 @@ def render(
         alone exceed *max_chars*.
     """
     ordered = sorted(issues, key=lambda i: i.number)
-    exclusive = {lane.label for lane in inputs.lanes}
+    exclusive = _STATUS_LABELS | {lane.label for lane in inputs.lanes}
     tiers: dict[str, list[Issue]] = {label: [] for label, _ in TIERS}
     for issue in ordered:
         tier = _tier_of(issue)
@@ -628,25 +638,6 @@ def _lane_arg(value: str) -> Lane:
     return Lane(label=match[1].strip(), heading=match[2].strip())
 
 
-def _recheck_arg(value: str) -> tuple[int, int]:
-    """Argparse type for ``--recheck ISSUE=PR``.
-
-    Args:
-        value: Command-line text to parse.
-
-    Returns:
-        The issue and PR numbers.
-    """
-    match = _PAIR_RE.match(value)
-    msg = f"expected ISSUE=PR numbers, got {value!r}"
-    if match is None:
-        raise argparse.ArgumentTypeError(msg)
-    try:
-        return int(match[1].lstrip("#")), int(match[2].lstrip("#"))
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError(msg) from exc
-
-
 def _build_parser() -> argparse.ArgumentParser:
     """Return the ``forge-backlog-index`` argument parser."""
     parser = argparse.ArgumentParser(
@@ -661,14 +652,6 @@ def _build_parser() -> argparse.ArgumentParser:
         default=[],
         metavar="LABEL=HEADING",
         help="Extra section for issues carrying LABEL; they leave the tier sections.",
-    )
-    parser.add_argument(
-        "--recheck",
-        type=_recheck_arg,
-        action="append",
-        default=[],
-        metavar="ISSUE=PR",
-        help="List ISSUE under Needs Recheck as touched by merged PR.",
     )
     parser.add_argument(
         "--dry-run",
@@ -701,7 +684,6 @@ def main(
         inputs=IndexInputs(
             today=datetime.now(UTC).date().isoformat(),
             lanes=tuple(args.lane),
-            recheck=dict(args.recheck),
         ),
         dry_run=args.dry_run,
     )
