@@ -18,6 +18,23 @@ Two kinds, not equally strong. Know which one you are at.
 Never treat second kind as first. A bare variable with no ledger behind it
 is no gate — a suggestion.
 
+**Where a guard thinks a command starts decides what it can see.** The
+shared anchors in `claude-hooks/git_anchor.sh` start one at line start or
+after `;`, `&`, `|`, `(` or `)`. `)` counts because a `case` arm begins its
+command there — `case x in x) git push -f …` — and wrapping a command that
+way once hid it from every guard at the same time.
+
+That separator set is **not** in one place, and a change to it must grep
+for the copies: five hooks (`block_raw_ruff`, `block_raw_git`,
+`block_continuation_delete`, `block_unverified_pr_create`,
+`block_no_verify`) spell the same class by hand, and the `guard_chunks`
+callers (`block_fixer_recon`, `block_install_deps`, `block_no_verify`,
+`block_git_destructive`) each pass their own charset, chosen for what is
+safe to split in that hook. `block_raw_ruff` is the one that also cuts its
+run out of `GIT_ANCHOR`, and it refuses every command when that cut stops
+matching — which is how a divergence announces itself rather than going
+quiet.
+
 Not a gate kind: **automated host-classifier refusal.** The harness's own
 automated permission check (Claude Code's auto-mode classifier) can refuse
 a command no forge guard blocks. It is not forge's to enforce and not the
@@ -138,13 +155,85 @@ not yours.
 
 - **Before any force push** (user-approved only): check divergence with
   `git fetch origin && git log origin/<branch>`. `block_force_push` covers
-  `--force` / `--force-with-lease`, the `-f` / `-uf` cluster, and
-  `+`-prefixed refspecs.
+  `--force` / `--force-with-lease`, the `-f` / `-uf` cluster,
+  `+`-prefixed refspecs, and the server-side form below.
 - **Is a branch protected?** Check BOTH
   `gh api repos/{owner}/{repo}/rules/branches/{branch}` and
   `.../rulesets` — never conclude "unprotected" from a 404 on the legacy
   `/branches/{branch}/protection` endpoint alone (FOUNDATION §1 "Absence of
   evidence").
+
+### Ref writes through the API
+
+A ref moved by asking GitHub is the same act as moving it with a push: no
+local git runs, nothing is pushed, and the git-only stages of the guards
+see nothing. Agent credentials bypass server-side rulesets (FOUNDATION §2),
+so GitHub is no second line of defence.
+
+`block_force_push` refuses a `gh api` call that names `git/refs` in its
+endpoint and carries **any** method or body flag — `-X`, `--method`, `-f`,
+`-F`, `--field`, `--raw-field`, `--input`, their attached forms, and short
+clusters such as `-iXPATCH`. Any ref, tags included: a force-moved release
+tag is worse than a moved branch. It also refuses GraphQL `updateRef`
+carrying a `force` at all. Authority is the hook's own header and code;
+this page holds the rationale and the limits.
+
+**No flag VALUE is read, deliberately.** A hook cannot match gh's flag
+parsing: `-f` takes the whole following word, so `-fforce=true` has no `=`
+split to find; a short cluster hides a flag (`-iXPATCH` is `-i` plus
+`-X PATCH`); gh honours the LAST of a repeated `force=`. Each of those is a
+spelling where a value-reading guard disagreed with gh and let a force
+through. A ref write that cannot be told apart from a force is therefore
+treated as one.
+
+**This is a tripwire, not a sandbox** — the same standing as the rest of
+the guard family. It stops the routes an agent would plausibly take; it
+cannot stop one that hides the endpoint, or the flags, from the shell's own
+text.
+
+Still allowed: **reading** refs — `gh api repos/{o}/{r}/git/refs/heads/<b>`,
+with `-q` / `--jq` / `--paginate`, carries no method or body flag.
+Everything outside `git/refs` is untouched, writes included: a comment
+whose body merely discusses `git/refs` passes, because the match requires
+`git/refs` in a word with no `=` before it, and a substitution in a
+non-ref endpoint (`…/pulls/$(gh pr view …)/files`) passes too, as does a
+GraphQL mutation other than a forced `updateRef`.
+
+What it costs: a non-force ref update, which can only fast-forward, is
+refused along with the rest. No forge path performs one; an agent that
+wants a branch moved uses `forge-update-branch`, and a human keeps `!`.
+
+Blind spots, on top of the ones listed under "Rebase forms". Each hides the
+endpoint or the flags from the text a hook can read:
+
+- **An endpoint whose `git/refs` never appears literally** — held in a
+  variable (`E=…; gh api "$E" -X PATCH`), spelled through brace expansion
+  (`git/re{f,g}s/…`), a glob (`git/ref*/…`) or `$'\x72efs'`. A
+  substitution that merely *contains* the literal is caught, and so is one
+  whose `;` / `&` / `|` would otherwise cut the command short.
+- **Flags the text does not spell either** — held in a variable
+  (`F=-XPATCH; gh api <endpoint> $F`), split by brace expansion
+  (`-{X,}PATCH`), or assembled through `$IFS`. The endpoint being visible
+  does not help: the stage needs a flag token to see.
+- **Flags supplied out of band** — piped in through `xargs`, or carried by
+  a `gh alias` / `gh extension` that expands to `api -XPATCH`.
+- **GraphQL `updateRef` cannot be judged per branch.** Its `refId` is an
+  opaque node id, so no stage can say which ref it names; the force test
+  catches it whatever ref that is.
+- **A GraphQL query or variable object read from a file or stdin**
+  (`-F query=@q.graphql`, `-F input=@vars.json`, `--input -`): the `force`
+  never appears in the command text.
+- **A different client altogether** — `curl -X PATCH https://api.github.com/…`
+  with a token, or `git send-pack --force`, neither of which carries a
+  `push` verb or a `gh api` call for any stage to match. Local
+  `git update-ref` is likewise unguarded, though it moves nothing published.
+- **Other endpoints that write the base** are not covered — `POST …/merges`,
+  `PUT …/contents/<path>` with `branch=<base>`,
+  `PUT …/branches/<base>/protection`, `POST …/branches/<base>/rename`, a
+  `default_branch` change, and the GraphQL mutations `createCommitOnBranch`,
+  `mergeBranch`, `createRef` and `deleteRef`. The real invariant is "no
+  `gh api` write naming the protected branch"; these are recorded as a
+  sighting rather than guarded, since nothing has reached for them.
 
 
 ## Base sync

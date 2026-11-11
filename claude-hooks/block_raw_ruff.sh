@@ -71,7 +71,7 @@ CMDPOS=$(command_positions --no-redir "$COMMAND")
 RUFF_PREFIX="${GIT_ANCHOR%%git\[\[:space:\]\]+*}"
 case "$RUFF_PREFIX" in
     "$GIT_ANCHOR" | "" | *git*) RUFF_PREFIX_OK=0 ;;
-    '(^|[;&|(])[[:space:]]*'*) RUFF_PREFIX_OK=1 ;;
+    '(^|[;&|()])[[:space:]]*'*) RUFF_PREFIX_OK=1 ;;
     *) RUFF_PREFIX_OK=0 ;;
 esac
 if [ "$RUFF_PREFIX_OK" != 1 ]; then

@@ -107,7 +107,7 @@ fi
 INTERP_PFX='(([[:alnum:]_]+=[^[:space:]]+|then|do|else|elif|[{!]|-[^[:space:]]+|'"${GUARD_REDIR}"')[[:space:]]+)*'
 INTERP_RUNNER='('"${GUARD_BINPATH}"'(command|env|exec|builtin|sudo|nice|nohup|time|timeout|stdbuf|xargs|uvx|npx|bunx|(uv|pixi|poetry|pipenv|pdm|hatch|rye|conda|mamba|micromamba)[[:space:]]+run)([[:space:]]+([^[:space:];&|()]+|'"${GUARD_REDIR}"'))*[[:space:]]+)?'
 INTERP_NAME='([^[:space:];&|()]*/)?(python[0-9.]*|pypy[0-9.]*|node|nodejs|perl|ruby|bun|deno|php)'
-INTERP_RE="(^|[;&|(])[[:space:]]*${INTERP_PFX}${INTERP_RUNNER}${INTERP_NAME}([[:space:]]|\$)"
+INTERP_RE="(^|[;&|()])[[:space:]]*${INTERP_PFX}${INTERP_RUNNER}${INTERP_NAME}([[:space:]]|\$)"
 INTERP_TOKEN_RE='^(.*/)?(python[0-9.]*|pypy[0-9.]*|node|nodejs|perl|ruby|bun|deno|php)$'
 GIT_WORD_RE='(^|[^[:alnum:]_.-])git([^[:alnum:]_./-]|$)'
 

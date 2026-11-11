@@ -1918,6 +1918,143 @@ _FORCE_PUSH_CASES = [
     pytest.param("${G//x/y} push -f", 2, id="blocks_brace_substitution_expansion"),
     pytest.param("${G%/*} push -f", 2, id="blocks_brace_suffix_strip_expansion"),
     pytest.param("${HOME}/bin/tool push -f", 0, id="allows_braced_variable_path"),
+    # A ref write forces through the REST API or GraphQL, not only `git push`.
+    pytest.param(
+        "gh api -X PATCH repos/o/r/git/refs/heads/main -F sha=abc -F force=true",
+        2,
+        id="blocks_gh_api_ref_force_true",
+    ),
+    pytest.param(
+        "gh api -X PATCH /repos/o/r/git/refs/tags/v1 -F sha=abc -F force=true",
+        2,
+        id="blocks_gh_api_tag_ref_force",
+    ),
+    pytest.param(
+        "gh api -XPATCH repos/o/r/git/refs/heads/main -F force=1",
+        2,
+        id="blocks_gh_api_attached_method_force_one",
+    ),
+    pytest.param(
+        "gh api --method PATCH repos/o/r/git/refs/heads/main -F force=true",
+        2,
+        id="blocks_gh_api_long_method_force",
+    ),
+    pytest.param(
+        "gh api -X PATCH repos/o/r/git/refs/heads/main --input body.json",
+        2,
+        id="blocks_gh_api_input_body_fails_closed",
+    ),
+    pytest.param(
+        """gh api graphql -f query='mutation{updateRef(input:{refId:"R",'"""
+        """oid:"abc",force:true}){x}}'""",
+        2,
+        id="blocks_gh_api_graphql_update_ref_force_true",
+    ),
+    pytest.param(
+        "gh -R o/n api -X PATCH repos/o/r/git/refs/heads/main -F force=true",
+        2,
+        id="blocks_gh_api_after_gh_options",
+    ),
+    # No flag value, a header's included, changes the verdict.
+    pytest.param(
+        "gh api -X PATCH repos/o/r/git/refs/heads/main -H 'x: force=true'",
+        2,
+        id="blocks_gh_api_header_value_with_method_flag",
+    ),
+    # Flag values are never read: a hook cannot trust `force=false`, so any
+    # method/body flag on a refs endpoint blocks.
+    pytest.param(
+        "gh api -X PATCH repos/o/r/git/refs/heads/main -F sha=abc -F force=false",
+        2,
+        id="blocks_gh_api_ref_force_false",
+    ),
+    pytest.param(
+        "gh api -X PATCH repos/o/r/git/refs/heads/main -F sha=abc",
+        2,
+        id="blocks_gh_api_ref_write_without_force",
+    ),
+    pytest.param(
+        """gh api graphql -f query='mutation{updateRef(input:{refId:"R",'"""
+        """force:false}){x}}'""",
+        2,
+        id="blocks_gh_api_graphql_update_ref_force",
+    ),
+    # Spellings a value-reading parser would misjudge; all blocked.
+    pytest.param(
+        "gh api -X PATCH repos/o/r/git/refs/heads/feat -fforce=true",
+        2,
+        id="blocks_gh_api_attached_field_force",
+    ),
+    pytest.param(
+        "gh api -iXPATCH repos/o/r/git/refs/heads/main",
+        2,
+        id="blocks_gh_api_short_cluster_method",
+    ),
+    pytest.param(
+        "gh api repos/o/r/git/refs/heads/feat -X PATCH "
+        "-f sha=$(git log | head -1) -f force=true",
+        2,
+        id="blocks_gh_api_pipe_in_substitution",
+    ),
+    pytest.param(
+        "gh api $(echo repos/o/r/git/refs/heads/main) -X PATCH -f sha=a",
+        2,
+        id="blocks_gh_api_substituted_endpoint",
+    ),
+    pytest.param(
+        "gh api -X PATCH repos/o/r/git/refs/heads/x -f force=false -f force=true",
+        2,
+        id="blocks_gh_api_repeated_force_last_wins",
+    ),
+    pytest.param(
+        'gh api -X PATCH "repos/o/r/git/refs/heads/x?force=true"',
+        2,
+        id="blocks_gh_api_query_string_force",
+    ),
+    pytest.param(
+        "gh api -X PATCH repos/o/r/git/refs/heads/%6Dain -F sha=a",
+        2,
+        id="blocks_gh_api_percent_encoded_ref",
+    ),
+    pytest.param(
+        """gh api graphql -f query='mutation{updateRef(input:{refId:"x",'"""
+        """force:true}){a}}' -f note=force:false""",
+        2,
+        id="blocks_gh_api_graphql_force_with_stray_false",
+    ),
+    pytest.param(
+        """gh api graphql -f query='mutation{updateRef(input:{refId:"x",'"""
+        """force : true}){a}}'""",
+        2,
+        id="blocks_gh_api_graphql_force_spaced_colon",
+    ),
+    # Reads and unrelated writes stay allowed.
+    pytest.param(
+        "gh api repos/o/r/git/refs/heads/feat", 0, id="allows_gh_api_ref_read"
+    ),
+    pytest.param(
+        "gh api repos/o/r/git/refs/heads/feat -q .object.sha",
+        0,
+        id="allows_gh_api_ref_read_with_jq",
+    ),
+    pytest.param(
+        "gh api -X POST repos/o/r/issues/5/comments -f body=hello",
+        0,
+        id="allows_gh_api_non_ref_write",
+    ),
+    # A substitution in a non-ref endpoint is not refused.
+    pytest.param(
+        "gh api repos/o/r/pulls/$(gh pr view --json number -q .number)/files",
+        0,
+        id="allows_gh_api_substitution_outside_refs",
+    ),
+    # `force=true` belongs to the `echo`, so the per-call scoping must not
+    # attribute it to the `gh api` before it (analogue of the `tar -f` row).
+    pytest.param(
+        "gh api repos/o/r/issues; echo force=true",
+        0,
+        id="allows_force_mention_after_gh_api_call",
+    ),
 ]
 
 
@@ -5597,6 +5734,18 @@ def test_fixer_recon_blocks_git_status() -> None:
     )
 
 
+def test_fixer_recon_blocks_a_command_masked_by_a_substitution_close() -> None:
+    """An allowlisted `cd` inside `$(...)` must not mask the command after the `)`."""
+    assert (
+        _run_hook(
+            _FIXER_RECON,
+            "X=$(cd /tmp) ls -la",
+            options=HookOptions(agent_type="forge:precommit-fixer"),
+        )
+        == 2
+    )
+
+
 def test_fixer_recon_blocks_find_and_checksum_pipe() -> None:
     """A `find | xargs md5sum` pipe is blocked — neither segment is allowlisted."""
     assert (
@@ -8277,6 +8426,12 @@ _POSITION_CASES = [
         id="bash-c-branch-deletion",
     ),
     pytest.param(
+        "block_force_push.sh",
+        'bash -c "gh api -X PATCH repos/o/r/git/refs/heads/main -F force=true"',
+        _BLOCK,
+        id="bash-c-gh-api-force-ref",
+    ),
+    pytest.param(
         "block_continuation_delete.sh",
         'bash -c "rm -rf .plan"',
         _BLOCK,
@@ -8379,6 +8534,70 @@ _POSITION_CASES = [
         "cat <<'EOF' | bash\ngit push -f\nEOF",
         _BLOCK,
         id="quoted-heredoc-piped-into-bash",
+    ),
+    # A `case` arm starts its command after `)`, so `)` is a command-start
+    # separator: wrapping a command in `case` must not hide it from any guard.
+    pytest.param(
+        "block_force_push.sh",
+        "case x in x) git push -f origin main ;; esac",
+        _BLOCK,
+        id="case-arm-force-push",
+    ),
+    pytest.param(
+        "block_git_destructive.sh",
+        "case x in x) git reset --hard HEAD~1 ;; esac",
+        _BLOCK,
+        id="case-arm-git-destructive",
+    ),
+    pytest.param(
+        "block_pr_merge.sh",
+        "case x in x) gh pr merge 5 --squash ;; esac",
+        _BLOCK,
+        id="case-arm-pr-merge",
+    ),
+    pytest.param(
+        "block_git_rebase.sh",
+        "case x in x) git rebase origin/main ;; esac",
+        _BLOCK,
+        id="case-arm-git-rebase",
+    ),
+    pytest.param(
+        "block_raw_ruff.sh",
+        "case x in x) ruff check . ;; esac",
+        _BLOCK,
+        id="case-arm-raw-ruff",
+    ),
+    pytest.param(
+        "block_continuation_delete.sh",
+        "case x in x) rm .plan/CONTINUATION.md ;; esac",
+        _BLOCK,
+        id="case-arm-continuation-delete",
+    ),
+    pytest.param(
+        "block_no_verify.sh",
+        "case x in x) git commit --no-verify -m x ;; esac",
+        _BLOCK,
+        id="case-arm-no-verify",
+    ),
+    # A subshell's `)` still finds a real force push after it ...
+    pytest.param(
+        "block_force_push.sh",
+        "(cd /tmp) git push -f origin main",
+        _BLOCK,
+        id="subshell-close-then-force-push",
+    ),
+    # ... while a `)` that precedes something harmless stays allowed.
+    pytest.param(
+        "block_force_push.sh",
+        "echo $(git rev-parse HEAD) && git push origin main",
+        _ALLOW,
+        id="substitution-close-then-plain-push",
+    ),
+    pytest.param(
+        "block_git_destructive.sh",
+        'echo "$(git status --short)"',
+        _ALLOW,
+        id="quoted-substitution-status",
     ),
 ]
 

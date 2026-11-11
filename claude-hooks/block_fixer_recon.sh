@@ -132,7 +132,7 @@ _segment_ok() {
 # `bash -c` / `eval` payload is split out and judged like any command.
 # This hook's own separator charset (guard_chunks); a splitter failure
 # blocks, since an empty segment list would pass every check.
-SEGMENTS=$(guard_chunks ';&|(' "$(command_positions --words "$COMMAND")") || _block "$COMMAND"
+SEGMENTS=$(guard_chunks ';&|()' "$(command_positions --words "$COMMAND")") || _block "$COMMAND"
 FULL_RUN=0
 while IFS= read -r segment; do
     if ! _segment_ok "$segment"; then

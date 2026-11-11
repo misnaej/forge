@@ -185,7 +185,7 @@ enforcement:
 - block_branch_deletion.sh: block agent deletion of protected remote branches (no bypass)
 - block_claude_attribution.sh: block AI attribution in commits
 - block_continuation_delete.sh: protect `.plan/CONTINUATION.md`
-- block_force_push.sh: block force pushes
+- block_force_push.sh: block force pushes, and any `gh api` write to `git/refs` (no push for the git stages to see, and a force is indistinguishable from a fast-forward there — reads stay allowed)
 - block_forge_docs_edits.sh: block agent edits inside the forge-managed forge-docs/ mirror
 - block_git_rebase.sh: block every rebase form from agents: `git rebase`, `git pull --rebase`, server-side `gh pr update-branch --rebase` (no bypass — sync via plain base merge)
 - block_install_deps.sh: block dependency installation (pip / conda / pipenv / poetry / uv / pixi; pixi governed by a verb allowlist that fails closed, the other five by denylists)

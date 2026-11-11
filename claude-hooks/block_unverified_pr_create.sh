@@ -64,7 +64,7 @@ fi
 # the create invocation — a free-text mention (e.g. in a --title/--body
 # that discusses this hook) must NOT trip the bypass, so it too is read
 # from the command-positions view.
-if echo "$CMDPOS" | grep -qE '(^|[;&|(])[[:space:]]*FORGE_SKIP_WRAPUP_GATE=1[[:space:]]+gh[[:space:]]+pr[[:space:]]+create\b' \
+if echo "$CMDPOS" | grep -qE '(^|[;&|()])[[:space:]]*FORGE_SKIP_WRAPUP_GATE=1[[:space:]]+gh[[:space:]]+pr[[:space:]]+create\b' \
     || [ "${FORGE_SKIP_WRAPUP_GATE:-}" = "1" ]; then
     exit 0
 fi
