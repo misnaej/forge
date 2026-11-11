@@ -20,6 +20,37 @@ fragment type (**Features / Changes / Fixes / Removed / Docs**).
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v12.0.0 — 2026-11-11
+
+### Features
+- `forge-commit --wip-sync -m "wip-sync: <what>"` makes a checkpoint commit: it stages the whole working tree, untracked files included, and commits with the pre-commit gate deferred to the next real commit. It is the manual form of the checkpoint `forge-update-branch` takes itself before merging the base; before, the only documented form was a raw `git commit` the agent guards refuse.
+- New `require_helpers_stopped` hook: when an agent stops while a helper it launched is still running, its first hand-back is refused with the helper named, so a report is never written over work still in progress. The agent template gains the matching rule for every delegating agent (wait for each helper; no placeholder helpers). The agent-timing ledger now records which helper each launch started.
+- `forge:precommit-fixer` has one scope contract: it edits only what a failing check names, reports warnings in untouched files, signature mismatches and test doubles instead of fixing them, and runs no tests — it lists the test files covering its edits for the caller to run. Its report's `Tests re-run:` field is now `Tests to run (caller):`; a wrapper or script matching the old name needs updating. Its command guard no longer allows test runs.
+- New `forge-update-branch`: brings a branch up to date with its base in one call. It checkpoints a dirty tree, merges, and resolves the predictable conflicts itself — files the branch already holds (every stacked branch after its parent is squash-merged), generated artifacts and the version slot — then commits and pushes. Conflicts that need judgment stop it (exit 3) with an intake lesson recording the stop; `forge-update-branch --continue` finishes once they are resolved, checking that nothing outside the conflicted files changed and running the pre-commit gate when files were edited by hand. A merge resolved entirely to one side now commits; before, no command could commit it.
+- New agent `forge:merge-resolver`, spawned after such a stop: it reads both sides, edits the conflicted files, escalates what it cannot determine, and finishes with `--continue`. It never commits or merges itself.
+- **Breaking:** `forge-commit` refuses while a merge is in progress and names `forge-update-branch --continue`; it no longer commits merges. `forge-resync --resolve-conflicts` and `--dry-run` are removed (the command resolves generated artifacts itself). The `warn_generated_conflicts` hook is now `warn_merge_conflicts`. Migration — grep your own docs and rules for each superseded form and replace it:
+  - `git merge origin/<base>` (base sync) → `forge-update-branch` (`--base <parent>` on a stacked branch);
+  - `forge-resync --resolve-conflicts` → `forge-update-branch` (generated files are resolved for you);
+  - `git diff --cached --no-renames --name-only` and "name every staged path" (finishing a merge with `forge-commit`), and "never unstage on a merge" → `forge-update-branch --continue`;
+  - `forge-commit` during a merge → refused; `forge-update-branch --continue`;
+  - the human `! git commit` for a merge resolved to one side → no longer needed.
+  `forge-update-branch` needs no open PR: a stacked branch's first sync, before publication, works the same.
+
+### Changes
+- `forge-plan-check overlap` flags only open issues with a validated plan; issues without one that name a changed file are counted in one `note:` line instead of each being flagged for re-planning.
+- The Backlog Index lists each issue once: an issue in Plan-Ready, Needs Recheck, Needs Endorsement or Blocked / Waiting leaves its tier section and shows its tier on the status line. Needs Recheck lists exactly the issues labelled `needs-recheck`, so the same backlog always renders the same size; an issue carrying both `plan-ready` and `needs-recheck` appears only under Needs Recheck; and the line standing in for dropped entries now says "trimmed".
+- `forge-backlog-index --recheck` is removed; a script passing it must drop the flag (treated as internal: forge's own triage agent is the only known caller).
+- `forge-plan-check drift`, `current` and `overlap` sort each changed file before flagging a plan: regenerated artifacts never count, shared files (any `CLAUDE.md`, `pyproject.toml`, lock files, `README.md`, `CHANGELOG.md`, `REPO_STRUCTURE.md`, `FOUNDATION.md`, the plugin manifest and roster) are listed as non-blocking `weak:` / `note:` lines, and only other files a plan names make it drift. Repos add their own shared files with `[tool.forge.plan_check].hub_paths`.
+- A merge that touches a planned file keeps `plan-ready` and adds `needs-recheck`. At pickup `/sentinel` reads the diff: when the planned logic is untouched it posts `[sentinel] recheck cleared:` (which restarts the drift window), removes `needs-recheck` and proceeds; when it changed, it removes `plan-ready` and the issue goes back to `/plan-issue`. The sentinel never grants `plan-ready`.
+- FOUNDATION §2: a refusal from the host's automated permission check (such as Claude Code's auto-mode classifier) is not a forge guard. Agents retry it once, or a suggested safer form that reaches no guarded effect; if it is still refused they quote it and ask, and never prescribe a `!` command or a settings change for it. A user's denial and a forge `block_*` hook are never retried. `forge-docs/git-safety.md` documents this next to the two gate kinds and notes the list is not exhaustive.
+- FOUNDATION §2: once the user says yes to closing or reopening an issue, the agent runs the `gh` command itself; `plan-ready` still goes only through the plan-readiness pipeline.
+- FOUNDATION §11 and the agent template: an agent's report states what it did, found and was refused — never who may act, what the user should run or which setting should change — and the parent tests such claims instead of relaying them.
+- The force-push divergence check and the branch-protection check moved from FOUNDATION §2 to `forge-docs/git-safety.md`, unchanged.
+
+### Fixes
+- The custom pre-commit example in `docs/customizing-precommit.md` lists staged files with `--no-renames`, so a renamed Python file is type-checked instead of skipped.
+- `forge-pr-create` now refuses a branch that is behind or conflicting with its base, before the pull request exists. The base often moves while verification runs, and the wrap-up post already refused such a branch — but only after the PR was public and reviewers notified, leaving it with no description. Same rule as the post: an emergency publication may be behind, never conflicting; an unreadable base is a warning.
+
 ## v11.4.0 — 2026-11-10
 
 ### Changes

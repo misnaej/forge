@@ -1,4 +1,0 @@
-bump: minor
-
-- New `require_helpers_stopped` hook: when an agent stops while a helper it launched is still running, its first hand-back is refused with the helper named, so a report is never written over work still in progress. The agent template gains the matching rule for every delegating agent (wait for each helper; no placeholder helpers). The agent-timing ledger now records which helper each launch started.
-- `forge:precommit-fixer` has one scope contract: it edits only what a failing check names, reports warnings in untouched files, signature mismatches and test doubles instead of fixing them, and runs no tests — it lists the test files covering its edits for the caller to run. Its report's `Tests re-run:` field is now `Tests to run (caller):`; a wrapper or script matching the old name needs updating. Its command guard no longer allows test runs.
