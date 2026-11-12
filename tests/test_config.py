@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import locale
 import logging
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple
+from typing import NamedTuple
+
+import pytest
 
 from forge import config, git_utils
 from forge.config import (
     DEFAULT_BASE_BRANCH,
     ForgeConfig,
+    PytestIgnores,
     detect_source_dirs,
     detect_test_dirs,
     filter_excluded,
@@ -19,6 +23,7 @@ from forge.config import (
     load_config,
     path_under_roots,
     read_pyproject_raw,
+    read_pytest_ignores,
     read_tool_forge_section,
     resolve_tool_roots,
     select_diff_files,
@@ -26,10 +31,6 @@ from forge.config import (
 )
 from tests.conftest import GIT_ENV as _GIT_ENV
 from tests.conftest import init_git_repo as _init_git_repo
-
-
-if TYPE_CHECKING:
-    import pytest
 
 
 def test_default_base_branch_is_main() -> None:
@@ -1015,3 +1016,344 @@ def test_summarize_paths_quotes_untrusted_names_as_inert_data() -> None:
     capped = config.summarize_paths(["d/" + "n" * 200])
     assert len(capped) == 82
     assert capped.endswith("…`")
+
+
+# ---------------------------------------------------------------------------
+# PytestIgnores / read_pytest_ignores — pytest's ignore rules, as forge applies
+# them to explicitly named test files.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("rules", "relpath", "expected"),
+    [
+        pytest.param(
+            PytestIgnores(paths=frozenset({"build"})),
+            "build/t.py",
+            True,
+            id="path-ignores-everything-under-it",
+        ),
+        pytest.param(
+            PytestIgnores(paths=frozenset({"build"})),
+            "build",
+            True,
+            id="path-ignores-itself",
+        ),
+        pytest.param(
+            PytestIgnores(paths=frozenset({"build"})),
+            "buildx/t.py",
+            False,
+            id="path-prefix-stops-at-a-directory-boundary",
+        ),
+        pytest.param(
+            PytestIgnores(paths=frozenset({"build"})),
+            "src/build/t.py",
+            False,
+            id="path-is-anchored-at-the-repo-root",
+        ),
+        pytest.param(
+            PytestIgnores(globs=("tests/old_*",)),
+            "tests/old_a/t.py",
+            True,
+            id="glob-star-crosses-slashes",
+        ),
+        pytest.param(
+            PytestIgnores(globs=("tests/old_*",)),
+            "tests/new/t.py",
+            False,
+            id="glob-non-match",
+        ),
+        pytest.param(
+            PytestIgnores(norecursedirs=("node_modules", "_*")),
+            "a/node_modules/t.py",
+            True,
+            id="norecursedirs-exact-name-in-the-middle",
+        ),
+        pytest.param(
+            PytestIgnores(norecursedirs=("node_modules", "_*")),
+            "_hidden/t.py",
+            True,
+            id="norecursedirs-pattern-at-the-top",
+        ),
+        pytest.param(
+            PytestIgnores(norecursedirs=("node_modules", "_*")),
+            "a/_x/b/t.py",
+            True,
+            id="norecursedirs-any-ancestor",
+        ),
+        pytest.param(
+            PytestIgnores(norecursedirs=("node_modules", "_*")),
+            "a/b/t.py",
+            False,
+            id="norecursedirs-non-match",
+        ),
+        pytest.param(
+            PytestIgnores(norecursedirs=("test_*",)),
+            "a/test_x.py",
+            False,
+            id="norecursedirs-never-matches-the-file-name-itself",
+        ),
+        pytest.param(
+            PytestIgnores(norecursedirs=("a/b",)),
+            "a/b/t.py",
+            False,
+            id="norecursedirs-matches-a-directory-name-not-a-path",
+        ),
+        pytest.param(PytestIgnores(), "a/t.py", False, id="empty-rules-ignore-nothing"),
+    ],
+)
+def test_pytest_ignores_match_semantics(
+    rules: PytestIgnores, relpath: str, expected: bool
+) -> None:
+    """Each rule family excludes exactly the paths pytest's own rule would.
+
+    Args:
+        rules: The ignore rules under test.
+        relpath: Repo-relative POSIX path asked about.
+        expected: Whether the path is excluded.
+    """
+    assert rules.ignores(relpath) is expected
+
+
+@pytest.mark.parametrize(
+    ("settings", "paths", "globs", "norecursedirs"),
+    [
+        pytest.param({"addopts": "--ignore=build"}, {"build"}, (), (), id="eq-path"),
+        pytest.param(
+            {"addopts": "--ignore build"}, {"build"}, (), (), id="spaced-path"
+        ),
+        pytest.param(
+            {"addopts": "--ignore-glob=*/old_*"}, set(), ("*/old_*",), (), id="eq-glob"
+        ),
+        pytest.param(
+            {"addopts": "--ignore-glob *old*"},
+            set(),
+            ("*old*",),
+            (),
+            id="spaced-glob",
+        ),
+        pytest.param(
+            {"addopts": "-q --ignore=a -x --ignore-glob=*b* -p no:cacheprovider"},
+            {"a"},
+            ("*b*",),
+            (),
+            id="mixed-with-unrelated-flags",
+        ),
+        pytest.param(
+            {"addopts": ["--ignore=a", "--ignore", "b"]},
+            {"a", "b"},
+            (),
+            (),
+            id="toml-list",
+        ),
+        pytest.param(
+            {"addopts": "--ignore=build/"}, {"build"}, (), (), id="trailing-slash"
+        ),
+        pytest.param(
+            {"addopts": '--ignore="my dir/x"'},
+            {"my dir/x"},
+            (),
+            (),
+            id="shlex-quoted-space",
+        ),
+        pytest.param({"addopts": "-q --ignore"}, set(), (), (), id="dangling-ignore"),
+        pytest.param(
+            {"addopts": "--ignore-glob"}, set(), (), (), id="dangling-ignore-glob"
+        ),
+        pytest.param(
+            {"norecursedirs": "a b"}, set(), (), ("a", "b"), id="norecurse-string"
+        ),
+        pytest.param(
+            {"norecursedirs": ["a", "b"]}, set(), (), ("a", "b"), id="norecurse-list"
+        ),
+        pytest.param({}, set(), (), (), id="no-keys"),
+        pytest.param(
+            {"addopts": "--ignore-glob=x"}, set(), ("x",), (), id="glob-not-in-paths"
+        ),
+    ],
+)
+def test_ignores_from_settings_fills_the_right_field(
+    settings: dict[str, object],
+    paths: set[str],
+    globs: tuple[str, ...],
+    norecursedirs: tuple[str, ...],
+) -> None:
+    """Each spelling lands in its own field, so a glob is never read as a path.
+
+    Args:
+        settings: One config file's pytest settings.
+        paths: Expected ``paths`` field.
+        globs: Expected ``globs`` field.
+        norecursedirs: Expected ``norecursedirs`` field.
+    """
+    assert config._ignores_from_settings(settings) == PytestIgnores(
+        paths=frozenset(paths), globs=globs, norecursedirs=norecursedirs
+    )
+
+
+_INI = "[pytest]\naddopts = --ignore=from_ini\n"
+_TOML = '[tool.pytest.ini_options]\naddopts = "--ignore=from_toml"\n'
+_TOX = "[pytest]\naddopts = --ignore=from_tox\n"
+_CFG = "[tool:pytest]\naddopts = --ignore=from_cfg\n"
+
+
+@pytest.mark.parametrize(
+    ("files", "expected"),
+    [
+        pytest.param(
+            {"pytest.ini": _INI, "pyproject.toml": _TOML},
+            PytestIgnores(paths=frozenset({"from_ini"})),
+            id="pytest-ini-beats-pyproject",
+        ),
+        pytest.param(
+            {"pytest.ini": "[other]\nx = 1\n", "pyproject.toml": _TOML},
+            PytestIgnores(),
+            id="pytest-ini-without-section-still-beats-pyproject-yielding-empty",
+        ),
+        pytest.param(
+            {"pyproject.toml": _TOML, "tox.ini": _TOX},
+            PytestIgnores(paths=frozenset({"from_toml"})),
+            id="pyproject-beats-tox",
+        ),
+        pytest.param(
+            {"pyproject.toml": "[tool.other]\nx = 1\n", "tox.ini": _TOX},
+            PytestIgnores(paths=frozenset({"from_tox"})),
+            id="pyproject-without-the-table-falls-through-to-tox",
+        ),
+        pytest.param(
+            {"tox.ini": "[tox]\nenvlist = py\n", "setup.cfg": _CFG},
+            PytestIgnores(paths=frozenset({"from_cfg"})),
+            id="tox-without-the-section-falls-through-to-setup-cfg",
+        ),
+        pytest.param(
+            {"setup.cfg": "[pytest]\naddopts = --ignore=from_cfg\n"},
+            PytestIgnores(),
+            id="setup-cfg-needs-the-tool-colon-pytest-section",
+        ),
+        pytest.param({}, PytestIgnores(), id="no-config-files"),
+        pytest.param(
+            {
+                "pyproject.toml": (
+                    '[tool.pytest.ini_options]\naddopts = "--ignore=a"\n'
+                ),
+                "tox.ini": "[pytest]\naddopts = --ignore=b\n",
+            },
+            PytestIgnores(paths=frozenset({"a"})),
+            id="no-merging-across-files",
+        ),
+        pytest.param(
+            {
+                "pyproject.toml": (
+                    '[tool.pytest.ini_options]\naddopts = ["--ignore=a"]\n'
+                )
+            },
+            PytestIgnores(paths=frozenset({"a"})),
+            id="toml-addopts-as-a-list",
+        ),
+        pytest.param(
+            {"pytest.ini": "[pytest]\nnorecursedirs =\n    x\n    y\n"},
+            PytestIgnores(norecursedirs=("x", "y")),
+            id="ini-multiline-norecursedirs",
+        ),
+    ],
+)
+def test_read_pytest_ignores_uses_the_first_file_pytest_would(
+    tmp_path: Path, files: dict[str, str], expected: PytestIgnores
+) -> None:
+    """Only the file pytest itself would pick supplies the rules, never a merge.
+
+    Args:
+        files: Config files to write, by name.
+        expected: The whole rule set the winner must yield.
+    """
+    for name, text in files.items():
+        (tmp_path / name).write_text(text, encoding="utf-8")
+
+    assert read_pytest_ignores(tmp_path) == expected
+
+
+@pytest.mark.parametrize(
+    ("name", "text"),
+    [
+        pytest.param("pytest.ini", "not an ini file at all\n", id="unparseable-ini"),
+        pytest.param("pyproject.toml", "[tool.pytest\n", id="malformed-toml"),
+    ],
+)
+def test_read_pytest_ignores_malformed_config_yields_empty_rules(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, name: str, text: str
+) -> None:
+    """A config that cannot be parsed degrades to "filter nothing", and says so.
+
+    Args:
+        name: Config file to write.
+        text: Its unparseable content.
+    """
+    (tmp_path / name).write_text(text, encoding="utf-8")
+    caplog.set_level(logging.DEBUG, logger="forge.config")
+
+    assert read_pytest_ignores(tmp_path) == PytestIgnores()
+    assert "could not" in caplog.text
+
+
+def test_read_pytest_ignores_percent_in_addopts_is_not_interpolated(
+    tmp_path: Path,
+) -> None:
+    """A literal ``%`` in ``addopts`` parses; configparser must not interpolate it."""
+    (tmp_path / "pytest.ini").write_text(
+        "[pytest]\naddopts = --ignore-glob=*%*\n", encoding="utf-8"
+    )
+
+    assert read_pytest_ignores(tmp_path) == PytestIgnores(globs=("*%*",))
+
+
+@pytest.mark.parametrize(
+    ("name", "header"),
+    [
+        pytest.param("pytest.ini", "[pytest]", id="pytest-ini"),
+        pytest.param("tox.ini", "[pytest]", id="tox-ini"),
+        pytest.param("setup.cfg", "[tool:pytest]", id="setup-cfg"),
+    ],
+)
+def test_read_pytest_ignores_undecodable_ini_yields_empty_rules(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, name: str, header: str
+) -> None:
+    """An ini file in another encoding degrades to "no rules", never an exception.
+
+    Args:
+        name: Ini-style config file to write.
+        header: The section header pytest reads in that file.
+    """
+    payload = f"{header}\naddopts = --ignore=caf\xe9\n".encode("latin-1")
+    try:
+        payload.decode(locale.getpreferredencoding(False))
+    except UnicodeDecodeError:
+        pass
+    else:
+        pytest.skip("locale decodes latin-1 bytes; nothing to fail on")
+    (tmp_path / name).write_bytes(payload)
+    caplog.set_level(logging.DEBUG, logger="forge.config")
+
+    assert read_pytest_ignores(tmp_path) == PytestIgnores()
+    assert "could not read" in caplog.text
+
+
+def test_read_pytest_ignores_undecodable_pyproject_yields_empty_rules(
+    tmp_path: Path,
+) -> None:
+    """A non-UTF8 ``pyproject.toml`` degrades to "no rules" like the ini files.
+
+    ``read_text`` here uses the locale encoding, and 0xE9 is invalid UTF-8; the
+    locale skip stays because a latin-1 locale would decode it and the test
+    would no longer exercise the error path.
+    """
+    payload = b'[tool.x]\nname = "caf\xe9"\n'
+    try:
+        payload.decode(locale.getpreferredencoding(False))
+    except UnicodeDecodeError:
+        pass
+    else:
+        pytest.skip("locale decodes latin-1 bytes; nothing to fail on")
+    (tmp_path / "pyproject.toml").write_bytes(payload)
+
+    assert read_pyproject_raw(tmp_path) == {}
+    assert read_pytest_ignores(tmp_path) == PytestIgnores()

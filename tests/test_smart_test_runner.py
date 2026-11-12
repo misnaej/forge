@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from typing import TYPE_CHECKING
 
 from forge.smart_test import runner
@@ -210,9 +211,9 @@ def test_run_pytest_telemetry_delegates_to_run_command(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``telemetry=True`` with psutil available delegates to ``run_command``.
+    """A ``telemetry_label`` with psutil available delegates to ``run_command``.
 
-    SCENARIO: ``telemetry=True``, ``label="depth0"``;
+    SCENARIO: ``telemetry_label="depth0"`` plus an ``on_output`` recorder;
         ``telemetry_mod.telemetry_available()`` is True.
     MOCK SETUP: ``telemetry_mod.run_command`` is stubbed to capture its
         ``(cmd, root, capture, cwd, label)`` arguments and return canned
@@ -221,7 +222,8 @@ def test_run_pytest_telemetry_delegates_to_run_command(
         subprocess run.
     EXPECTED BEHAVIOR: ``run_command`` is called with ``capture=True``,
         ``cwd=repo_root``, and the ``label`` forwarded unchanged; the
-        returned output is passed through unchanged.
+        returned output is passed through unchanged; the ``on_output``
+        recorder is never called.
     """
     captured: dict[str, object] = {}
 
@@ -248,12 +250,18 @@ def test_run_pytest_telemetry_delegates_to_run_command(
     monkeypatch.setattr(runner.telemetry_mod, "run_command", _fake_run_command)
     monkeypatch.setattr(subprocess, "run", _sentinel_subprocess_run)
 
+    streamed: list[str] = []
     code, output = runner.run_pytest(
-        tmp_path, ["tests/test_x.py"], telemetry=True, label="depth0"
+        tmp_path,
+        ["tests/test_x.py"],
+        telemetry_label="depth0",
+        on_output=streamed.append,
     )
 
     assert code == 0
     assert "child output" in output
+    # The delegate captures through a spool file, so it never streams.
+    assert streamed == []
     assert captured["capture"] is True
     assert captured["cwd"] == tmp_path
     assert captured["root"] == tmp_path
@@ -266,7 +274,7 @@ def test_run_pytest_telemetry_delegate_exit5_with_paths_stays_5(
 ) -> None:
     """Exit code 5 from the telemetry delegate stays 5 for a named selection.
 
-    SCENARIO: ``telemetry=True`` with test paths; the delegate reports
+    SCENARIO: a ``telemetry_label`` with test paths; the delegate reports
         pytest's "no tests collected" exit code (5).
     MOCK SETUP: ``telemetry_mod.telemetry_available`` -> True;
         ``telemetry_mod.run_command`` stubbed to return ``(5, "")``.
@@ -275,7 +283,9 @@ def test_run_pytest_telemetry_delegate_exit5_with_paths_stays_5(
     """
     monkeypatch.setattr(runner.telemetry_mod, "telemetry_available", lambda: True)
     monkeypatch.setattr(runner.telemetry_mod, "run_command", lambda *_a, **_kw: (5, ""))
-    code, output = runner.run_pytest(tmp_path, ["tests/test_x.py"], telemetry=True)
+    code, output = runner.run_pytest(
+        tmp_path, ["tests/test_x.py"], telemetry_label="x"
+    )
     assert code == 5
     assert "collected no tests" in output
 
@@ -286,7 +296,7 @@ def test_run_pytest_telemetry_unavailable_falls_back_with_notice(
 ) -> None:
     """Missing ``psutil`` degrades to a plain (unprofiled) run with a notice.
 
-    SCENARIO: ``telemetry=True`` but ``telemetry_mod.telemetry_available()``
+    SCENARIO: a ``telemetry_label`` but ``telemetry_mod.telemetry_available()``
         is False.
     MOCK SETUP: ``telemetry_mod.telemetry_available`` → False;
         ``subprocess.run`` stubbed via ``make_fake_run`` — the fallback path
@@ -302,7 +312,9 @@ def test_run_pytest_telemetry_unavailable_falls_back_with_notice(
         subprocess, "run", make_fake_run(stdout="1 passed", captured=captured)
     )
 
-    _, output = runner.run_pytest(tmp_path, ["tests/test_x.py"], telemetry=True)
+    _, output = runner.run_pytest(
+        tmp_path, ["tests/test_x.py"], telemetry_label="x"
+    )
 
     assert captured.calls, "the fallback subprocess.run was not called"
     assert "psutil" in output
@@ -313,9 +325,9 @@ def test_run_pytest_telemetry_false_never_touches_telemetry_mod(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``telemetry=False`` (the default) never consults ``telemetry_mod``.
+    """No ``telemetry_label`` (the default) never consults ``telemetry_mod``.
 
-    SCENARIO: ``run_pytest`` called without the ``telemetry`` kwarg.
+    SCENARIO: ``run_pytest`` called without the ``telemetry_label`` kwarg.
     MOCK SETUP: both ``telemetry_mod.telemetry_available`` and
         ``telemetry_mod.run_command`` raise if called; ``subprocess.run`` is
         stubbed normally.
@@ -323,7 +335,7 @@ def test_run_pytest_telemetry_false_never_touches_telemetry_mod(
     """
 
     def _fail(*_a: object, **_kw: object) -> object:
-        msg = "telemetry_mod must not be touched when telemetry=False"
+        msg = "telemetry_mod must not be touched without a telemetry_label"
         raise AssertionError(msg)
 
     monkeypatch.setattr(runner.telemetry_mod, "telemetry_available", _fail)
@@ -333,3 +345,83 @@ def test_run_pytest_telemetry_false_never_touches_telemetry_mod(
 
     code, _ = runner.run_pytest(tmp_path, ["tests/test_x.py"])
     assert code == 0
+
+
+# ---------------------------------------------------------------------------
+# _run_streamed — lines reach the callback while the child is still running
+# ---------------------------------------------------------------------------
+
+# Prints "first" WITHOUT flushing, then waits for the parent to create the
+# marker file in answer to it. The wait is bounded and reports TIMEOUT, so a
+# parent that only delivers after exit fails here without a timing assertion.
+# Not flushing is deliberate: the line can only arrive early if the child
+# really runs unbuffered, which is what PYTHONUNBUFFERED=1 is for.
+_HANDSHAKE_SCRIPT = """
+import os, sys, time
+print("PYTHONUNBUFFERED=" + os.environ.get("PYTHONUNBUFFERED", ""))
+print("first")
+for _ in range(200):
+    if os.path.exists(sys.argv[1]):
+        break
+    time.sleep(0.05)
+else:
+    print("TIMEOUT")
+    sys.exit(99)
+print("second")
+sys.exit(3)
+"""
+
+
+def test_run_streamed_delivers_lines_while_the_child_runs(tmp_path: Path) -> None:
+    """Each line reaches ``on_output`` before the child exits, newline included.
+
+    The child waits for a file the callback creates on seeing ``first``; if
+    delivery were deferred to the end it would print ``TIMEOUT`` and exit 99.
+    The same run shows the child is unbuffered and the exit code comes back.
+    """
+    marker = tmp_path / "seen-first"
+    delivered: list[str] = []
+
+    def _on_output(line: str) -> None:
+        delivered.append(line)
+        if line == "first\n":
+            marker.write_text("x", encoding="utf-8")
+
+    code, output = runner._run_streamed(
+        [sys.executable, "-c", _HANDSHAKE_SCRIPT, str(marker)],
+        tmp_path,
+        "notice\n",
+        _on_output,
+    )
+
+    assert code == 3
+    assert "TIMEOUT\n" not in delivered
+    assert delivered == [
+        "notice\n",
+        "PYTHONUNBUFFERED=1\n",
+        "first\n",
+        "second\n",
+    ]
+    assert output == "".join(delivered)
+
+
+def test_run_streamed_returns_the_same_text_as_the_captured_path(
+    tmp_path: Path,
+) -> None:
+    """For a stdout-only child, streaming and capturing return identical text.
+
+    Callers parse this text (run log, exit-5 rule), so streaming must not
+    change it. Stdout only: with both streams the two paths order stderr
+    differently, which the docstring states.
+    """
+    cmd = [sys.executable, "-c", "print('one'); print('two'); raise SystemExit(4)"]
+    captured = subprocess.run(
+        cmd, cwd=tmp_path, capture_output=True, text=True, check=False
+    )
+    delivered: list[str] = []
+
+    code, output = runner._run_streamed(cmd, tmp_path, "", delivered.append)
+
+    assert code == captured.returncode == 4
+    assert output == captured.stdout
+    assert "".join(delivered) == captured.stdout

@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import fnmatch
+import inspect
 import logging
 import os
 import sys
@@ -23,14 +24,14 @@ from typing import TYPE_CHECKING
 import pytest
 
 from forge.git_utils import code_health_dir
-from forge.smart_test import cli
+from forge.smart_test import cli, runner
 from forge.smart_test.dependencies import SelectionPlan
 from forge.smart_test.run_log import LOCK_NAME, RunLog
 from tests.conftest import PRODUCED_AT_RE, CapturedCalls, log_body
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
 
@@ -45,6 +46,7 @@ def _make_plan(
     depth1: list[str] | None = None,
     changed_tests: list[str] | None = None,
     max_depth: int = 1,
+    total_tests: int = 10,
 ) -> SelectionPlan:
     """Build a minimal SelectionPlan for CLI tests.
 
@@ -53,6 +55,8 @@ def _make_plan(
         depth1: Tests newly reachable at depth 1.
         changed_tests: Test files that were themselves modified.
         max_depth: Highest depth the plan covers.
+        total_tests: Size of the whole suite; the default is under the
+            widening notice's minimum so ordinary tests never trigger it.
 
     Returns:
         A ``SelectionPlan`` populated from the supplied lists.
@@ -66,7 +70,97 @@ def _make_plan(
         newly_at_depth=newly,
         changed_tests=changed_tests or [],
         max_depth=max_depth,
+        total_tests=total_tests,
     )
+
+
+class _FakeRunPytest:
+    """Stand-in for ``cli.run_pytest`` that has the real signature.
+
+    The signature is spelled out rather than swallowed by ``**kwargs`` so a
+    future change to ``run_pytest`` breaks these tests instead of being
+    absorbed silently.
+
+    Attributes:
+        results: ``(exit_code, output)`` pairs returned by successive calls;
+            ``default`` once exhausted.
+        default: Result returned when ``results`` is empty.
+        streamed: Lines handed to ``on_output`` on every call, like pytest
+            producing output while it runs.
+        on_call: Optional hook run at the start of each call, with its paths.
+        calls: Test paths of every call, in call order.
+        coverage_flags: ``coverage`` of every call.
+        telemetry_labels: ``telemetry_label`` of every call.
+        captured: Optional ``CapturedCalls`` mirroring the same per-call data.
+    """
+
+    def __init__(
+        self,
+        results: list[tuple[int, str]] | None = None,
+        *,
+        default: tuple[int, str] = (0, "ok"),
+        streamed: tuple[str, ...] = (),
+        on_call: Callable[[list[str]], None] | None = None,
+        captured: CapturedCalls | None = None,
+    ) -> None:
+        self.results = list(results or [])
+        self.default = default
+        self.streamed = streamed
+        self.on_call = on_call
+        self.calls: list[list[str]] = []
+        self.coverage_flags: list[bool] = []
+        self.telemetry_labels: list[str | None] = []
+        self.captured = captured
+
+    def __call__(
+        self,
+        repo_root: Path,
+        test_paths: Sequence[str],
+        *,
+        coverage: bool = False,
+        telemetry_label: str | None = None,
+        on_output: Callable[[str], None] | None = None,
+    ) -> tuple[int, str]:
+        """Record the call, stream the configured lines, return the next result.
+
+        Args:
+            repo_root: Repository root (unused).
+            test_paths: Test paths requested.
+            coverage: Whether coverage was requested.
+            telemetry_label: Telemetry label, None when not sampling.
+            on_output: Receives each configured streamed line.
+
+        Returns:
+            The next queued result, else the default.
+        """
+        del repo_root
+        if self.on_call is not None:
+            self.on_call(list(test_paths))
+        self.calls.append(list(test_paths))
+        self.coverage_flags.append(coverage)
+        self.telemetry_labels.append(telemetry_label)
+        if self.captured is not None:
+            self.captured.calls.append(list(test_paths))
+            self.captured.telemetry_flags.append(telemetry_label is not None)
+            self.captured.labels.append(telemetry_label or "")
+        if on_output is not None:
+            for line in self.streamed:
+                on_output(line)
+        return self.results.pop(0) if self.results else self.default
+
+
+def test_fake_run_pytest_has_the_real_signature() -> None:
+    """The fake mirrors ``run_pytest``'s parameter names and kinds.
+
+    A real parameter dropped or renamed must fail here, not leave the fake
+    silently accepting calls the real function would reject.
+    """
+    real = inspect.signature(runner.run_pytest).parameters
+    fake = inspect.signature(_FakeRunPytest().__call__).parameters
+
+    assert [(p.name, p.kind) for p in fake.values()] == [
+        (p.name, p.kind) for p in real.values()
+    ]
 
 
 def _stub_cli_deps(
@@ -89,9 +183,9 @@ def _stub_cli_deps(
 
     Returns:
         A ``CapturedCalls`` that accumulates every argv list ``run_pytest``
-        was called with, for later assertion. Also carries the ``telemetry``
-        kwarg of each call, in call order, in its ``telemetry_flags`` field,
-        and the ``label`` kwarg of each call in its ``labels`` field (#376).
+        was called with, for later assertion. Also carries whether each call
+        had a ``telemetry_label``, in call order, in its ``telemetry_flags``
+        field, and the label itself (empty when None) in its ``labels`` field.
     """
     _changed = changed if changed is not None else {"src/myapp/core.py"}
     _results = list(run_results or [])
@@ -102,22 +196,9 @@ def _stub_cli_deps(
     monkeypatch.setattr(cli, "select_tests", lambda _root, _ch, _depth, **_kw: plan)
     monkeypatch.setattr(cli, "clear_python_cache", lambda _root: None)
 
-    def _fake_run_pytest(
-        _root: object,
-        paths: list[str],
-        *,
-        coverage: bool = False,
-        telemetry: bool = False,
-        label: str = "",
-    ) -> tuple[int, str]:
-        captured.calls.append(list(paths))
-        captured.telemetry_flags.append(telemetry)
-        captured.labels.append(label)
-        if _results:
-            return _results.pop(0)
-        return 0, "ok"
-
-    monkeypatch.setattr(cli, "run_pytest", _fake_run_pytest)
+    monkeypatch.setattr(
+        cli, "run_pytest", _FakeRunPytest(_results, captured=captured)
+    )
     return captured
 
 
@@ -293,32 +374,29 @@ def test_run_tiers_appends_each_tier_section_as_it_finishes(
     log.start(tmp_path, "HEADER\n")
     snapshots: list[str] = []
 
-    def _fake_run_pytest(
-        _root: Path, paths: list[str], **_kw: object
-    ) -> tuple[int, str]:
-        """Record the invocation and return success.
-
-        Args:
-            _root: Repository root (unused).
-            paths: Test paths requested.
-            **_kw: Extra keyword arguments (unused).
-
-        Returns:
-            ``(0, output)`` naming the requested paths.
-        """
+    def _snapshot_log(_paths: list[str]) -> None:
         snapshots.append(log.paths[0].read_text(encoding="utf-8"))
-        return 0, f"ran {paths}\n"
 
-    monkeypatch.setattr(cli, "run_pytest", _fake_run_pytest)
+    fake = _FakeRunPytest(
+        [(0, "ran ['tests/test_a.py']\n"), (0, "ran ['tests/test_b.py']\n")],
+        on_call=_snapshot_log,
+    )
+    monkeypatch.setattr(cli, "run_pytest", fake)
     monkeypatch.setattr(cli, "clear_python_cache", lambda _root: None)
     plan = _make_plan(depth0=["tests/test_a.py"], depth1=["tests/test_b.py"])
     config = cli._RunConfig(
-        coverage=False, extra_depth0=set(), header="HEADER\n", telemetry=False
+        coverage=False,
+        extra_depth0=set(),
+        header="HEADER\n",
+        notice="",
+        telemetry=False,
     )
 
     code, output = cli._run_tiers(tmp_path, 1, plan, config, log)
 
     assert code == 0
+    assert f"=== depth 0: 1 of {plan.total_tests} test file(s) ===" in output
+    assert f"=== depth 1: 1 of {plan.total_tests} test file(s) ===" in output
     assert "ran [" not in snapshots[0]
     assert "ran ['tests/test_a.py']" in snapshots[1]
     assert "ran ['tests/test_b.py']" not in snapshots[1]
@@ -333,29 +411,13 @@ def test_run_tiers_fail_fast_logs_failure_and_skips_higher_tiers(
     """A failing tier is logged with its marker and no later tier runs."""
     log = RunLog.for_repo(tmp_path, ("smart_test.log",))
     log.start(tmp_path, "")
-    ran: list[list[str]] = []
-
-    def _fake_run_pytest(
-        _root: Path, paths: list[str], **_kw: object
-    ) -> tuple[int, str]:
-        r"""Record the invocation and fail.
-
-        Args:
-            _root: Repository root (unused).
-            paths: Test paths requested.
-            **_kw: Extra keyword arguments (unused).
-
-        Returns:
-            ``(1, "red\\n")``.
-        """
-        ran.append(paths)
-        return 1, "red\n"
-
-    monkeypatch.setattr(cli, "run_pytest", _fake_run_pytest)
+    fake = _FakeRunPytest(default=(1, "red\n"))
+    ran = fake.calls
+    monkeypatch.setattr(cli, "run_pytest", fake)
     monkeypatch.setattr(cli, "clear_python_cache", lambda _root: None)
     plan = _make_plan(depth0=["tests/test_a.py"], depth1=["tests/test_b.py"])
     config = cli._RunConfig(
-        coverage=False, extra_depth0=set(), header="", telemetry=False
+        coverage=False, extra_depth0=set(), header="", notice="", telemetry=False
     )
 
     code, _output = cli._run_tiers(tmp_path, 1, plan, config, log)
@@ -390,11 +452,11 @@ def test_main_show_files_prints_plan_and_exits_0(
     monkeypatch.setattr(cli, "changed_python_files", lambda _r, _ref: {"src/foo.py"})
     monkeypatch.setattr(cli, "select_tests", lambda _r, _c, _d, **_kw: plan)
 
-    def _fail(*_a: object, **_kw: object) -> tuple[int, str]:
-        called.append(True)
-        return 0, ""
-
-    monkeypatch.setattr(cli, "run_pytest", _fail)
+    monkeypatch.setattr(
+        cli,
+        "run_pytest",
+        _FakeRunPytest(on_call=lambda _paths: called.append(True)),
+    )
 
     with caplog.at_level(logging.INFO, logger="forge.smart_test.cli"):
         code = cli.main()
@@ -505,27 +567,14 @@ def test_main_full_depth_calls_run_pytest_with_empty_paths_and_coverage_true(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", ["forge-smart-test", "--depth", "full"])
 
-    recorded: list[dict[str, object]] = []
-
-    def _fake(
-        _root: object,
-        paths: list[str],
-        *,
-        coverage: bool = False,
-        telemetry: bool = False,
-        label: str = "",
-    ) -> tuple[int, str]:
-        del label
-        recorded.append({"paths": paths, "coverage": coverage, "telemetry": telemetry})
-        return 0, "full suite ok"
-
-    monkeypatch.setattr(cli, "run_pytest", _fake)
+    fake = _FakeRunPytest(default=(0, "full suite ok"))
+    monkeypatch.setattr(cli, "run_pytest", fake)
 
     code = cli.main()
     assert code == 0
-    assert recorded
-    assert recorded[0]["paths"] == []
-    assert recorded[0]["coverage"] is True
+    assert fake.calls
+    assert fake.calls[0] == []
+    assert fake.coverage_flags[0] is True
 
 
 def test_main_no_tests_selected_returns_0(
@@ -601,6 +650,7 @@ def test_main_changed_test_file_not_run_twice(
         newly_at_depth={0: ["tests/test_core.py"]},
         changed_tests=["tests/test_core.py"],
         max_depth=0,
+        total_tests=5,
     )
     captured = _stub_cli_deps(monkeypatch, plan=plan)
 
@@ -720,7 +770,7 @@ def test_main_from_commit_message_overrides_depth(
     monkeypatch.setattr(cli, "changed_python_files", lambda _r, _ref: {"src/foo.py"})
     monkeypatch.setattr(cli, "select_tests", _capturing_select)
     monkeypatch.setattr(cli, "clear_python_cache", lambda _root: None)
-    monkeypatch.setattr(cli, "run_pytest", lambda _r, _p, **_kw: (0, "ok"))
+    monkeypatch.setattr(cli, "run_pytest", _FakeRunPytest())
 
     code = cli.main()
     assert code == 0
@@ -844,7 +894,7 @@ def test_main_follow_mock_patches_config_flows_to_select_tests(
     monkeypatch.setattr(cli, "changed_python_files", lambda _r, _ref: {"src/foo.py"})
     monkeypatch.setattr(cli, "select_tests", _capturing)
     monkeypatch.setattr(cli, "clear_python_cache", lambda _root: None)
-    monkeypatch.setattr(cli, "run_pytest", lambda _r, _p, **_kw: (0, "ok"))
+    monkeypatch.setattr(cli, "run_pytest", _FakeRunPytest())
 
     cli.main()
     assert follow_kwargs_seen == [True], (
@@ -915,12 +965,12 @@ def test_main_depth0_telemetry_flag_forwarded_to_run_pytest(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``--depth 0 --telemetry`` forwards ``telemetry=True`` to ``run_pytest``.
+    """``--depth 0 --telemetry`` passes a ``telemetry_label`` to ``run_pytest``.
 
     SCENARIO: a single depth-0 batch with ``--telemetry`` on the CLI.
-    MOCK SETUP: ``_stub_cli_deps``'s fake records the ``telemetry`` kwarg of
+    MOCK SETUP: ``_stub_cli_deps``'s fake records the ``telemetry_label`` of
         every ``run_pytest`` call.
-    EXPECTED BEHAVIOR: the sole recorded call carries ``telemetry=True``.
+    EXPECTED BEHAVIOR: the sole recorded call carries a label (not None).
     """
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
@@ -938,12 +988,12 @@ def test_main_depth0_no_telemetry_flag_forwards_false(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Without ``--telemetry``, ``run_pytest`` is called with ``telemetry=False``.
+    """Without ``--telemetry``, ``run_pytest`` gets no ``telemetry_label``.
 
     SCENARIO: a single depth-0 batch with no ``--telemetry`` flag on the CLI.
-    MOCK SETUP: ``_stub_cli_deps``'s fake records the ``telemetry`` kwarg of
+    MOCK SETUP: ``_stub_cli_deps``'s fake records the ``telemetry_label`` of
         every ``run_pytest`` call.
-    EXPECTED BEHAVIOR: the sole recorded call carries ``telemetry=False``.
+    EXPECTED BEHAVIOR: the sole recorded call carries ``telemetry_label=None``.
     """
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, "argv", ["forge-smart-test", "--depth", "0"])
@@ -959,14 +1009,13 @@ def test_main_depth1_telemetry_flag_forwarded_to_every_batch(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``--depth 1 --telemetry`` forwards ``telemetry=True`` to every batch.
+    """``--depth 1 --telemetry`` passes a ``telemetry_label`` to every batch.
 
     SCENARIO: a plan with tests at both depth 0 and depth 1, ``--telemetry``
         on the CLI; both batches pass, so both run.
-    MOCK SETUP: ``_stub_cli_deps``'s fake records the ``telemetry`` kwarg of
+    MOCK SETUP: ``_stub_cli_deps``'s fake records the ``telemetry_label`` of
         every ``run_pytest`` call, in call order.
-    EXPECTED BEHAVIOR: two ``run_pytest`` calls, both carrying
-        ``telemetry=True``.
+    EXPECTED BEHAVIOR: two ``run_pytest`` calls, both carrying a label.
     """
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
@@ -995,40 +1044,28 @@ def test_main_full_depth_telemetry_flag_and_coverage_true(
 
     SCENARIO: the ``full`` tier always enables coverage; ``--telemetry`` adds
         resource sampling on top.
-    MOCK SETUP: a local fake captures ``coverage`` and ``telemetry`` kwargs.
-    EXPECTED BEHAVIOR: the recorded call has ``coverage=True`` and
-        ``telemetry=True``.
+    MOCK SETUP: a ``_FakeRunPytest`` records ``coverage`` and
+        ``telemetry_label``.
+    EXPECTED BEHAVIOR: the recorded call has ``coverage=True`` and a
+        ``telemetry_label``.
     """
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         sys, "argv", ["forge-smart-test", "--depth", "full", "--telemetry"]
     )
 
-    recorded: list[dict[str, object]] = []
-
-    def _fake(
-        _root: object,
-        paths: list[str],
-        *,
-        coverage: bool = False,
-        telemetry: bool = False,
-        label: str = "",
-    ) -> tuple[int, str]:
-        del label
-        recorded.append({"paths": paths, "coverage": coverage, "telemetry": telemetry})
-        return 0, "full suite ok"
-
-    monkeypatch.setattr(cli, "run_pytest", _fake)
+    fake = _FakeRunPytest(default=(0, "full suite ok"))
+    monkeypatch.setattr(cli, "run_pytest", fake)
 
     code = cli.main()
     assert code == 0
-    assert recorded
-    assert recorded[0]["coverage"] is True
-    assert recorded[0]["telemetry"] is True
+    assert fake.calls
+    assert fake.coverage_flags[0] is True
+    assert fake.telemetry_labels[0] is not None
 
 
 # ---------------------------------------------------------------------------
-# telemetry run label — per-tier artifacts (#376)
+# telemetry run label — per-tier artifacts
 # ---------------------------------------------------------------------------
 
 
@@ -1039,13 +1076,15 @@ def test_main_depth_batches_label_each_call_by_tier(
     """Each depth batch is labeled ``depth<N>`` so tiers keep separate artifacts.
 
     SCENARIO: a plan with tests at both depth 0 and depth 1; both batches pass.
-    MOCK SETUP: ``_stub_cli_deps``'s fake records the ``label`` kwarg of every
-        ``run_pytest`` call, in call order.
-    EXPECTED BEHAVIOR: the two calls carry ``label="depth0"`` then
-        ``label="depth1"`` — never the same label twice.
+    MOCK SETUP: ``_stub_cli_deps``'s fake records the ``telemetry_label`` of
+        every ``run_pytest`` call, in call order.
+    EXPECTED BEHAVIOR: the two calls carry ``telemetry_label="depth0"`` then
+        ``telemetry_label="depth1"`` — never the same label twice.
     """
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(sys, "argv", ["forge-smart-test", "--depth", "1"])
+    monkeypatch.setattr(
+        sys, "argv", ["forge-smart-test", "--depth", "1", "--telemetry"]
+    )
     plan = _make_plan(
         depth0=["tests/test_core.py"],
         depth1=["tests/test_service.py"],
@@ -1093,20 +1132,9 @@ def _stub_run_full_deps(
         lambda _root, _files, _changed, **_kw: skippable,
     )
 
-    def _fake_run_pytest(
-        _root: object,
-        paths: list[str],
-        *,
-        coverage: bool = False,
-        telemetry: bool = False,
-        label: str = "",
-    ) -> tuple[int, str]:
-        del coverage, telemetry
-        captured.calls.append(list(paths))
-        captured.labels.append(label)
-        return run_result
-
-    monkeypatch.setattr(cli, "run_pytest", _fake_run_pytest)
+    monkeypatch.setattr(
+        cli, "run_pytest", _FakeRunPytest(default=run_result, captured=captured)
+    )
     return captured
 
 
@@ -1130,33 +1158,21 @@ def test_main_depth1_nonpython_change_escalates_to_full(
         and ``coverage=True`` — proof the full path ran, not the depth-1 path.
     """
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(sys, "argv", ["forge-smart-test", "--depth", "1"])
+    monkeypatch.setattr(
+        sys, "argv", ["forge-smart-test", "--depth", "1", "--telemetry"]
+    )
     monkeypatch.setattr(cli, "resolve_base_ref", lambda _r, _b: "main")
     monkeypatch.setattr(cli, "changed_python_files", lambda _r, _ref: set())
     monkeypatch.setattr(
         cli, "changed_non_python_files", lambda _r, _ref, **_kw: {"unmappable.rst"}
     )
-    recorded: list[dict[str, object]] = []
-
-    def _fake(
-        _root: object,
-        paths: list[str],
-        *,
-        coverage: bool = False,
-        telemetry: bool = False,
-        label: str = "",
-    ) -> tuple[int, str]:
-        del telemetry
-        recorded.append({"paths": paths, "coverage": coverage, "label": label})
-        return 0, "ok"
-
-    monkeypatch.setattr(cli, "run_pytest", _fake)
+    fake = _FakeRunPytest()
+    monkeypatch.setattr(cli, "run_pytest", fake)
 
     code = cli.main()
     assert code == 0
-    assert recorded
-    assert recorded[0]["label"] == "full"
-    assert recorded[0]["coverage"] is True
+    assert fake.telemetry_labels == ["full"]
+    assert fake.coverage_flags == [True]
 
 
 def _escalation(
@@ -1302,28 +1318,19 @@ def test_main_safe_fallback_warn_from_pyproject_does_not_escalate(
         '[tool.forge.smart_test]\nsafe_fallback = "warn"\n'
     )
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(sys, "argv", ["forge-smart-test", "--depth", "1"])
+    monkeypatch.setattr(
+        sys, "argv", ["forge-smart-test", "--depth", "1", "--telemetry"]
+    )
     monkeypatch.setattr(cli, "resolve_base_ref", lambda _r, _b: "main")
     monkeypatch.setattr(cli, "changed_python_files", lambda _r, _ref: set())
     monkeypatch.setattr(
         cli, "changed_non_python_files", lambda _r, _ref, **_kw: {"unmappable.rst"}
     )
-    labels: list[str] = []
-
-    def _fake(
-        _root: object,
-        _paths: list[str],
-        *,
-        label: str = "",
-        **_kw: object,
-    ) -> tuple[int, str]:
-        labels.append(label)
-        return 0, "ok"
-
-    monkeypatch.setattr(cli, "run_pytest", _fake)
+    fake = _FakeRunPytest()
+    monkeypatch.setattr(cli, "run_pytest", fake)
 
     assert cli.main() == 0
-    assert "full" not in labels
+    assert "full" not in fake.telemetry_labels
 
 
 @pytest.mark.parametrize("trigger", ["root_commit", "unscanned_conftest"])
@@ -1344,7 +1351,9 @@ def test_main_unsafe_diff_escalates_depth0_to_full(
     EXPECTED BEHAVIOR: the single run_pytest call carries ``label="full"``.
     """
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(sys, "argv", ["forge-smart-test", "--depth", "0"])
+    monkeypatch.setattr(
+        sys, "argv", ["forge-smart-test", "--depth", "0", "--telemetry"]
+    )
     monkeypatch.setattr(cli, "resolve_base_ref", lambda _r, _b: "main")
     root_commit = trigger == "root_commit"
     monkeypatch.setattr(
@@ -1357,24 +1366,11 @@ def test_main_unsafe_diff_escalates_depth0_to_full(
         "changed_python_files",
         lambda _r, _ref: set() if root_commit else {"conftest.py"},
     )
-    labels: list[str] = []
-
-    def _fake(
-        _root: object,
-        _paths: list[str],
-        *,
-        coverage: bool = False,
-        telemetry: bool = False,
-        label: str = "",
-    ) -> tuple[int, str]:
-        del coverage, telemetry
-        labels.append(label)
-        return 0, "ok"
-
-    monkeypatch.setattr(cli, "run_pytest", _fake)
+    fake = _FakeRunPytest()
+    monkeypatch.setattr(cli, "run_pytest", fake)
 
     assert cli.main() == 0
-    assert labels == ["full"]
+    assert fake.telemetry_labels == ["full"]
 
 
 def test_main_depth1_ignored_glob_change_no_escalation(
@@ -1391,33 +1387,21 @@ def test_main_depth1_ignored_glob_change_no_escalation(
         carries ``label="depth0"``, never ``"full"``.
     """
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(sys, "argv", ["forge-smart-test", "--depth", "1"])
+    monkeypatch.setattr(
+        sys, "argv", ["forge-smart-test", "--depth", "1", "--telemetry"]
+    )
     plan = _make_plan(depth0=["tests/test_core.py"], max_depth=1)
     monkeypatch.setattr(cli, "resolve_base_ref", lambda _r, _b: "main")
     monkeypatch.setattr(cli, "changed_python_files", lambda _r, _ref: set())
     monkeypatch.setattr(cli, "changed_non_python_files", lambda _r, _ref, **_kw: set())
     monkeypatch.setattr(cli, "select_tests", lambda _r, _c, _d, **_kw: plan)
     monkeypatch.setattr(cli, "clear_python_cache", lambda _root: None)
-    captured = CapturedCalls()
-
-    def _fake_run_pytest(
-        _root: object,
-        paths: list[str],
-        *,
-        coverage: bool = False,
-        telemetry: bool = False,
-        label: str = "",
-    ) -> tuple[int, str]:
-        del coverage, telemetry
-        captured.calls.append(list(paths))
-        captured.labels.append(label)
-        return 0, "ok"
-
-    monkeypatch.setattr(cli, "run_pytest", _fake_run_pytest)
+    fake = _FakeRunPytest()
+    monkeypatch.setattr(cli, "run_pytest", fake)
 
     code = cli.main()
     assert code == 0
-    assert captured.labels == ["depth0"]
+    assert fake.telemetry_labels == ["depth0"]
 
 
 def test_main_reads_nonpython_ignore_from_pyproject_config(
@@ -1447,7 +1431,9 @@ def test_main_reads_nonpython_ignore_from_pyproject_config(
         '[tool.forge.smart_test]\nnonpython_ignore = ["*.custom"]\n',
         encoding="utf-8",
     )
-    monkeypatch.setattr(sys, "argv", ["forge-smart-test", "--depth", "1"])
+    monkeypatch.setattr(
+        sys, "argv", ["forge-smart-test", "--depth", "1", "--telemetry"]
+    )
     plan = _make_plan(depth0=["tests/test_core.py"], max_depth=1)
     monkeypatch.setattr(cli, "resolve_base_ref", lambda _r, _b: "main")
     monkeypatch.setattr(cli, "changed_python_files", lambda _r, _ref: set())
@@ -1465,26 +1451,12 @@ def test_main_reads_nonpython_ignore_from_pyproject_config(
     monkeypatch.setattr(cli, "changed_non_python_files", _fake_changed_non_python_files)
     monkeypatch.setattr(cli, "select_tests", lambda _r, _c, _d, **_kw: plan)
     monkeypatch.setattr(cli, "clear_python_cache", lambda _root: None)
-    captured = CapturedCalls()
-
-    def _fake_run_pytest(
-        _root: object,
-        paths: list[str],
-        *,
-        coverage: bool = False,
-        telemetry: bool = False,
-        label: str = "",
-    ) -> tuple[int, str]:
-        del coverage, telemetry
-        captured.calls.append(list(paths))
-        captured.labels.append(label)
-        return 0, "ok"
-
-    monkeypatch.setattr(cli, "run_pytest", _fake_run_pytest)
+    fake = _FakeRunPytest()
+    monkeypatch.setattr(cli, "run_pytest", fake)
 
     code = cli.main()
     assert code == 0
-    assert captured.labels == ["depth0"]
+    assert fake.telemetry_labels == ["depth0"]
 
 
 def test_main_depth_full_never_calls_changed_non_python_files(
@@ -1508,7 +1480,7 @@ def test_main_depth_full_never_calls_changed_non_python_files(
         raise AssertionError(msg)
 
     monkeypatch.setattr(cli, "changed_non_python_files", _raise)
-    monkeypatch.setattr(cli, "run_pytest", lambda _r, _p, **_kw: (0, "ok"))
+    monkeypatch.setattr(cli, "run_pytest", _FakeRunPytest())
 
     code = cli.main()
     assert code == 0
@@ -1599,7 +1571,7 @@ def test_run_full_threads_lifecycle_skip_days_from_config(
         return set()
 
     monkeypatch.setattr(cli.lifecycle, "lifecycle_skippable", _fake_skippable)
-    monkeypatch.setattr(cli, "run_pytest", lambda _r, _p, **_kw: (0, "ok"))
+    monkeypatch.setattr(cli, "run_pytest", _FakeRunPytest())
 
     cli._run_full(tmp_path, {"lifecycle_skip_days": 7}, set())
 
@@ -1727,31 +1699,336 @@ def test_run_full_appends_exactly_one_history_line(
     assert "dev_files=1" in lines[0]
 
 
+# ---------------------------------------------------------------------------
+# _widening_notice — saying so when a cheap tier selects nearly the whole suite
+# ---------------------------------------------------------------------------
+
+_NO_CAUSE = "most test files import something that changed"
+
+
+def _test_names(prefix: str, count: int) -> list[str]:
+    """Return *count* distinct test paths under *prefix*.
+
+    Args:
+        prefix: Distinguishes one group of names from another.
+        count: How many names.
+
+    Returns:
+        ``tests/test_<prefix><i>.py`` paths.
+    """
+    return [f"tests/test_{prefix}{i}.py" for i in range(count)]
+
+
+@pytest.mark.parametrize(
+    (
+        "at_depth0",
+        "at_depth1",
+        "depth",
+        "total",
+        "extra_new",
+        "extra_inside",
+        "changed",
+        "contains",
+        "absent",
+    ),
+    [
+        pytest.param(18, 0, 0, 20, 0, 0, set(), ["18 of 20"], [], id="fires-at-90pct"),
+        pytest.param(17, 0, 0, 20, 0, 0, set(), None, [], id="below-90pct"),
+        pytest.param(19, 0, 0, 19, 0, 0, set(), None, [], id="19-of-19-too-small"),
+        pytest.param(20, 0, 0, 20, 0, 0, set(), ["20 of 20"], [], id="20-of-20"),
+        pytest.param(0, 0, 0, 20, 0, 0, set(), None, [], id="nothing-selected"),
+        pytest.param(1, 0, 0, 0, 0, 0, set(), None, [], id="empty-suite"),
+        pytest.param(
+            10, 8, 1, 20, 0, 0, set(), ["18 of 20"], [], id="cumulative-over-tiers"
+        ),
+        pytest.param(10, 8, 0, 20, 0, 0, set(), None, [], id="same-plan-at-depth-0"),
+        pytest.param(
+            10, 0, 0, 20, 8, 0, set(), ["18 of 20"], [], id="extra-depth0-counts"
+        ),
+        pytest.param(
+            10, 0, 0, 20, 0, 8, set(), None, [], id="extra-already-in-batch-once"
+        ),
+        pytest.param(
+            18,
+            0,
+            0,
+            20,
+            0,
+            0,
+            {"tests/conftest.py"},
+            ["tests/conftest.py"],
+            [_NO_CAUSE],
+            id="names-a-changed-conftest",
+        ),
+        pytest.param(
+            18,
+            0,
+            0,
+            20,
+            0,
+            0,
+            {"tests/conftest.py", "src/pkg/__init__.py"},
+            ["tests/conftest.py"],
+            ["__init__.py", _NO_CAUSE],
+            id="conftest-outranks-init",
+        ),
+        pytest.param(
+            18,
+            0,
+            0,
+            20,
+            0,
+            0,
+            {"src/pkg/__init__.py"},
+            ["src/pkg/__init__.py"],
+            [_NO_CAUSE],
+            id="names-a-changed-init",
+        ),
+        pytest.param(
+            18,
+            0,
+            0,
+            20,
+            0,
+            0,
+            {"src/pkg/mod.py"},
+            [_NO_CAUSE],
+            ["conftest", "__init__"],
+            id="no-culprit",
+        ),
+        pytest.param(
+            18,
+            0,
+            0,
+            20,
+            0,
+            0,
+            {"tests/b/conftest.py", "tests/a/conftest.py"},
+            ["tests/a/conftest.py, tests/b/conftest.py"],
+            [],
+            id="several-conftests-sorted",
+        ),
+        pytest.param(
+            18,
+            0,
+            0,
+            20,
+            0,
+            0,
+            {"tests/myconftest.py", "tests/conftest.py.bak"},
+            [_NO_CAUSE],
+            ["myconftest", ".bak"],
+            id="lookalike-names-are-not-conftests",
+        ),
+    ],
+)
+def test_widening_notice_fires_on_nearly_the_whole_suite(
+    at_depth0: int,
+    at_depth1: int,
+    depth: int,
+    total: int,
+    extra_new: int,
+    extra_inside: int,
+    changed: set[str],
+    contains: list[str] | None,
+    absent: list[str],
+) -> None:
+    """The notice appears from 90% of a 20+ file suite, naming the likeliest cause.
+
+    Args:
+        at_depth0: Tests newly reachable at depth 0.
+        at_depth1: Tests newly reachable at depth 1.
+        depth: Highest depth the run executes.
+        total: Size of the whole suite.
+        extra_new: Coverage-derived extras not otherwise selected.
+        extra_inside: Coverage-derived extras already in the depth-0 batch.
+        changed: Changed ``.py`` paths.
+        contains: Substrings the notice must hold; None means no notice.
+        absent: Substrings the notice must not hold.
+    """
+    depth0 = _test_names("a", at_depth0)
+    plan = _make_plan(
+        depth0=depth0,
+        depth1=_test_names("b", at_depth1),
+        total_tests=total,
+    )
+    extra = set(_test_names("x", extra_new)) | set(depth0[:extra_inside])
+
+    notice = cli._widening_notice(plan, depth, extra, changed)
+
+    if contains is None:
+        assert notice == ""
+        return
+    assert all(text in notice for text in contains)
+    assert not any(text in notice for text in absent)
+
+
+class _EventLog(logging.Handler):
+    """Logging handler that appends ``"notice"`` to a shared event list.
+
+    Attributes:
+        events: Shared, ordered list of what happened.
+        records: The WARNING-or-above records seen.
+    """
+
+    def __init__(self, events: list[str]) -> None:
+        super().__init__(level=logging.DEBUG)
+        self.events = events
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Note a WARNING-or-above record in the shared event list.
+
+        Args:
+            record: The record being logged.
+        """
+        if record.levelno >= logging.WARNING:
+            self.records.append(record)
+            self.events.append("notice")
+
+
+_NOTICE = "selection is 18 of 20 test file(s) — nearly the whole suite (x)\n"
+
+
+@pytest.mark.parametrize("notice", [_NOTICE, ""], ids=["notice", "no-notice"])
+def test_run_tiers_warns_and_records_the_notice_before_any_tier_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, notice: str
+) -> None:
+    """A widening notice is a WARNING and a log line, ahead of the first tier.
+
+    SCENARIO: one tier runs with and without a notice in the run config.
+    MOCK SETUP: ``cli.run_pytest`` is a ``_FakeRunPytest`` appending ``"run"``
+        to the same ``events`` list a logging handler on the ``cli`` logger
+        appends ``"notice"`` to, so their order is observed directly.
+    EXPECTED BEHAVIOR: with a notice, exactly one WARNING record, written to
+        the run log, and ``"notice"`` precedes ``"run"``; with none, no
+        WARNING record at all.
+
+    Args:
+        notice: The notice carried by the run config.
+    """
+    events: list[str] = []
+    handler = _EventLog(events)
+    cli_logger = logging.getLogger(cli.__name__)
+    cli_logger.addHandler(handler)
+    monkeypatch.setattr(cli_logger, "level", logging.DEBUG)
+    log = RunLog.for_repo(tmp_path, ("smart_test.log",))
+    log.start(tmp_path, "HEADER\n")
+    monkeypatch.setattr(
+        cli, "run_pytest", _FakeRunPytest(on_call=lambda _p: events.append("run"))
+    )
+    monkeypatch.setattr(cli, "clear_python_cache", lambda _root: None)
+    config = cli._RunConfig(
+        coverage=False,
+        extra_depth0=set(),
+        header="HEADER\n",
+        notice=notice,
+        telemetry=False,
+    )
+    try:
+        cli._run_tiers(
+            tmp_path, 0, _make_plan(depth0=["tests/test_a.py"]), config, log
+        )
+    finally:
+        cli_logger.removeHandler(handler)
+
+    if notice:
+        assert len(handler.records) == 1
+        assert handler.records[0].levelno == logging.WARNING
+        assert notice.rstrip() in handler.records[0].getMessage()
+        assert notice in log_body(log.paths[0])
+        assert events.index("notice") < events.index("run")
+    else:
+        assert handler.records == []
+        assert events == ["run"]
+
+
+def test_run_tiers_prints_each_streamed_line_exactly_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """pytest's lines reach the console as streamed, not again from the output.
+
+    SCENARIO: the fake ``run_pytest`` streams two lines through ``on_output``
+        and also returns them as its combined output, as the real one does.
+    MOCK SETUP: ``cli.run_pytest`` is a ``_FakeRunPytest`` with ``streamed``.
+    EXPECTED BEHAVIOR: each line is on stdout once — a second copy would mean
+        the end-of-run dump came back — and both are in the run log.
+    """
+    log = RunLog.for_repo(tmp_path, ("smart_test.log",))
+    log.start(tmp_path, "HEADER\n")
+    monkeypatch.setattr(
+        cli,
+        "run_pytest",
+        _FakeRunPytest(
+            default=(0, "streamed-one\nstreamed-two\n"),
+            streamed=("streamed-one\n", "streamed-two\n"),
+        ),
+    )
+    monkeypatch.setattr(cli, "clear_python_cache", lambda _root: None)
+    config = cli._RunConfig(
+        coverage=False,
+        extra_depth0=set(),
+        header="HEADER\n",
+        notice="",
+        telemetry=False,
+    )
+
+    _code, output = cli._run_tiers(
+        tmp_path, 0, _make_plan(depth0=["tests/test_a.py"]), config, log
+    )
+
+    lines = capsys.readouterr().out.splitlines()
+    assert lines.count("streamed-one") == 1
+    assert lines.count("streamed-two") == 1
+    assert "streamed-one\nstreamed-two\n" in output
+    assert "streamed-one\nstreamed-two\n" in log_body(log.paths[0])
+
+
+def test_run_full_prints_each_streamed_line_and_the_skip_line_exactly_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The full tier shows streamed lines and its own tail once each.
+
+    SCENARIO: a full run with one lifecycle-skippable file; pytest streams one
+        line and returns it as output.
+    MOCK SETUP: ``_stub_run_full_deps`` for discovery and lifecycle, then
+        ``cli.run_pytest`` replaced by a streaming ``_FakeRunPytest``.
+    EXPECTED BEHAVIOR: the streamed line and the ``lifecycle-skipped:`` line
+        are each on stdout once, and the latter is in the returned output.
+    """
+    monkeypatch.chdir(tmp_path)
+    _stub_run_full_deps(
+        monkeypatch,
+        all_tests={"tests/test_a.py", "tests/test_stale.py"},
+        dev_marked={"tests/test_stale.py"},
+        skippable={"tests/test_stale.py"},
+    )
+    monkeypatch.setattr(
+        cli,
+        "run_pytest",
+        _FakeRunPytest(default=(0, "full-streamed\n"), streamed=("full-streamed\n",)),
+    )
+
+    _code, out = cli._run_full(tmp_path, {}, set())
+
+    lines = capsys.readouterr().out.splitlines()
+    assert lines.count("full-streamed") == 1
+    assert sum(line.startswith("lifecycle-skipped: 1") for line in lines) == 1
+    assert out.count("lifecycle-skipped: 1") == 1
+
+
 def test_main_full_depth_labels_run_full(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """``--depth full`` labels its single ``run_pytest`` call ``"full"``."""
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(sys, "argv", ["forge-smart-test", "--depth", "full"])
-
-    recorded: list[dict[str, object]] = []
-
-    def _fake(
-        _root: object,
-        paths: list[str],
-        *,
-        coverage: bool = False,
-        telemetry: bool = False,
-        label: str = "",
-    ) -> tuple[int, str]:
-        recorded.append({"paths": paths, "coverage": coverage, "label": label})
-        del telemetry
-        return 0, "full suite ok"
-
-    monkeypatch.setattr(cli, "run_pytest", _fake)
+    monkeypatch.setattr(
+        sys, "argv", ["forge-smart-test", "--depth", "full", "--telemetry"]
+    )
+    fake = _FakeRunPytest(default=(0, "full suite ok"))
+    monkeypatch.setattr(cli, "run_pytest", fake)
 
     code = cli.main()
     assert code == 0
-    assert recorded
-    assert recorded[0]["label"] == "full"
+    assert fake.telemetry_labels == ["full"]

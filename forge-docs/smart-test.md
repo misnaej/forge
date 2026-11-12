@@ -56,6 +56,34 @@ full pass. Config reference:
   the test roots (e.g. at the repo root) escalates to `full`. Only
   `test_*.py` / `*_test.py` files are ever selected as tests; conftests
   and helper modules are dependencies.
+- **A test file git or pytest ignores is not selected.** Selection skips
+  test files git ignores (a scratch copy, anything under an ignored
+  directory) and those pytest's own config excludes — `--ignore`,
+  `--ignore-glob` and `norecursedirs`, read from whichever of
+  `pytest.ini`, `pyproject.toml`, `tox.ini` or `setup.cfg` pytest itself
+  would use. Forge applies those rules to its own selection because it
+  hands pytest explicit file paths, which pytest collects whatever its
+  directory-level ignore settings say. An untracked file that is *not*
+  ignored stays selected, so a test runs before it is `git add`-ed.
+  Two deliberate asymmetries: only files that would be collected as
+  tests are filtered, so an ignored conftest keeps its graph edges and
+  the tests depending on it stay reachable; and when git cannot answer
+  at all, nothing is filtered, because a filter that failed closed would
+  drop every test and report a green run.
+- **A tier says how much of the suite it runs.** Each tier's header
+  reads `=== depth N: K of M test file(s) ===`. When a tier reaches 90%
+  of a suite of at least 20 test files, a warning says so before the run
+  and names the cause — a changed `conftest.py`, a changed package
+  `__init__.py`, or neither identifiable. That is the honest shape of a
+  cheap tier that is about to cost a full run: the escalation is not
+  prevented, only made visible.
+- **Output arrives while the run happens.** Each tier's header, its
+  warning and pytest's own output reach the console as they are produced,
+  so a long run looks different from a hang. The run log receives the
+  same text, and the output a caller gets back is unchanged, which is
+  what the lifecycle, differential and exit-code rules read. A
+  `--telemetry` run is the exception and stays unstreamed: its capture
+  goes through a spool file to avoid a pipe deadlock.
 - **Running on the base branch tests the last commit.** When the base
   resolves to `HEAD` itself and the tree is clean — CI after a merge —
   the change set is `HEAD^1..HEAD`, not an empty diff; a root commit runs

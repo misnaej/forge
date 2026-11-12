@@ -151,8 +151,11 @@ def _run_streamed(
         on_output: Receives each line, newline included.
 
     Returns:
-        ``(exit_code, combined_output)``, the same text the captured path
-        would have returned.
+        ``(exit_code, combined_output)`` — the whole output, so callers
+        that parse it are unaffected by streaming. It is not byte-equal
+        to the captured path when the child writes to both streams: here
+        stderr is interleaved in the order it was written, where the
+        captured path appends it after stdout. pytest writes to stdout.
     """
     if notice:
         on_output(notice)

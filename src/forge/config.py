@@ -209,7 +209,12 @@ def read_pyproject_raw(repo_root: Path) -> dict:
         return {}
     try:
         text = pyproject.read_text()
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
+        # A file saved in another encoding is unreadable in the sense this
+        # function promises: it degrades to defaults rather than taking
+        # down the caller. `UnicodeDecodeError` is a `ValueError`, so the
+        # parse guard below never saw it, and it reached every forge CLI
+        # through `load_config`.
         logger.debug("forge.config: could not read %s (%s)", pyproject, exc)
         return {}
     try:
@@ -323,10 +328,16 @@ def _ini_pytest_settings(path: Path, section: str) -> dict[str, object] | None:
     """
     if not path.is_file():
         return None
-    parser = configparser.ConfigParser()
+    # `interpolation=None` because these are pytest's settings, not
+    # configparser's: pytest reads them without interpolation, so a
+    # legitimate `addopts = --ignore-glob=*%*` must not raise here.
+    parser = configparser.ConfigParser(interpolation=None)
     try:
         parser.read(path)
-    except (OSError, configparser.Error) as exc:
+    except (OSError, UnicodeDecodeError, configparser.Error) as exc:
+        # A decode error is an unreadable file like any other: a config
+        # saved in another encoding must degrade to "no rules", never
+        # take down the test run that asked.
         logger.debug("forge.config: could not read %s (%s)", path, exc)
         return None
     if not parser.has_section(section):

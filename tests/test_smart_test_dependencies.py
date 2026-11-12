@@ -24,6 +24,9 @@ from forge.smart_test.dependencies import (
     select_tests,
     unscanned_conftests,
 )
+from forge.config import read_pytest_ignores
+from forge.smart_test.git_helpers import visible_paths
+from tests.conftest import init_git_repo
 
 
 if TYPE_CHECKING:
@@ -99,6 +102,7 @@ def test_tests_up_to_returns_sorted_union_at_depth() -> None:
         newly_at_depth={0: ["tests/test_b.py"], 1: ["tests/test_a.py"]},
         changed_tests=[],
         max_depth=1,
+        total_tests=2,
     )
     assert plan.tests_up_to(1) == ["tests/test_a.py", "tests/test_b.py"]
 
@@ -109,13 +113,16 @@ def test_tests_up_to_depth_beyond_plan_max_returns_same() -> None:
         newly_at_depth={0: ["tests/test_a.py"], 1: ["tests/test_b.py"]},
         changed_tests=[],
         max_depth=1,
+        total_tests=2,
     )
     assert plan.tests_up_to(99) == plan.tests_up_to(1)
 
 
 def test_tests_up_to_empty_plan() -> None:
     """An empty plan returns an empty list at any depth."""
-    plan = SelectionPlan(newly_at_depth={}, changed_tests=[], max_depth=2)
+    plan = SelectionPlan(
+        newly_at_depth={}, changed_tests=[], max_depth=2, total_tests=0
+    )
     assert plan.tests_up_to(2) == []
 
 
@@ -125,6 +132,7 @@ def test_tests_up_to_deduplication() -> None:
         newly_at_depth={0: ["tests/test_x.py"]},
         changed_tests=["tests/test_x.py"],
         max_depth=0,
+        total_tests=1,
     )
     result = plan.tests_up_to(0)
     assert result == ["tests/test_x.py"]
@@ -206,6 +214,7 @@ def test_select_tests_depth_0_direct_importer(import_chain_repo: Path) -> None:
     tests = plan.tests_up_to(0)
     assert any("test_core" in t for t in tests)
     assert not any("test_service" in t for t in tests)
+    assert plan.total_tests == len(all_test_files(import_chain_repo)) == 2
 
 
 def test_select_tests_depth_1_transitive(import_chain_repo: Path) -> None:
@@ -243,6 +252,7 @@ def test_render_plan_render_with_tests() -> None:
         newly_at_depth={0: ["tests/test_a.py", "tests/test_b.py"]},
         changed_tests=[],
         max_depth=0,
+        total_tests=2,
     )
     output = render_plan(plan, 0)
     assert "📋 Tests covering changed code" in output
@@ -252,14 +262,18 @@ def test_render_plan_render_with_tests() -> None:
 
 def test_render_plan_render_empty() -> None:
     """An empty plan renders a '(none' notice rather than test paths."""
-    plan = SelectionPlan(newly_at_depth={}, changed_tests=[], max_depth=0)
+    plan = SelectionPlan(
+        newly_at_depth={}, changed_tests=[], max_depth=0, total_tests=0
+    )
     output = render_plan(plan, 0)
     assert "(none" in output
 
 
 def test_render_plan_header_includes_depth_number() -> None:
     """The header names the depth tier."""
-    plan = SelectionPlan(newly_at_depth={}, changed_tests=[], max_depth=2)
+    plan = SelectionPlan(
+        newly_at_depth={}, changed_tests=[], max_depth=2, total_tests=0
+    )
     output = render_plan(plan, 2)
     assert "depth 2" in output
 
@@ -917,3 +931,263 @@ def test_unscanned_conftests_returns_repo_root_conftest(conftest_repo: Path) -> 
     """A conftest outside every test root is reported; one under a root is not."""
     changed = {"conftest.py", "tests/conftest.py", "src/myapp/fixtures.py"}
     assert unscanned_conftests(conftest_repo, changed) == {"conftest.py"}
+
+
+# ---------------------------------------------------------------------------
+# Ignored files: an ignored test is never selected, an ignored helper or
+# conftest still carries its import edges.
+# ---------------------------------------------------------------------------
+
+_IGNORE_MECHANISMS = ["gitignore", "ignore-option", "ignore-glob", "norecursedirs"]
+
+
+def _ignore_by(
+    root: Path, mechanism: str, *, path: str, glob: str, directory: str
+) -> None:
+    """Make *path* ignored the way *mechanism* does it.
+
+    Args:
+        root: Repo root; a git repo, so ``gitignore`` has something to act on.
+        mechanism: One of ``_IGNORE_MECHANISMS``.
+        path: Repo-relative file or directory to ignore.
+        glob: ``--ignore-glob`` pattern matching exactly that path.
+        directory: Directory name ``norecursedirs`` skips; the ignored path
+            lies inside it.
+    """
+    lines = {
+        "ignore-option": f"addopts = --ignore={path}",
+        "ignore-glob": f"addopts = --ignore-glob={glob}",
+        "norecursedirs": f"norecursedirs = {directory}",
+    }
+    if mechanism == "gitignore":
+        # Left untracked on purpose: `git add -f` would make it visible again.
+        (root / ".gitignore").write_text(f"/{path}\n", encoding="utf-8")
+    else:
+        (root / "pytest.ini").write_text(
+            f"[pytest]\n{lines[mechanism]}\n", encoding="utf-8"
+        )
+
+
+def _assert_hidden(root: Path, mechanism: str, path: str) -> None:
+    """Assert *mechanism* really hides *path*, so "still selected" means something.
+
+    The selector never applies the ignore predicate to non-test files, so
+    without this a typo'd path or a no-op mechanism would leave the test green.
+
+    Args:
+        root: Repo root.
+        mechanism: One of ``_IGNORE_MECHANISMS``.
+        path: Repo-relative path that must now be hidden.
+    """
+    if mechanism == "gitignore":
+        assert path not in (visible_paths(root) or set())
+    else:
+        assert read_pytest_ignores(root).ignores(path)
+
+
+@pytest.fixture
+def repo_with_helper_between_source_and_test(tmp_path: Path) -> Path:
+    """Git repo where a helper, not a test, is the only link to the source.
+
+    Layout::
+
+        <root>/
+          pyproject.toml
+          src/pkg/__init__.py
+          src/pkg/mod.py              # the module the tests change
+          tests/support/helpers.py    # from pkg.mod import value (not a test)
+          tests/test_real.py          # from tests.support.helpers import value
+
+    Returns:
+        The repo root path (an initialised, uncommitted git repo).
+    """
+    root = tmp_path
+    (root / "pyproject.toml").write_text(
+        '[tool.forge]\nsource_dirs = ["src"]\ntest_dirs = ["tests"]\n',
+        encoding="utf-8",
+    )
+    (root / "src" / "pkg").mkdir(parents=True)
+    (root / "src" / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "src" / "pkg" / "mod.py").write_text("value = 1\n", encoding="utf-8")
+    (root / "tests" / "support").mkdir(parents=True)
+    (root / "tests" / "support" / "helpers.py").write_text(
+        "from pkg.mod import value\n", encoding="utf-8"
+    )
+    (root / "tests" / "test_real.py").write_text(
+        "from tests.support.helpers import value\n\n\ndef test_real():\n"
+        "    assert value\n",
+        encoding="utf-8",
+    )
+    init_git_repo(root)
+    return root
+
+
+@pytest.fixture
+def repo_with_ignorable_tests(tmp_path: Path) -> Path:
+    """Git repo with one kept test and three tests under ``tests/skip/``.
+
+    Layout::
+
+        <root>/
+          pyproject.toml
+          src/pkg/__init__.py
+          src/pkg/mod.py              # the module the tests change
+          src/pkg/other.py            # from pkg.mod import value
+          tests/test_kept.py          # from pkg.mod import value
+          tests/skip/test_direct.py   # from pkg.mod import value
+          tests/skip/test_far.py      # from pkg.other import value (2 hops)
+          tests/skip/test_changed.py  # imports nothing; edited itself
+
+    Returns:
+        The repo root path (an initialised, uncommitted git repo).
+    """
+    root = tmp_path
+    (root / "pyproject.toml").write_text(
+        '[tool.forge]\nsource_dirs = ["src"]\ntest_dirs = ["tests"]\n',
+        encoding="utf-8",
+    )
+    (root / "src" / "pkg").mkdir(parents=True)
+    (root / "src" / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "src" / "pkg" / "mod.py").write_text("value = 1\n", encoding="utf-8")
+    (root / "src" / "pkg" / "other.py").write_text(
+        "from pkg.mod import value\n", encoding="utf-8"
+    )
+    (root / "tests" / "skip").mkdir(parents=True)
+    body = "\n\ndef test_it():\n    assert value\n"
+    for name, imports in {
+        "tests/test_kept.py": "from pkg.mod import value",
+        "tests/skip/test_direct.py": "from pkg.mod import value",
+        "tests/skip/test_far.py": "from pkg.other import value",
+        "tests/skip/test_changed.py": "value = 1",
+    }.items():
+        (root / name).write_text(imports + "\n" + body, encoding="utf-8")
+    init_git_repo(root)
+    return root
+
+
+@pytest.mark.parametrize("mechanism", [None, *_IGNORE_MECHANISMS])
+def test_ignored_helper_keeps_its_edges_so_the_real_test_stays_selected(
+    repo_with_helper_between_source_and_test: Path, mechanism: str | None
+) -> None:
+    """Ignoring a helper never drops the test that reaches the source through it.
+
+    Under-selecting is the one direction smart-test must not fail in, so the
+    selection with the helper ignored has to equal the unignored control.
+
+    Args:
+        mechanism: How the helper is ignored; None is the control.
+    """
+    root = repo_with_helper_between_source_and_test
+    changed = {"src/pkg/mod.py"}
+    control = select_tests(root, changed, 2).tests_up_to(2)
+    assert control == ["tests/test_real.py"]
+
+    if mechanism is not None:
+        _ignore_by(
+            root,
+            mechanism,
+            path="tests/support/helpers.py",
+            glob="tests/support/helpers.py",
+            directory="support",
+        )
+        _assert_hidden(root, mechanism, "tests/support/helpers.py")
+
+    assert select_tests(root, changed, 2).tests_up_to(2) == control
+
+
+@pytest.mark.parametrize("mechanism", ["gitignore", "ignore-option", "ignore-glob"])
+def test_ignored_conftest_keeps_its_edges_so_its_tests_stay_selected(
+    conftest_repo: Path, mechanism: str
+) -> None:
+    """Ignoring a conftest never drops the tests it applies to.
+
+    ``norecursedirs`` is not a row: it can only hide the conftest's directory,
+    which holds the very tests under check.
+
+    Args:
+        mechanism: How ``tests/a/conftest.py`` is ignored.
+    """
+    init_git_repo(conftest_repo)
+    changed = {"src/myapp/fixtures.py"}
+    control = select_tests(conftest_repo, changed, 1).tests_up_to(1)
+    assert control == ["tests/a/test_one.py"]
+
+    _ignore_by(
+        conftest_repo,
+        mechanism,
+        path="tests/a/conftest.py",
+        glob="tests/a/conftest.py",
+        directory="a",
+    )
+    _assert_hidden(conftest_repo, mechanism, "tests/a/conftest.py")
+
+    assert select_tests(conftest_repo, changed, 1).tests_up_to(1) == control
+
+
+@pytest.mark.parametrize(
+    "mechanism",
+    [
+        pytest.param(None, id="control-untracked-but-not-ignored-is-selected"),
+        *_IGNORE_MECHANISMS,
+    ],
+)
+def test_ignored_test_files_never_appear_in_any_selection(
+    repo_with_ignorable_tests: Path, mechanism: str | None
+) -> None:
+    """An ignored test is absent from the suite, the plan, and every tier.
+
+    The direct, two-hop and self-changed tests cover each way a test can
+    enter a plan, so a filter applied to only one of them still fails.
+
+    Args:
+        mechanism: How ``tests/skip`` is ignored; None is the control, where
+            the same files are untracked but visible and must all appear.
+    """
+    root = repo_with_ignorable_tests
+    skipped = {
+        "tests/skip/test_direct.py",
+        "tests/skip/test_far.py",
+        "tests/skip/test_changed.py",
+    }
+    if mechanism is not None:
+        _ignore_by(
+            root,
+            mechanism,
+            path="tests/skip",
+            glob="tests/skip/*",
+            directory="skip",
+        )
+
+    plan = select_tests(root, {"src/pkg/mod.py", "tests/skip/test_changed.py"}, 2)
+
+    in_plan = set(plan.changed_tests)
+    in_plan.update(*plan.newly_at_depth.values())
+    in_plan.update(plan.tests_up_to(2))
+    if mechanism is None:
+        assert skipped <= in_plan
+        assert "tests/skip/test_far.py" in plan.newly_at_depth[1]
+        assert skipped <= all_test_files(root)
+        assert plan.total_tests == 4
+    else:
+        assert in_plan == {"tests/test_kept.py"}
+        assert all_test_files(root) == {"tests/test_kept.py"}
+        assert plan.total_tests == 1
+
+
+def test_all_test_files_outside_a_git_repo_fails_open(
+    import_chain_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When git cannot say what is ignored, every test file is still listed.
+
+    A filter that failed closed would run nothing and report green.
+    ``GIT_CEILING_DIRECTORIES`` keeps git from finding an enclosing repo.
+    """
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(import_chain_repo.parent))
+    # An inherited GIT_DIR / GIT_WORK_TREE would override discovery entirely.
+    monkeypatch.delenv("GIT_DIR", raising=False)
+    monkeypatch.delenv("GIT_WORK_TREE", raising=False)
+
+    assert all_test_files(import_chain_repo) == {
+        "tests/test_core.py",
+        "tests/test_service.py",
+    }
