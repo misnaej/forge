@@ -14,7 +14,7 @@ Installs the Vibe integration:
 - Writes .vibe/hooks.toml and the roster sidecar
 - Publishes skills
 - Generates AGENTS.md
-- Generates 12 subagent TOML + prompt pairs from agents/*.md
+- Generates 13 subagent TOML + prompt pairs from agents/*.md
 - Prints the trust requirement and every unenforced protection (Section 6)
 
 Wire into install_bootstrap.STEPS behind an opt-in [tool.forge] gate.
