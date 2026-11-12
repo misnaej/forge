@@ -2,7 +2,10 @@
 
 Every request an agent makes re-sends its whole context, so cost is
 dominated by prompt tokens, not output. This module turns Claude Code
-transcript records into per-request usage and ranks it.
+transcript records into per-request usage and ranks it. It also defines
+the harness-neutral pieces — :class:`TokenUsage`, :class:`SessionTokens`,
+:func:`printable`, :func:`nonneg_int` — that the Vibe journal parser in
+:mod:`forge.vibe_sessions` reuses for main-session tokens.
 
 Two quirks of the transcript format shape it:
 
@@ -100,7 +103,7 @@ class TokenUsage:
             )
 
 
-def _printable(text: str) -> str:
+def printable(text: str) -> str:
     """*text* with every non-printable character turned into a space.
 
     Args:
@@ -112,7 +115,7 @@ def _printable(text: str) -> str:
     return "".join(ch if ch.isprintable() else " " for ch in text)
 
 
-def _count(value: object) -> int:
+def nonneg_int(value: object) -> int:
     """A usage field as a non-negative int (``0`` for anything else).
 
     Args:
@@ -160,16 +163,16 @@ class UsageTally:
             self._seen.add(message_id)
         usage = message.get("usage")
         usage = usage if isinstance(usage, dict) else {}
-        fresh = _count(usage.get("input_tokens"))
-        written = _count(usage.get("cache_creation_input_tokens"))
-        read = _count(usage.get("cache_read_input_tokens"))
+        fresh = nonneg_int(usage.get("input_tokens"))
+        written = nonneg_int(usage.get("cache_creation_input_tokens"))
+        read = nonneg_int(usage.get("cache_read_input_tokens"))
         if self.usage.requests == 0:
             self.usage.fixed_tokens = fresh + written + read
         self.usage.requests += 1
         self.usage.input_tokens += fresh
         self.usage.cache_write_tokens += written
         self.usage.cache_read_tokens += read
-        self.usage.output_tokens += _count(usage.get("output_tokens"))
+        self.usage.output_tokens += nonneg_int(usage.get("output_tokens"))
         return True
 
 
@@ -253,7 +256,7 @@ def parse_session(records: Iterable[dict[str, Any]]) -> SessionTokens:
         kind = record.get("type")
         if kind == "assistant":
             skill = record.get("attributionSkill")
-            skill = _printable(skill) if isinstance(skill, str) and skill else NO_SKILL
+            skill = printable(skill) if isinstance(skill, str) and skill else NO_SKILL
             tallies.setdefault(skill, UsageTally()).add_record(record)
             _note_delegations(session, record, skill)
         elif kind == "user":
@@ -382,7 +385,7 @@ def _model(record: dict[str, Any]) -> str | None:
     model = message.get("model") if isinstance(message, dict) else None
     if not isinstance(model, str) or not model or model.startswith("<"):
         return None
-    return _printable(model)
+    return printable(model)
 
 
 def _in_window(
@@ -428,7 +431,7 @@ class BranchUsageTally:
             agent_type: Who wrote it — :data:`MAIN_AGENT` or a subagent type.
             run: The transcript's identity (session or agent id).
         """
-        label = _printable(agent_type) or "?"
+        label = printable(agent_type) or "?"
         for record in records:
             branch = record.get("gitBranch")
             kind = record.get("type")
@@ -442,7 +445,7 @@ class BranchUsageTally:
                 usage = request.usage if request.add_record(record) else None
                 precommit, tests = _bash_counts(record)
                 model = _model(record) if usage is not None else None
-            self.events.setdefault(_printable(branch), []).append(
+            self.events.setdefault(printable(branch), []).append(
                 BranchEvent(
                     parse_ts(record.get("timestamp")),
                     label,
@@ -658,7 +661,8 @@ def render_token_report(report: TokenReport) -> str:
     if not by_type and not by_skill:
         return (
             "No token data found — token counts come from Claude Code "
-            "transcripts under ~/.claude/projects/."
+            "transcripts under ~/.claude/projects/ and Vibe session journals "
+            "under ~/.vibe/logs/session/unified/."
         )
     lines = ["Token profile (fixed ctx = prompt before the first tool call)", ""]
     if by_type:

@@ -121,7 +121,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_run_json(run: AgentRun) -> dict[str, Any]` _(internal)_ — JSON-safe view of a run (datetimes as ISO strings, properties included).
 - `render_json(runs: list[AgentRun], tools: list[ToolRow]) -> str` — Machine-readable report: runs, per-type rows, per-tool rows.
 - `waste_flags(run: AgentRun) -> list[WasteFlag]` — The mechanical waste findings for *run* (none without token data).
-- `load_sessions(transcripts: Path | None, runs: Iterable[AgentRun]) -> dict[str, SessionTokens]` — Parse the main-session transcripts of the sessions *runs* belong to.
+- `load_sessions(transcripts: Path | None, runs: Iterable[AgentRun], *, root: Path | None = None, vibe_sessions_dir: Path | None = None) -> dict[str, SessionTokens]` — Parse the main sessions of the report's window, on either harness.
 - `join_sessions(runs: Iterable[AgentRun], sessions: dict[str, SessionTokens]) -> None` — Link each subagent run to the skill and brief that launched it.
 - `_grouped(rows: Iterable[tuple[str, TokenUsage, int]]) -> list[TokenRow]` _(internal)_ — Sum usage and report size per label, ranked.
 - `render_tokens(runs: list[AgentRun], sessions: dict[str, SessionTokens]) -> str` — Render the ``--tokens`` report for *runs* and their sessions.
@@ -142,8 +142,8 @@ A compact index of this codebase's symbols — every top-level function and clas
   - `fixed_cost(self) -> int` — Prompt tokens spent re-sending the fixed context, every request.
   - `fixed_share(self) -> float` — :attr:`fixed_cost` as a share of prompt tokens (``0`` when none).
   - `add(self, other: TokenUsage) -> None` — Add *other*'s counts into this usage.
-- `_printable(text: str) -> str` _(internal)_ — *text* with every non-printable character turned into a space.
-- `_count(value: object) -> int` _(internal)_ — A usage field as a non-negative int (``0`` for anything else).
+- `printable(text: str) -> str` — *text* with every non-printable character turned into a space.
+- `nonneg_int(value: object) -> int` — A usage field as a non-negative int (``0`` for anything else).
 - `class UsageTally` — Adds each request's usage once, however many records repeat it.
   - `add_record(self, record: dict[str, Any]) -> bool` — Count *record*'s usage unless its message was already counted.
 - `tool_result_chars(block: dict[str, Any]) -> int` — Characters a ``tool_result`` block puts back into the conversation.
@@ -2548,11 +2548,21 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 - `class VibeRun` — One Vibe subagent session as profiler input.
 - `runs_from_vibe_sessions(root: Path, sessions_dir: Path | None = None) -> dict[str, VibeRun]` — Every Vibe subagent session that ran in *root*'s checkout.
+- `_belongs_to_repo(cwd: Path, root: Path, slug: str | None) -> bool` _(internal)_ — Whether a session's recorded *cwd* is a checkout of *root*'s repo.
+- `main_sessions_from_vibe(root: Path, sessions_dir: Path | None = None) -> dict[str, SessionTokens]` — Every Vibe root (main) session that ran in *root*'s checkout.
+- `parse_vibe_main_journal(session_dir: Path) -> SessionTokens | None` — Fold one root session's journal into per-skill token usage.
 - `parse_vibe_journal(session_dir: Path) -> VibeRun | None` — Fold one session's journal records into a run.
 - `_iter_jsonl(path: Path) -> Iterator[dict[str, Any]]` _(internal)_ — Yield the JSON objects in *path*, skipping lines that are not one.
 - `class _JournalScan` _(internal)_ — Running state of one :func:`parse_vibe_journal` pass.
   - `record(self, run: VibeRun, record: dict[str, Any]) -> None` — Fold one journal record into *run*.
   - `finish(self, run: VibeRun) -> None` — Apply the fallback cumulative usage when no per-request usage was seen.
+- `_projection_usage(payload: dict[str, Any]) -> dict[str, int]` _(internal)_ — The cumulative ``tokenUsage`` a projection_delta record carries.
+- `class _MainJournalScan` _(internal)_ — Running state of one :func:`parse_vibe_main_journal` pass.
+  - `record(self, record: dict[str, Any]) -> None` — Fold one journal record into the session being built.
+  - `finish(self) -> SessionTokens` — Build the session, applying the cumulative-usage fallback.
+- `class _SkillTally` _(internal)_ — One skill's summed usage; its first request sets the fixed context.
+  - `add(self, usage: dict[str, Any]) -> None` — Add one completion's usage.
+- `_skill_name(arguments_json: object) -> str | None` _(internal)_ — The skill id a ``skill`` tool call's arguments carry.
 - `_mapping(value: dict[str, Any] | None) -> dict[str, Any]` _(internal)_ — Return *value* when it is a dict, else an empty one.
 - `_record_ts(record: dict[str, Any]) -> datetime | None` _(internal)_ — One journal record's wall-clock time.
 - `_find_ms(value: dict[str, Any] | None, key: str) -> int | float | None` _(internal)_ — Depth-first search for the first numeric *key* in a nested structure.

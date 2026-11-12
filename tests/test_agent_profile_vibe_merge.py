@@ -10,9 +10,12 @@ from pathlib import Path
 from forge.agent_profile import (
     AgentRun,
     _vibe_run_to_agent_run,
+    load_sessions,
     merge_vibe_runs,
 )
+from forge.agent_profile_tokens import NO_SKILL
 from forge.vibe_sessions import parse_vibe_journal
+from tests.test_vibe_sessions import _make_root_session
 
 
 def _ts(ms: int) -> datetime:
@@ -197,3 +200,82 @@ class TestMergeVibeRuns:
         runs = {}
         merge_vibe_runs(runs, root=tmp_path, sessions_dir=sessions_dir)
         assert set(runs.keys()) == {"vibe:s1", "vibe:s2"}
+
+
+class TestLoadSessionsVibe:
+    """Tests for load_sessions merging Claude transcripts and Vibe root sessions."""
+
+    @staticmethod
+    def _make_root_session_with_journal(session_dir: Path, cwd: str | Path) -> None:
+        """Create a root session directory whose journal carries one usage record.
+
+        Args:
+            session_dir: The session directory to create.
+            cwd: The working directory to record in its metadata.
+        """
+        _make_root_session(session_dir, cwd)
+        journal_dir = session_dir / "journal"
+        journal_dir.mkdir(parents=True)
+        record = {
+            "type": "action_result",
+            "payload": {
+                "action_id": "a1",
+                "result": {
+                    "result": {
+                        "parts": [],
+                        "usage": {"input_tokens": 42, "output_tokens": 4},
+                    }
+                },
+            },
+            "time_unix_ms": 1717000000000,
+        }
+        (journal_dir / "records.jsonl").write_text(json.dumps(record) + "\n")
+
+    def test_claude_and_vibe_sessions_merged(self, tmp_path: Path) -> None:
+        """Claude-keyed and vibe:-keyed main sessions coexist in one report."""
+        transcripts = tmp_path / "projects"
+        transcripts.mkdir()
+        session_id = "claude-session"
+        record = {
+            "type": "assistant",
+            "message": {
+                "id": "m1",
+                "usage": {
+                    "input_tokens": 10,
+                    "output_tokens": 2,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                },
+                "content": [],
+            },
+        }
+        (transcripts / f"{session_id}.jsonl").write_text(json.dumps(record) + "\n")
+        runs = [AgentRun(agent_id="a1", agent_type="t", session_id=session_id)]
+        sessions_dir = tmp_path / "unified"
+        self._make_root_session_with_journal(sessions_dir / "root-uuid", tmp_path)
+        sessions = load_sessions(
+            transcripts, runs, root=tmp_path, vibe_sessions_dir=sessions_dir
+        )
+        assert sessions[session_id].by_skill[NO_SKILL].input_tokens == 10
+        vibe = sessions["vibe:root-uuid"]
+        assert vibe.by_skill[NO_SKILL].input_tokens == 42
+
+    def test_without_root_only_claude_sessions_loaded(self, tmp_path: Path) -> None:
+        """root=None keeps the Vibe store out of the sessions."""
+        transcripts = tmp_path / "projects"
+        transcripts.mkdir()
+        session_id = "claude-session"
+        record = {
+            "type": "assistant",
+            "message": {
+                "id": "m1",
+                "usage": {"input_tokens": 10, "output_tokens": 2},
+                "content": [],
+            },
+        }
+        (transcripts / f"{session_id}.jsonl").write_text(json.dumps(record) + "\n")
+        runs = [AgentRun(agent_id="a1", agent_type="t", session_id=session_id)]
+        sessions_dir = tmp_path / "unified"
+        self._make_root_session_with_journal(sessions_dir / "root-uuid", tmp_path)
+        sessions = load_sessions(transcripts, runs, vibe_sessions_dir=sessions_dir)
+        assert set(sessions) == {session_id}

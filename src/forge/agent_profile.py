@@ -28,11 +28,13 @@ Three inputs, one primary and two best-effort:
   enriches a run with turn counts, repeated-call detection, and
   precommit-run counts. Claude Code deletes transcripts after
   ``cleanupPeriodDays`` (30 by default).
-- Mistral Vibe session journals (``…/logs/session/unified/child-*/journal``),
+- Mistral Vibe session journals (``…/logs/session/unified/<id>/journal``),
   located through ``--vibe-sessions`` or the active Vibe home. Under Vibe
   the ``log_agent_timing`` hook has no equivalent, so these journals are
   the only record of subagent runs; they are keyed ``vibe:<session_id>``
-  so they never collide with ledger or Claude runs.
+  so they never collide with ledger or Claude runs. With ``--tokens``, root
+  (main) sessions from the same store feed the main-session per-skill
+  table, also keyed ``vibe:<session_id>``.
 - ``code_health/agent_transcript_digest.jsonl`` — this reporter's own
   per-run digest of what it read from each transcript, one JSON line
   per new or changed run, kept beside the ledger. A live transcript
@@ -102,7 +104,11 @@ from forge.git_utils import (
 from forge.ledger import append_jsonl_record, append_ledger_line, parse_ledger
 from forge.text_clip import truncate
 from forge.vibe_metadata import default_sessions_dir
-from forge.vibe_sessions import VibeRun, runs_from_vibe_sessions
+from forge.vibe_sessions import (
+    VibeRun,
+    main_sessions_from_vibe,
+    runs_from_vibe_sessions,
+)
 
 
 if TYPE_CHECKING:
@@ -1940,29 +1946,41 @@ def waste_flags(run: AgentRun) -> list[WasteFlag]:
 
 
 def load_sessions(
-    transcripts: Path | None, runs: Iterable[AgentRun]
+    transcripts: Path | None,
+    runs: Iterable[AgentRun],
+    *,
+    root: Path | None = None,
+    vibe_sessions_dir: Path | None = None,
 ) -> dict[str, SessionTokens]:
-    """Parse the main-session transcripts of the sessions *runs* belong to.
+    """Parse the main sessions of the report's window, on either harness.
 
-    Only the sessions in the report's window are read: a main transcript
-    can run to tens of megabytes.
+    Claude main transcripts are read only for sessions in the report's
+    window — a main transcript can run to tens of megabytes. Vibe root
+    sessions have no window link (a root session is the main session, not
+    a run), so when *root* is given every root session of the repo's store
+    is read in full, keyed ``vibe:<session_id>``.
 
     Args:
         transcripts: The Claude Code project directory, or ``None``.
         runs: The reported runs.
+        root: The checkout asking; enables Vibe root-session ingestion
+            when given.
+        vibe_sessions_dir: The unified store to scan; the active Vibe
+            home's when omitted.
 
     Returns:
-        Session id → its token breakdown, for each readable transcript.
+        Session id → its token breakdown, for each readable session.
     """
-    if transcripts is None:
-        return {}
     sessions: dict[str, SessionTokens] = {}
-    for session_id in sorted({r.session_id for r in runs if r.session_id}):
-        if not _is_path_component(session_id):
-            continue
-        path = transcripts / f"{session_id}{_TRANSCRIPT_SUFFIX}"
-        if path.is_file():
-            sessions[session_id] = parse_session(_iter_jsonl(path))
+    if transcripts is not None:
+        for session_id in sorted({r.session_id for r in runs if r.session_id}):
+            if not _is_path_component(session_id):
+                continue
+            path = transcripts / f"{session_id}{_TRANSCRIPT_SUFFIX}"
+            if path.is_file():
+                sessions[session_id] = parse_session(_iter_jsonl(path))
+    if root is not None:
+        sessions.update(main_sessions_from_vibe(root, vibe_sessions_dir))
     return sessions
 
 
@@ -2140,7 +2158,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "--vibe-sessions",
         type=Path,
         help="Vibe unified session store to scan for subagent runs the ledger "
-        "does not name (default: $VIBE_HOME/logs/session/unified, else "
+        "does not name, and — with --tokens — root (main) sessions "
+        "(default: $VIBE_HOME/logs/session/unified, else "
         "~/.vibe/logs/session/unified, when it exists).",
     )
     parser.add_argument(
@@ -2181,7 +2200,8 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Rank token use by agent type, launching skill and main-session "
         "skill, with waste flags. Reads this checkout's Claude Code "
         "transcripts (~/.claude/projects/<encoded path>) unless "
-        "--transcripts names another directory.",
+        "--transcripts names another directory, and Vibe root sessions from "
+        "the unified store (--vibe-sessions).",
     )
     return parser
 
@@ -2244,13 +2264,14 @@ def main() -> int:
     transcripts = args.transcripts
     if args.tokens and transcripts is None:
         transcripts = default_transcripts_dir(root)
+    vibe_sessions_dir = args.vibe_sessions or default_sessions_dir()
     runs = filter_runs(
         collect_runs(
             ledger_path,
             transcripts,
             record_digest=not args.no_history,
             root=root,
-            vibe_sessions_dir=args.vibe_sessions or default_sessions_dir(),
+            vibe_sessions_dir=vibe_sessions_dir,
         ),
         agent_type=args.agent_type,
         since=since,
@@ -2258,7 +2279,9 @@ def main() -> int:
     )
     tools = tool_rows(events)
     if args.tokens:
-        sessions = load_sessions(transcripts, runs)
+        sessions = load_sessions(
+            transcripts, runs, root=root, vibe_sessions_dir=vibe_sessions_dir
+        )
         join_sessions(runs, sessions)
         output = render_tokens(runs, sessions)
     elif args.json:

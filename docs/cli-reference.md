@@ -47,7 +47,8 @@ options:
                         backfills only what Claude Code still keeps.
   --vibe-sessions VIBE_SESSIONS
                         Vibe unified session store to scan for subagent runs
-                        the ledger does not name (default:
+                        the ledger does not name, and — with --tokens — root
+                        (main) sessions (default:
                         $VIBE_HOME/logs/session/unified, else
                         ~/.vibe/logs/session/unified, when it exists).
   --agent-type AGENT_TYPE
@@ -69,7 +70,8 @@ options:
                         main-session skill, with waste flags. Reads this
                         checkout's Claude Code transcripts
                         (~/.claude/projects/<encoded path>) unless
-                        --transcripts names another directory.
+                        --transcripts names another directory, and Vibe root
+                        sessions from the unified store (--vibe-sessions).
 ```
 
 ## forge-audit-agents
