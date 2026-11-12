@@ -307,10 +307,10 @@ def _widening_notice(
 ) -> str:
     """Return a warning when this run selects nearly the whole suite.
 
-    The cheapest tier selecting almost everything is the symptom #841
-    was filed for: a changed ``conftest.py`` or package ``__init__.py``
-    is imported by nearly every test, so "depth 0" quietly becomes a
-    full run that takes minutes with nothing said about why.
+    The cheapest tier selecting almost everything is the symptom worth
+    announcing: a changed ``conftest.py`` or package ``__init__.py`` is
+    imported by nearly every test, so "depth 0" quietly becomes a full
+    run that takes minutes with nothing said about why.
 
     The fraction is measured over everything the run will execute up to
     *depth*, not per tier: higher tiers only add newly reachable tests,
@@ -403,8 +403,10 @@ def _run_tiers(
         return 0, "".join(output)
 
     if config.notice:
+        # Shown by the logger, recorded for the log — not `emit`, which
+        # would do both and print it twice on a terminal.
         logger.warning("%s", config.notice.rstrip())
-        emit(config.notice)
+        record(config.notice)
 
     already: set[str] = set()
     for tier in range(depth + 1):

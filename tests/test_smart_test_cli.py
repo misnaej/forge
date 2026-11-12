@@ -1865,7 +1865,10 @@ _NOTICE = "selection is 18 of 20 test file(s) — nearly the whole suite (x)\n"
 
 @pytest.mark.parametrize("notice", [_NOTICE, ""], ids=["notice", "no-notice"])
 def test_run_tiers_warns_and_records_the_notice_before_any_tier_runs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, notice: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    notice: str,
 ) -> None:
     """A widening notice is a WARNING and a log line, ahead of the first tier.
 
@@ -1873,9 +1876,10 @@ def test_run_tiers_warns_and_records_the_notice_before_any_tier_runs(
     MOCK SETUP: ``cli.run_pytest`` is a ``_FakeRunPytest`` appending ``"run"``
         to the same ``events`` list a logging handler on the ``cli`` logger
         appends ``"notice"`` to, so their order is observed directly.
-    EXPECTED BEHAVIOR: with a notice, exactly one WARNING record, written to
-        the run log, and ``"notice"`` precedes ``"run"``; with none, no
-        WARNING record at all.
+    EXPECTED BEHAVIOR: with a notice, exactly one WARNING record, one copy in
+        the run log, none on stdout (the logger is its console channel, so
+        printing it too would show it twice), and ``"notice"`` precedes
+        ``"run"``; with none, no WARNING record at all.
 
     Args:
         notice: The notice carried by the run config.
@@ -1907,7 +1911,8 @@ def test_run_tiers_warns_and_records_the_notice_before_any_tier_runs(
         assert len(handler.records) == 1
         assert handler.records[0].levelno == logging.WARNING
         assert notice.rstrip() in handler.records[0].getMessage()
-        assert notice in log_body(log.paths[0])
+        assert log_body(log.paths[0]).count(notice) == 1
+        assert notice.rstrip() not in capsys.readouterr().out
         assert events.index("notice") < events.index("run")
     else:
         assert handler.records == []

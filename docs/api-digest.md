@@ -538,7 +538,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 ## `forge.config`
 
-> _Read forge-internal config from a repo's ``pyproject.toml``._
+> _Read a repo's configuration: forge's own, and pytest's where it matters._
 
 - `is_agent_definition(path: Path) -> bool` — Say whether a Markdown file in an agents dir defines an agent.
 - `detect_source_dirs(repo_root: Path) -> list[str]` — Smart-detect the repo's source roots when ``source_dirs`` is unset.
@@ -549,6 +549,8 @@ A compact index of this codebase's symbols — every top-level function and clas
   - `ignores(self, relpath: str) -> bool` — Return whether pytest's config excludes *relpath*.
 - `_ignores_from_settings(settings: Mapping[str, object]) -> PytestIgnores` _(internal)_ — Build :class:`PytestIgnores` from one config file's pytest settings.
 - `_ini_pytest_settings(path: Path, section: str) -> dict[str, object] | None` _(internal)_ — Return one ini-style file's pytest section, or None when it has none.
+- `_toml_table(path: Path, keys: tuple[str, ...]) -> dict[str, object] | None` _(internal)_ — Read one nested table out of a TOML file.
+- `_pyproject_pytest_settings(repo_root: Path) -> dict[str, object] | None` _(internal)_ — Return pyproject's pytest settings table, or None when it has none.
 - `read_pytest_ignores(repo_root: Path) -> PytestIgnores` — Return the ignore rules from whichever config file pytest would use.
 - `is_fragments_mode(repo_root: Path) -> bool` — Return whether the repo runs changelog fragments mode.
 - `read_tool_forge_section(repo_root: Path, section: str = '') -> dict` — Return a ``[tool.forge.<section>]`` table, or ``{}`` when absent.
@@ -2157,7 +2159,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_iter_py(roots: Iterable[Path]) -> Iterable[Path]` _(internal)_ — Yield every ``.py`` file under *roots*.
 - `_is_test_file(path: Path) -> bool` _(internal)_ — Return whether pytest would collect *path* as a test module.
 - `_unselectable_test(repo_root: Path) -> Callable[[str], bool]` _(internal)_ — Build the predicate for "this test file must not be selected".
-- `all_test_files(repo_root: Path) -> set[str]` — Return every repo-relative test file under the configured test roots.
+- `all_test_files(repo_root: Path, unselectable: Callable[[str], bool] | None = None) -> set[str]` — Return every repo-relative test file under the configured test roots.
 - `_dotted(node: ast.expr) -> str | None` _(internal)_ — Return the dotted name of an attribute/name chain, or ``None``.
 - `_string_literals(args: list[ast.expr]) -> list[str]` _(internal)_ — Return the string-constant values among *args*, in order.
 - `_classify_patch_call(node: ast.Call) -> str | None` _(internal)_ — Classify a call node as a patch variant: ``"patch"``, ``"dict"``, or ``None``.

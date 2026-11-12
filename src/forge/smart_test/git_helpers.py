@@ -68,7 +68,10 @@ def visible_paths(repo_root: Path) -> set[str] | None:
             "--exclude-standard",
             check=True,
         )
-    except CalledProcessError as exc:
+    except (CalledProcessError, OSError) as exc:
+        # `OSError` covers a missing git binary, which reaches here as
+        # `FileNotFoundError`: still a question git did not answer, so
+        # still no filter rather than an empty one.
         logger.debug("smart-test: ls-files failed (%s); no visibility filter", exc)
         return None
     return set(names) or None

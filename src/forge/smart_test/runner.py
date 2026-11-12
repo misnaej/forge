@@ -108,7 +108,13 @@ def run_pytest(
             code, output = telemetry_mod.run_command(
                 cmd, repo_root, capture=True, cwd=repo_root, label=telemetry_label
             )
-            return _finalize(code, notice + output, selected=bool(test_paths))
+            code, output = _finalize(code, notice + output, selected=bool(test_paths))
+            if on_output is not None:
+                # This path spools rather than streams, so the reader
+                # gets the whole output here instead of line by line.
+                # Showing nothing would hide a failing run completely.
+                on_output(output)
+            return code, output
         notice += (
             f"({missing_dependency_hint('psutil', extra='telemetry')} "
             "— running without telemetry)\n"
@@ -123,10 +129,15 @@ def run_pytest(
             notice + proc.stdout + proc.stderr,
             selected=bool(test_paths),
         )
-    return _finalize(
-        *_run_streamed(cmd, repo_root, notice, on_output),
-        selected=bool(test_paths),
-    )
+    code, streamed = _run_streamed(cmd, repo_root, notice, on_output)
+    code, output = _finalize(code, streamed, selected=bool(test_paths))
+    if output != streamed:
+        # `_finalize` explains a selection that collected nothing, and it
+        # does so after the child has exited — past everything streaming
+        # could carry. Show the tail, or the console reports a failure
+        # with its reason only in the log.
+        on_output(output[len(streamed) :])
+    return code, output
 
 
 def _run_streamed(
@@ -173,9 +184,16 @@ def _run_streamed(
         if proc.stdout is None:
             msg = "pytest stdout pipe was not created"
             raise RuntimeError(msg)
-        for line in proc.stdout:
-            collected.append(line)
-            on_output(line)
+        try:
+            for line in proc.stdout:
+                collected.append(line)
+                on_output(line)
+        except BaseException:
+            # Leaving the loop early — an interrupt, or a callback that
+            # raised — must not leave a test run going. Closing the pipe
+            # alone only stops the child at its next write.
+            proc.kill()
+            raise
         code = proc.wait()
     return code, "".join(collected)
 

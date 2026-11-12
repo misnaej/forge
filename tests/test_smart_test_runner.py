@@ -18,14 +18,15 @@ import subprocess
 import sys
 from typing import TYPE_CHECKING
 
+import pytest
+
 from forge.smart_test import runner
 from tests.conftest import CapturedCalls, make_fake_run
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
-
-    import pytest
 
 
 def test_clear_python_cache_removes_all_pycache_dirs(tmp_path: Path) -> None:
@@ -223,7 +224,7 @@ def test_run_pytest_telemetry_delegates_to_run_command(
     EXPECTED BEHAVIOR: ``run_command`` is called with ``capture=True``,
         ``cwd=repo_root``, and the ``label`` forwarded unchanged; the
         returned output is passed through unchanged; the ``on_output``
-        recorder is never called.
+        recorder receives that output once, not line by line.
     """
     captured: dict[str, object] = {}
 
@@ -260,8 +261,9 @@ def test_run_pytest_telemetry_delegates_to_run_command(
 
     assert code == 0
     assert "child output" in output
-    # The delegate captures through a spool file, so it never streams.
-    assert streamed == []
+    # The delegate captures through a spool file, so it cannot stream line by
+    # line; the reader still gets the whole output, once, at the end.
+    assert streamed == [output]
     assert captured["capture"] is True
     assert captured["cwd"] == tmp_path
     assert captured["root"] == tmp_path
@@ -399,6 +401,62 @@ def test_run_streamed_delivers_lines_while_the_child_runs(tmp_path: Path) -> Non
         "second\n",
     ]
     assert output == "".join(delivered)
+
+
+@pytest.mark.parametrize(
+    ("paths", "coverage", "explained"),
+    [
+        pytest.param(["tests/test_x.py"], False, True, id="named-files-fail"),
+        pytest.param([], True, False, id="whole-suite-is-benign"),
+    ],
+)
+def test_run_pytest_shows_the_exit5_explanation_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    paths: list[str],
+    *,
+    coverage: bool,
+    explained: bool,
+) -> None:
+    """The reason a selection "tested nothing" reaches the console, exactly once.
+
+    ``_finalize`` appends it after the child exits, past what streaming
+    carried, so ``run_pytest`` has to pass that tail on itself.
+
+    SCENARIO: the streamed child reports pytest's exit 5 after one line.
+    MOCK SETUP: ``runner._run_streamed`` is a fake that streams that line and
+        returns it with code 5.
+    EXPECTED BEHAVIOR: for named files the explanation is in the callback
+        text and the returned output, once each, and the callback text equals
+        the returned output; for a whole-suite run nothing is added.
+
+    Args:
+        paths: Test paths requested.
+        coverage: Whether the whole-suite coverage form is requested.
+        explained: Whether the explanation is expected; the exit code is
+            then 5, else the benign 0.
+    """
+
+    def _fake_streamed(
+        _cmd: list[str],
+        _root: Path,
+        _notice: str,
+        on_output: Callable[[str], None],
+    ) -> tuple[int, str]:
+        on_output("no tests ran\n")
+        return 5, "no tests ran\n"
+
+    monkeypatch.setattr(runner, "_run_streamed", _fake_streamed)
+    monkeypatch.setattr(runner, "_coverage_available", lambda: True)
+    delivered: list[str] = []
+
+    code, output = runner.run_pytest(
+        tmp_path, paths, coverage=coverage, on_output=delivered.append
+    )
+
+    assert code == (5 if explained else 0)
+    assert "".join(delivered) == output
+    assert output.count("collected no tests") == int(explained)
 
 
 def test_run_streamed_returns_the_same_text_as_the_captured_path(

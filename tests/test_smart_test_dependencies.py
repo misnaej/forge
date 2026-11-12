@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from forge.config import read_pytest_ignores
+from forge.smart_test import dependencies as deps
 from forge.smart_test.dependencies import (
     SelectionPlan,
     _patch_targets,
@@ -30,6 +31,7 @@ from tests.conftest import init_git_repo
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 
@@ -1172,6 +1174,47 @@ def test_ignored_test_files_never_appear_in_any_selection(
         assert in_plan == {"tests/test_kept.py"}
         assert all_test_files(root) == {"tests/test_kept.py"}
         assert plan.total_tests == 1
+
+
+def test_all_test_files_uses_a_passed_predicate_instead_of_building_one(
+    repo_with_ignorable_tests: Path,
+) -> None:
+    """A supplied ``unselectable`` replaces the built one; omitted, one is built.
+
+    ``tests/skip`` is git-ignored, so the built predicate hides it. A
+    permissive predicate bringing it back proves the passed one is honoured
+    and the built one is not consulted too.
+    """
+    root = repo_with_ignorable_tests
+    _ignore_by(
+        root, "gitignore", path="tests/skip", glob="tests/skip/*", directory="skip"
+    )
+
+    assert all_test_files(root) == {"tests/test_kept.py"}
+    assert len(all_test_files(root, lambda _relpath: False)) == 4
+    assert all_test_files(root, lambda relpath: "kept" in relpath) == {
+        "tests/skip/test_changed.py",
+        "tests/skip/test_direct.py",
+        "tests/skip/test_far.py",
+    }
+
+
+def test_select_tests_builds_the_exclusion_predicate_once(
+    repo_with_ignorable_tests: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One selection costs one git query and config read, not two."""
+    built: list[int] = []
+    real = deps._unselectable_test
+
+    def _counting(repo_root: Path) -> Callable[[str], bool]:
+        built.append(1)
+        return real(repo_root)
+
+    monkeypatch.setattr(deps, "_unselectable_test", _counting)
+
+    select_tests(repo_with_ignorable_tests, {"src/pkg/mod.py"}, 1)
+
+    assert built == [1]
 
 
 def test_all_test_files_outside_a_git_repo_fails_open(

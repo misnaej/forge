@@ -1064,6 +1064,30 @@ def test_summarize_paths_quotes_untrusted_names_as_inert_data() -> None:
             id="glob-non-match",
         ),
         pytest.param(
+            PytestIgnores(globs=("scratch_*",)),
+            "tests/scratch_b.py",
+            True,
+            id="slashless-glob-matches-the-file-name",
+        ),
+        pytest.param(
+            PytestIgnores(globs=("scratch_*",)),
+            "tests/test_scratch_c.py",
+            False,
+            id="slashless-glob-is-not-a-substring-match",
+        ),
+        pytest.param(
+            PytestIgnores(globs=("tests/scratch_*",)),
+            "tests/scratch_b.py",
+            True,
+            id="slashed-glob-matches-the-path",
+        ),
+        pytest.param(
+            PytestIgnores(globs=("tests/scratch_*",)),
+            "other/scratch_b.py",
+            False,
+            id="slashed-glob-is-anchored-to-its-directory",
+        ),
+        pytest.param(
             PytestIgnores(norecursedirs=("node_modules", "_*")),
             "a/node_modules/t.py",
             True,
@@ -1166,6 +1190,7 @@ def test_pytest_ignores_match_semantics(
         pytest.param(
             {"norecursedirs": ["a", "b"]}, set(), (), ("a", "b"), id="norecurse-list"
         ),
+        pytest.param({"addopts": "--ignore 'x"}, set(), (), (), id="unbalanced-quote"),
         pytest.param({}, set(), (), (), id="no-keys"),
         pytest.param(
             {"addopts": "--ignore-glob=x"}, set(), ("x",), (), id="glob-not-in-paths"
@@ -1229,6 +1254,46 @@ _CFG = "[tool:pytest]\naddopts = --ignore=from_cfg\n"
             {"setup.cfg": "[pytest]\naddopts = --ignore=from_cfg\n"},
             PytestIgnores(),
             id="setup-cfg-needs-the-tool-colon-pytest-section",
+        ),
+        pytest.param(
+            {
+                "pytest.toml": '[pytest]\naddopts = ["--ignore=build"]\n',
+                "pytest.ini": _INI,
+                "pyproject.toml": _TOML,
+            },
+            PytestIgnores(paths=frozenset({"build"})),
+            id="pytest-toml-beats-ini-and-pyproject",
+        ),
+        pytest.param(
+            {
+                ".pytest.toml": '[pytest]\naddopts = ["--ignore=hidden_toml"]\n',
+                "pyproject.toml": _TOML,
+            },
+            PytestIgnores(paths=frozenset({"hidden_toml"})),
+            id="dot-pytest-toml-is-honoured",
+        ),
+        pytest.param(
+            {
+                ".pytest.ini": "[pytest]\naddopts = --ignore=hidden_ini\n",
+                "pyproject.toml": _TOML,
+            },
+            PytestIgnores(paths=frozenset({"hidden_ini"})),
+            id="dot-pytest-ini-is-honoured",
+        ),
+        pytest.param(
+            {"pyproject.toml": '[tool.pytest]\nnorecursedirs = ["junk"]\n'},
+            PytestIgnores(norecursedirs=("junk",)),
+            id="native-tool-pytest-table-is-read",
+        ),
+        pytest.param(
+            {
+                "pyproject.toml": (
+                    '[tool.pytest]\nnorecursedirs = ["native"]\n\n'
+                    '[tool.pytest.ini_options]\naddopts = "--ignore=from_opts"\n'
+                )
+            },
+            PytestIgnores(paths=frozenset({"from_opts"})),
+            id="ini-options-beats-native-tool-pytest",
         ),
         pytest.param({}, PytestIgnores(), id="no-config-files"),
         pytest.param(

@@ -1,4 +1,8 @@
-"""Read forge-internal config from a repo's ``pyproject.toml``.
+"""Read a repo's configuration: forge's own, and pytest's where it matters.
+
+Mostly the ``[tool.forge]`` table. :func:`read_pytest_ignores` is the
+exception and reads *pytest's* native config instead, because the rules
+it needs are pytest's to define (FOUNDATION §8's config-home rule).
 
 Loader for the ``[tool.forge]`` table. **Forge sets this in its own
 repo to support its internal release workflow; consumer repos do not
@@ -210,11 +214,10 @@ def read_pyproject_raw(repo_root: Path) -> dict:
     try:
         text = pyproject.read_text()
     except (OSError, UnicodeDecodeError) as exc:
-        # A file saved in another encoding is unreadable in the sense this
-        # function promises: it degrades to defaults rather than taking
-        # down the caller. `UnicodeDecodeError` is a `ValueError`, so the
-        # parse guard below never saw it, and it reached every forge CLI
-        # through `load_config`.
+        # A file saved in another encoding counts as unreadable here: it
+        # degrades to defaults rather than taking the caller down. The
+        # parse guard below does not cover it, since a decode error is
+        # raised by the read.
         logger.debug("forge.config: could not read %s (%s)", pyproject, exc)
         return {}
     try:
@@ -238,8 +241,11 @@ class PytestIgnores:
     Attributes:
         paths: ``--ignore`` values, as repo-relative POSIX paths. A path
             ignores itself and everything under it.
-        globs: ``--ignore-glob`` patterns, matched against the whole
-            repo-relative path.
+        globs: ``--ignore-glob`` patterns. A pattern containing ``/`` is
+            matched against the whole repo-relative path; one without is
+            matched against the file name alone, which is how pytest
+            applies it (its ``fnmatch_ex``). ``scratch_*`` therefore hides
+            ``tests/scratch_a.py``, as it does under pytest.
         norecursedirs: Patterns matched against each *directory name* in
             a path, which is how pytest applies them — not against the
             path as a whole.
@@ -260,7 +266,11 @@ class PytestIgnores:
         """
         if any(relpath == i or relpath.startswith(f"{i}/") for i in self.paths):
             return True
-        if any(fnmatch.fnmatch(relpath, pattern) for pattern in self.globs):
+        name = PurePosixPath(relpath).name
+        if any(
+            fnmatch.fnmatch(relpath if "/" in pattern else name, pattern)
+            for pattern in self.globs
+        ):
             return True
         parents = PurePosixPath(relpath).parent.parts
         return any(
@@ -282,11 +292,17 @@ def _ignores_from_settings(settings: Mapping[str, object]) -> PytestIgnores:
         The ignore rules those settings express.
     """
     addopts = settings.get("addopts", "")
-    words = (
-        list(addopts)
-        if isinstance(addopts, (list, tuple))
-        else shlex.split(str(addopts))
-    )
+    if isinstance(addopts, (list, tuple)):
+        words = list(addopts)
+    else:
+        try:
+            words = shlex.split(str(addopts))
+        except ValueError as exc:
+            # An unbalanced quote. pytest rejects the same string, so the
+            # run is broken either way — but it must fail as pytest's own
+            # error, not as a traceback out of a selection helper.
+            logger.debug("forge.config: could not split addopts (%s)", exc)
+            return PytestIgnores()
     paths: set[str] = set()
     globs: list[str] = []
     pending: str | None = None
@@ -345,22 +361,84 @@ def _ini_pytest_settings(path: Path, section: str) -> dict[str, object] | None:
     return dict(parser[section])
 
 
+def _toml_table(path: Path, keys: tuple[str, ...]) -> dict[str, object] | None:
+    """Read one nested table out of a TOML file.
+
+    Args:
+        path: The TOML file.
+        keys: The table path to walk, e.g. ``("pytest",)``.
+
+    Returns:
+        The table, or None when the file is missing, unreadable,
+        unparseable, or carries no such table — every one of which means
+        "no rules" to the caller.
+    """
+    try:
+        text = path.read_text()
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.debug("forge.config: could not read %s (%s)", path, exc)
+        return None
+    try:
+        data: object = tomllib.loads(text)
+    except ValueError as exc:
+        logger.debug("forge.config: could not parse %s (%s)", path, exc)
+        return None
+    for key in keys:
+        if not isinstance(data, dict):
+            return None
+        data = data.get(key)
+    return data if isinstance(data, dict) else None
+
+
+def _pyproject_pytest_settings(repo_root: Path) -> dict[str, object] | None:
+    """Return pyproject's pytest settings table, or None when it has none.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        The ``[tool.pytest.ini_options]`` table when present, else the
+        native ``[tool.pytest]`` table (without ``ini_options``) when it
+        carries any key, else None.
+    """
+    tool = read_pyproject_raw(repo_root).get("tool")
+    if not isinstance(tool, dict):
+        return None
+    pytest_table = tool.get("pytest")
+    if not isinstance(pytest_table, dict):
+        return None
+    ini_options = pytest_table.get("ini_options")
+    if isinstance(ini_options, dict):
+        return ini_options
+    # pytest 9's TOML mode: `[tool.pytest]` carries the settings directly,
+    # with native types rather than strings.
+    native = {k: v for k, v in pytest_table.items() if k != "ini_options"}
+    return native or None
+
+
 def read_pytest_ignores(repo_root: Path) -> PytestIgnores:
     """Return the ignore rules from whichever config file pytest would use.
 
-    Only the *first* file that counts is read, because that is what
-    pytest does — settings do not merge across files. The order is
-    pytest's own: ``pytest.ini`` wins whenever it exists, even with no
-    ``[pytest]`` section; then ``pyproject.toml`` if it has
-    ``[tool.pytest.ini_options]``; then ``tox.ini`` with a ``[pytest]``
-    section; then ``setup.cfg`` with ``[tool:pytest]``.
+    Only the *first* file that counts is read: settings do not merge
+    across files, so neither does this. The order is pytest's own
+    (``_pytest.config.findpaths``) — ``pytest.toml``, ``.pytest.toml``,
+    ``pytest.ini`` and ``.pytest.ini`` are the source whenever they
+    exist, even carrying no settings at all; then ``pyproject.toml``
+    with either a ``[tool.pytest]`` or a ``[tool.pytest.ini_options]``
+    table; then ``tox.ini`` with ``[pytest]``; then ``setup.cfg`` with
+    ``[tool:pytest]``. The TOML forms give real lists where the ini
+    forms give one string, and both are accepted.
 
-    Simplifications worth knowing: ``-c`` on the command line can point
-    pytest at another file, and ``rootdir`` can differ from the repo
-    root. Neither is handled, because smart-test runs pytest itself from
-    the repo root with no ``-c``. ``testpaths`` is not read either: it
-    only matters when pytest is given no paths, and smart-test always
-    names files explicitly.
+    What it does not read, each failing open — no rules, so nothing is
+    filtered: a file named by ``-c``, and a ``rootdir`` that differs
+    from the repo root, neither of which smart-test produces, since it
+    runs pytest itself from the repo root. ``testpaths`` is skipped
+    because it only applies when pytest is given no paths, and
+    smart-test always names files. Setting ``norecursedirs`` in pytest
+    replaces its defaults (``build``, ``dist``, ``node_modules``,
+    ``.*`` and more); only the configured value is read here, so those
+    defaults are left to the git-visibility filter, which covers them in
+    practice.
 
     Args:
         repo_root: Git repo root.
@@ -369,16 +447,18 @@ def read_pytest_ignores(repo_root: Path) -> PytestIgnores:
         The rules, or empty rules when no config file carries any — which
         every caller reads as "filter nothing".
     """
-    ini = repo_root / "pytest.ini"
-    if ini.is_file():
-        return _ignores_from_settings(_ini_pytest_settings(ini, "pytest") or {})
-    toml_settings = read_pyproject_raw(repo_root).get("tool", {})
-    if isinstance(toml_settings, dict):
-        pytest_table = toml_settings.get("pytest", {})
-        if isinstance(pytest_table, dict) and isinstance(
-            pytest_table.get("ini_options"), dict
-        ):
-            return _ignores_from_settings(pytest_table["ini_options"])
+    for name in ("pytest.toml", ".pytest.toml"):
+        toml_file = repo_root / name
+        if toml_file.is_file():
+            table = _toml_table(toml_file, ("pytest",))
+            return _ignores_from_settings(table or {})
+    for name in ("pytest.ini", ".pytest.ini"):
+        ini = repo_root / name
+        if ini.is_file():
+            return _ignores_from_settings(_ini_pytest_settings(ini, "pytest") or {})
+    pyproject_settings = _pyproject_pytest_settings(repo_root)
+    if pyproject_settings is not None:
+        return _ignores_from_settings(pyproject_settings)
     for name, section in (("tox.ini", "pytest"), ("setup.cfg", "tool:pytest")):
         settings = _ini_pytest_settings(repo_root / name, section)
         if settings is not None:

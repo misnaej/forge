@@ -164,7 +164,10 @@ def _unselectable_test(repo_root: Path) -> Callable[[str], bool]:
     return unselectable
 
 
-def all_test_files(repo_root: Path) -> set[str]:
+def all_test_files(
+    repo_root: Path,
+    unselectable: Callable[[str], bool] | None = None,
+) -> set[str]:
     """Return every repo-relative test file under the configured test roots.
 
     The full tier's explicit file list — lifecycle deselection subtracts
@@ -174,12 +177,16 @@ def all_test_files(repo_root: Path) -> set[str]:
 
     Args:
         repo_root: Git repo root.
+        unselectable: The exclusion predicate to reuse. Built here when
+            omitted; passed in by a caller that already has one, since
+            building it costs a git query and a config read.
 
     Returns:
         Repo-relative test-file paths.
     """
     _, tests = _roots(repo_root)
-    unselectable = _unselectable_test(repo_root)
+    if unselectable is None:
+        unselectable = _unselectable_test(repo_root)
     found: set[str] = set()
     for path in _iter_py(tests):
         if _is_test_file(path):
@@ -581,7 +588,7 @@ def select_tests(
         newly_at_depth=newly_at_depth,
         changed_tests=changed_tests,
         max_depth=max_depth,
-        total_tests=len(all_test_files(repo_root)),
+        total_tests=len(all_test_files(repo_root, unselectable)),
     )
 
 
