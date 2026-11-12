@@ -15,6 +15,7 @@ from forge.agent_profile import (
 )
 from forge.agent_profile_tokens import NO_SKILL
 from forge.vibe_sessions import parse_vibe_journal
+from tests.test_vibe_sessions import _make_root_session
 
 
 def _ts(ms: int) -> datetime:
@@ -205,30 +206,14 @@ class TestLoadSessionsVibe:
     """Tests for load_sessions merging Claude transcripts and Vibe root sessions."""
 
     @staticmethod
-    def _make_root_session(session_dir: Path, cwd: str | Path) -> None:
-        """Create a valid root session directory.
+    def _make_root_session_with_journal(session_dir: Path, cwd: str | Path) -> None:
+        """Create a root session directory whose journal carries one usage record.
 
         Args:
             session_dir: The session directory to create.
             cwd: The working directory to record in its metadata.
         """
-        session_dir.mkdir(parents=True)
-        (session_dir / "CURRENT").write_text(
-            '{"generation": "gen_1"}', encoding="utf-8"
-        )
-        gen_path = session_dir / "generations" / "gen_1"
-        gen_path.mkdir(parents=True)
-        payload = {
-            "identity": {
-                "session_id": session_dir.name,
-                "kind": "root",
-                "parent_session_id": None,
-            },
-            "session_metadata": {
-                "environment": {"working_directory": str(cwd)},
-            },
-        }
-        (gen_path / "runtime-state.json").write_text(json.dumps(payload))
+        _make_root_session(session_dir, cwd)
         journal_dir = session_dir / "journal"
         journal_dir.mkdir(parents=True)
         record = {
@@ -267,7 +252,7 @@ class TestLoadSessionsVibe:
         (transcripts / f"{session_id}.jsonl").write_text(json.dumps(record) + "\n")
         runs = [AgentRun(agent_id="a1", agent_type="t", session_id=session_id)]
         sessions_dir = tmp_path / "unified"
-        self._make_root_session(sessions_dir / "root-uuid", tmp_path)
+        self._make_root_session_with_journal(sessions_dir / "root-uuid", tmp_path)
         sessions = load_sessions(
             transcripts, runs, root=tmp_path, vibe_sessions_dir=sessions_dir
         )
@@ -291,6 +276,6 @@ class TestLoadSessionsVibe:
         (transcripts / f"{session_id}.jsonl").write_text(json.dumps(record) + "\n")
         runs = [AgentRun(agent_id="a1", agent_type="t", session_id=session_id)]
         sessions_dir = tmp_path / "unified"
-        self._make_root_session(sessions_dir / "root-uuid", tmp_path)
+        self._make_root_session_with_journal(sessions_dir / "root-uuid", tmp_path)
         sessions = load_sessions(transcripts, runs, vibe_sessions_dir=sessions_dir)
         assert set(sessions) == {session_id}

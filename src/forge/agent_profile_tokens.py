@@ -4,8 +4,8 @@ Every request an agent makes re-sends its whole context, so cost is
 dominated by prompt tokens, not output. This module turns Claude Code
 transcript records into per-request usage and ranks it. It also defines
 the harness-neutral pieces — :class:`TokenUsage`, :class:`SessionTokens`,
-:func:`printable` — that the Vibe journal parser in :mod:`forge.vibe_sessions`
-reuses for main-session tokens.
+:func:`printable`, :func:`nonneg_int` — that the Vibe journal parser in
+:mod:`forge.vibe_sessions` reuses for main-session tokens.
 
 Two quirks of the transcript format shape it:
 
@@ -115,7 +115,7 @@ def printable(text: str) -> str:
     return "".join(ch if ch.isprintable() else " " for ch in text)
 
 
-def _count(value: object) -> int:
+def nonneg_int(value: object) -> int:
     """A usage field as a non-negative int (``0`` for anything else).
 
     Args:
@@ -163,16 +163,16 @@ class UsageTally:
             self._seen.add(message_id)
         usage = message.get("usage")
         usage = usage if isinstance(usage, dict) else {}
-        fresh = _count(usage.get("input_tokens"))
-        written = _count(usage.get("cache_creation_input_tokens"))
-        read = _count(usage.get("cache_read_input_tokens"))
+        fresh = nonneg_int(usage.get("input_tokens"))
+        written = nonneg_int(usage.get("cache_creation_input_tokens"))
+        read = nonneg_int(usage.get("cache_read_input_tokens"))
         if self.usage.requests == 0:
             self.usage.fixed_tokens = fresh + written + read
         self.usage.requests += 1
         self.usage.input_tokens += fresh
         self.usage.cache_write_tokens += written
         self.usage.cache_read_tokens += read
-        self.usage.output_tokens += _count(usage.get("output_tokens"))
+        self.usage.output_tokens += nonneg_int(usage.get("output_tokens"))
         return True
 
 

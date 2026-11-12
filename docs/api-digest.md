@@ -143,7 +143,7 @@ A compact index of this codebase's symbols — every top-level function and clas
   - `fixed_share(self) -> float` — :attr:`fixed_cost` as a share of prompt tokens (``0`` when none).
   - `add(self, other: TokenUsage) -> None` — Add *other*'s counts into this usage.
 - `printable(text: str) -> str` — *text* with every non-printable character turned into a space.
-- `_count(value: object) -> int` _(internal)_ — A usage field as a non-negative int (``0`` for anything else).
+- `nonneg_int(value: object) -> int` — A usage field as a non-negative int (``0`` for anything else).
 - `class UsageTally` — Adds each request's usage once, however many records repeat it.
   - `add_record(self, record: dict[str, Any]) -> bool` — Count *record*'s usage unless its message was already counted.
 - `tool_result_chars(block: dict[str, Any]) -> int` — Characters a ``tool_result`` block puts back into the conversation.
@@ -2551,7 +2551,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `class _SkillTally` _(internal)_ — One skill's summed usage; its first request sets the fixed context.
   - `add(self, usage: dict[str, Any]) -> None` — Add one completion's usage.
 - `_skill_name(arguments_json: object) -> str | None` _(internal)_ — The skill id a ``skill`` tool call's arguments carry.
-- `_uint(value: object) -> int` _(internal)_ — A usage field as a non-negative int (``0`` for anything else).
 - `_mapping(value: dict[str, Any] | None) -> dict[str, Any]` _(internal)_ — Return *value* when it is a dict, else an empty one.
 - `_record_ts(record: dict[str, Any]) -> datetime | None` _(internal)_ — One journal record's wall-clock time.
 - `_find_ms(value: dict[str, Any] | None, key: str) -> int | float | None` _(internal)_ — Depth-first search for the first numeric *key* in a nested structure.

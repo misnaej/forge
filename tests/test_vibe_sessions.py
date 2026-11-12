@@ -79,6 +79,25 @@ def _projection_delta(ms: int, token_usage: dict) -> dict:
     }
 
 
+@pytest.fixture
+def mock_github_slug(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Patch forge.vibe_sessions.github_slug to recognise one fake repo."""
+    # Create a minimal git repo for github_slug
+    repo_a = tmp_path / "repo_a"
+    repo_a.mkdir()
+    (repo_a / ".git").mkdir()
+    (repo_a / ".git" / "config").write_text(
+        '[remote "origin"]\n    url = https://github.com/owner/repo_a.git\n'
+    )
+
+    def fake_slug(path: Path) -> str | None:
+        if path.resolve() == repo_a.resolve():
+            return "owner/repo_a"
+        return None
+
+    monkeypatch.setattr("forge.vibe_sessions.github_slug", fake_slug)
+
+
 class TestParseVibeJournal:
     """Tests for parse_vibe_journal tolerant parsing of journal lines."""
 
@@ -360,24 +379,6 @@ class TestParseVibeJournal:
 
 class TestRunsFromVibeSessions:
     """Tests for runs_from_vibe_sessions repo matching and filtering."""
-
-    @pytest.fixture
-    def mock_github_slug(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """Patch forge.vibe_sessions.github_slug to recognise one fake repo."""
-        # Create a minimal git repo for github_slug
-        repo_a = tmp_path / "repo_a"
-        repo_a.mkdir()
-        (repo_a / ".git").mkdir()
-        (repo_a / ".git" / "config").write_text(
-            '[remote "origin"]\n    url = https://github.com/owner/repo_a.git\n'
-        )
-
-        def fake_slug(path: Path) -> str | None:
-            if path.resolve() == repo_a.resolve():
-                return "owner/repo_a"
-            return None
-
-        monkeypatch.setattr("forge.vibe_sessions.github_slug", fake_slug)
 
     def _make_subagent_session(self, session_dir: Path, cwd: str | Path) -> None:
         """Create a valid subagent session directory.
@@ -700,26 +701,81 @@ class TestParseVibeMainJournal:
         assert session is not None
         assert session.by_skill[NO_SKILL].input_tokens == 10
 
+    def test_deeply_nested_line_skipped(self, tmp_path: Path) -> None:
+        """A pathologically nested JSON line (RecursionError) is skipped."""
+        session_dir = tmp_path / "root_1"
+        _make_root_session(session_dir, tmp_path)
+        journal_dir = session_dir / "journal"
+        journal_dir.mkdir(parents=True)
+        good = json.dumps(
+            _action_result("a1", 1717000000000, usage={"input_tokens": 10})
+        )
+        deep = "[" * 5000 + "]" * 5000
+        (journal_dir / "records.jsonl").write_text(f"{deep}\n{good}\n")
+        session = parse_vibe_main_journal(session_dir)
+        assert session is not None
+        assert session.by_skill[NO_SKILL].input_tokens == 10
+
+    def test_deeply_nested_skill_arguments_keep_cursor(self, tmp_path: Path) -> None:
+        """A skill part whose arguments_json overflows the parser keeps the cursor."""
+        session_dir = tmp_path / "root_1"
+        _make_root_session(session_dir, tmp_path)
+        bad = {
+            "type": "tool_call",
+            "name": "skill",
+            "id": "s1",
+            "arguments_json": "[" * 5000 + "]" * 5000,
+        }
+        _write_journal(
+            session_dir,
+            [
+                _action_result(
+                    "a1",
+                    1717000000000,
+                    parts=[bad],
+                    usage={"input_tokens": 10, "output_tokens": 1},
+                ),
+                _action_result(
+                    "a2", 1717000010000, usage={"input_tokens": 5, "output_tokens": 1}
+                ),
+            ],
+        )
+        session = parse_vibe_main_journal(session_dir)
+        assert session is not None
+        assert set(session.by_skill) == {NO_SKILL}
+        assert session.by_skill[NO_SKILL].input_tokens == 15
+
+    def test_non_finite_projection_usage_ignored(self, tmp_path: Path) -> None:
+        """NaN/Infinity tokenUsage fields never reach int() (no ValueError)."""
+        session_dir = tmp_path / "root_1"
+        _make_root_session(session_dir, tmp_path)
+        _write_journal(
+            session_dir,
+            [
+                _projection_delta(
+                    1717000000000,
+                    {"inputTokens": float("nan"), "outputTokens": float("inf")},
+                )
+            ],
+        )
+        session = parse_vibe_main_journal(session_dir)
+        assert session is not None
+        assert session.by_skill == {}
+
+    def test_huge_timestamp_yields_none(self, tmp_path: Path) -> None:
+        """An overflowing ts_ms is dropped instead of raising OverflowError."""
+        session_dir = tmp_path / "root_1"
+        _make_root_session(session_dir, tmp_path)
+        _write_journal(
+            session_dir,
+            [_action_result("a1", 1e300, usage={"input_tokens": 10})],
+        )
+        assert parse_vibe_main_journal(session_dir) is None
+        assert parse_vibe_journal(session_dir) is None
+
 
 class TestMainSessionsFromVibe:
     """Tests for main_sessions_from_vibe root-session selection and repo matching."""
-
-    @pytest.fixture
-    def mock_github_slug(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """Patch forge.vibe_sessions.github_slug to recognise one fake repo."""
-        repo_a = tmp_path / "repo_a"
-        repo_a.mkdir()
-        (repo_a / ".git").mkdir()
-        (repo_a / ".git" / "config").write_text(
-            '[remote "origin"]\n    url = https://github.com/owner/repo_a.git\n'
-        )
-
-        def fake_slug(path: Path) -> str | None:
-            if path.resolve() == repo_a.resolve():
-                return "owner/repo_a"
-            return None
-
-        monkeypatch.setattr("forge.vibe_sessions.github_slug", fake_slug)
 
     def test_missing_sessions_dir_returns_empty_dict(self, tmp_path: Path) -> None:
         """A nonexistent store yields no sessions."""
@@ -785,3 +841,37 @@ class TestMainSessionsFromVibe:
             main_sessions_from_vibe(root=Path("/repo_a"), sessions_dir=sessions_dir)
             == {}
         )
+
+    def test_parallel_clone_matched_by_origin_slug(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A root session in a parallel clone of the same repo is collected."""
+        repo_a = tmp_path / "repo_a"
+        repo_a.mkdir()
+        (repo_a / ".git").mkdir()
+        (repo_a / ".git" / "config").write_text(
+            '[remote "origin"]\n    url = https://github.com/owner/repo_a.git\n'
+        )
+        clone = tmp_path / "clone_a"
+        clone.mkdir()
+        (clone / ".git").mkdir()
+        (clone / ".git" / "config").write_text(
+            '[remote "origin"]\n    url = https://github.com/owner/repo_a.git\n'
+        )
+
+        def fake_slug(path: Path) -> str | None:
+            if path.resolve() in {repo_a.resolve(), clone.resolve()}:
+                return "owner/repo_a"
+            return None
+
+        monkeypatch.setattr("forge.vibe_sessions.github_slug", fake_slug)
+        sessions_dir = tmp_path / "sessions"
+        root_session = sessions_dir / "root-clone"
+        _make_root_session(root_session, clone)
+        _write_journal(
+            root_session,
+            [_action_result("a1", 1717000000000, usage={"input_tokens": 7})],
+        )
+        sessions = main_sessions_from_vibe(root=repo_a, sessions_dir=sessions_dir)
+        assert set(sessions) == {"vibe:root-clone"}
+        assert sessions["vibe:root-clone"].by_skill[NO_SKILL].input_tokens == 7

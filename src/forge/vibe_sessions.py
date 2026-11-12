@@ -18,13 +18,20 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from forge.agent_profile_tokens import NO_SKILL, SessionTokens, TokenUsage, printable
+from forge.agent_profile_tokens import (
+    NO_SKILL,
+    SessionTokens,
+    TokenUsage,
+    nonneg_int,
+    printable,
+)
 from forge.git_utils import github_slug
 from forge.vibe_metadata import default_sessions_dir, read_session_meta
 
@@ -218,7 +225,7 @@ def _iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
                     continue
                 try:
                     record = json.loads(stripped)
-                except json.JSONDecodeError:
+                except (json.JSONDecodeError, RecursionError, ValueError):
                     continue
                 if isinstance(record, dict):
                     yield record
@@ -347,7 +354,9 @@ def _projection_usage(payload: dict[str, Any]) -> dict[str, int]:
             return {
                 key: int(value)
                 for key, value in usage.items()
-                if isinstance(value, int | float) and not isinstance(value, bool)
+                if isinstance(value, int | float)
+                and not isinstance(value, bool)
+                and math.isfinite(value)
             }
     return {}
 
@@ -449,15 +458,15 @@ class _SkillTally:
         """
         if self.usage.requests == 0:
             self.usage.fixed_tokens = (
-                _uint(usage.get("input_tokens"))
-                + _uint(usage.get("cache_write_tokens"))
-                + _uint(usage.get("cached_input_tokens"))
+                nonneg_int(usage.get("input_tokens"))
+                + nonneg_int(usage.get("cache_write_tokens"))
+                + nonneg_int(usage.get("cached_input_tokens"))
             )
         self.usage.requests += 1
-        self.usage.input_tokens += _uint(usage.get("input_tokens"))
-        self.usage.cache_write_tokens += _uint(usage.get("cache_write_tokens"))
-        self.usage.cache_read_tokens += _uint(usage.get("cached_input_tokens"))
-        self.usage.output_tokens += _uint(usage.get("output_tokens"))
+        self.usage.input_tokens += nonneg_int(usage.get("input_tokens"))
+        self.usage.cache_write_tokens += nonneg_int(usage.get("cache_write_tokens"))
+        self.usage.cache_read_tokens += nonneg_int(usage.get("cached_input_tokens"))
+        self.usage.output_tokens += nonneg_int(usage.get("output_tokens"))
 
 
 def _skill_name(arguments_json: object) -> str | None:
@@ -474,24 +483,10 @@ def _skill_name(arguments_json: object) -> str | None:
         return None
     try:
         arguments = json.loads(arguments_json)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError, ValueError):
         return None
     name = arguments.get("name") if isinstance(arguments, dict) else None
     return name if isinstance(name, str) and name else None
-
-
-def _uint(value: object) -> int:
-    """A usage field as a non-negative int (``0`` for anything else).
-
-    Args:
-        value: The decoded JSON value.
-
-    Returns:
-        *value* when it is a non-negative ``int`` (``bool`` excluded), else ``0``.
-    """
-    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
-        return value
-    return 0
 
 
 def _mapping(value: dict[str, Any] | None) -> dict[str, Any]:
@@ -524,7 +519,10 @@ def _record_ts(record: dict[str, Any]) -> datetime | None:
     if found is None and isinstance(record.get("ts_ms"), int | float):
         found = record["ts_ms"]
     if isinstance(found, int | float) and found > 0:
-        return datetime.fromtimestamp(found / 1000, tz=UTC)
+        try:
+            return datetime.fromtimestamp(found / 1000, tz=UTC)
+        except (OverflowError, OSError, ValueError):
+            return None
     return None
 
 
