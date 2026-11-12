@@ -266,8 +266,8 @@ class TestBareConsumerRepo:
         assert install_vibe(root) == 0
         tomls = sorted((root / ".vibe" / "agents").glob("*.toml"))
         prompts = sorted((root / ".vibe" / "prompts").glob("*.md"))
-        assert len(tomls) == 13
-        assert len(prompts) == 13
+        assert len(tomls) == 14
+        assert len(prompts) == 14
         assert (root / ".vibe" / "agents" / "prior-art.toml").is_file()
         assert (root / ".vibe" / "hooks.toml").is_file()
         assert (root / ".vibe" / "forge-roster.json").is_file()

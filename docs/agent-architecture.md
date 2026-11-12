@@ -122,6 +122,7 @@ graph LR
   merge_resolver["merge-resolver<br/>AI agent"]
   knowledge_search["knowledge-search<br/>AI agent"]
   perf_optimizer["perf-optimizer<br/>AI agent"]
+  token_optimizer["token-optimizer<br/>AI agent"]
   prior_art["prior-art<br/>AI agent"]
   precommit_fixer["⚖️ precommit-fixer<br/>AI agent"]
   sk_smart_test(["/smart-test<br/>skill"])
@@ -140,6 +141,7 @@ graph LR
   sk_perf -->|invokes| cli_forge_telemetry
   sk_perf -->|invokes| cli_forge_agent_profile
   sk_perf -.->|delegates deep dives| perf_optimizer
+  sk_perf -.->|delegates token drain reports| token_optimizer
   main_agent -->|runs| sk_test
   main_agent -. §3 pre-write review .-> design_checker
   main_agent -. §3 before creating files .-> prior_art
@@ -185,6 +187,8 @@ graph LR
   class knowledge_search reporter
   class perf_optimizer agent
   class perf_optimizer mutator
+  class token_optimizer agent
+  class token_optimizer reporter
   class prior_art agent
   class prior_art reporter
   class precommit_fixer agent
