@@ -78,9 +78,10 @@ process** and must uphold those invariants itself:
   check, return a skipped `StepResult` without demanding the binary be
   installed.
 - **`run_context` still applies** (FOUNDATION §15) — no inline CI checks.
-- **Write stdout with `forge.git_utils.emit`, never `print`.** `T201`
-  forbids a bare `print`; `ruff.toml` says why its fix must not be
-  applied.
+- **Write stdout with `forge.git_utils.emit`, never `print`.** It writes
+  through `sys.stdout.write`, so output that is part of the interface is
+  not what ruff's `T201` is for — and `T201`'s fix is to delete the
+  statement, so a `print` here can cost a CLI its output.
 - **Launch forge's own CLIs from the running install, never by PATH name.**
   A step that spawns another forge CLI (the doc generators) builds its
   argv with `forge.git_utils.forge_cli_argv`, which resolves the name

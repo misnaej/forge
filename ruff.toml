@@ -9,11 +9,6 @@ ignore = [
     "CPY001",  # missing-copyright-notice — forge has no copyright-header
                 # policy; would fire on every file
 ]
-# T201 (bare print) stays a blocking error, but its fix DELETES the statement,
-# so a CLI's own output can disappear under a green lint verdict. Failing
-# instead sends the author to `forge.git_utils.emit`, which writes to stdout
-# without tripping the rule.
-unfixable = ["T201"]
 
 [lint.per-file-ignores]
 "src/forge/audit/orphans.py" = [

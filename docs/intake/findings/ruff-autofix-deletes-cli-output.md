@@ -20,10 +20,15 @@ file held
         pass
 
 Both emitting branches gone, a green lint verdict over the top. Found
-only by running the binary — no step noticed. That one is closed:
-`T201` is `unfixable` in `ruff.toml:16`, so it now fails instead of
-deleting, and `docs/step-invocation.md` names `forge.git_utils.emit` as
-the way to write stdout.
+only by running the binary — no step noticed (`ruff.toml:5` selects
+every rule, `T201` among them).
+
+Nothing stops a repeat. `docs/step-invocation.md` now names
+`forge.git_utils.emit` as the way to write stdout, which is a rule
+somebody has to have read. Listing `T201` under ruff's `unfixable`
+would stop it mechanically, and that is a lint-policy decision for the
+repo's owner — not something to slip in alongside whatever feature
+tripped over it.
 
 ## What it costs
 
@@ -38,8 +43,9 @@ Cost so far: one debugging cycle.
 
 ## What would fix it
 
-Enumerate ruff's fixable rules whose fix removes code rather than
-rewriting it, and decide per rule whether it belongs in `unfixable`.
+Decide whether `T201` belongs in ruff's `unfixable` list, and then
+whether other rules do: enumerate the fixable rules whose fix removes
+code rather than rewriting it.
 `ruff rule --all --output-format json` flags which rules have a fix at
 all — for `T201` the whole `fix` field reads "Fix is sometimes
 available." — so it narrows the list but does not say which fixes

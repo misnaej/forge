@@ -54,6 +54,15 @@
 - **`needs-forge-report` issue label** (forge-only): marks an open issue from someone without write access whose body lacks `/report-to-forge`'s filing marker (format: `skills/report-to-forge/SKILL.md` Step 6) — policy in CONTRIBUTING.md rule 2. Applied by `issue-triage-forge` in `triage` mode, which also returns a reply draft per gated issue for the user to approve one at a time (mechanics: that wrapper). Never closes the issue. Not in `CANONICAL_LABELS`, same reasoning as `forge-internal`; create it the same way (command in the wrapper).
 - **Closed issues keep their tier labels** (forge-local override of the `forge:issue-triage` `post-pr` strip rule): the tier at close time is retrospective data (weekly summaries, throughput reviews) that stripping destroys. `post-pr` mode must not remove tier labels here; the Backlog Index lists only open issues, so closed-issue labels never pollute it.
 - **`_FORGE_GITHUB_REPO` carve-out** (forge's single exception to FOUNDATION §2 "No private organizational names"): the canonical upstream constant in `src/forge/git_utils.py` (and URLs derived from it) must name the public upstream — that constant only, not "any public GitHub URL". During a repo move it stays at the *functional* location (where the gh API returns 200s) while docs may forward-point at the *aspirational* one — a bounded divergence flagged by a README callout.
+- **Lint and policy config is propose-only for an agent**: `ruff.toml`, the
+  lint tables in `pyproject.toml`, `FOUNDATION.md`, this file, `.githooks/`,
+  `claude-hooks/`. An agent states the change it wants and why, then waits
+  for the user's yes — including a change that only *tightens* (an
+  `unfixable` entry, a new per-file ignore, a pin bump), and including one
+  whose need surfaced mid-task from a defect the agent hit. These files set
+  policy for everyone working in the repo, so a sound justification is not
+  authorization, and "strictly stricter" is not an exemption. Report the
+  finding (intake, or the PR body) and leave the file alone.
 - **Approved `# noqa` exceptions** (FOUNDATION §5 normally permits only `E402`):
   - `# noqa: N802` — for a test fake that must carry a third-party API's own PascalCase name to stand in for it (e.g. `Process` mirroring `psutil.Process`, `Vulture` mirroring `vulture.Vulture`).
   - `# noqa: PLC0415` — for guarded optional-dependency imports under `try / except ImportError` inside a helper, where moving the import to module level would break consumers without the extra (e.g. `audit/orphans.py:78` for `vulture`). Module-level guarded imports are preferred when feasible; reserve PLC0415 for cases where the optional dep is only needed inside one function.
