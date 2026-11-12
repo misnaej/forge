@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from forge.config import read_pytest_ignores
 from forge.smart_test.dependencies import (
     SelectionPlan,
     _patch_targets,
@@ -24,7 +25,6 @@ from forge.smart_test.dependencies import (
     select_tests,
     unscanned_conftests,
 )
-from forge.config import read_pytest_ignores
 from forge.smart_test.git_helpers import visible_paths
 from tests.conftest import init_git_repo
 

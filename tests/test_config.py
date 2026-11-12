@@ -1103,7 +1103,7 @@ def test_summarize_paths_quotes_untrusted_names_as_inert_data() -> None:
     ],
 )
 def test_pytest_ignores_match_semantics(
-    rules: PytestIgnores, relpath: str, expected: bool
+    rules: PytestIgnores, relpath: str, *, expected: bool
 ) -> None:
     """Each rule family excludes exactly the paths pytest's own rule would.
 
@@ -1325,7 +1325,7 @@ def test_read_pytest_ignores_undecodable_ini_yields_empty_rules(
     """
     payload = f"{header}\naddopts = --ignore=caf\xe9\n".encode("latin-1")
     try:
-        payload.decode(locale.getpreferredencoding(False))
+        payload.decode(locale.getpreferredencoding(do_setlocale=False))
     except UnicodeDecodeError:
         pass
     else:
@@ -1348,7 +1348,7 @@ def test_read_pytest_ignores_undecodable_pyproject_yields_empty_rules(
     """
     payload = b'[tool.x]\nname = "caf\xe9"\n'
     try:
-        payload.decode(locale.getpreferredencoding(False))
+        payload.decode(locale.getpreferredencoding(do_setlocale=False))
     except UnicodeDecodeError:
         pass
     else:

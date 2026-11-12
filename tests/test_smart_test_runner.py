@@ -283,9 +283,7 @@ def test_run_pytest_telemetry_delegate_exit5_with_paths_stays_5(
     """
     monkeypatch.setattr(runner.telemetry_mod, "telemetry_available", lambda: True)
     monkeypatch.setattr(runner.telemetry_mod, "run_command", lambda *_a, **_kw: (5, ""))
-    code, output = runner.run_pytest(
-        tmp_path, ["tests/test_x.py"], telemetry_label="x"
-    )
+    code, output = runner.run_pytest(tmp_path, ["tests/test_x.py"], telemetry_label="x")
     assert code == 5
     assert "collected no tests" in output
 
@@ -312,9 +310,7 @@ def test_run_pytest_telemetry_unavailable_falls_back_with_notice(
         subprocess, "run", make_fake_run(stdout="1 passed", captured=captured)
     )
 
-    _, output = runner.run_pytest(
-        tmp_path, ["tests/test_x.py"], telemetry_label="x"
-    )
+    _, output = runner.run_pytest(tmp_path, ["tests/test_x.py"], telemetry_label="x")
 
     assert captured.calls, "the fallback subprocess.run was not called"
     assert "psutil" in output

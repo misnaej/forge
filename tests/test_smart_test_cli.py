@@ -19,6 +19,7 @@ import inspect
 import logging
 import os
 import sys
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pytest
@@ -103,6 +104,15 @@ class _FakeRunPytest:
         on_call: Callable[[list[str]], None] | None = None,
         captured: CapturedCalls | None = None,
     ) -> None:
+        """Script the fake's per-call results and streamed output.
+
+        Args:
+            results: ``(exit_code, output)`` pairs returned by successive calls.
+            default: Result returned once ``results`` is exhausted.
+            streamed: Lines handed to ``on_output`` on every call.
+            on_call: Optional hook run at the start of each call, with its paths.
+            captured: Optional ``CapturedCalls`` mirroring the per-call data.
+        """
         self.results = list(results or [])
         self.default = default
         self.streamed = streamed
@@ -196,9 +206,7 @@ def _stub_cli_deps(
     monkeypatch.setattr(cli, "select_tests", lambda _root, _ch, _depth, **_kw: plan)
     monkeypatch.setattr(cli, "clear_python_cache", lambda _root: None)
 
-    monkeypatch.setattr(
-        cli, "run_pytest", _FakeRunPytest(_results, captured=captured)
-    )
+    monkeypatch.setattr(cli, "run_pytest", _FakeRunPytest(_results, captured=captured))
     return captured
 
 
@@ -1719,123 +1727,11 @@ def _test_names(prefix: str, count: int) -> list[str]:
     return [f"tests/test_{prefix}{i}.py" for i in range(count)]
 
 
-@pytest.mark.parametrize(
-    (
-        "at_depth0",
-        "at_depth1",
-        "depth",
-        "total",
-        "extra_new",
-        "extra_inside",
-        "changed",
-        "contains",
-        "absent",
-    ),
-    [
-        pytest.param(18, 0, 0, 20, 0, 0, set(), ["18 of 20"], [], id="fires-at-90pct"),
-        pytest.param(17, 0, 0, 20, 0, 0, set(), None, [], id="below-90pct"),
-        pytest.param(19, 0, 0, 19, 0, 0, set(), None, [], id="19-of-19-too-small"),
-        pytest.param(20, 0, 0, 20, 0, 0, set(), ["20 of 20"], [], id="20-of-20"),
-        pytest.param(0, 0, 0, 20, 0, 0, set(), None, [], id="nothing-selected"),
-        pytest.param(1, 0, 0, 0, 0, 0, set(), None, [], id="empty-suite"),
-        pytest.param(
-            10, 8, 1, 20, 0, 0, set(), ["18 of 20"], [], id="cumulative-over-tiers"
-        ),
-        pytest.param(10, 8, 0, 20, 0, 0, set(), None, [], id="same-plan-at-depth-0"),
-        pytest.param(
-            10, 0, 0, 20, 8, 0, set(), ["18 of 20"], [], id="extra-depth0-counts"
-        ),
-        pytest.param(
-            10, 0, 0, 20, 0, 8, set(), None, [], id="extra-already-in-batch-once"
-        ),
-        pytest.param(
-            18,
-            0,
-            0,
-            20,
-            0,
-            0,
-            {"tests/conftest.py"},
-            ["tests/conftest.py"],
-            [_NO_CAUSE],
-            id="names-a-changed-conftest",
-        ),
-        pytest.param(
-            18,
-            0,
-            0,
-            20,
-            0,
-            0,
-            {"tests/conftest.py", "src/pkg/__init__.py"},
-            ["tests/conftest.py"],
-            ["__init__.py", _NO_CAUSE],
-            id="conftest-outranks-init",
-        ),
-        pytest.param(
-            18,
-            0,
-            0,
-            20,
-            0,
-            0,
-            {"src/pkg/__init__.py"},
-            ["src/pkg/__init__.py"],
-            [_NO_CAUSE],
-            id="names-a-changed-init",
-        ),
-        pytest.param(
-            18,
-            0,
-            0,
-            20,
-            0,
-            0,
-            {"src/pkg/mod.py"},
-            [_NO_CAUSE],
-            ["conftest", "__init__"],
-            id="no-culprit",
-        ),
-        pytest.param(
-            18,
-            0,
-            0,
-            20,
-            0,
-            0,
-            {"tests/b/conftest.py", "tests/a/conftest.py"},
-            ["tests/a/conftest.py, tests/b/conftest.py"],
-            [],
-            id="several-conftests-sorted",
-        ),
-        pytest.param(
-            18,
-            0,
-            0,
-            20,
-            0,
-            0,
-            {"tests/myconftest.py", "tests/conftest.py.bak"},
-            [_NO_CAUSE],
-            ["myconftest", ".bak"],
-            id="lookalike-names-are-not-conftests",
-        ),
-    ],
-)
-def test_widening_notice_fires_on_nearly_the_whole_suite(
-    at_depth0: int,
-    at_depth1: int,
-    depth: int,
-    total: int,
-    extra_new: int,
-    extra_inside: int,
-    changed: set[str],
-    contains: list[str] | None,
-    absent: list[str],
-) -> None:
-    """The notice appears from 90% of a 20+ file suite, naming the likeliest cause.
+@dataclass(frozen=True)
+class _WideningCase:
+    """One row of the widening-notice table.
 
-    Args:
+    Attributes:
         at_depth0: Tests newly reachable at depth 0.
         at_depth1: Tests newly reachable at depth 1.
         depth: Highest depth the run executes.
@@ -1846,21 +1742,93 @@ def test_widening_notice_fires_on_nearly_the_whole_suite(
         contains: Substrings the notice must hold; None means no notice.
         absent: Substrings the notice must not hold.
     """
-    depth0 = _test_names("a", at_depth0)
+
+    at_depth0: int
+    total: int = 20
+    at_depth1: int = 0
+    depth: int = 0
+    extra_new: int = 0
+    extra_inside: int = 0
+    changed: frozenset[str] = frozenset()
+    contains: tuple[str, ...] | None = None
+    absent: tuple[str, ...] = ()
+
+
+_WIDENING_CASES = {
+    "fires-at-90pct": _WideningCase(18, contains=("18 of 20",)),
+    "below-90pct": _WideningCase(17),
+    "19-of-19-too-small": _WideningCase(19, total=19),
+    "20-of-20": _WideningCase(20, contains=("20 of 20",)),
+    "nothing-selected": _WideningCase(0),
+    "empty-suite": _WideningCase(1, total=0),
+    "cumulative-over-tiers": _WideningCase(
+        10, at_depth1=8, depth=1, contains=("18 of 20",)
+    ),
+    "same-plan-at-depth-0": _WideningCase(10, at_depth1=8),
+    "extra-depth0-counts": _WideningCase(10, extra_new=8, contains=("18 of 20",)),
+    "extra-already-in-batch-once": _WideningCase(10, extra_inside=8),
+    "names-a-changed-conftest": _WideningCase(
+        18,
+        changed=frozenset({"tests/conftest.py"}),
+        contains=("tests/conftest.py",),
+        absent=(_NO_CAUSE,),
+    ),
+    "conftest-outranks-init": _WideningCase(
+        18,
+        changed=frozenset({"tests/conftest.py", "src/pkg/__init__.py"}),
+        contains=("tests/conftest.py",),
+        absent=("__init__.py", _NO_CAUSE),
+    ),
+    "names-a-changed-init": _WideningCase(
+        18,
+        changed=frozenset({"src/pkg/__init__.py"}),
+        contains=("src/pkg/__init__.py",),
+        absent=(_NO_CAUSE,),
+    ),
+    "no-culprit": _WideningCase(
+        18,
+        changed=frozenset({"src/pkg/mod.py"}),
+        contains=(_NO_CAUSE,),
+        absent=("conftest", "__init__"),
+    ),
+    "several-conftests-sorted": _WideningCase(
+        18,
+        changed=frozenset({"tests/b/conftest.py", "tests/a/conftest.py"}),
+        contains=("tests/a/conftest.py, tests/b/conftest.py",),
+    ),
+    "lookalike-names-are-not-conftests": _WideningCase(
+        18,
+        changed=frozenset({"tests/myconftest.py", "tests/conftest.py.bak"}),
+        contains=(_NO_CAUSE,),
+        absent=("myconftest", ".bak"),
+    ),
+}
+
+
+@pytest.mark.parametrize("case", _WIDENING_CASES.values(), ids=list(_WIDENING_CASES))
+def test_widening_notice_fires_on_nearly_the_whole_suite(
+    case: _WideningCase,
+) -> None:
+    """The notice appears from 90% of a 20+ file suite, naming the likeliest cause.
+
+    Args:
+        case: The plan shape, run depth and expected notice text.
+    """
+    depth0 = _test_names("a", case.at_depth0)
     plan = _make_plan(
         depth0=depth0,
-        depth1=_test_names("b", at_depth1),
-        total_tests=total,
+        depth1=_test_names("b", case.at_depth1),
+        total_tests=case.total,
     )
-    extra = set(_test_names("x", extra_new)) | set(depth0[:extra_inside])
+    extra = set(_test_names("x", case.extra_new)) | set(depth0[: case.extra_inside])
 
-    notice = cli._widening_notice(plan, depth, extra, changed)
+    notice = cli._widening_notice(plan, case.depth, extra, set(case.changed))
 
-    if contains is None:
+    if case.contains is None:
         assert notice == ""
         return
-    assert all(text in notice for text in contains)
-    assert not any(text in notice for text in absent)
+    assert all(text in notice for text in case.contains)
+    assert not any(text in notice for text in case.absent)
 
 
 class _EventLog(logging.Handler):
@@ -1872,6 +1840,11 @@ class _EventLog(logging.Handler):
     """
 
     def __init__(self, events: list[str]) -> None:
+        """Start recording into the shared event list.
+
+        Args:
+            events: Shared, ordered list the handler appends to.
+        """
         super().__init__(level=logging.DEBUG)
         self.events = events
         self.records: list[logging.LogRecord] = []
@@ -1926,9 +1899,7 @@ def test_run_tiers_warns_and_records_the_notice_before_any_tier_runs(
         telemetry=False,
     )
     try:
-        cli._run_tiers(
-            tmp_path, 0, _make_plan(depth0=["tests/test_a.py"]), config, log
-        )
+        cli._run_tiers(tmp_path, 0, _make_plan(depth0=["tests/test_a.py"]), config, log)
     finally:
         cli_logger.removeHandler(handler)
 
@@ -1946,7 +1917,7 @@ def test_run_tiers_warns_and_records_the_notice_before_any_tier_runs(
 def test_run_tiers_prints_each_streamed_line_exactly_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """pytest's lines reach the console as streamed, not again from the output.
+    """Pytest's lines reach the console as streamed, not again from the output.
 
     SCENARIO: the fake ``run_pytest`` streams two lines through ``on_output``
         and also returns them as its combined output, as the real one does.
