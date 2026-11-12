@@ -56,6 +56,42 @@ full pass. Config reference:
   the test roots (e.g. at the repo root) escalates to `full`. Only
   `test_*.py` / `*_test.py` files are ever selected as tests; conftests
   and helper modules are dependencies.
+- **A test file git or pytest ignores is not selected.** Selection skips
+  test files git ignores (a scratch copy, anything under an ignored
+  directory) and those pytest's own config excludes — `--ignore`,
+  `--ignore-glob` and `norecursedirs`, read from whichever file pytest
+  itself would use: `pytest.toml`, `.pytest.toml`, `pytest.ini` or
+  `.pytest.ini` first and whether or not they carry settings, then
+  `pyproject.toml` with a `[tool.pytest]` or `[tool.pytest.ini_options]`
+  table, then `tox.ini` with `[pytest]`, then `setup.cfg` with
+  `[tool:pytest]`. Settings do not merge across files, so neither does
+  this. Forge applies those rules to its own selection because it
+  hands pytest explicit file paths, which pytest collects whatever its
+  directory-level ignore settings say. An untracked file that is *not*
+  ignored stays selected, so a test runs before it is `git add`-ed.
+  Two deliberate asymmetries: only files that would be collected as
+  tests are filtered, so an ignored conftest keeps its graph edges and
+  the tests depending on it stay reachable; and when git cannot answer
+  at all, nothing is filtered, because a filter that failed closed would
+  drop every test and report a green run.
+- **A tier says how much of the suite it runs.** Each tier's header
+  reads `=== depth N: K of M test file(s) ===`, where K counts the files
+  that tier adds and M the whole suite. When a run selects at least 90%
+  of a suite of at least 20 test files, one warning says so before the
+  first tier and names the cause — a changed `conftest.py`, a changed
+  package `__init__.py`, or neither identifiable. It is measured once,
+  over everything the run will execute, not per tier. That is the honest
+  shape of a cheap tier about to cost a full run: the escalation is not
+  prevented, only made visible.
+- **Output arrives while the run happens.** Each tier's header, its
+  warning and pytest's own output reach the console as they are produced,
+  so a long run looks different from a hang. The run log receives the
+  same text, and the output a caller gets back still holds everything,
+  which is what the lifecycle, differential and exit-code rules read —
+  with stderr interleaved where it was written rather than appended at
+  the end. A `--telemetry` run cannot stream, because its capture goes
+  through a spool file to avoid a pipe deadlock, so it shows its output
+  in one piece when the run ends.
 - **Running on the base branch tests the last commit.** When the base
   resolves to `HEAD` itself and the tree is clean — CI after a merge —
   the change set is `HEAD^1..HEAD`, not an empty diff; a root commit runs

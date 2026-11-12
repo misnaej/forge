@@ -140,7 +140,8 @@ def _with_run_log(
         repo_root: Git repo root.
         header: First body text of the log.
         run: The test run; receives the log, returns ``(exit_code,
-            console_output)``.
+            output)``. The output is shown by *run* as it happens, so it
+            is returned here only for the log, not re-printed.
 
     Returns:
         The run's exit code, or ``1`` when another live run holds the
@@ -154,9 +155,8 @@ def _with_run_log(
     try:
         log = RunLog.for_repo(repo_root, (_LOG_NAME, _PYTEST_LOG_NAME))
         log.start(repo_root, header)
-        code, output = run(log)
+        code, _output = run(log)
         log.complete("passed" if code == 0 else f"failed (exit {code})")
-        logger.info("%s", output.rstrip())
         return code
     finally:
         release_lock(lock)
@@ -209,26 +209,37 @@ def _run_full(
     batch = sorted(tests - skippable) if skippable else []
     started = time.monotonic()
     code, out = run_pytest(
-        repo_root, batch, coverage=True, telemetry=telemetry, label=label
+        repo_root,
+        batch,
+        coverage=True,
+        telemetry_label=label if telemetry else None,
+        on_output=_show,
     )
     wall_s = time.monotonic() - started
     if skippable:
-        out += (
+        # Shown as well as recorded: these lines are produced after the
+        # child exits, so streaming the child's output does not carry
+        # them, and the full run is the one a reader waits longest for.
+        tail = (
             f"\nlifecycle-skipped: {len(skippable)} development file(s) "
             f"untouched >={skip_days:g}d (run --all-tests to include)\n"
         )
+        out += tail
+        _show(tail)
     mismatches: set[str] = set()
     if changed:
         plan = select_tests(repo_root, changed, 2)
         selected = set(plan.tests_up_to(2))
         mismatches = lifecycle.failed_files(out) - selected - skippable
         if mismatches:
-            out += (
+            tail = (
                 f"differential: {len(mismatches)} failing file(s) outside "
                 f"depth-2 selection (record-only): "
                 + ", ".join(sorted(mismatches))
                 + "\n"
             )
+            out += tail
+            _show(tail)
     metrics = lifecycle.RunMetrics(
         label=label,
         wall_s=wall_s,
@@ -251,8 +262,90 @@ class _RunConfig:
     """Coverage-derived tests to union into the depth-0 batch."""
     header: str
     """One-line run header recorded at the top of the log."""
+    notice: str
+    """Widening warning, or empty. Separate from ``header`` because the
+    header is printed for every tier while this is printed only when a
+    tier turns out to run nearly the whole suite."""
     telemetry: bool = False
     """Whether to sample resource usage during each pytest batch."""
+
+
+#: Fraction of the suite a tier has to reach before it is called a
+#: widening. Fixed rather than configurable: the number exists to make a
+#: surprise visible, and a repo that tuned it would be tuning away the
+#: warning it asked for.
+_WIDENING_FRACTION = 0.9
+
+#: Suites smaller than this are never called a widening, however large
+#: the fraction. Running 3 of 3 test files is not a surprise worth a
+#: warning; running 300 of 320 is.
+_WIDENING_MIN_TESTS = 20
+
+
+def _show(text: str) -> None:
+    """Write *text* to the console exactly as given.
+
+    Output reaches the reader while the run is happening, which is the
+    whole point of streaming it: a tier that takes minutes has to look
+    different from a hang. ``sys.stdout.write`` rather than
+    :func:`forge.git_utils.emit` because these chunks already carry
+    their own newlines, and rather than a logger because pytest's output
+    is not log records.
+
+    Args:
+        text: Text to write, newline included.
+    """
+    sys.stdout.write(text)
+    sys.stdout.flush()
+
+
+def _widening_notice(
+    plan: SelectionPlan,
+    depth: int,
+    extra_depth0: set[str],
+    changed: set[str],
+) -> str:
+    """Return a warning when this run selects nearly the whole suite.
+
+    The cheapest tier selecting almost everything is the symptom worth
+    announcing: a changed ``conftest.py`` or package ``__init__.py`` is
+    imported by nearly every test, so "depth 0" quietly becomes a full
+    run that takes minutes with nothing said about why.
+
+    The fraction is measured over everything the run will execute up to
+    *depth*, not per tier: higher tiers only add newly reachable tests,
+    so a per-tier fraction would almost never trip.
+
+    Args:
+        plan: The computed selection.
+        depth: Highest depth this run will execute.
+        extra_depth0: Coverage-derived additions to the depth-0 batch.
+        changed: Repo-relative changed ``.py`` paths.
+
+    Returns:
+        The warning line, or an empty string when the run is not wide or
+        the suite is too small for the question to mean anything.
+    """
+    selected = set(plan.tests_up_to(depth)) | extra_depth0
+    total = plan.total_tests
+    if total < _WIDENING_MIN_TESTS or not selected:
+        return ""
+    if len(selected) < _WIDENING_FRACTION * total:
+        return ""
+    conftests = sorted(f for f in changed if Path(f).name == "conftest.py")
+    inits = sorted(f for f in changed if Path(f).name == "__init__.py")
+    if conftests:
+        cause = f"changed {', '.join(conftests)}"
+    elif inits:
+        cause = f"changed {', '.join(inits)}"
+    else:
+        # No single culprit to name. Say what is observable — the tests
+        # reach the change — rather than guessing at a cause.
+        cause = "most test files import something that changed"
+    return (
+        f"selection is {len(selected)} of {total} test file(s) — nearly the "
+        f"whole suite ({cause}); expect a full run's wall time\n"
+    )
 
 
 def _run_tiers(
@@ -281,9 +374,14 @@ def _run_tiers(
         ``(exit_code, combined_output)`` across the batches that ran.
     """
     output = [config.header]
+    _show(config.header)
 
-    def emit(text: str) -> None:
-        """Append text to the console output and the run log.
+    def record(text: str) -> None:
+        """Keep text for the log and the returned output, without showing it.
+
+        Used for pytest's own output, which the reader has already seen
+        streamed line by line — recording it again here is what keeps the
+        log and the return value complete without printing twice.
 
         Args:
             text: Text to record.
@@ -291,9 +389,24 @@ def _run_tiers(
         output.append(text)
         log.append(text)
 
+    def emit(text: str) -> None:
+        """Show text and record it.
+
+        Args:
+            text: Text to show and record.
+        """
+        record(text)
+        _show(text)
+
     if not (set(plan.tests_up_to(depth)) | config.extra_depth0):
         emit("No tests reach the changed files — nothing to run.\n")
         return 0, "".join(output)
+
+    if config.notice:
+        # Shown by the logger, recorded for the log — not `emit`, which
+        # would do both and print it twice on a terminal.
+        logger.warning("%s", config.notice.rstrip())
+        record(config.notice)
 
     already: set[str] = set()
     for tier in range(depth + 1):
@@ -305,15 +418,17 @@ def _run_tiers(
             continue
         already.update(batch)
         clear_python_cache(repo_root)
-        emit(f"\n=== depth {tier}: {len(batch)} test file(s) ===\n")
+        emit(
+            f"\n=== depth {tier}: {len(batch)} of {plan.total_tests} test file(s) ===\n"
+        )
         code, out = run_pytest(
             repo_root,
             batch,
             coverage=config.coverage,
-            telemetry=config.telemetry,
-            label=f"depth{tier}",
+            telemetry_label=f"depth{tier}" if config.telemetry else None,
+            on_output=_show,
         )
-        emit(out)
+        record(out)
         if code != 0:
             emit(f"\nFAILED at depth {tier} — skipping higher depths.\n")
             return code, "".join(output)
@@ -607,6 +722,7 @@ def main() -> int:
         coverage=args.coverage,
         extra_depth0=extra_depth0,
         header=header,
+        notice=_widening_notice(plan, depth, extra_depth0, changed),
         telemetry=args.telemetry,
     )
     return _with_run_log(

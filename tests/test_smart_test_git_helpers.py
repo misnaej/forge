@@ -551,6 +551,58 @@ def test_changed_python_files_reports_awkward_names_for_every_change_kind(
     assert name in git_helpers.changed_python_files(tmp_path, base)
 
 
+def test_visible_paths_lists_tracked_and_untracked_but_not_ignored(
+    tmp_path: Path,
+) -> None:
+    """Tracked and untracked-not-ignored files are visible; ignored ones are not.
+
+    The untracked file matters: a test written but not yet ``git add``-ed must
+    still be runnable.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / ".gitignore").write_text("scratch/\n", encoding="utf-8")
+    (tmp_path / "tracked.py").write_text("x = 1\n", encoding="utf-8")
+    _git_in(tmp_path, "add", "tracked.py")
+    (tmp_path / "untracked.py").write_text("x = 2\n", encoding="utf-8")
+    (tmp_path / "scratch").mkdir()
+    (tmp_path / "scratch" / "ignored.py").write_text("x = 3\n", encoding="utf-8")
+
+    visible = git_helpers.visible_paths(tmp_path)
+
+    assert visible is not None
+    assert "tracked.py" in visible
+    assert "untracked.py" in visible
+    assert "scratch/ignored.py" not in visible
+
+
+def test_visible_paths_empty_repo_is_none_not_an_empty_set(tmp_path: Path) -> None:
+    """A repo listing nothing yields None ("no filter"), never ``set()``.
+
+    An empty set would read as "nothing is visible" and drop every test.
+    """
+    init_git_repo(tmp_path)
+
+    assert git_helpers.visible_paths(tmp_path) is None
+
+
+def test_visible_paths_outside_a_repo_is_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When git cannot answer at all, the result is None ("no filter").
+
+    ``GIT_CEILING_DIRECTORIES`` stops git from finding a repo enclosing the
+    temp dir, so the outcome does not depend on where the suite runs.
+    """
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    # An inherited GIT_DIR / GIT_WORK_TREE would override discovery entirely.
+    monkeypatch.delenv("GIT_DIR", raising=False)
+    monkeypatch.delenv("GIT_WORK_TREE", raising=False)
+
+    assert git_helpers.visible_paths(plain) is None
+
+
 def _git_in(repo: Path, *args: str) -> None:
     """Run git in *repo*, failing the test on a non-zero exit.
 

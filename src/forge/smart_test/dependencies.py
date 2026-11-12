@@ -19,7 +19,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from forge.config import resolve_tool_roots
+from forge.config import read_pytest_ignores, resolve_tool_roots
 from forge.import_graph import (
     ancestor_edges,
     closest_known,
@@ -27,10 +27,11 @@ from forge.import_graph import (
     resolve_module_name,
     resolve_package_module_name,
 )
+from forge.smart_test.git_helpers import visible_paths
 
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
     from pathlib import Path
 
 
@@ -48,11 +49,16 @@ class SelectionPlan:
         changed_tests: Test files that were themselves modified; these run
             at depth 0 regardless of imports.
         max_depth: Highest depth the plan was computed for (0, 1, or 2).
+        total_tests: How many test files the whole suite holds, so a
+            caller can say what fraction of it a tier runs. No default:
+            a zero would read as "the suite is empty" and make every
+            selection look like 0% of it.
     """
 
     newly_at_depth: dict[int, list[str]]
     changed_tests: list[str]
     max_depth: int
+    total_tests: int
 
     def tests_up_to(self, depth: int) -> list[str]:
         """Return the sorted unique test relpaths selected at *depth* or below.
@@ -115,24 +121,78 @@ def _is_test_file(path: Path) -> bool:
     return path.name.startswith("test_") or path.name.endswith("_test.py")
 
 
-def all_test_files(repo_root: Path) -> set[str]:
-    """Return every repo-relative test file under the configured test roots.
+def _unselectable_test(repo_root: Path) -> Callable[[str], bool]:
+    """Build the predicate for "this test file must not be selected".
 
-    The full tier's explicit file list — lifecycle deselection subtracts
-    from this set, so it must match what a bare pytest run would collect
-    (``test_*.py`` / ``*_test.py`` under the test roots).
+    Two exclusions, both about files that exist on disk but are not part
+    of the suite: those git ignores (a scratch copy, anything under an
+    ignored directory) and those pytest's own config excludes from
+    collection. Forge has to apply pytest's rules itself because it
+    passes explicit file paths, which pytest collects regardless of its
+    directory-level ignore settings.
+
+    Only files that would be *collected as tests* are ever put through
+    this. Conftests and helper modules keep their place in the import
+    graph even when ignored: dropping an edge there would make a real
+    test unreachable, which under-selects — the one direction smart-test
+    must never fail in.
 
     Args:
         repo_root: Git repo root.
 
     Returns:
+        A predicate over repo-relative POSIX test paths.
+    """
+    visible = visible_paths(repo_root)
+    ignores = read_pytest_ignores(repo_root)
+
+    def unselectable(relpath: str) -> bool:
+        """Return whether *relpath* must be left out of the selection.
+
+        Args:
+            relpath: Repo-relative POSIX path of a test file.
+
+        Returns:
+            True when git or pytest's config excludes it.
+        """
+        # `visible is None` means git could not answer, which is "no
+        # filter" — never "nothing is visible" (see `visible_paths`).
+        if visible is not None and relpath not in visible:
+            return True
+        return ignores.ignores(relpath)
+
+    return unselectable
+
+
+def all_test_files(
+    repo_root: Path,
+    unselectable: Callable[[str], bool] | None = None,
+) -> set[str]:
+    """Return every repo-relative test file under the configured test roots.
+
+    The full tier's explicit file list — lifecycle deselection subtracts
+    from this set, so it must match what a bare pytest run would collect
+    (``test_*.py`` / ``*_test.py`` under the test roots), minus the files
+    git ignores or pytest's own config excludes (:func:`_unselectable_test`).
+
+    Args:
+        repo_root: Git repo root.
+        unselectable: The exclusion predicate to reuse. Built here when
+            omitted; passed in by a caller that already has one, since
+            building it costs a git query and a config read.
+
+    Returns:
         Repo-relative test-file paths.
     """
     _, tests = _roots(repo_root)
+    if unselectable is None:
+        unselectable = _unselectable_test(repo_root)
     found: set[str] = set()
     for path in _iter_py(tests):
         if _is_test_file(path):
-            found.add(path.relative_to(repo_root).as_posix())
+            relpath = path.relative_to(repo_root).as_posix()
+            if not unselectable(relpath):
+                found.add(relpath)
     return found
 
 
@@ -465,10 +525,28 @@ def select_tests(
     )
     module_of = {rel: name for name, rel in graph.path_of.items()}
 
+    # The import graph deliberately keeps ignored files (an ignored
+    # conftest still carries real edges), so every path that leaves this
+    # function as a *selected test* is filtered here. Filtering only
+    # `all_test_files` would let a git-ignored or pytest-ignored test
+    # back in through the graph.
+    unselectable = _unselectable_test(repo_root)
+
+    def selected_tests(modules: Iterable[str]) -> list[str]:
+        """Return the selectable test paths among *modules*.
+
+        Args:
+            modules: Dotted module names from the graph.
+
+        Returns:
+            Sorted repo-relative paths of those that are test modules and
+            are not excluded by git or pytest's config.
+        """
+        paths = (graph.path_of[m] for m in modules if m in graph.test_modules)
+        return sorted(path for path in paths if not unselectable(path))
+
     changed_modules = {module_of[f] for f in changed_files if f in module_of}
-    changed_tests = sorted(
-        graph.path_of[m] for m in changed_modules if m in graph.test_modules
-    )
+    changed_tests = selected_tests(changed_modules)
 
     importers: dict[str, set[str]] = {}
     for module, deps in graph.imports.items():
@@ -500,7 +578,7 @@ def select_tests(
         nxt = {imp for m in frontier for imp in importers.get(m, set())} - seen
         if not nxt:
             break
-        tests_here = sorted(graph.path_of[m] for m in nxt if m in graph.test_modules)
+        tests_here = selected_tests(nxt)
         if tests_here:
             newly_at_depth[depth] = tests_here
         seen |= nxt
@@ -510,6 +588,7 @@ def select_tests(
         newly_at_depth=newly_at_depth,
         changed_tests=changed_tests,
         max_depth=max_depth,
+        total_tests=len(all_test_files(repo_root, unselectable)),
     )
 
 
