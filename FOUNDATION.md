@@ -1058,6 +1058,9 @@ duration. `forge:design-checker` asks the cost question of diffs that add or
 edit tests or touch a known hot path; `forge:test-advisor`'s necessity gate
 (§8) carries the cost half of its question.
 
+The token-optimization runbook — provider cache pricing with sources,
+measurement, ranked levers — lives in `forge-docs/token-optimization.md`.
+
 **Anti-goal.** No goal served by deleting assertions, weakening a
 check, or parallelising to hide cost.
 

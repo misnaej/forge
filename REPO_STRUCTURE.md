@@ -155,6 +155,7 @@ ownership model) — see [FOUNDATION §11](FOUNDATION.md#11-agent-boundary-proto
 - security-checker.md: security review agent
 - test-advisor.md: test coverage planning + review agent
 - test-writer.md: test implementation agent
+- token-optimizer.md: token/cost drain reporter agent — runs `forge-agent-profile --tokens`, ranks billed-equivalent drains per `forge-docs/token-optimization.md`
 - weekly-summary.md: weekly activity summary agent
 
 ## Skills Directory (`skills/`)
@@ -390,6 +391,7 @@ repos by `install-forge-claude-md` (guarded there by a README notice + the
 - git-safety.md: procedure behind FOUNDATION §2's git rules — gate kinds, guard bypass, destructive git forms, base sync (`forge-update-branch`, stacked branches)
 - plugin-staleness.md: how a running session ends up on an old forge plugin, how to spot it, and how to recover
 - metrics.md: `forge-metrics` — what is recorded per merged PR, what is not stored, where the database and the repo-id map live, legacy migration
+- token-optimization.md: token/cost runbook — provider cache pricing with source URLs, cache scope and `/clear`/compaction, forge cache-hazard audit, measurement, ranked levers
 
 ## Documentation (`docs/`)
 
