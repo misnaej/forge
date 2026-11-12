@@ -127,7 +127,7 @@ class TestNamingVerifier(ast.NodeVisitor):
         self.is_conftest = is_helper_module(Path(filepath))
         self.current_class_stack: list[str] = []  # Track nested classes
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802 — ast.NodeVisitor dispatch name
         """Check function definition for naming issues.
 
         Args:
@@ -184,7 +184,7 @@ class TestNamingVerifier(ast.NodeVisitor):
 
         self.generic_visit(node)
 
-    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:  # noqa: N802 — ast.NodeVisitor dispatch name
         """Visit class definition and track class context.
 
         Args:
@@ -194,7 +194,7 @@ class TestNamingVerifier(ast.NodeVisitor):
         self.generic_visit(node)
         self.current_class_stack.pop()
 
-    def visit_Assign(self, node: ast.Assign) -> None:
+    def visit_Assign(self, node: ast.Assign) -> None:  # noqa: N802 — ast.NodeVisitor dispatch name
         """Check module-level variable assignments for naming conventions.
 
         Args:

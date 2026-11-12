@@ -1,0 +1,4 @@
+bump: minor
+- `forge-agent-profile --tokens` now shows the Vibe main session in its "Main session, per active skill" table. Root sessions in the Vibe unified store (`$VIBE_HOME/logs/session/unified/<id>/journal`, or `--vibe-sessions`) are folded into per-skill token usage: each completion's usage lands in the skill active when it was generated, and a `skill` tool call switches the active skill for the completions after it. Previously the table only read Claude Code transcripts, so under Vibe it showed nothing from the current session.
+- Sessions from other checkouts of the same repo are matched by `origin` slug, same as the subagent-run ingestion; root sessions are always read in full because a main session is not windowed by the report's runs.
+- The empty-state message now names both token sources, and `--tokens` / `--vibe-sessions` help, `docs/cli-reference.md` and `docs/api-digest.md` say the Vibe store is read too.
