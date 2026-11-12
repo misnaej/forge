@@ -56,6 +56,11 @@ on:
 # resync / tag-on-merge workflows below) declare their own overrides.
 permissions:
   contents: read
+  # Both read-only, and both only for the tree gate below: it asks which
+  # pull request produced this commit, and whether that pull request's
+  # own run of this workflow passed. Drop them and the gate declines.
+  pull-requests: read
+  actions: read
 
 jobs:
   test:
@@ -70,6 +75,12 @@ jobs:
       # current, enable Dependabot's `github-actions` ecosystem in your repo
       # (or run `gha-update`).
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          # At least 2 for the tree gate below: it needs HEAD's first
+          # parent, which the default shallow checkout (depth 1) does
+          # not fetch — the gate would then decline every run. Use 0 if
+          # anything in your build derives a version from git history.
+          fetch-depth: 2
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
         with:
           python-version: "3.11"
@@ -90,15 +101,31 @@ That output goes to the job log, where it is as visible as the log is. It is cap
       - name: Run forge pre-commit
         run: forge-precommit
 
+      - name: Has this tree already passed?
+        id: tree_gate
+        continue-on-error: true   # an optimisation must never fail the job
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: forge-tree-verified --github-output
+
       - name: Tests
+        if: steps.tree_gate.outputs.verified != 'true'
         shell: bash   # not optional: the default run shell has no pipefail,
                       # so `pytest | tee` would exit with tee's status
         run: pytest -q --durations=25 --durations-min=1.0 | tee code_health/pytest.log
 
       - name: Slow tests report
-        if: always()
+        if: always() && steps.tree_gate.outputs.verified != 'true'
         run: forge-slow-tests-report --log code_health/pytest.log --out code_health/slow_tests.log
 ```
+
+The gate needs `pull-requests: read` and `actions: read` — both read
+scopes — which is why the `permissions:` block in the snippet above
+carries them alongside `contents: read`. Without them `gh api` fails,
+the gate prints `api unavailable (token/permissions?)` and the suite
+runs, so the only symptom is that nothing is ever skipped. Adopt the
+gate and those two lines together, or the optimisation is dead on
+arrival.
 
 Notes:
 
@@ -120,6 +147,78 @@ Notes:
 - The tee'd `code_health/pytest.log` is **not evidence**: it carries no
   `# produced-at:` stamp, lives only on the runner, and exists to feed
   `forge-slow-tests-report` in the same job. Nothing should gate on it.
+- `forge-tree-verified` skips the **test execution only**, on a push whose
+  tree is byte-identical to the one the pull request already tested.
+  Everything else in the job still runs on `main`, pre-commit included,
+  and the job still reports on the commit. Both the slow-tests report and
+  the step that feeds it are gated on the same output, since that report
+  has no log to read when the suite did not run.
+  It is fail-closed at every branch and names its reason in one line;
+  the module's own docstring carries the rationale and the full list of
+  refusals, so neither drifts from the code (`--help` carries the flags,
+  not the reasoning). A skip names its evidence — tree, pull request,
+  head, workflow, run, job — to be re-checked by hand.
+- **Decide first whether your suite is tree-determined.** The whole
+  argument is that an identical tree gives an identical result, and that
+  is a claim about *your tests*, not about tests in general. A suite that
+  reads git history (a version derived from tag distance or commit SHA,
+  as setuptools-scm does), the clock, a cadence stamp, a lifecycle window,
+  or the network is not tree-determined, and skipping on `main` can hide
+  a real failure in exactly those places. If that describes your suite,
+  do not adopt the gate, or restrict it to jobs that are.
+- **Tree identity is also not environment identity.** A skipped run does
+  not re-prove the suite against today's dependency releases or runner
+  image, so a break that only a newer transitive dependency would show is
+  not caught by that `main` run. Keep `forge-precommit` (with `pip_audit`
+  and `typecheck`) unskipped on `main`, as above, and add a scheduled full
+  run if you want that signal on a timer.
+- **The saving depends on your merge settings, not on the CLI.** The
+  trees match only when the branch already contained the base when it
+  merged. On GitHub that is the branch-protection option **"Require
+  branches to be up to date before merging"**; without it, a behind
+  branch can be squashed and the gate will simply decline — usually with
+  `pr head tree differs`, since the squash absorbed the base's changes
+  too. Declining costs a normal test run, so a repo without that setting
+  is no worse off than before, just unimproved.
+- **The evidence is a job of this workflow, not a check of that name.**
+  The gate reads the Actions API: the pull-request run whose `path` is
+  this workflow file (from `$GITHUB_WORKFLOW_REF`, or `--workflow`), then
+  that run's job named by `--check-name`. A check-run's name identifies
+  nothing — anything with `checks: write` can post one under any name,
+  and a step using `GITHUB_TOKEN` posts it as the GitHub Actions app
+  itself — so neither a third-party reporter nor a second workflow of
+  yours sharing a job name can satisfy it.
+- `--check-name` must match the job's **displayed name**, which is the
+  job id only when the job sets no `name:` and has no matrix. A matrix
+  job shows as `ci (3.12)` and a reusable workflow as `caller / ci`;
+  those will not match `$GITHUB_JOB`, so the gate declines with
+  `job <name> not found` and the optimisation quietly does nothing. Pass
+  the displayed name explicitly in those cases.
+- **Only the named job is read, not the whole run.** Other jobs of the
+  same run may have failed; the gate does not look. With one job, as in
+  the snippet above, there is nothing else to look at — with several,
+  name the job that runs the tests and know that its siblings are not
+  part of the evidence.
+- **The base is not part of the match.** The run is identified by the
+  pull request's head commit, branch and repository, not by what it was
+  merging into. One head commit can belong to two pull requests with
+  different bases — a retarget, or a reopen against another base — and
+  each run tested the merge with its own base. GitHub produces no new
+  run for a bare retarget (the `pull_request` trigger here has no
+  `edited` type), so the exposure is narrow, but the gate cannot tell
+  those runs apart.
+- **The job's success is what gets trusted, so the test step must carry
+  no condition of its own** beyond the gate's output. A job concludes
+  success with a step skipped by its own `if:`, or passing under
+  `continue-on-error:`; the gate cannot see inside. In the recipe above
+  that holds, because the only condition on the test step is the gate's
+  verdict. Add another and you are trusting a job that may not have run
+  its tests.
+- **On a self-hosted runner, require a clean checkout.** The gate
+  compares HEAD's *committed* tree, while pytest runs the working tree.
+  A persistent runner that reuses a dirty workspace can therefore test
+  something the committed tree never described. Hosted runners start
+  clean every time, so this is a self-hosted caveat only.
 
 - `install-forge-bootstrap` is idempotent — running it on every CI
   job is cheap and guarantees the managed artifacts (`FOUNDATION.md`,

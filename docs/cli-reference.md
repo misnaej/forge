@@ -1060,6 +1060,33 @@ options:
                  psutil)
 ```
 
+## forge-tree-verified
+
+```text
+usage: forge-tree-verified [-h] [--check-name CHECK_NAME]
+                           [--workflow WORKFLOW] [--github-output] [--json]
+
+Answer whether HEAD's tree already passed its suite in the pull request that
+landed it, so CI can skip a redundant run.
+
+options:
+  -h, --help            show this help message and exit
+  --check-name CHECK_NAME
+                        Job that must have concluded success on the PR head
+                        (default: $GITHUB_JOB, i.e. this job's own earlier
+                        run). An empty or unset name refuses rather than
+                        accepting any check. It is matched against the job's
+                        DISPLAYED name.
+  --workflow WORKFLOW   Repository-relative path of the workflow that job
+                        belongs to, e.g. .github/workflows/ci.yml (default:
+                        parsed from $GITHUB_WORKFLOW_REF). Refuses when
+                        neither is available.
+  --github-output       Append verified=true|false to $GITHUB_OUTPUT as well
+                        as stdout.
+  --json                Print the verdict as JSON instead of the one-line
+                        form.
+```
+
 ## forge-update-branch
 
 ```text
