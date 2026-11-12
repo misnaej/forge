@@ -316,10 +316,10 @@ class _JournalScan:
                 run.repeated_call = self._labels[signature]
         usage = _mapping(completion.get("usage"))
         if usage:
-            run.tokens.input_tokens += int(usage.get("input_tokens") or 0)
-            run.tokens.cache_read_tokens += int(usage.get("cached_input_tokens") or 0)
-            run.tokens.cache_write_tokens += int(usage.get("cache_write_tokens") or 0)
-            run.tokens.output_tokens += int(usage.get("output_tokens") or 0)
+            run.tokens.input_tokens += nonneg_int(usage.get("input_tokens"))
+            run.tokens.cache_read_tokens += nonneg_int(usage.get("cached_input_tokens"))
+            run.tokens.cache_write_tokens += nonneg_int(usage.get("cache_write_tokens"))
+            run.tokens.output_tokens += nonneg_int(usage.get("output_tokens"))
             run.tokens.requests += 1
 
     def _projection(self, payload: dict[str, Any]) -> None:

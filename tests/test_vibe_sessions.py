@@ -773,6 +773,27 @@ class TestParseVibeMainJournal:
         assert parse_vibe_main_journal(session_dir) is None
         assert parse_vibe_journal(session_dir) is None
 
+    def test_non_finite_action_usage_does_not_raise(self, tmp_path: Path) -> None:
+        """NaN/string usage fields in a subagent completion coerce to 0."""
+        session_dir = tmp_path / "session_123"
+        _make_root_session(session_dir, tmp_path, kind="subagent")
+        _write_journal(
+            session_dir,
+            [
+                _action_result(
+                    "a1",
+                    1717000000000,
+                    usage={"input_tokens": float("nan"), "output_tokens": "abc"},
+                ),
+                _action_result("a2", 1717000010000, usage={"input_tokens": 10}),
+            ],
+        )
+        run = parse_vibe_journal(session_dir)
+        assert run is not None
+        assert run.tokens.requests == 2
+        assert run.tokens.input_tokens == 10
+        assert run.tokens.output_tokens == 0
+
 
 class TestMainSessionsFromVibe:
     """Tests for main_sessions_from_vibe root-session selection and repo matching."""
