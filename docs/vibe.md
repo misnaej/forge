@@ -4,6 +4,10 @@ Forge's CLIs and git hooks are harness-agnostic; the agent surface (guards,
 agents, skills, instructions) can also run under [Mistral Vibe](https://mistral.ai/vibe).
 Opt in per repo with `[tool.forge.vibe] enabled = true`, then run
 `install-forge-bootstrap` (its `vibe` step) or `install-forge-vibe` directly.
+In a consumer repo the agent/skill/hook sources come from the installed forge
+package (shipped under `src/forge/data/`), so no forge checkout is needed —
+`install-forge-vibe` generates `.vibe/agents/*.toml` from them, and the agents
+spawn by bare name (see below).
 
 ## What lands on disk (all generated, all gitignored)
 

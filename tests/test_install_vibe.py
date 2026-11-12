@@ -246,3 +246,40 @@ def test_agent_sources_carry_terse_block_and_audit_enforces_it() -> None:
         if md.name == "_TEMPLATE.md":
             continue
         assert "## Output style (always)" in md.read_text(encoding="utf-8"), md.name
+
+
+class TestBareConsumerRepo:
+    """install-forge-vibe in a consumer repo with no forge checkout files.
+
+    A consumer checkout has no .claude-plugin/, agents/, skills/ or
+    claude-hooks/ — the shipped copies inside the installed package must
+    be used instead.
+    """
+
+    def test_bare_consumer_gets_shipped_agents_and_hooks(self, tmp_path: Path) -> None:
+        """install_vibe succeeds from package data alone and writes all artifacts."""
+        root = tmp_path / "bare"
+        root.mkdir()
+        (root / "pyproject.toml").write_text(
+            '[project]\nname = "bare"\nversion = "0.1.0"\n', encoding="utf-8"
+        )
+        assert install_vibe(root) == 0
+        tomls = sorted((root / ".vibe" / "agents").glob("*.toml"))
+        prompts = sorted((root / ".vibe" / "prompts").glob("*.md"))
+        assert len(tomls) == 13
+        assert len(prompts) == 13
+        assert (root / ".vibe" / "agents" / "prior-art.toml").is_file()
+        assert (root / ".vibe" / "hooks.toml").is_file()
+        assert (root / ".vibe" / "forge-roster.json").is_file()
+        skills = list((root / ".agents" / "skills").iterdir())
+        assert len(skills) == 19
+
+    def test_bare_consumer_verify_passes_after_install(self, tmp_path: Path) -> None:
+        """--verify is green on a bare consumer once install ran."""
+        root = tmp_path / "bare"
+        root.mkdir()
+        (root / "pyproject.toml").write_text(
+            '[project]\nname = "bare"\nversion = "0.1.0"\n', encoding="utf-8"
+        )
+        assert install_vibe(root) == 0
+        assert install_vibe(root, verify_mode=True) == 0

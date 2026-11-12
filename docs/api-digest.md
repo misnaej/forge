@@ -1178,6 +1178,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _Instruction-document text: packaged foundation, ``@``-includes, AGENTS.md._
 
+- `shipped_path(repo_root: Path, rel: str) -> Path` — Resolve a forge-shipped source path for *repo_root*.
 - `foundation_text() -> str` — Return the bundled FOUNDATION.md text shipped with the pip package.
 - `resolve_includes(text: str, base_dir: Path, *, _seen: frozenset[Path] = frozenset()) -> str` — Replace whole-line ``@path`` directives with the referenced file's content.
 - `flatten_agents_md(repo_root: Path) -> str | None` — Compose the flattened AGENTS.md for a checkout.

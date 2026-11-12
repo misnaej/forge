@@ -9,19 +9,17 @@ read-on-demand references, and inlining every linked doc would multiply
 the instruction context for no semantic gain.
 
 This module is the single home for: the packaged ``FOUNDATION.md`` text,
-the include-line regex, recursive include resolution, and the AGENTS.md
-flatten/drift computation. Leaf module — stdlib only.
+the shipped-source resolver, the include-line regex, recursive include
+resolution, and the AGENTS.md flatten/drift computation. Leaf module —
+stdlib only.
 """
 
 from __future__ import annotations
 
 import re
 from importlib import resources
-from typing import TYPE_CHECKING
-
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from pathlib import Path
+from typing import Final
 
 
 # A whole-line @-directive: optional whitespace, `@`, then a path token
@@ -30,6 +28,41 @@ if TYPE_CHECKING:
 INCLUDE_LINE_RE = re.compile(r"^\s*@(\S*(?:/\S*|\.md))\s*\n?", re.MULTILINE)
 
 FOUNDATION_RESOURCE = "data/FOUNDATION.md"
+
+#: Repo-relative forge source paths and their packaged copies under
+#: ``src/forge/data/`` (symlinks into the repo root at build time, real
+#: files inside the wheel). Consumer repos have none of the repo-root
+#: copies, so the packaged ones are what they install from.
+SHIPPED_SOURCES: Final = {
+    ".claude-plugin/plugin.json": "data/plugin.json",
+    "claude-hooks": "data/claude-hooks",
+    "agents": "data/agents",
+    "skills": "data/skills",
+}
+
+
+def shipped_path(repo_root: Path, rel: str) -> Path:
+    """Resolve a forge-shipped source path for *repo_root*.
+
+    The checkout's own copy wins (forge's own repo, or a consumer that
+    vendored the files); otherwise the copy inside the installed package
+    is used. Wheels extract to real files, so the resource path is a plain
+    filesystem path.
+
+    Args:
+        repo_root: The checkout asking.
+        rel: Repo-relative path; must be a key of :data:`SHIPPED_SOURCES`.
+
+    Returns:
+        The local path when it exists, else the packaged path.
+
+    Raises:
+        KeyError: When *rel* is not a shipped source.
+    """
+    local = repo_root / rel
+    if local.exists():
+        return local
+    return Path(str(resources.files("forge").joinpath(SHIPPED_SOURCES[rel])))
 
 
 def foundation_text() -> str:

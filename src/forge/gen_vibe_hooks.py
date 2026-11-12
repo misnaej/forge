@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from forge.agent_harness import UNENFORCED_VIBE_HOOKS, resolve_hooks_base
+from forge.instruction_files import shipped_path
 
 
 if TYPE_CHECKING:
@@ -464,7 +465,9 @@ def generate_vibe_hooks(
     if repo_root is None:
         repo_root = Path.cwd()
 
-    plugin_dir = repo_root / ".claude-plugin"
+    # The checkout's own manifest wins (forge's repo); consumer repos use
+    # the copy shipped inside the installed package.
+    plugin_dir = shipped_path(repo_root, ".claude-plugin/plugin.json").parent
 
     # In the forge repo itself, claude-hooks are at repo root, not in .claude-plugin
     hooks_base = resolve_hooks_base(repo_root, plugin_dir)

@@ -79,13 +79,18 @@ def test_check_mode_writes_nothing_but_reports_references(skills_repo: Path) -> 
     assert not (skills_repo / ".agents").exists()
 
 
-def test_missing_skills_dir_reports_warning_without_writing(tmp_path: Path) -> None:
-    """No skills/ directory: zero skills published, a warning, no crash."""
+def test_missing_local_skills_dir_falls_back_to_packaged_skills(
+    tmp_path: Path,
+) -> None:
+    """A consumer repo without skills/ publishes the packaged skills."""
     empty_repo = tmp_path / "empty"
     empty_repo.mkdir()
     count, warnings, references = generate_vibe_agents(empty_repo)
-    assert count == 0
-    assert references == []
-    assert len(warnings) == 1
-    assert "No skills directory found" in warnings[0]
-    assert not (empty_repo / ".agents").exists()
+    assert count == 19
+    # Warnings are the CLAUDE.md→AGENTS.md rewrites in shipped skills.
+    assert warnings
+    assert all("Updated references" in w for w in warnings)
+    assert (empty_repo / ".agents" / "skills").is_dir()
+    # The packaged agents/ sits next to the packaged skills/, so the
+    # reference check still sees the shipped agent docs.
+    assert references

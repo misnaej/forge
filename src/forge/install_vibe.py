@@ -44,7 +44,7 @@ from forge.agent_harness import (
 from forge.gen_vibe_agents import generate_vibe_agents
 from forge.gen_vibe_hooks import verify_existing_hooks, write_vibe_hooks
 from forge.git_utils import configure_cli_logging
-from forge.instruction_files import flatten_agents_md
+from forge.instruction_files import flatten_agents_md, shipped_path
 
 
 configure_cli_logging()
@@ -522,8 +522,14 @@ def install_vibe(
     if verify_mode:
         return _verify_vibe_installation(repo_root)
 
-    plugin_json_path = repo_root / ".claude-plugin" / "plugin.json"
+    # The checkout's own plugin manifest wins (forge's repo); consumer
+    # repos fall back to the copy shipped inside the installed package.
+    plugin_json_path = shipped_path(repo_root, ".claude-plugin/plugin.json")
     if not plugin_json_path.exists():
+        logger.error(
+            "plugin.json not found in %s or in the installed forge package",
+            repo_root / ".claude-plugin",
+        )
         return 1
 
     before = _artifact_snapshot(repo_root)
@@ -544,8 +550,9 @@ def install_vibe(
     )
     _warn(skills_warnings)
 
-    # Step 4: Generate subagent TOMLs and prompts
-    agents_dir = repo_root / "agents"
+    # Step 4: Generate subagent TOMLs and prompts — from the checkout's
+    # agents/ in forge's repo, else from the package's shipped copy.
+    agents_dir = shipped_path(repo_root, "agents")
     if agents_dir.exists():
         _subagent_count, subagent_warnings = _publish_subagents(
             agents_dir, repo_root, check_mode=check_mode
