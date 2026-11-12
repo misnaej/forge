@@ -293,6 +293,12 @@ forge = [
     "data/docs/*.md",
     # `forge-metrics bench`: sample project, task specs, check files.
     "data/bench/**/*",
+    # Shipped plugin sources (symlinks into the repo root), so consumer
+    # repos get agents/skills/hooks from the installed package alone.
+    "data/plugin.json",
+    "data/claude-hooks/**/*",
+    "data/agents/*.md",
+    "data/skills/**/*",
 ]
 
 [tool.setuptools_scm]

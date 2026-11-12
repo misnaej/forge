@@ -6,7 +6,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from forge.instruction_files import flatten_agents_md, foundation_text, resolve_includes
+from forge.instruction_files import (
+    flatten_agents_md,
+    foundation_text,
+    resolve_includes,
+    shipped_path,
+)
 
 
 if TYPE_CHECKING:
@@ -74,3 +79,32 @@ def test_flatten_agents_md_returns_none_without_inputs(tmp_path: Path) -> None:
     assert flatten_agents_md(tmp_path) is None
     (tmp_path / "FOUNDATION.md").write_text("x\n")
     assert flatten_agents_md(tmp_path) is None
+
+
+class TestShippedPath:
+    """Tests for the repo-vs-package resolver for forge-shipped sources."""
+
+    def test_local_copy_wins_when_present(self, tmp_path: Path) -> None:
+        """A checkout holding the path resolves to its own copy."""
+        agents = tmp_path / "agents"
+        agents.mkdir()
+        (agents / "local.md").write_text("x\n")
+        assert shipped_path(tmp_path, "agents") == agents
+
+    def test_falls_back_to_packaged_copy(self, tmp_path: Path) -> None:
+        """A bare consumer repo resolves to the installed package's copy."""
+        agents = shipped_path(tmp_path, "agents")
+        assert agents != tmp_path / "agents"
+        names = {p.name for p in agents.glob("*.md")}
+        assert "prior-art.md" in names
+        assert "design-checker.md" in names
+
+    def test_packaged_copies_cover_all_sources(self, tmp_path: Path) -> None:
+        """Every mapped source ships in the package and resolves."""
+        for rel in (".claude-plugin/plugin.json", "claude-hooks", "agents", "skills"):
+            assert shipped_path(tmp_path, rel).exists(), rel
+
+    def test_unknown_rel_raises_key_error(self, tmp_path: Path) -> None:
+        """A path outside SHIPPED_SOURCES is a programming error, not a fallback."""
+        with pytest.raises(KeyError):
+            shipped_path(tmp_path, "not-a-source")

@@ -1,0 +1,3 @@
+bump: minor
+- `install-forge-vibe` now works in consumer repos: the plugin manifest, `agents/`, `skills/` and `claude-hooks/` ship inside the forge package (under `src/forge/data/`, symlinked at build time) and a new `shipped_path` resolver picks the checkout's own copies when present and the packaged copies otherwise. Previously the installer exited 1 in any repo without a forge checkout, so a consumer Vibe session got no `.vibe/agents/*.toml` and no forge subagents to spawn.
+- Verified in a bare consumer repo: 13 agent TOML + prompt pairs, 19 skills, hooks.toml and roster generated; `install-forge-vibe --verify` and `forge-doctor --harness vibe` pass (agents/hooks/roster/skills/models checks green); the built wheel contains all shipped files.

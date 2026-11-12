@@ -130,6 +130,10 @@ Checked on every commit by `verify-forge-repo-structure`: every listed file and 
    - plugin-roster.toml: shipped roster of forge's plugin skills, hooks and agents, read by `verify-forge-agent-doc` so consumer agent docs can name them and by `forge-metrics` to keep shipped agent types; regenerated and drift-checked by `tests/test_verify_agent_doc.py`
    - bench/: `forge-metrics bench` data — `sample/` (the `tally` sample project; `.py` files ship as `.py.tmpl`, `dot-<name>` as `.<name>`, so forge's own tools skip them), `tasks/*.toml` (five task specs: prompt + outcome checks), `files/` (task setup files and hidden check tests), `workflow.md` (the shared workflow rules appended to every prompt)
    - docs/: symlinks to the `forge-docs/` reference pages, shipped so `install-forge-claude-md` can write them into consumer repos
+   - agents/: symlink to the repo-root `agents/` — shipped so `install-forge-vibe` generates the per-agent TOMLs in consumer repos from the installed package
+   - skills/: symlink to the repo-root `skills/` — shipped for the same reason (published to the Vibe skills dir at install)
+   - claude-hooks/: symlink to the repo-root `claude-hooks/` — shipped so generated hooks.toml/roster resolve guard commands in consumer repos
+   - plugin.json: symlink to `.claude-plugin/plugin.json` — the manifest `install-forge-vibe`/`forge-gen-vibe-hooks` read in consumer repos
    - VENDORED.md: provenance record (URL, version, SHA-256, rebuild command) for vendored third-party assets in this folder
 
 ## Agents Directory (`agents/`)

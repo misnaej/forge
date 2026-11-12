@@ -22,6 +22,8 @@ import re
 import sys
 from pathlib import Path
 
+from forge.instruction_files import shipped_path
+
 
 logger = logging.getLogger(__name__)
 
@@ -169,14 +171,17 @@ def generate_vibe_agents(
     if repo_root is None:
         repo_root = Path.cwd()
 
-    src_skills = repo_root / "skills"
+    # The checkout's own skills/ win (forge's repo); consumer repos use
+    # the copy shipped inside the installed package.
+    src_skills = shipped_path(repo_root, "skills")
     dest_skills = repo_root / ".agents" / "skills"
 
     if not src_skills.exists():
         return 0, [f"No skills directory found at {src_skills}"], []
 
-    # Check for references before copying
-    references = _check_agent_references(repo_root)
+    # Check for references before copying; the source root holds both
+    # skills/ and agents/ (local checkout or shipped package data).
+    references = _check_agent_references(src_skills.parent)
 
     if check_mode:
         return 0, [], references
