@@ -11,11 +11,21 @@ Opt in per repo with `[tool.forge.vibe] enabled = true`, then run
 |---|---|---|
 | `.vibe/hooks.toml` | `forge-gen-vibe-hooks` | One entry per blocking event/matcher, every one `strict = true`, commands route through `forge-hook-dispatch --harness vibe --roster <abs path>`; the two Vibe-only `post_agent` extras (from `src/forge/data/vibe-extra-hooks.toml`) run directly with no `strict` (Vibe forbids strict on post_agent) |
 | `.vibe/forge-roster.json` | `install-forge-vibe` | Guard roster baked at generation time; dispatcher contains commands to the repo root and denies a roster claiming `project_root` outside its own location |
-| `.vibe/agents/*.toml` + `.vibe/prompts/*.md` | `install-forge-vibe` | The 12 forge subagents in Vibe's schema (`agent_type = "subagent"`, `system_prompt_id`); pinned via `active_model = "forge-<tier>"` using the preset aliases written to `.vibe/config.toml` (an unknown alias would reject the whole agent file, so forge ships the aliases itself) |
+| `.vibe/agents/*.toml` + `.vibe/prompts/*.md` | `install-forge-vibe` | The 13 forge subagents in Vibe's schema (`agent_type = "subagent"`, `system_prompt_id`); pinned via `active_model = "forge-<tier>"` using the preset aliases written to `.vibe/config.toml` (an unknown alias would reject the whole agent file, so forge ships the aliases itself) |
 | `.agents/skills/*/SKILL.md` | `forge-gen-vibe-agents` | The 19 skills (incl. vendored `/caveman` levels), `CLAUDE.md` references rewritten to `AGENTS.md` |
 | `AGENTS.md` | `install-forge-vibe` | Flattened from `FOUNDATION.md` + `CLAUDE.md`; see below |
 | `.gitignore` entries | `install-forge-vibe` | Ensures `.vibe/`, `.agents/`, `AGENTS.md` stay untracked |
 | `.vibe/config.toml` | `install-forge-vibe` | Appends forge-owned `[[models]]` presets (`forge-haiku`/`forge-sonnet`/`forge-opus`) when absent — never clobbers user models |
+
+### Spawning the forge agents
+
+Under Mistral Vibe, spawn forge agents by their bare name:
+
+```python
+agents.spawn(config_name="prior-art")
+```
+
+The `forge:<name>` form is the Claude Code plugin namespace and is **not** a valid subagent type under Vibe.
 
 ## AGENTS.md and `@`-includes
 
