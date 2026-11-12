@@ -479,6 +479,35 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_cmd_restrand(root: Path, bump: str) -> int` _(internal)_ — Repair stranded changelog entries mechanically; stage the result.
 - `main(argv: list[str] | None = None) -> int` — Run the ``forge-changelog`` CLI.
 
+## `forge.ci_tree_gate`
+
+> _Answer one question for CI: has this exact tree already passed its suite?_
+
+- `class Decision` — One verdict, with the evidence or the reason behind it.
+- `class _Local` _(internal)_ — What the checkout itself says, before any API call.
+- `class _Job` _(internal)_ — The passing job a skip rests on.
+- `_run(reason: str) -> Decision` _(internal)_ — Build a not-verified verdict.
+- `_api_json(*args: str) -> object | None` _(internal)_ — Return a parsed `gh api` response, or None when anything failed.
+- `_local_facts(root: Path) -> _Local | str` _(internal)_ — Collect what the checkout can answer on its own.
+- `_merged_pr_for(slug: str, head_sha: str) -> dict[str, object] | str` _(internal)_ — Find the single merged pull request whose merge produced *head_sha*.
+- `_pr_head_sha(pull: dict[str, object]) -> str | None` _(internal)_ — Return the head commit SHA of *pull*, or None when absent.
+- `_pr_head_origin(found: dict[str, object]) -> tuple[str, str] | None` _(internal)_ — The repository and branch a pull request's head commit lived on.
+- `_head_tree(slug: str, pr_head: str) -> str | None` _(internal)_ — Return the tree SHA of *pr_head*, read from the API.
+- `_parent_is_contained(slug: str, pr_head: str, parent_sha: str) -> bool | None` _(internal)_ — Whether *parent_sha* is an ancestor of *pr_head*.
+- `_workflow_path(workflow_ref: str | None) -> str | None` _(internal)_ — Read the workflow file's path out of a ``$GITHUB_WORKFLOW_REF`` value.
+- `_run_is_this_pulls(run: dict[str, object], origin: tuple[str, str], pr_head: str) -> bool` _(internal)_ — Whether *run* belongs to the pull request *origin* describes.
+- `_matching_run(slug: str, pr_head: str, workflow_path: str, origin: tuple[str, str]) -> dict[str, object] | str` _(internal)_ — Find this workflow's own pull-request run for *pr_head*.
+- `_run_jobs(slug: str, run_id: int) -> list[dict[str, object]] | str` _(internal)_ — List the job objects of run *run_id*, or the reason the list is unusable.
+- `_job_verdict(slug: str, run_id: int, check_name: str) -> str | None` _(internal)_ — Judge the job called *check_name* inside run *run_id*.
+- `_job_evidence(slug: str, pr_head: str, *, check_name: str | None, workflow_path: str | None, origin: tuple[str, str]) -> _Job | str` _(internal)_ — Establish that a named job of this workflow passed on *pr_head*.
+- `_same_tested_tree(local: _Local, pr_head: str) -> str | None` _(internal)_ — Whether *pr_head* was tested at this checkout's tree.
+- `_against_pull(local: _Local, *, check_name: str | None, workflow_path: str | None) -> Decision` _(internal)_ — Compare the checkout with the pull request that landed it.
+- `decide(root: Path, *, check_name: str | None, workflow_path: str | None, event_name: str | None, ci: bool) -> Decision` — Decide whether HEAD's tree has already passed its suite.
+- `decision_line(decision: Decision) -> str` — Render the one line a reader scans in a CI log.
+- `_write_github_output(decision: Decision) -> None` _(internal)_ — Append ``verified`` to ``$GITHUB_OUTPUT`` when that file is set.
+- `_parser() -> argparse.ArgumentParser` _(internal)_ — Build the argument parser.
+- `main(argv: list[str] | None = None) -> int` — Print whether HEAD's tree has already passed, and why.
+
 ## `forge.claude_settings_schema`
 
 > _Shared schema for the consumer ``.claude/settings.json`` forge block._

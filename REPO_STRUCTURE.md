@@ -98,6 +98,7 @@ Checked on every commit by `verify-forge-repo-structure`: every listed file and 
    - import_graph.py: `forge.import_graph` — shared AST import primitives (`extract_import_targets`, `resolve_module_name`, `closest_known`) used by `audit.deps` and `smart_test.dependencies`
    - run_context.py: `forge.run_context` — CI vs workstation detection (`is_non_interactive`, `git_auth_mode`, `progress_logger`) per FOUNDATION §15
    - scratch_repo.py: `forge-scratch-repo` — isolated scratch copies for agent experiments (FOUNDATION §11 "Probing"): `snapshot [--ref REF | --worktree]` copies the checkout into a fresh one-commit repo, `build --spec` makes a repo from a JSON spec of commits; reads the source checkout only, refuses a non-ignored target inside a work tree
+   - ci_tree_gate.py: `forge-tree-verified` — CI tree-identity gate: answers whether HEAD's tree already passed its suite in the merged pull request, so a push run can skip a redundant execution; always exits 0, prints one verdict line, and fails closed to "run the suite" on every unknown
 
 2. **Audit Subpackage (`src/forge/audit/`)**
    - common.py: shared helpers (scope enum, file iteration)
@@ -347,6 +348,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_telemetry.py: tests for telemetry (the resource-profiling wrapper)
    - test_version_surfaces.py: tests for version_surfaces (install-version, install-record and global-install readers)
    - test_plugin_sync.py: tests for plugin_sync (forge-plugin-sync target resolution, per-version marketplace, refusals, `--check`)
+   - test_ci_tree_gate.py: tests for ci_tree_gate (the tree-identity verdict against a fake GitHub and a real squash-commit repo)
 
 2. **Audit Tests (`tests/audit/`)**
    - test_agents.py: tests for audit.agents
