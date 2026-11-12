@@ -11,6 +11,8 @@ stays a pure function of a file set.
 from __future__ import annotations
 
 import fnmatch
+import logging
+from subprocess import CalledProcessError
 from typing import TYPE_CHECKING
 
 from forge.config import load_config
@@ -25,6 +27,51 @@ from forge.git_utils import (
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+logger = logging.getLogger(__name__)
+
+
+def visible_paths(repo_root: Path) -> set[str] | None:
+    """Return the repo-relative paths git can see, or None when unknown.
+
+    "Visible" means tracked or untracked-but-not-ignored: the files a
+    contributor would consider part of the repo. Ignored files are the
+    ones to leave out of a test selection — scratch copies, a stray
+    ``test_tmp.py``, anything under an ignored build directory.
+
+    Untracked-but-not-ignored files stay visible on purpose, so a test
+    written but not yet ``git add``-ed still runs.
+
+    None is returned when git cannot answer, and means "no filter" to
+    every caller rather than "nothing is visible". That asymmetry is the
+    whole point: a filter that failed closed here would silently drop
+    every test and report a green run. Unlike
+    :func:`forge.git_utils.get_tracked_files`, which turns a git failure
+    into an empty set, this passes ``check=True`` so the failure is
+    distinguishable from an empty repo.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        Repo-relative visible paths, or None when git failed or listed
+        nothing.
+    """
+    try:
+        names = git_z_names(
+            repo_root,
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            check=True,
+        )
+    except CalledProcessError as exc:
+        logger.debug("smart-test: ls-files failed (%s); no visibility filter", exc)
+        return None
+    return set(names) or None
 
 
 def _ref_exists(repo_root: Path, ref: str) -> bool:

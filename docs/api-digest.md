@@ -516,6 +516,11 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `detect_test_dirs(repo_root: Path) -> list[str]` — Smart-detect the repo's test roots when ``test_dirs`` is unset.
 - `class ForgeConfig` — Repo configuration sourced from ``[tool.forge]``.
 - `read_pyproject_raw(repo_root: Path) -> dict` — Return the full parsed ``pyproject.toml`` dict, or ``{}`` on failure.
+- `class PytestIgnores` — What pytest's own configuration says not to collect.
+  - `ignores(self, relpath: str) -> bool` — Return whether pytest's config excludes *relpath*.
+- `_ignores_from_settings(settings: Mapping[str, object]) -> PytestIgnores` _(internal)_ — Build :class:`PytestIgnores` from one config file's pytest settings.
+- `_ini_pytest_settings(path: Path, section: str) -> dict[str, object] | None` _(internal)_ — Return one ini-style file's pytest section, or None when it has none.
+- `read_pytest_ignores(repo_root: Path) -> PytestIgnores` — Return the ignore rules from whichever config file pytest would use.
 - `is_fragments_mode(repo_root: Path) -> bool` — Return whether the repo runs changelog fragments mode.
 - `read_tool_forge_section(repo_root: Path, section: str = '') -> dict` — Return a ``[tool.forge.<section>]`` table, or ``{}`` when absent.
 - `_read_toml_file(path: Path) -> dict | None` _(internal)_ — Parse a standalone TOML file, degrading to ``None`` on any failure.
@@ -2094,6 +2099,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_with_run_log(repo_root: Path, header: str, run: Callable[[RunLog], tuple[int, str]]) -> int` _(internal)_ — Run *run* holding the log lock, with the log stamped up front.
 - `_run_full(repo_root: Path, cfg: dict[str, object], changed: set[str], *, all_tests: bool = False, telemetry: bool = False) -> tuple[int, str]` _(internal)_ — Run the ``full`` tier with lifecycle deselection and metrics.
 - `class _RunConfig` _(internal)_ — Configuration for a tiered test run.
+- `_show(text: str) -> None` _(internal)_ — Write *text* to the console exactly as given.
+- `_widening_notice(plan: SelectionPlan, depth: int, extra_depth0: set[str], changed: set[str]) -> str` _(internal)_ — Return a warning when this run selects nearly the whole suite.
 - `_run_tiers(repo_root: Path, depth: int, plan: SelectionPlan, config: _RunConfig, log: RunLog) -> tuple[int, str]` _(internal)_ — Run depth batches 0..*depth* with fail-fast between them.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Construct the ``forge-smart-test`` argument parser.
 - `_escalate_to_full(repo_root: Path, base_ref: str, changed: set[str], cfg: dict[str, object]) -> bool` _(internal)_ — Return whether the change set must run the full suite.
@@ -2120,6 +2127,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_roots(repo_root: Path) -> tuple[list[Path], list[Path]]` _(internal)_ — Return ``(source_dir_paths, test_dir_paths)`` as absolute paths.
 - `_iter_py(roots: Iterable[Path]) -> Iterable[Path]` _(internal)_ — Yield every ``.py`` file under *roots*.
 - `_is_test_file(path: Path) -> bool` _(internal)_ — Return whether pytest would collect *path* as a test module.
+- `_unselectable_test(repo_root: Path) -> Callable[[str], bool]` _(internal)_ — Build the predicate for "this test file must not be selected".
 - `all_test_files(repo_root: Path) -> set[str]` — Return every repo-relative test file under the configured test roots.
 - `_dotted(node: ast.expr) -> str | None` _(internal)_ — Return the dotted name of an attribute/name chain, or ``None``.
 - `_string_literals(args: list[ast.expr]) -> list[str]` _(internal)_ — Return the string-constant values among *args*, in order.
@@ -2138,6 +2146,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _Git plumbing for smart-test change detection._
 
+- `visible_paths(repo_root: Path) -> set[str] | None` — Return the repo-relative paths git can see, or None when unknown.
 - `_ref_exists(repo_root: Path, ref: str) -> bool` _(internal)_ — Return whether *ref* resolves to a commit in the repo.
 - `resolve_base_ref(repo_root: Path, override: str | None = None) -> str` — Resolve the ref to diff ``HEAD`` against for change detection.
 - `effective_base_ref(repo_root: Path, base_ref: str, *, explicit: bool) -> tuple[str | None, str]` — Return the ref to diff against once ``HEAD`` itself is accounted for.
@@ -2186,7 +2195,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 - `clear_python_cache(repo_root: Path) -> None` — Delete every ``__pycache__`` directory under *repo_root*.
 - `_coverage_available() -> bool` _(internal)_ — Return whether the ``pytest-cov`` plugin is importable.
-- `run_pytest(repo_root: Path, test_paths: Sequence[str], *, coverage: bool = False, telemetry: bool = False, label: str = '') -> tuple[int, str]` — Run ``pytest`` once over *test_paths* and return ``(exit_code, output)``.
+- `run_pytest(repo_root: Path, test_paths: Sequence[str], *, coverage: bool = False, telemetry_label: str | None = None, on_output: Callable[[str], None] | None = None) -> tuple[int, str]` — Run ``pytest`` once over *test_paths* and return ``(exit_code, output)``.
+- `_run_streamed(cmd: list[str], repo_root: Path, notice: str, on_output: Callable[[str], None]) -> tuple[int, str]` _(internal)_ — Run *cmd*, passing each output line on as it arrives.
 - `_finalize(code: int, output: str, *, selected: bool) -> tuple[int, str]` _(internal)_ — Apply the "no tests collected" rule to a finished pytest run.
 
 ## `forge.telemetry`

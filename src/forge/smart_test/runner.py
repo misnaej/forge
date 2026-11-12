@@ -11,6 +11,7 @@ when ``pytest-cov`` is not installed rather than erroring.
 from __future__ import annotations
 
 import importlib.util
+import os
 import shutil
 import subprocess
 import sys
@@ -21,7 +22,7 @@ from forge.git_utils import missing_dependency_hint
 
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
 
@@ -53,8 +54,8 @@ def run_pytest(
     test_paths: Sequence[str],
     *,
     coverage: bool = False,
-    telemetry: bool = False,
-    label: str = "",
+    telemetry_label: str | None = None,
+    on_output: Callable[[str], None] | None = None,
 ) -> tuple[int, str]:
     """Run ``pytest`` once over *test_paths* and return ``(exit_code, output)``.
 
@@ -68,14 +69,22 @@ def run_pytest(
         test_paths: Repo-relative test file paths; empty means "whole suite".
         coverage: Enable ``--cov`` (ignored with a notice when ``pytest-cov``
             is absent).
-        telemetry: Sample resource usage during the run via
-            ``forge.telemetry`` (degrades to an unprofiled run with a
-            notice when ``psutil`` is absent — a missing profiler must
-            never fail the test run).
-        label: Telemetry run label forwarded to
-            :func:`forge.telemetry.run_command`, so each depth tier of a
-            multi-tier run keeps its own artifacts instead of clobbering
-            the previous tier's (#376).
+        telemetry_label: Sample resource usage during the run via
+            ``forge.telemetry``, labelling its artifacts with this name so
+            each depth tier of a multi-tier run keeps its own instead of
+            clobbering the previous tier's. None means no sampling. One
+            parameter rather than a flag plus a name, because a label only
+            ever meant anything with sampling on and the pair could
+            express a combination that did nothing. Sampling degrades to
+            an unprofiled run with a notice when ``psutil`` is absent — a
+            missing profiler must never fail the test run.
+        on_output: Called with each line as pytest produces it, so a long
+            run shows progress instead of looking like a hang. The return
+            value is unchanged either way — the whole output is still
+            returned, because the run log, the differential check and the
+            exit-5 rule all read it. Ignored under *telemetry*, whose
+            capture goes through a spool file to avoid a pipe deadlock;
+            that path stays unstreamed.
 
     Returns:
         ``(exit_code, combined_output)``. Exit code 5 ("no tests collected")
@@ -94,10 +103,10 @@ def run_pytest(
             notice = "(pytest-cov not installed — running without coverage)\n"
     cmd += sorted(test_paths)
 
-    if telemetry:
+    if telemetry_label is not None:
         if telemetry_mod.telemetry_available():
             code, output = telemetry_mod.run_command(
-                cmd, repo_root, capture=True, cwd=repo_root, label=label
+                cmd, repo_root, capture=True, cwd=repo_root, label=telemetry_label
             )
             return _finalize(code, notice + output, selected=bool(test_paths))
         notice += (
@@ -105,12 +114,67 @@ def run_pytest(
             "— running without telemetry)\n"
         )
 
-    proc = subprocess.run(
-        cmd, cwd=repo_root, capture_output=True, text=True, check=False
-    )
+    if on_output is None:
+        proc = subprocess.run(
+            cmd, cwd=repo_root, capture_output=True, text=True, check=False
+        )
+        return _finalize(
+            proc.returncode,
+            notice + proc.stdout + proc.stderr,
+            selected=bool(test_paths),
+        )
     return _finalize(
-        proc.returncode, notice + proc.stdout + proc.stderr, selected=bool(test_paths)
+        *_run_streamed(cmd, repo_root, notice, on_output),
+        selected=bool(test_paths),
     )
+
+
+def _run_streamed(
+    cmd: list[str],
+    repo_root: Path,
+    notice: str,
+    on_output: Callable[[str], None],
+) -> tuple[int, str]:
+    """Run *cmd*, passing each output line on as it arrives.
+
+    stderr is merged into stdout rather than read separately: two pipes
+    read in sequence deadlock as soon as one fills, and pytest's own
+    output interleaves the two anyway. ``PYTHONUNBUFFERED`` is set in the
+    child because an unbuffered pipe is what makes the lines arrive while
+    the run is happening rather than in one block at the end.
+
+    Args:
+        cmd: The pytest argv.
+        repo_root: Working directory for the child.
+        notice: Text to prepend to the captured output (and to pass on
+            first, so the reader sees it in the same order).
+        on_output: Receives each line, newline included.
+
+    Returns:
+        ``(exit_code, combined_output)``, the same text the captured path
+        would have returned.
+    """
+    if notice:
+        on_output(notice)
+    env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+    collected = [notice]
+    with subprocess.Popen(
+        cmd,
+        cwd=repo_root,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+        env=env,
+    ) as proc:
+        if proc.stdout is None:
+            msg = "pytest stdout pipe was not created"
+            raise RuntimeError(msg)
+        for line in proc.stdout:
+            collected.append(line)
+            on_output(line)
+        code = proc.wait()
+    return code, "".join(collected)
 
 
 def _finalize(code: int, output: str, *, selected: bool) -> tuple[int, str]:
