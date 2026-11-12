@@ -83,5 +83,6 @@ names = [
     "security-checker",
     "test-advisor",
     "test-writer",
+    "token-optimizer",
     "weekly-summary",
 ]

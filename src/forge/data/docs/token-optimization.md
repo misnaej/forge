@@ -1,0 +1,1 @@
+../../../../forge-docs/token-optimization.md
