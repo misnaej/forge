@@ -429,12 +429,12 @@ Mechanics (modes, commands, templates): the `/pr` skill. Rules:
   - Bound limits *waiting*, not obligation — §4 "fix ALL violations" and §1 "every failure requires investigation" outrank it.
 - **Before commissioning verification, establish what is already verified.** Binds agent about to *ask* for evidence (previous bullet binds agent *handed* it). Check: prior `verified-at:` on PR, and whether changes since fall inside what it covers. Determination is **a CLI call, never prose** — `forge-pr-plan`, run and followed. **State the verdict in one line before any reporter starts.** Thresholds, blast-radius paths, modes: `/pr` skill + `forge.pr_delta`.
 - `verified-at:` header (reporter contract, `agents/_TEMPLATE.md`) makes wrap-up drift detectable.
-- **The flow does not end at posting — monitor the PR.** Canonical; skills state only call-site delta. Default: after wrap-up posts, start one background monitor per open PR (`forge-pr-watch start --pr <N>`), five signals:
+- **The flow does not end at posting — monitor the PR.** Canonical; skills state only call-site delta. Default: after wrap-up posts, start one background monitor per open PR (`forge-pr-watch start --pr <N>`):
   - **New review comments** → surface.
   - **Merged / closed** → on merge: local cleanup (sync base, prune merged local branch, `forge-metrics record` — `/next` cleanup phase) **and** `issue-triage` `post-pr` mode (closed-issue tier-label removal + Backlog Index regeneration).
   - **`mergeable == CONFLICTING`** → alert only; **the monitor never syncs the branch it watches** (read-only watcher).
   - **A CI run concluding in failure** → surface, investigate (§1); never auto-push fixes.
-  - **Wrap-up staleness** — `forge-pr-plan --freshness --pr <N>` → `fresh: false` → alert **once per new head**, naming both SHAs. Refresh = `/pr <N>` (delta mode) by whoever picks up work; newer `verified-at:` clears signal. `fresh: null` = unknown: skip poll, never alert, retry next cycle; the `cause` field names the degrade path so a blind watch is distinguishable from a quiet one. **The monitor never posts the refresh.** `warn_stale_wrapup` Claude Code hook runs same verdict after every agent `git push` (at-the-cause); monitor covers pushes elsewhere. Both read-only.
+  - **Wrap-up staleness** — `forge-pr-plan --freshness --pr <N>` → `fresh: false` → alert **once per new head**, naming both SHAs. Refresh = `/pr <N>` (delta mode) by whoever picks up work; newer `verified-at:` clears signal. `fresh: null` = unknown: skip poll, never alert, retry; `cause` names the degrade path. **The monitor never posts the refresh.** `warn_stale_wrapup` Claude Code hook runs same verdict after every agent `git push` (at-the-cause); monitor covers pushes elsewhere. Both read-only.
 
   **Resolving a conflict** — whoever picks up work, never monitor: `forge-update-branch` (§2: never rebase). No permission needed — merge commit destroys nothing. It resolves the mechanical conflicts itself (generated artifacts regenerated, never textually merged; version slot; files the branch already holds — every stacked child after its parent's squash) and stops on the rest: `forge:merge-resolver` reads each side's intent, keeps both, escalates when a side's purpose is undeterminable; then `forge-update-branch --continue` commits.
 
@@ -487,7 +487,9 @@ Reviewed by `forge:design-checker` (foundation) + per-repo wrappers.
   (`[tool.forge.hooks].caveman`). People-facing text (PRs, issues, commits,
   human docs): plain concise English. Config comments, file headers: 1–2
   lines, details referenced; advisory pin's comment = its id; unpinned
-  advisory → one line why.
+  advisory → one line why. Issue bodies are people-facing even when an
+  agent generates them (e.g. the Backlog Index): plain concise English,
+  never caveman; size is bounded, not voiced down.
 - **Google-style docstrings** for all public classes / functions / methods, incl. `__init__`.
 - **Args** match function signature exactly. Read implementation to confirm names.
 - **Returns** required for non-`None` returning functions. Omit for `None`-returning, `@property`, `@abstractmethod`.
@@ -699,9 +701,8 @@ case, recovery and `forge-doctor` lines:
 [`forge-docs/plugin-staleness.md`](forge-docs/plugin-staleness.md). Rules:
 
 - **Restarting is the terminal step of a plugin-moving upgrade; an agent that
-  moved it stops there** (§2 "On deviation"). Report the upgrade, say the
-  session still runs the old version, ask for a restart — reload is not
-  enough.
+  moved it stops there** (§2 "On deviation"). Report the upgrade and ask
+  for a restart — reload is not enough.
 - **Session start prints the loaded release** (`forge plugin loaded: <v>`),
   but **no check confirms the restart**: a green check is filesystem
   evidence, never session proof (§1).
