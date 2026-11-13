@@ -122,6 +122,7 @@ from forge.git_utils import (
     require_cli,
     resolve_base_branch_ref,
     resolve_current_branch,
+    resolve_pr_base_ref,
     run_git,
     stage_modified_paths,
     working_tree_sha,
@@ -2679,7 +2680,10 @@ def _changelog_version_skip_gate(repo_root: Path) -> StepResult | None:
         # no version-shaped string, and the branch adds at most ONE
         # fragment (one unique file per PR; several bullets go in it).
         errors = check_pending_fragments(repo_root)
-        added = branch_added_fragments(repo_root)
+        base_ref = resolve_pr_base_ref(
+            repo_root, config.load_config(repo_root).base_branch
+        )
+        added = branch_added_fragments(repo_root, base_ref=base_ref)
         if len(added) > 1:
             # Never phrase the remedy as merging the fragments: on a
             # stacked branch one of them is another PR's authored entry,
@@ -2689,16 +2693,21 @@ def _changelog_version_skip_gate(repo_root: Path) -> StepResult | None:
                 f"({', '.join(added)}) — a PR carries ONE fragment. If this "
                 "PR is stacked on an unmerged PR, the parent's fragment is "
                 "not yours: leave it and retarget or wait for the parent to "
-                "merge. Otherwise move your own bullets into a single "
-                "<slug>.<type>.md (strongest bump level wins; the slug "
-                "names the change, not the category — `fixes.fixed.md` "
-                "collides with another PR's)."
+                "merge. On a stacked branch whose PR does not exist yet, "
+                "pass the real base explicitly — `forge-commit --base "
+                "origin/<parent-branch> -m ... <files>` sets "
+                "FORGE_PR_BASE_REF for the gate — or move your own bullets "
+                "into a single <slug>.<type>.md (strongest bump level wins; "
+                "the slug names the change, not the category — "
+                "`fixes.fixed.md` collides with another PR's)."
             )
         return StepResult(
             name=name,
             passed=not errors,
             output=(
-                "Fragment mode — validated pending changelog.d/ fragments "
+                f"Fragment mode — validated pending changelog.d/ fragments "
+                f"against base {base_ref or 'unresolved'}; branch adds "
+                f"{len(added)} ({', '.join(added) or 'none'}) "
                 "(CHANGELOG.md is assembled at release, never read as a "
                 "version signal)."
                 if not errors
