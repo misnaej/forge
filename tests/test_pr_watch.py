@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from typing import TYPE_CHECKING
 
@@ -120,8 +121,6 @@ def test_start_refuses_when_arming_fails(
         raise FileNotFoundError(msg)
 
     monkeypatch.setattr(pr_watch, "_gh", fake_gh)
-    import argparse
-
     args = argparse.Namespace(pr=993, repo="o/r", interval=60, bound=1800)
     assert pr_watch.cmd_start(args) == pr_watch.EXIT_ARMING_FAILED
 
@@ -132,8 +131,6 @@ def test_start_self_skips_in_ci(
     """In CI the command exits 0 without starting anything."""
     monkeypatch.setattr(pr_watch, "repo_root", lambda: tmp_path)
     monkeypatch.setenv("GITHUB_ACTIONS", "true")
-    import argparse
-
     args = argparse.Namespace(pr=993, repo="o/r", interval=60, bound=1800)
     assert pr_watch.cmd_start(args) == pr_watch.EXIT_OK
     assert not (tmp_path / ".plan" / "pr_monitors.json").exists()
@@ -155,8 +152,6 @@ def test_stop_refuses_to_kill_unmatched_pid(
     )
     killed: list[int] = []
     monkeypatch.setattr(pr_watch.os, "kill", lambda pid, _sig: killed.append(pid))
-    import argparse
-
     args = argparse.Namespace(pr=993, all=False)
     pr_watch.cmd_stop(args)
     assert killed == []
@@ -180,8 +175,6 @@ def test_stop_kills_matching_pid(
     )
     killed: list[int] = []
     monkeypatch.setattr(pr_watch.os, "kill", lambda pid, _sig: killed.append(pid))
-    import argparse
-
     args = argparse.Namespace(pr=993, all=False)
     code = pr_watch.cmd_stop(args)
     assert code == pr_watch.EXIT_OK
@@ -191,8 +184,6 @@ def test_stop_kills_matching_pid(
 
 def test_list_empty(watch_repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """List prints 'no monitors registered' when the registry is empty."""
-    import argparse
-
     pr_watch.cmd_list(argparse.Namespace())
     captured = capsys.readouterr()
     assert "no monitors registered" in captured.out
