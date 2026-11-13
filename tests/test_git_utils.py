@@ -1711,6 +1711,132 @@ def test_resolve_pr_base_ref_falls_back_to_configured_base_when_no_pr(
     assert calls == ["main"]
 
 
+# ---------------------------------------------------------------------------
+# resolve_pr_base_ref precedence tests for FORGE_PR_BASE_REF and base_override
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_pr_base_ref_prefers_github_base_ref_env_over_override_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`GITHUB_BASE_REF` wins over FORGE_PR_BASE_REF env var.
+
+    SCENARIO: GitHub Actions run with both env vars set.
+    EXPECTED: GITHUB_BASE_REF short-circuits before any override lookup.
+    """
+    monkeypatch.setenv("GITHUB_BASE_REF", "release")
+    monkeypatch.setenv("FORGE_PR_BASE_REF", "override-base")
+
+    def _fail_if_called(*_a: str, **_kw: object) -> str | None:
+        pytest.fail("gh_api must not be called when GITHUB_BASE_REF is set")
+
+    monkeypatch.setattr(git_utils, "gh_api", _fail_if_called)
+    monkeypatch.setattr(
+        git_utils, "ref_exists", lambda _root, ref: ref == "origin/release"
+    )
+    assert git_utils.resolve_pr_base_ref(tmp_path, "main") == "origin/release"
+
+
+def test_resolve_pr_base_ref_prefers_github_base_ref_env_over_base_override_kwarg(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`GITHUB_BASE_REF` wins over explicit base_override kwarg.
+
+    SCENARIO: GitHub Actions run with GITHUB_BASE_REF set and a CLI override.
+    EXPECTED: GITHUB_BASE_REF short-circuits before the kwarg is consulted.
+    """
+    monkeypatch.setenv("GITHUB_BASE_REF", "release")
+
+    def _fail_if_called(*_a: str, **_kw: object) -> str | None:
+        pytest.fail("gh_api must not be called when GITHUB_BASE_REF is set")
+
+    monkeypatch.setattr(git_utils, "gh_api", _fail_if_called)
+    monkeypatch.setattr(
+        git_utils, "ref_exists", lambda _root, ref: ref == "origin/release"
+    )
+    # Simulate base_override kwarg being passed (internal API)
+    assert (
+        git_utils.resolve_pr_base_ref(tmp_path, "main", base_override="override-base")
+        == "origin/release"
+    )
+
+
+def test_resolve_pr_base_ref_uses_base_override_env_var_over_open_pr_lookup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """FORGE_PR_BASE_REF env var resolves above open-PR gh lookup.
+
+    SCENARIO: Workstation with an open PR but FORGE_PR_BASE_REF set.
+    MOCK SETUP: GITHUB_BASE_REF not set, gh_api returns a PR base.
+    EXPECTED: FORGE_PR_BASE_REF value wins over the PR's base.
+    """
+    monkeypatch.delenv("GITHUB_BASE_REF", raising=False)
+    monkeypatch.setenv("FORGE_PR_BASE_REF", "env-override")
+
+    def _fake_gh_api(*args: str, **_kw: object) -> str | None:
+        if 'head.ref == "feat/child"' in args[-1]:
+            return "feat/parent"
+        return None
+
+    monkeypatch.setattr(git_utils, "gh_api", _fake_gh_api)
+    monkeypatch.setattr(
+        git_utils, "ref_exists", lambda _root, ref: ref == "origin/env-override"
+    )
+    assert git_utils.resolve_pr_base_ref(tmp_path, "main") == "origin/env-override"
+
+
+def test_resolve_pr_base_ref_uses_base_override_kwarg_over_open_pr_lookup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Explicit base_override kwarg resolves above open-PR gh lookup.
+
+    SCENARIO: Workstation with an open PR and a CLI override.
+    MOCK SETUP: No env vars, gh_api returns a PR base.
+    EXPECTED: base_override value wins over the PR's base.
+    """
+    monkeypatch.delenv("GITHUB_BASE_REF", raising=False)
+    monkeypatch.delenv("FORGE_PR_BASE_REF", raising=False)
+
+    def _fake_gh_api(*args: str, **_kw: object) -> str | None:
+        if 'head.ref == "feat/child"' in args[-1]:
+            return "feat/parent"
+        return None
+
+    monkeypatch.setattr(git_utils, "gh_api", _fake_gh_api)
+    monkeypatch.setattr(
+        git_utils, "ref_exists", lambda _root, ref: ref == "origin/kwarg-override"
+    )
+    assert (
+        git_utils.resolve_pr_base_ref(tmp_path, "main", base_override="kwarg-override")
+        == "origin/kwarg-override"
+    )
+
+
+def test_resolve_pr_base_ref_falls_back_to_gh_pr_base_when_no_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No override anywhere → falls back to open PR's base via gh api.
+
+    SCENARIO: Workstation on a branch with an open PR.
+    MOCK SETUP: No env vars, gh_api returns the PR's base.
+    EXPECTED: The PR's base ref is used.
+    """
+    monkeypatch.delenv("GITHUB_BASE_REF", raising=False)
+    monkeypatch.delenv("FORGE_PR_BASE_REF", raising=False)
+    monkeypatch.setattr(git_utils, "_run_git", lambda *_a, **_kw: "feat/child")
+
+    def _fake_gh_api(*args: str, **_kw: object) -> str | None:
+        if 'head.ref == "feat/child"' in args[-1]:
+            return "feat/parent"
+        return None
+
+    monkeypatch.setattr(git_utils, "gh_api", _fake_gh_api)
+    monkeypatch.setattr(
+        git_utils, "ref_exists", lambda _root, ref: ref == "origin/feat/parent"
+    )
+    assert git_utils.resolve_pr_base_ref(tmp_path, "main") == "origin/feat/parent"
+
+
 @pytest.mark.parametrize("branch", ["HEAD", 'feat/"quoted"'])
 def test_open_pr_base_branch_skips_detached_head_and_quote_bearing_branch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, branch: str

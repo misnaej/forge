@@ -449,24 +449,24 @@ def _utc_token() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H%MZ")
 
 
-def _pr_fields(
-    previous: dict[str, tuple[str, str | None]], pr: PrState | None
-) -> dict[str, tuple[str, str | None]]:
-    """Choose fresh PR fields or carry the previous ones forward.
+def _pr_fields(pr: PrState | None) -> dict[str, tuple[str, str | None]]:
+    """Return fresh PR fields, or ``unknown`` when GitHub was not read.
 
     Args:
-        previous: Parsed fields of the panel being replaced.
-        pr: Freshly read PR state, or ``None`` to carry forward.
+        pr: Freshly read PR state, or ``None`` when the run did not ask
+            GitHub (bare ``state``).
 
     Returns:
-        ``{key: (value, as_of)}`` for every key in :data:`PR_KEYS`.
+        ``{key: (value, as_of)}`` for every key in :data:`PR_KEYS`. A bare
+        ``state`` run reports ``unknown`` for every field rather than
+        carrying the previous run's answer forward under a fresh header.
     """
     if pr is not None:
         return {
             key: (sanitize(value), sanitize(pr.as_of))
             for key, value in pr.values().items()
         }
-    return {key: previous.get(key, (UNKNOWN, None)) for key in PR_KEYS}
+    return dict.fromkeys(PR_KEYS, (UNKNOWN, None))
 
 
 def write_state(
@@ -529,7 +529,7 @@ def write_state(
     panel = render_panel(
         local,
         attempt=attempt_field,
-        pr=_pr_fields(previous, pr),
+        pr=_pr_fields(pr),
         updated=_utc_token(),
     )
     span = panel_span(text)
