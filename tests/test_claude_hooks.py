@@ -10140,6 +10140,66 @@ def test_load_continuation_is_silent_when_the_note_is_a_symlink(
     assert (proc.returncode, proc.stdout) == (0, "")
 
 
+def _run_version_script(plugin_root: Path) -> subprocess.CompletedProcess[str]:
+    """Run print_loaded_plugin_version.sh copied into a fake plugin root.
+
+    The script derives the plugin root from its own path, so the test
+    copies it into ``plugin_root/claude-hooks/`` and plants a
+    ``.claude-plugin/plugin.json`` beside it.
+
+    Args:
+        plugin_root: Fake plugin root to run from.
+
+    Returns:
+        The completed process.
+    """
+    hooks = plugin_root / "claude-hooks"
+    hooks.mkdir(parents=True, exist_ok=True)
+    shutil.copy(
+        _HOOKS_DIR / "print_loaded_plugin_version.sh",
+        hooks / "print_loaded_plugin_version.sh",
+    )
+    bash = shutil.which("bash")
+    assert bash is not None
+    return subprocess.run(
+        [bash, str(hooks / "print_loaded_plugin_version.sh")],
+        input="{}",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_print_loaded_plugin_version_prints_live_slot_line(tmp_path: Path) -> None:
+    """The line names the loaded release and carries the reload caveat."""
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "plugin.json").write_text('{"version": "12.3.4"}', encoding="utf-8")
+    proc = _run_version_script(tmp_path)
+    assert proc.returncode == 0
+    assert proc.stdout.strip() == (
+        "forge plugin loaded: 12.3.4 (live slot; /reload-plugins re-reads it)"
+    )
+
+
+def test_print_loaded_plugin_version_falls_back_to_root_plugin_json(
+    tmp_path: Path,
+) -> None:
+    """Consumer installs may carry plugin.json at the slot root itself."""
+    (tmp_path / "plugin.json").write_text('{"version": "9.9.9"}', encoding="utf-8")
+    proc = _run_version_script(tmp_path)
+    assert proc.returncode == 0
+    assert "forge plugin loaded: 9.9.9 " in proc.stdout
+
+
+def test_print_loaded_plugin_version_is_silent_without_plugin_json(
+    tmp_path: Path,
+) -> None:
+    """Fail-open: no plugin.json next to the hook root means no output, exit 0."""
+    proc = _run_version_script(tmp_path)
+    assert (proc.returncode, proc.stdout) == (0, "")
+
+
 def _run_caveman_hook(
     event: str, project_dir: Path
 ) -> subprocess.CompletedProcess[str]:

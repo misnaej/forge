@@ -215,7 +215,9 @@ CLAUDE_PROFILE = HarnessProfile(
 # - pre-tool -> PreToolUse
 # - post-tool -> PostToolUse
 # - subagent done -> post_agent (and .agent_type -> .agent_name)
-# - SessionStart -> none (doesn't exist in Vibe)
+# - SessionStart -> session_start on current Vibe (non-blocking; shipped
+#   as an extra entry in vibe-extra-hooks.toml, not via this map); older
+#   Vibe falls back to the post_agent vibe_session_start.sh extra
 # - PreCompact -> none (doesn't exist in Vibe)
 # - SubagentStart -> none (doesn't exist in Vibe)
 # - Bash matcher -> "re:bash|process_start"
@@ -227,8 +229,9 @@ VIBE_PROFILE = HarnessProfile(
         "pre_tool": "PreToolUse",
         "post_tool": "PostToolUse",
         "post_agent": "SubagentStop",
-        # Vibe has no equivalents for these Claude events:
-        # SessionStart, PreCompact, SubagentStart
+        # Vibe has no blocking equivalents for these Claude events:
+        # SessionStart (session_start extra is non-blocking), PreCompact,
+        # SubagentStart
     },
     tool_matcher_map={
         "re:bash|process_start": "Bash",
@@ -414,9 +417,10 @@ def translate_payload_field(field_name: str, harness_name: str) -> str | None:
     return field_name
 
 
-# Claude hooks with no Vibe equivalent (SessionStart / PreCompact /
-# SubagentStart / SubagentStop events Vibe does not implement, and
-# post_agent fires after a turn so it cannot block like SubagentStop).
+# Claude hooks with no blocking Vibe equivalent (SessionStart's Vibe
+# session_start is non-blocking and carries only the plugin-version line;
+# PreCompact / SubagentStart / SubagentStop events Vibe does not implement,
+# and post_agent fires after a turn so it cannot block like SubagentStop).
 # Single source for the generator (which skips them) and the installer
 # (which prints them as unenforced protections).
 UNENFORCED_VIBE_HOOKS: Mapping[str, str] = {
@@ -424,9 +428,12 @@ UNENFORCED_VIBE_HOOKS: Mapping[str, str] = {
         "SubagentStop blocking gate - Vibe has no SubagentStop; "
         "post_agent fires after the turn and cannot block"
     ),
-    "caveman_mode.sh": "SessionStart context injection - Vibe has no SessionStart",
+    "caveman_mode.sh": (
+        "SessionStart context injection - no blocking Vibe equivalent "
+        "(session_start is non-blocking and prints only the plugin version)"
+    ),
     "load_continuation.sh": (
-        "SessionStart context injection - Vibe has no SessionStart; "
+        "SessionStart context injection - no blocking Vibe equivalent; "
         "replaced by post_agent vibe_session_start.sh"
     ),
     "keep_continuation_state.sh": (

@@ -59,6 +59,7 @@ names = [
     "load_continuation",
     "log_agent_timing",
     "once_mark",
+    "print_loaded_plugin_version",
     "require_fixer_verdict",
     "require_helpers_stopped",
     "vibe_continuation_state",
