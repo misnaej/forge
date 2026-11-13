@@ -19,6 +19,9 @@ Usage:
 - ``forge-continuation check`` — report the written section's line usage
   against ``[tool.forge.continuation].judgment_max_lines``; exits ``1``
   when the panel markers are mismatched or duplicated.
+- ``forge-continuation reset`` — replace the written section with a
+  skeleton (§10's five headings), regenerate the panel, never delete the
+  file. Refuses while the panel shows live work unless ``--force``.
 
 The first write over an old-format note drops the retired activity
 ledger, digest and archive pointer and keeps the rest verbatim.
@@ -32,9 +35,12 @@ import logging
 import subprocess
 import sys
 from pathlib import Path
+from typing import Final
 
 from forge.continuation_state import (
+    BEGIN_MARKER,
     CONTINUATION_PATH,
+    END_MARKER,
     PrState,
     judgment_max_lines,
     marker_problems,
@@ -188,6 +194,104 @@ def check_note(root: Path) -> int:
     return 0
 
 
+#: The five headings of the written-section skeleton (§10).
+_WRITTEN_SKELETON: Final = """\
+## Intent
+
+## Decisions and why
+
+## What was rejected
+
+## Open question
+
+## Next step
+"""
+
+
+def reset_note(root: Path, *, force: bool = False) -> int:
+    """Replace the written section with a skeleton and regenerate the panel.
+
+    Refuses while the panel shows live work (unpushed commits, dirty tree,
+    open PR, stale wrap-up) unless *force*; never deletes the file.
+
+    Args:
+        root: Repo root.
+        force: Override the live-work refusal.
+
+    Returns:
+        ``0`` on success, ``1`` when refused.
+    """
+    if is_ci():
+        logger.info("forge-continuation: CI run — reset skipped.")
+        return 0
+    path = root / CONTINUATION_PATH
+    if not force and path.is_file():
+        text = path.read_text(encoding="utf-8")
+        blockers = _live_work_signals(root, text)
+        if blockers:
+            for b in blockers:
+                logger.warning("forge-continuation: reset refused — %s", b)
+            logger.warning("forge-continuation: rerun with --force to override.")
+            return 1
+    # Regenerate the panel first so the note always carries a fresh panel.
+    write_state(root)
+    if not path.is_file():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            f"{BEGIN_MARKER}\n{END_MARKER}\n\n{_WRITTEN_SKELETON}", encoding="utf-8"
+        )
+        logger.info(
+            "forge-continuation: reset — created %s with skeleton.", CONTINUATION_PATH
+        )
+        return 0
+    text = path.read_text(encoding="utf-8")
+    problems = marker_problems(text)
+    if problems:
+        for p in problems:
+            logger.error("forge-continuation: %s", p)
+        return 1
+    text.index(BEGIN_MARKER)
+    end = text.index(END_MARKER) + len(END_MARKER)
+    new_text = text[:end] + "\n\n" + _WRITTEN_SKELETON
+    path.write_text(new_text, encoding="utf-8")
+    logger.info("forge-continuation: reset — written section replaced with skeleton.")
+    return 0
+
+
+def _live_work_signals(root: Path, text: str) -> list[str]:
+    """Return live-work signals visible in the current panel text.
+
+    Args:
+        root: Repo root.
+        text: The note's current content.
+
+    Returns:
+        Blocking signal descriptions; empty when the panel shows no live work.
+    """
+    signals: list[str] = []
+    panel = text
+    if BEGIN_MARKER in panel and END_MARKER in panel:
+        panel = panel[panel.index(BEGIN_MARKER) : panel.index(END_MARKER)]
+    if "unpushed:" in panel and "unpushed: 0" not in panel:
+        signals.append("the panel shows unpushed commits")
+    try:
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        ).stdout.strip()
+        if dirty:
+            signals.append("the working tree is dirty")
+    except (OSError, subprocess.SubprocessError):
+        pass
+    if "pr:" in panel and "pr: none" not in panel and "pr: unknown" not in panel:
+        signals.append("the panel shows an open PR")
+    return signals
+
+
 def _build_parser() -> argparse.ArgumentParser:
     """Build the ``forge-continuation`` argument parser.
 
@@ -226,6 +330,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Report the written section's line usage against "
         "[tool.forge.continuation].judgment_max_lines; exit 1 on bad markers.",
     )
+    reset = sub.add_parser(
+        "reset",
+        help="Replace the written section with a skeleton and regenerate the "
+        "panel; refuses on live work unless --force.",
+    )
+    reset.add_argument(
+        "--force",
+        action="store_true",
+        help="Override the live-work refusal (unpushed commits, dirty tree, open PR).",
+    )
     return parser
 
 
@@ -244,6 +358,8 @@ def main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int
     root = repo_root if repo_root is not None else Path.cwd()
     if args.command == "check":
         return check_note(root)
+    if args.command == "reset":
+        return reset_note(root, force=args.force)
     return refresh_state(root, with_pr=args.with_pr, attempt=args.attempt)
 
 
