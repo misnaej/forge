@@ -1092,11 +1092,11 @@ options:
 ## forge-update-branch
 
 ```text
-usage: forge-update-branch [-h] [--continue] [--base BASE] [--no-push]
+usage: forge-update-branch [-h] [--continue] [--base BASE]
 
 Merge the base into the current branch, resolve the predictable conflicts, and
-commit the merge (exit 0 done, 1 refused, 2 push failed, 3 stopped on
-conflicts that need judgment).
+commit the merge (exit 0 done, 1 refused, 3 stopped on conflicts that need
+judgment). The branch is not pushed; publish via forge-commit.
 
 options:
   -h, --help   show this help message and exit
@@ -1104,7 +1104,6 @@ options:
                conflicts.
   --base BASE  Branch to merge from (default: [tool.forge].base_branch); a
                stacked branch passes its parent.
-  --no-push    Commit only.
 ```
 
 ## forge-upgrade

@@ -11,8 +11,10 @@ git commands is enforced here (FOUNDATION §7: a CLI performing a
 §2-guarded effect enforces that guard in its own code):
 
 - never on a protected branch (``[tool.forge].base_branch``) or a detached HEAD;
-- the pre-commit verdict must pass first (an armed ``forge-emergency``
-  lets stale or missing logs through, never a failed step);
+- the pre-commit verdict must pass before anything is pushed (an armed
+  ``forge-emergency`` lets stale or missing logs through, never a failed
+  step) — the gate sits on the push seam, so every publication path pays it,
+  including ``--push-only`` and any deferred-checkpoint recovery;
 - the message is conventional, a 50-word target (warned up to 55, refused
   past it), with no AI attribution;
 - the index must equal the named files before the commit, and the commit
@@ -340,10 +342,13 @@ def committed_paths(root: Path) -> set[str]:
 
 
 def push(root: Path, branch: str, *, tool: str = "forge-commit") -> int:
-    """Push *branch*, retrying briefly when GitHub is momentarily unavailable.
+    """Push *branch* after the pre-commit verdict passes, retrying on transient errors.
 
-    Never forces and never deletes (:func:`forge.git_utils.push_branch`).
-    Sets the upstream when the branch has none yet.
+    Every publication path goes through here, so the verdict gate pays any
+    deferral (``FORGE_MERGE_SYNC`` / ``FORGE_WIP_SYNC``) at push time instead
+    of never. Never forces and never deletes
+    (:func:`forge.git_utils.push_branch`). Sets the upstream when the branch
+    has none yet.
 
     Args:
         root: Repo root.
@@ -353,7 +358,12 @@ def push(root: Path, branch: str, *, tool: str = "forge-commit") -> int:
     Returns:
         :data:`EXIT_OK` when pushed, :data:`EXIT_PUSH_FAILED` otherwise
         (the commits stay local).
+
+    Raises:
+        CommitRefusedError: When the pre-commit verdict did not pass (and no
+            armed emergency excuses it); nothing is pushed.
     """
+    check_verdict(root)
     upstream = run_git(
         "rev-parse",
         "--abbrev-ref",
@@ -432,7 +442,7 @@ def commit_and_push(root: Path, request: Request) -> int:
     return push(root, branch) if request.push else EXIT_OK
 
 
-def checkpoint(root: Path, message: str, *, push_after: bool) -> int:
+def checkpoint(root: Path, message: str, *, push_after: bool = False) -> int:
     """Commit the whole working tree as a ``wip-sync:`` checkpoint.
 
     Secures dirty work before merging the base in; ``forge-update-branch``
@@ -521,8 +531,9 @@ def _dispatch(args: argparse.Namespace, root: Path) -> int:
         CommitRefusedError: When the argument combination is invalid or a
             guard refuses.
     """
-    # --push-only re-checks the branch, not the commits it publishes: each
-    # was already refused or admitted by this command or the commit hook.
+    # --push-only publishes existing commits; the push seam gates on the
+    # verdict, so deferred checks (FORGE_MERGE_SYNC / FORGE_WIP_SYNC) are
+    # paid here at push time.
     if args.push_only:
         if args.paths or args.message or args.wip_sync:
             msg = "--push-only takes no files, no message and no --wip-sync."

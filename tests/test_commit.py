@@ -454,6 +454,7 @@ def test_commit_and_push_blocking_hook_refuses(feature_repo: Path) -> None:
         commit.commit_and_push(feature_repo, Request("fix: a", ("a.txt",), push=False))
 
 
+@pytest.mark.usefixtures("_fake_evidence")
 def test_push_transient_then_ok_retries(
     feature_repo: Path, monkeypatch: pytest.MonkeyPatch, sleeps: list[float]
 ) -> None:
@@ -477,6 +478,7 @@ def test_push_transient_then_ok_retries(
     assert sleeps == [commit.PUSH_RETRY_DELAY_S]
 
 
+@pytest.mark.usefixtures("_fake_evidence")
 def test_push_non_fast_forward_not_retried(
     feature_repo: Path, monkeypatch: pytest.MonkeyPatch, sleeps: list[float]
 ) -> None:
@@ -495,6 +497,7 @@ def test_push_non_fast_forward_not_retried(
     assert sleeps == []
 
 
+@pytest.mark.usefixtures("_fake_evidence")
 def test_push_all_transient_exhausts_attempts(
     feature_repo: Path, monkeypatch: pytest.MonkeyPatch, sleeps: list[float]
 ) -> None:
@@ -511,6 +514,7 @@ def test_push_all_transient_exhausts_attempts(
     assert len(sleeps) == commit.PUSH_ATTEMPTS - 1
 
 
+@pytest.mark.usefixtures("_fake_evidence")
 def test_push_sets_upstream_only_when_missing(
     feature_repo: Path,
     tmp_path_factory: pytest.TempPathFactory,
@@ -610,12 +614,111 @@ def test_main_push_failure_exits_2(
     assert commit.main(["-m", "fix: a", "a.txt"]) == commit.EXIT_PUSH_FAILED == 2
 
 
+@pytest.mark.usefixtures("_fake_evidence")
 def test_main_push_only_pushes(main_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Push-only mode pushes the current branch without committing."""
     calls: list[tuple[object, object, dict[str, object]]] = []
     monkeypatch.setattr(commit, "push_branch", make_fake_push_branch(calls=calls))
     assert commit.main(["--push-only"]) == commit.EXIT_OK
     assert len(calls) == 1
+
+
+def test_push_refuses_when_verdict_fails(
+    feature_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: the pre-commit verdict did not pass and no emergency is armed.
+
+    MOCK SETUP: ``verdict`` returns a FAIL line; ``push_branch`` must not run.
+    EXPECTED BEHAVIOR: ``push`` raises CommitRefusedError, nothing pushed.
+    """
+    calls: list[tuple[object, object, dict[str, object]]] = []
+    monkeypatch.setattr(commit, "verdict", lambda _r: (False, ["FAIL ruff"]))
+    monkeypatch.setattr(commit, "active_state", lambda _r: None)
+    monkeypatch.setattr(commit, "push_branch", make_fake_push_branch(calls=calls))
+
+    with pytest.raises(CommitRefusedError, match="verdict did not pass"):
+        commit.push(feature_repo, "feat/x")
+    assert calls == []
+
+
+def test_push_gates_on_verdict_even_for_push_only(
+    main_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: ``--push-only`` with a failing verdict.
+
+    MOCK SETUP: ``verdict`` fails; ``push_branch`` must not run.
+    EXPECTED BEHAVIOR: main exits 1 (refused), nothing pushed — the push
+    seam gates every publication path, not just forge-commit's own commits.
+    """
+    calls: list[tuple[object, object, dict[str, object]]] = []
+    monkeypatch.setattr(commit, "verdict", lambda _r: (False, ["FAIL ruff"]))
+    monkeypatch.setattr(commit, "active_state", lambda _r: None)
+    monkeypatch.setattr(commit, "push_branch", make_fake_push_branch(calls=calls))
+
+    assert commit.main(["--push-only"]) == commit.EXIT_REFUSED
+    assert calls == []
+
+
+def test_push_stale_verdict_armed_emergency_passes(
+    feature_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: stale verdict with an armed emergency; push proceeds.
+
+    MOCK SETUP: ``verdict`` returns STALE (no FAIL); ``active_state``
+    returns a truthy state; ``push_branch`` records calls.
+    EXPECTED BEHAVIOR: push succeeds (exit 0), one push call.
+    """
+    calls: list[tuple[object, object, dict[str, object]]] = []
+    monkeypatch.setattr(commit, "verdict", lambda _r: (False, ["STALE ruff"]))
+    monkeypatch.setattr(commit, "active_state", lambda _r: object())
+    monkeypatch.setattr(commit, "push_branch", make_fake_push_branch(calls=calls))
+
+    assert commit.push(feature_repo, "feat/x") == commit.EXIT_OK
+    assert len(calls) == 1
+
+
+def test_push_fail_verdict_armed_emergency_still_refuses(
+    feature_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: a FAIL verdict with an armed emergency; push still refuses.
+
+    MOCK SETUP: ``verdict`` returns FAIL; ``active_state`` returns truthy;
+    ``push_branch`` must not run.
+    EXPECTED BEHAVIOR: CommitRefusedError, nothing pushed.
+    """
+    calls: list[tuple[object, object, dict[str, object]]] = []
+    monkeypatch.setattr(commit, "verdict", lambda _r: (False, ["FAIL ruff"]))
+    monkeypatch.setattr(commit, "active_state", lambda _r: object())
+    monkeypatch.setattr(commit, "push_branch", make_fake_push_branch(calls=calls))
+
+    with pytest.raises(CommitRefusedError, match="verdict did not pass"):
+        commit.push(feature_repo, "feat/x")
+    assert calls == []
+
+
+def test_push_not_reachable_with_typed_merge_sync_env(
+    feature_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: ``FORGE_MERGE_SYNC=1`` typed in the environment, no merge in progress.
+
+    The env var alone does not make ``verdict`` pass: the push seam reads
+    the logs, and a typed deferral marker cannot produce fresh passing
+    logs. ``check_commit_format`` blocks the typed var on the commit
+    side; this test pins the push side.
+
+    MOCK SETUP: env var set, no merge in progress, ``verdict`` returns
+    not-passed (as it would with no fresh logs), ``push_branch`` must not run.
+    EXPECTED BEHAVIOR: CommitRefusedError, nothing pushed.
+    """
+    monkeypatch.setenv("FORGE_MERGE_SYNC", "1")
+    calls: list[tuple[object, object, dict[str, object]]] = []
+    monkeypatch.setattr(commit, "verdict", lambda _r: (False, ["STALE ruff"]))
+    monkeypatch.setattr(commit, "active_state", lambda _r: None)
+    monkeypatch.setattr(commit, "push_branch", make_fake_push_branch(calls=calls))
+
+    with pytest.raises(CommitRefusedError, match="verdict did not pass"):
+        commit.push(feature_repo, "feat/x")
+    assert calls == []
 
 
 def test_wip_sync_commits_whole_dirty_tree(main_env: Path) -> None:

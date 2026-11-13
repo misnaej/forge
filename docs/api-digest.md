@@ -529,9 +529,9 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_staged(root: Path, *diff_filter: str) -> set[str]` _(internal)_ — Paths currently staged, a rename counted as its old and new path.
 - `stage_exactly(root: Path, paths: tuple[str, ...]) -> None` — Stage *paths* and refuse when the index then holds anything else.
 - `committed_paths(root: Path) -> set[str]` — Paths the HEAD commit changed.
-- `push(root: Path, branch: str, *, tool: str = 'forge-commit') -> int` — Push *branch*, retrying briefly when GitHub is momentarily unavailable.
+- `push(root: Path, branch: str, *, tool: str = 'forge-commit') -> int` — Push *branch* after the pre-commit verdict passes, retrying on transient errors.
 - `commit_and_push(root: Path, request: Request) -> int` — Run the guarded commit, then the push.
-- `checkpoint(root: Path, message: str, *, push_after: bool) -> int` — Commit the whole working tree as a ``wip-sync:`` checkpoint.
+- `checkpoint(root: Path, message: str, *, push_after: bool = False) -> int` — Commit the whole working tree as a ``wip-sync:`` checkpoint.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — The CLI surface.
 - `_dispatch(args: argparse.Namespace, root: Path) -> int` _(internal)_ — Route parsed arguments to push-only or a guarded commit.
 - `main(argv: list[str] | None = None) -> int` — Entry point for ``forge-commit``.
@@ -2285,10 +2285,10 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_conflicted_and_automerge(root: Path) -> tuple[set[str], str]` _(internal)_ — Return the paths the merge conflicts on and git's automatic merge tree.
 - `_check_resolution(root: Path, done: Resolution) -> list[str]` _(internal)_ — Check the staged result and return the paths edited by hand.
 - `_commit(root: Path, message: str, *, gated: bool) -> None` _(internal)_ — Commit the merge, with or without the pre-commit gate.
-- `_finish(root: Path, base_ref: str, done: Resolution, *, push_after: bool) -> int` _(internal)_ — Check, commit and push a fully resolved merge.
+- `_finish(root: Path, base_ref: str, done: Resolution) -> int` _(internal)_ — Check and commit a fully resolved merge.
 - `_stop(root: Path, base_ref: str, done: Resolution) -> int` _(internal)_ — Report the conflicts that need judgment and leave the merge in progress.
-- `start(root: Path, base: str | None, *, push_after: bool) -> int` — Merge the base into the current branch and resolve what is mechanical.
-- `resume(root: Path, base: str | None, *, push_after: bool) -> int` — Finish a merge in progress once its judgment conflicts are resolved.
+- `start(root: Path, base: str | None) -> int` — Merge the base into the current branch and resolve what is mechanical.
+- `resume(root: Path, base: str | None) -> int` — Finish a merge in progress once its judgment conflicts are resolved.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — The CLI surface.
 - `main(argv: list[str] | None = None) -> int` — Entry point for ``forge-update-branch``.
 

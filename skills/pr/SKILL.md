@@ -69,7 +69,8 @@ silently merge.** Which variant depends on Step 0:
   recovery (base side of both files, restore consumed fragments from the
   merge base, re-run `forge-changelog release`).
 - **Behind but clean** (left count > 0, not conflicting) → run
-  `forge-update-branch --base <base>` and proceed, saying what was done — **no confirmation
+  `forge-update-branch --base <base>` (commits the merge locally), then
+  push via `forge-commit --push-only`, and proceed, saying what was done — **no confirmation
   needed** (FOUNDATION §6's resolution rule governs): it refreshes the
   branch so verification reflects the real merge result and re-triggers
   CI.
