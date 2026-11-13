@@ -203,12 +203,18 @@ class WrapupFreshness:
             comments in posting order, ``None`` when no comment carries
             one.
         reason: Human-readable one-line explanation of the verdict.
+        cause: Machine-readable degrade cause when ``fresh`` is ``None``
+            (``no-gh`` | ``no-auth`` | ``no-repo`` | ``no-pr-view`` |
+            ``no-head`` | ``no-verified-at`` | ``ok``); ``ok`` whenever
+            ``fresh`` is not ``None``. Lets a blind watch be told apart
+            from a quiet one.
     """
 
     fresh: bool | None
     head_oid: str = ""
     latest_verified_at: str | None = None
     reason: str = ""
+    cause: str = "ok"
 
 
 def _changed_paths(
@@ -291,7 +297,9 @@ def _line_count(root: Path, diff_range: str, pathspec: list[str] | None = None) 
     return total
 
 
-def gh_pr_view(pr_number: int, json_fields: str) -> dict[str, object] | None:
+def gh_pr_view(
+    pr_number: int, json_fields: str, *, repo: str | None = None
+) -> dict[str, object] | None:
     """Return ``gh pr view N --json <fields>`` decoded, or ``None``.
 
     The one ``gh`` seam this module owns. Every failure — missing binary,
@@ -302,11 +310,16 @@ def gh_pr_view(pr_number: int, json_fields: str) -> dict[str, object] | None:
     Args:
         pr_number: The existing PR to read.
         json_fields: Comma-separated ``--json`` field list.
+        repo: Optional ``owner/repo`` slug passed as ``--repo``; inside a
+            checkout gh resolves the repo from the remote, but outside one
+            (or against a different repo) this makes the call explicit.
 
     Returns:
         The decoded object, or ``None`` on any failure.
     """
     cmd = ["gh", "pr", "view", str(pr_number), "--json", json_fields]
+    if repo:
+        cmd.extend(["--repo", repo])
     try:
         proc = subprocess.run(
             cmd, capture_output=True, text=True, check=True, timeout=GH_TIMEOUT_S
@@ -371,7 +384,7 @@ def _latest_verified_sha(pr_number: int) -> str | None:
     return _newest_header_sha(comments if isinstance(comments, list) else [])
 
 
-def wrapup_freshness(pr_number: int) -> WrapupFreshness:
+def wrapup_freshness(pr_number: int, *, repo: str | None = None) -> WrapupFreshness:
     """Compare the PR's newest ``verified-at:`` SHA against its current head.
 
     One ``gh pr view`` call reads head and comments together so the two
@@ -384,22 +397,32 @@ def wrapup_freshness(pr_number: int) -> WrapupFreshness:
 
     Args:
         pr_number: The existing PR to check.
+        repo: Optional ``owner/repo`` slug threaded to ``gh --repo``; inside
+            a checkout gh resolves from the remote, outside one this makes
+            the target explicit.
 
     Returns:
         The verdict; ``fresh`` is ``None`` (skip, never alert) when ``gh``
         failed, returned unparseable JSON or no head, or no comment
         carries a ``verified-at:`` line — an unknown head can never be
         reported stale, since a false alert costs a needless refresh.
+        The ``cause`` field names which degrade path produced the ``None``
+        so a blind watch is distinguishable from a quiet one.
     """
-    data = gh_pr_view(pr_number, "headRefOid,comments")
+    data = gh_pr_view(pr_number, "headRefOid,comments", repo=repo)
     if data is None:
+        cause = "no-repo" if repo is None else "no-pr-view"
         return WrapupFreshness(
-            fresh=None, reason="gh pr view failed or returned no JSON object; skip"
+            fresh=None,
+            reason=f"gh pr view failed or returned no JSON object ({cause}); skip",
+            cause=cause,
         )
     head = str(data.get("headRefOid", ""))
     if not head:
         return WrapupFreshness(
-            fresh=None, reason="gh pr view returned no headRefOid; skip"
+            fresh=None,
+            reason="gh pr view returned no headRefOid; skip",
+            cause="no-head",
         )
     comments = data.get("comments")
     latest = _newest_header_sha(comments if isinstance(comments, list) else [])
@@ -408,6 +431,7 @@ def wrapup_freshness(pr_number: int) -> WrapupFreshness:
             fresh=None,
             head_oid=head,
             reason="no verified-at: comment on the PR; skip",
+            cause="no-verified-at",
         )
     if head.startswith(latest):
         return WrapupFreshness(
@@ -415,6 +439,7 @@ def wrapup_freshness(pr_number: int) -> WrapupFreshness:
             head_oid=head,
             latest_verified_at=latest,
             reason=f"latest verified-at {latest} prefixes head {head}",
+            cause="ok",
         )
     return WrapupFreshness(
         fresh=False,
@@ -424,6 +449,7 @@ def wrapup_freshness(pr_number: int) -> WrapupFreshness:
             f"wrap-up verified at {latest} but PR head is {head}; "
             "re-run /pr <N> to post a refreshed wrap-up"
         ),
+        cause="ok",
     )
 
 
@@ -827,6 +853,30 @@ def _write_evidence(root: Path, base: str, plan: PrPlan, pr_number: int | None) 
     logger.info("pr-plan: wrote %s", path)
 
 
+def _resolve_repo(repo_arg: str | None) -> str | None:
+    """Resolve ``owner/repo`` from *repo_arg* or the checkout's origin remote.
+
+    Args:
+        repo_arg: Explicit ``--repo`` value, or ``None``.
+
+    Returns:
+        The slug, or ``None`` when unresolvable (outside a checkout with no
+        ``--repo``). The caller's gh call then degrades with ``cause=no-repo``.
+    """
+    if repo_arg:
+        return repo_arg
+    try:
+        url = run_git(
+            "remote", "get-url", "origin", cwd=repo_root(), check=False
+        ).strip()
+    except (SystemExit, subprocess.CalledProcessError):
+        return None
+    if not url:
+        return None
+    slug = url.rsplit(":", 1)[-1].rsplit("/", 1)[-1].removesuffix(".git")
+    return slug if "/" in slug else None
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the finalization-path classifier (or the freshness check) and emit JSON.
 
@@ -858,8 +908,14 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Read-only mode: report whether PR --pr's newest posted "
         "wrap-up (verified-at:) still names its current head; emits "
-        "{fresh, head_oid, latest_verified_at, reason}. Needs --pr; "
+        "{fresh, head_oid, latest_verified_at, reason, cause}. Needs --pr; "
         "ignores --base.",
+    )
+    parser.add_argument(
+        "--repo",
+        metavar="OWNER/REPO",
+        help="Explicit repo slug for gh calls (default: resolved from the "
+        "checkout's origin remote). Makes --freshness work outside a checkout.",
     )
     parser.add_argument(
         "--evidence",
@@ -872,7 +928,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.freshness:
         if args.pr is None:
             parser.error("--freshness requires --pr N")
-        emit(json.dumps(asdict(wrapup_freshness(args.pr)), indent=2))
+        emit(
+            json.dumps(
+                asdict(wrapup_freshness(args.pr, repo=_resolve_repo(args.repo))),
+                indent=2,
+            )
+        )
         return 0
     if args.base is None:
         parser.error("--base is required unless --freshness")

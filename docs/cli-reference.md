@@ -795,22 +795,28 @@ options:
 ## forge-pr-plan
 
 ```text
-usage: forge-pr-plan [-h] [--base REF] [--pr N] [--freshness] [--evidence]
+usage: forge-pr-plan [-h] [--base REF] [--pr N] [--freshness]
+                     [--repo OWNER/REPO] [--evidence]
 
 options:
-  -h, --help   show this help message and exit
-  --base REF   Base ref the PR targets (e.g. origin/main); the classified diff
-               is BASE...HEAD. Required unless --freshness.
-  --pr N       Existing PR number — enables the delta path (reads the PR's
-               verified-at: comments via gh). Omit when no PR exists yet.
-  --freshness  Read-only mode: report whether PR --pr's newest posted wrap-up
-               (verified-at:) still names its current head; emits {fresh,
-               head_oid, latest_verified_at, reason}. Needs --pr; ignores
-               --base.
-  --evidence   Also write the review evidence pack to
-               code_health/pr_evidence.log after the plan; the plan JSON and
-               exit code do not change, and a pack failure is only logged.
-               Ignored with --freshness.
+  -h, --help         show this help message and exit
+  --base REF         Base ref the PR targets (e.g. origin/main); the
+                     classified diff is BASE...HEAD. Required unless
+                     --freshness.
+  --pr N             Existing PR number — enables the delta path (reads the
+                     PR's verified-at: comments via gh). Omit when no PR
+                     exists yet.
+  --freshness        Read-only mode: report whether PR --pr's newest posted
+                     wrap-up (verified-at:) still names its current head;
+                     emits {fresh, head_oid, latest_verified_at, reason,
+                     cause}. Needs --pr; ignores --base.
+  --repo OWNER/REPO  Explicit repo slug for gh calls (default: resolved from
+                     the checkout's origin remote). Makes --freshness work
+                     outside a checkout.
+  --evidence         Also write the review evidence pack to
+                     code_health/pr_evidence.log after the plan; the plan JSON
+                     and exit code do not change, and a pack failure is only
+                     logged. Ignored with --freshness.
 ```
 
 ## forge-pr-review-comments
@@ -851,6 +857,23 @@ options:
   --title TITLE  Squash title (conventional-commit format). Required with
                  --bullet; the PR title is forced to match it.
   --bullet TEXT  Bullet line. Repeat 3-5 times.
+```
+
+## forge-pr-watch
+
+```text
+usage: forge-pr-watch [-h] {start,list,stop} ...
+
+Start, list and stop bounded background PR monitors.
+
+positional arguments:
+  {start,list,stop}
+    start            Start a monitor for a PR.
+    list             List registered monitors.
+    stop             Stop a monitor.
+
+options:
+  -h, --help         show this help message and exit
 ```
 
 ## forge-pr-wrapup

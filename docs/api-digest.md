@@ -1780,10 +1780,10 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_changed_paths(root: Path, diff_range: str, pathspec: list[str] | None = None) -> list[str]` _(internal)_ — Return the repo-relative paths changed across *diff_range*.
 - `added_paths(root: Path, diff_range: str) -> list[str]` — Return the new paths across *diff_range* (``--diff-filter=ACR``).
 - `_line_count(root: Path, diff_range: str, pathspec: list[str] | None = None) -> int` _(internal)_ — Return insertions + deletions across *diff_range*.
-- `gh_pr_view(pr_number: int, json_fields: str) -> dict[str, object] | None` — Return ``gh pr view N --json <fields>`` decoded, or ``None``.
+- `gh_pr_view(pr_number: int, json_fields: str, *, repo: str | None = None) -> dict[str, object] | None` — Return ``gh pr view N --json <fields>`` decoded, or ``None``.
 - `_newest_header_sha(comments: list[dict[str, object]]) -> str | None` _(internal)_ — Return the header ``verified-at:`` SHA of the newest comment carrying one.
 - `_latest_verified_sha(pr_number: int) -> str | None` _(internal)_ — Return the newest ``verified-at:`` SHA among the PR's comments.
-- `wrapup_freshness(pr_number: int) -> WrapupFreshness` — Compare the PR's newest ``verified-at:`` SHA against its current head.
+- `wrapup_freshness(pr_number: int, *, repo: str | None = None) -> WrapupFreshness` — Compare the PR's newest ``verified-at:`` SHA against its current head.
 - `_try_delta(root: Path, pr_number: int | None, reasons: list[str], branch_paths: list[str]) -> bool` _(internal)_ — Evaluate delta-mode eligibility, appending the trail to *reasons*.
 - `class _RawEntry` _(internal)_ — One changed path as ``git diff --raw`` reports it.
 - `_raw_entries(root: Path, diff_range: str) -> list[_RawEntry]` _(internal)_ — Return status, path and modes per changed file across *diff_range*.
@@ -1792,6 +1792,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_light_release_refusal(root: Path, base: str, paths: list[str]) -> str | None` _(internal)_ — Return why the diff is not a release assembly, or ``None`` when it is.
 - `classify(root: Path, base: str, pr_number: int | None) -> PrPlan` — Classify the current branch's finalization path.
 - `_write_evidence(root: Path, base: str, plan: PrPlan, pr_number: int | None) -> None` _(internal)_ — Write the review evidence pack; a failure is logged, never raised.
+- `_resolve_repo(repo_arg: str | None) -> str | None` _(internal)_ — Resolve ``owner/repo`` from *repo_arg* or the checkout's origin remote.
 - `main(argv: list[str] | None = None) -> int` — Run the finalization-path classifier (or the freshness check) and emit JSON.
 
 ## `forge.pr_review_comments`
@@ -1825,6 +1826,33 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `post_squash_comment(pr_number: int, body: str) -> int` — Post *body*, then delete the squash comments it supersedes.
 - `ensure_last(pr_number: int) -> int` — Re-post the existing squash comment so it is the newest again.
 - `main() -> int` — Validate the body, post it (or print it), and keep it last.
+
+## `forge.pr_watch`
+
+> _forge-pr-watch — start, list and stop background PR monitors._
+
+- `class MonitorRecord` — One registered monitor.
+- `class Registry` — The on-disk registry of monitors.
+  - `load(cls, path: Path) -> Registry` — Read the registry, tolerating a missing or corrupt file.
+  - `save(self, path: Path) -> None` — Write the registry atomically.
+- `_registry_path(root: Path) -> Path` _(internal)_
+- `_resolve_repo(root: Path, repo_arg: str | None) -> str | None` _(internal)_ — Return ``owner/repo``, from *repo_arg* or the checkout's origin remote.
+- `_gh(*args: str, timeout: int = GH_TIMEOUT_S) -> subprocess.CompletedProcess[str]` _(internal)_ — Run a ``gh`` command, raising on failure.
+- `arming_check(repo: str, pr: int) -> list[str]` — Verify every signal the monitor needs is parseable.
+- `_check_gh_present(failures: list[str]) -> bool` _(internal)_ — Append a failure when gh is missing; return whether gh is usable.
+- `_check_gh_auth(failures: list[str]) -> None` _(internal)_ — Append a failure when gh auth is not logged in.
+- `_check_pr_view(repo: str, pr: int, failures: list[str]) -> None` _(internal)_ — Parse one full gh pr view and append failures for missing signals.
+- `_poll_once(repo: str, pr: int) -> list[str]` _(internal)_ — Run one poll cycle and return alert lines.
+- `_state_alerts(pr: int, view: dict[str, object]) -> list[str]` _(internal)_ — Return alerts for the PR's state and mergeable fields.
+- `_ci_alerts(repo: str, pr: int) -> list[str]` _(internal)_ — Return CI-failure alerts from ``gh pr checks``.
+- `_staleness_alerts(repo: str, pr: int) -> list[str]` _(internal)_ — Return a wrap-up-staleness alert when the freshness verdict is stale.
+- `_monitor_loop(repo: str, pr: int, interval: int, bound: int, registry_path: Path) -> None` _(internal)_ — The bounded poll loop (runs in the spawned child process).
+- `cmd_start(args: argparse.Namespace) -> int` — Start a bounded monitor for a PR.
+- `_pid_cmdline(pid: int) -> str` _(internal)_ — Return the command line of *pid*, or empty when unreadable.
+- `cmd_stop(args: argparse.Namespace) -> int` — Stop one or all monitors, verifying process identity before signalling.
+- `cmd_list(_args: argparse.Namespace) -> int` — List registered monitors.
+- `_build_parser() -> argparse.ArgumentParser` _(internal)_ — The CLI surface.
+- `main(argv: Sequence[str] | None = None) -> int` — Entry point for ``forge-pr-watch``.
 
 ## `forge.pr_wrapup`
 
