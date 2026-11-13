@@ -49,6 +49,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 from forge.git_utils import configure_cli_logging, repo_root, run_git
+from forge.pr_plan import wrapup_freshness
 from forge.run_context import is_ci
 
 
@@ -296,7 +297,7 @@ def _poll_once(repo: str, pr: int) -> list[str]:
                 "--repo",
                 repo,
                 "--json",
-                "number,state,mergeable,headRefOid",
+                "number,state,mergeable,headRefOid,baseRefName",
             ).stdout
         )
     except (
@@ -305,18 +306,68 @@ def _poll_once(repo: str, pr: int) -> list[str]:
         json.JSONDecodeError,
     ) as exc:
         return [f"PR #{pr}: poll failed ({exc})"]
-    alerts.extend(_state_alerts(pr, view))
-    alerts.extend(_ci_alerts(repo, pr))
+    base_ref = str(view.get("baseRefName", ""))
+    stack_child = _stack_parent(repo, base_ref) if base_ref else False
+    alerts.extend(_state_alerts(pr, view, stack_child=stack_child))
+    alerts.extend(_ci_alerts(repo, pr, stack_child=stack_child, base_ref=base_ref))
     alerts.extend(_staleness_alerts(repo, pr))
     return alerts
 
 
-def _state_alerts(pr: int, view: dict[str, object]) -> list[str]:
+def _stack_parent(repo: str, base_ref: str) -> bool:
+    """Return whether *base_ref* is another open PR's head branch.
+
+    A stacked child targets an unmerged parent PR's branch, so
+    ``CONFLICTING`` against it is the expected steady state, not a
+    signal. One ``gh pr list`` call per poll; the open-PR set is small.
+
+    Args:
+        repo: ``owner/repo`` slug.
+        base_ref: The PR's ``baseRefName``.
+
+    Returns:
+        True when an open PR's head branch equals *base_ref*.
+    """
+    try:
+        listing = json.loads(
+            _gh(
+                "pr",
+                "list",
+                "--state",
+                "open",
+                "--repo",
+                repo,
+                "--json",
+                "headRefName",
+                "--limit",
+                "100",
+            ).stdout
+        )
+    except (
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        json.JSONDecodeError,
+    ):
+        return False
+    if not isinstance(listing, list):
+        return False
+    return any(
+        isinstance(pr, dict) and pr.get("headRefName") == base_ref for pr in listing
+    )
+
+
+def _state_alerts(
+    pr: int, view: dict[str, object], *, stack_child: bool = False
+) -> list[str]:
     """Return alerts for the PR's state and mergeable fields.
 
     Args:
         pr: PR number.
         view: Decoded ``gh pr view`` JSON.
+        stack_child: Whether the PR's base is another open PR's branch.
+            ``CONFLICTING`` is the expected steady state in a stack, so
+            it is not alerted on (resolution stays ``forge-update-branch``
+            per FOUNDATION §6).
 
     Returns:
         Alert lines.
@@ -328,19 +379,25 @@ def _state_alerts(pr: int, view: dict[str, object]) -> list[str]:
         alerts.append(f"PR #{pr} MERGED")
     elif state == "CLOSED":
         alerts.append(f"PR #{pr} CLOSED")
-    if mergeable == "CONFLICTING":
+    if mergeable == "CONFLICTING" and not stack_child:
         alerts.append(
             f"PR #{pr} CONFLICTING — run forge-update-branch (monitor never syncs)"
         )
     return alerts
 
 
-def _ci_alerts(repo: str, pr: int) -> list[str]:
+def _ci_alerts(
+    repo: str, pr: int, *, stack_child: bool = False, base_ref: str = ""
+) -> list[str]:
     """Return CI-failure alerts from ``gh pr checks``.
 
     Args:
         repo: ``owner/repo`` slug.
         pr: PR number.
+        stack_child: Whether the PR's base is another open PR's branch;
+            its CI runs against the unmerged parent, which the alert
+            line says so a failure is read in that light.
+        base_ref: The PR's ``baseRefName``, named in the marker.
 
     Returns:
         Alert lines (empty when checks are unavailable or all pass).
@@ -357,8 +414,9 @@ def _ci_alerts(repo: str, pr: int) -> list[str]:
         return []
     if not isinstance(checks, list):
         return []
+    marker = f" (CI run against unmerged parent base {base_ref})" if stack_child else ""
     return [
-        f"PR #{pr} CI FAILED: {c.get('name', '?')}"
+        f"PR #{pr} CI FAILED: {c.get('name', '?')}{marker}"
         for c in checks
         if isinstance(c, dict) and c.get("bucket") == "fail"
     ]
@@ -627,6 +685,119 @@ def cmd_list(_args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _stack_order(prs: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Order open PRs so every parent precedes its stacked children.
+
+    An edge runs from a PR to each open PR whose ``baseRefName`` is its
+    ``headRefName``. Roots (basing on a non-PR branch, e.g. the default
+    branch) come first, then children in dependency order. A cycle —
+    which GitHub cannot produce but untrusted PR fields could fake —
+    falls back to number order for the remainder rather than looping.
+
+    Args:
+        prs: Decoded ``gh pr list`` entries.
+
+    Returns:
+        The PRs in dependency order.
+    """
+    by_head = {str(p.get("headRefName", "")): p for p in prs}
+    children: dict[str, list[dict[str, object]]] = {}
+    roots: list[dict[str, object]] = []
+    for p in prs:
+        base = str(p.get("baseRefName", ""))
+        if base in by_head and by_head[base] is not p:
+            children.setdefault(base, []).append(p)
+        else:
+            roots.append(p)
+    ordered: list[dict[str, object]] = []
+    seen: set[int] = set()
+    queue = list(roots)
+    while queue:
+        p = queue.pop(0)
+        number = int(str(p.get("number", "0")))
+        if number in seen:
+            continue
+        seen.add(number)
+        ordered.append(p)
+        queue.extend(children.get(str(p.get("headRefName", "")), []))
+    ordered.extend(
+        p
+        for p in sorted(prs, key=lambda x: int(x.get("number", 0)))
+        if int(str(p.get("number", "0"))) not in seen
+    )
+    return ordered
+
+
+def cmd_stack(args: argparse.Namespace) -> int:
+    """List the open-PR stack in dependency order with per-PR state.
+
+    Each line carries the PR's base, mergeability, wrap-up freshness and
+    monitor state, so a stack can be read top-down: parent first, each
+    child against its parent's branch.
+
+    Args:
+        args: Parsed CLI arguments.
+
+    Returns:
+        Exit code.
+    """
+    root = repo_root()
+    repo = args.repo or _resolve_repo(root, None)
+    if not repo:
+        logger.error("pr-watch: cannot resolve owner/repo; pass --repo.")
+        return EXIT_REFUSED
+    try:
+        listing = json.loads(
+            _gh(
+                "pr",
+                "list",
+                "--state",
+                "open",
+                "--repo",
+                repo,
+                "--json",
+                "number,title,baseRefName,headRefName,mergeable",
+                "--limit",
+                "100",
+            ).stdout
+        )
+    except (
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        json.JSONDecodeError,
+    ):
+        logger.exception("pr-watch: gh pr list failed")
+        return EXIT_REFUSED
+    if not isinstance(listing, list) or not listing:
+        sys.stdout.write("no open PRs\n")
+        return EXIT_OK
+    prs = [p for p in listing if isinstance(p, dict)]
+    reg = Registry.load(_registry_path(root))
+    monitors = {m.pr: m for m in reg.monitors}
+    for p in _stack_order(prs):
+        number = int(str(p.get("number", "0")))
+        title = str(p.get("title", ""))[:60]
+        base = str(p.get("baseRefName", ""))
+        mergeable = str(p.get("mergeable", ""))
+        try:
+            fresh = wrapup_freshness(number, repo=repo).fresh
+        except Exception:  # noqa: BLE001 - freshness is informational
+            fresh = None
+        fresh_text = {True: "fresh", False: "STALE", None: "unknown"}[fresh]
+        m = monitors.get(number)
+        if m is None:
+            monitor_text = "no-monitor"
+        elif _pid_cmdline(m.pid) != "":
+            monitor_text = f"alive(pid {m.pid})"
+        else:
+            monitor_text = "dead"
+        sys.stdout.write(
+            f"#{number} {title}  base={base}  mergeable={mergeable or '?'}  "
+            f"fresh={fresh_text}  monitor={monitor_text}\n"
+        )
+    return EXIT_OK
+
+
 def _build_parser() -> argparse.ArgumentParser:
     """The CLI surface."""
     parser = argparse.ArgumentParser(
@@ -655,6 +826,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p_stop.add_argument("--pr", type=int, help="PR number to stop.")
     p_stop.add_argument("--all", action="store_true", help="Stop all monitors.")
     p_stop.set_defaults(func=cmd_stop)
+    p_stack = sub.add_parser(
+        "stack", help="List open PRs in stack (dependency) order with state."
+    )
+    p_stack.add_argument("--repo", help="owner/repo (default: the checkout's origin).")
+    p_stack.set_defaults(func=cmd_stack)
     return parser
 
 

@@ -85,6 +85,10 @@ class ComposeInputs:
 
     Attributes:
         head_sha: Short HEAD SHA the wrap-up verifies.
+        verified_base: Branch name the wrap-up is verified against
+            (the PR's ``baseRefName`` when one exists, else the
+            normalized ``--base``); recorded as the ``verified-base:``
+            header so a later base retarget reads as stale.
         mode: ``forge-pr-plan`` mode (full, light-docs, light-regen,
             light-release, light-code, delta).
         reasons: ``forge-pr-plan`` reasons, in order.
@@ -115,6 +119,7 @@ class ComposeInputs:
     emergency_ledger: int | None = None
     delta_prior_sha: str | None = None
     light_regen_evidence: str | None = None
+    verified_base: str | None = None
 
 
 def _report_line(report_text: str, head_sha: str) -> str | None:
@@ -244,6 +249,8 @@ def render_wrapup(inputs: ComposeInputs) -> str:
     """
     _check_evidence(inputs)
     out = [f"verified-at: {inputs.head_sha}"]
+    if inputs.verified_base:
+        out.append(f"verified-base: {inputs.verified_base}")
     if inputs.emergency_ledger is not None:
         out.append("wrapup-mode: emergency")
     elif inputs.mode == "light-code":

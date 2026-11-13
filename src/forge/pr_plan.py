@@ -118,6 +118,7 @@ from forge.pr_delta import (
     configured_docs_only_globs,
     delta_decision,
     docs_only_diff,
+    extract_verified_bases,
     extract_verified_shas,
     light_wrapup_decision,
     regen_only_diff,
@@ -208,6 +209,11 @@ class WrapupFreshness:
             ``no-head`` | ``no-verified-at`` | ``ok``); ``ok`` whenever
             ``fresh`` is not ``None``. Lets a blind watch be told apart
             from a quiet one.
+        verified_base: The ``verified-base:`` branch recorded in the
+            newest wrap-up comment, ``None`` when it carries none (older
+            wrap-ups predate the header).
+        current_base: The PR's current ``baseRefName``, empty when
+            unknown.
     """
 
     fresh: bool | None
@@ -215,6 +221,8 @@ class WrapupFreshness:
     latest_verified_at: str | None = None
     reason: str = ""
     cause: str = "ok"
+    verified_base: str | None = None
+    current_base: str = ""
 
 
 def _changed_paths(
@@ -362,6 +370,30 @@ def _newest_header_sha(comments: list[dict[str, object]]) -> str | None:
     return latest
 
 
+def _newest_header_base(comments: list[dict[str, object]]) -> str | None:
+    """Return the header ``verified-base:`` branch of the newest comment carrying one.
+
+    Same first-match-per-comment, newest-comment-wins rule as
+    :func:`_newest_header_sha`: a wrap-up embeds the sub-reports it
+    summarises, and only its own header line describes the base the
+    whole wrap-up was verified against.
+
+    Args:
+        comments: ``gh pr view --json comments`` entries, posting order.
+
+    Returns:
+        The winning base branch name, or ``None`` when no comment
+        carries a ``verified-base:`` line (wrap-ups posted before the
+        header existed).
+    """
+    latest: str | None = None
+    for comment in comments:
+        bases = extract_verified_bases(str(comment.get("body", "")))
+        if bases:
+            latest = bases[0]
+    return latest
+
+
 def _latest_verified_sha(pr_number: int) -> str | None:
     """Return the newest ``verified-at:`` SHA among the PR's comments.
 
@@ -385,15 +417,19 @@ def _latest_verified_sha(pr_number: int) -> str | None:
 
 
 def wrapup_freshness(pr_number: int, *, repo: str | None = None) -> WrapupFreshness:
-    """Compare the PR's newest ``verified-at:`` SHA against its current head.
+    """Compare the PR's newest ``verified-at:`` SHA and base against its current state.
 
-    One ``gh pr view`` call reads head and comments together so the two
-    cannot drift between reads. Prefix matching mirrors the
-    ``verified-at:`` contract (short SHAs). The verdict is read-only by
-    design: the §6 monitor surfaces a ``False``, and only a fresh ``/pr``
-    run (delta mode) clears it by posting a newer ``verified-at:``. The
-    comment bodies are untrusted — anyone can comment on a public PR —
-    so the verdict is advisory only and never authorizes anything.
+    One ``gh pr view`` call reads head, comments and ``baseRefName``
+    together so they cannot drift between reads. Prefix matching mirrors
+    the ``verified-at:`` contract (short SHAs). A wrap-up whose recorded
+    ``verified-base:`` differs from the PR's current ``baseRefName`` is
+    stale — a stacked child retargeted after its parent merged no
+    longer shows the diff the wrap-up describes. The verdict is
+    read-only by design: the §6 monitor surfaces a ``False``, and only
+    a fresh ``/pr`` run (delta mode) clears it by posting a newer
+    ``verified-at:``. The comment bodies are untrusted — anyone can
+    comment on a public PR — so the verdict is advisory only and never
+    authorizes anything.
 
     Args:
         pr_number: The existing PR to check.
@@ -409,7 +445,7 @@ def wrapup_freshness(pr_number: int, *, repo: str | None = None) -> WrapupFreshn
         The ``cause`` field names which degrade path produced the ``None``
         so a blind watch is distinguishable from a quiet one.
     """
-    data = gh_pr_view(pr_number, "headRefOid,comments", repo=repo)
+    data = gh_pr_view(pr_number, "headRefOid,comments,baseRefName", repo=repo)
     if data is None:
         cause = "no-repo" if repo is None else "no-pr-view"
         return WrapupFreshness(
@@ -418,6 +454,7 @@ def wrapup_freshness(pr_number: int, *, repo: str | None = None) -> WrapupFreshn
             cause=cause,
         )
     head = str(data.get("headRefOid", ""))
+    current_base = str(data.get("baseRefName", ""))
     if not head:
         return WrapupFreshness(
             fresh=None,
@@ -425,19 +462,44 @@ def wrapup_freshness(pr_number: int, *, repo: str | None = None) -> WrapupFreshn
             cause="no-head",
         )
     comments = data.get("comments")
-    latest = _newest_header_sha(comments if isinstance(comments, list) else [])
+    comment_list = comments if isinstance(comments, list) else []
+    latest = _newest_header_sha(comment_list)
     if latest is None:
         return WrapupFreshness(
             fresh=None,
             head_oid=head,
+            current_base=current_base,
             reason="no verified-at: comment on the PR; skip",
             cause="no-verified-at",
+        )
+    verified_base = _newest_header_base(comment_list)
+    # A base retarget (GitHub moves a stacked child onto the merged
+    # parent's base) is exactly the drift this signal exists to catch:
+    # the posted wrap-up then describes a diff that no longer exists.
+    # Checked before the head-prefix test, so a retarget is stale even
+    # when the head has not moved. Wrap-ups without a verified-base
+    # header (posted before it existed) skip this comparison.
+    if verified_base is not None and current_base and verified_base != current_base:
+        return WrapupFreshness(
+            fresh=False,
+            head_oid=head,
+            latest_verified_at=latest,
+            verified_base=verified_base,
+            current_base=current_base,
+            reason=(
+                f"wrap-up verified against base {verified_base} but the PR "
+                f"now targets {current_base} (retargeted); "
+                "re-run /pr <N> to post a refreshed wrap-up"
+            ),
+            cause="ok",
         )
     if head.startswith(latest):
         return WrapupFreshness(
             fresh=True,
             head_oid=head,
             latest_verified_at=latest,
+            verified_base=verified_base,
+            current_base=current_base,
             reason=f"latest verified-at {latest} prefixes head {head}",
             cause="ok",
         )
@@ -445,6 +507,8 @@ def wrapup_freshness(pr_number: int, *, repo: str | None = None) -> WrapupFreshn
         fresh=False,
         head_oid=head,
         latest_verified_at=latest,
+        verified_base=verified_base,
+        current_base=current_base,
         reason=(
             f"wrap-up verified at {latest} but PR head is {head}; "
             "re-run /pr <N> to post a refreshed wrap-up"

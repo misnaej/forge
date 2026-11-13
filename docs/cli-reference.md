@@ -358,6 +358,7 @@ options:
 
 ```text
 usage: forge-commit [-h] [-m MESSAGE] [--no-push] [--push-only] [--wip-sync]
+                    [--base REF]
                     [paths ...]
 
 Commit exactly the named files with forge's guards enforced, then push (never
@@ -375,6 +376,11 @@ options:
   --wip-sync            Checkpoint the whole working tree (forge-update-branch
                         takes one itself): no files named, message starts
                         'wip-sync:', gate deferred to the next real commit.
+  --base REF            Explicit PR base ref for this commit's pre-commit
+                        gate, for a stacked branch before its PR exists:
+                        threaded to the hook as FORGE_PR_BASE_REF — below
+                        GITHUB_BASE_REF, above the open-PR and configured-base
+                        fallbacks. Real commits only.
 ```
 
 ## forge-config
@@ -862,18 +868,19 @@ options:
 ## forge-pr-watch
 
 ```text
-usage: forge-pr-watch [-h] {start,list,stop} ...
+usage: forge-pr-watch [-h] {start,list,stop,stack} ...
 
 Start, list and stop bounded background PR monitors.
 
 positional arguments:
-  {start,list,stop}
-    start            Start a monitor for a PR.
-    list             List registered monitors.
-    stop             Stop a monitor.
+  {start,list,stop,stack}
+    start               Start a monitor for a PR.
+    list                List registered monitors.
+    stop                Stop a monitor.
+    stack               List open PRs in stack (dependency) order with state.
 
 options:
-  -h, --help         show this help message and exit
+  -h, --help            show this help message and exit
 ```
 
 ## forge-pr-wrapup

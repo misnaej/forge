@@ -1608,12 +1608,14 @@ def test_main_freshness_happy_path_emits_verdict_json(
         "latest_verified_at",
         "reason",
         "cause",
+        "verified_base",
+        "current_base",
     }
     assert payload["fresh"] is True
     assert payload["head_oid"] == "cafebabe1234567890000000000000000000000"
     assert payload["latest_verified_at"] == "cafebab"
     assert captured.calls == [
-        ["gh", "pr", "view", "7", "--json", "headRefOid,comments"]
+        ["gh", "pr", "view", "7", "--json", "headRefOid,comments,baseRefName"]
     ]
 
 
@@ -1847,3 +1849,92 @@ def test_changed_paths_failure_raises_instead_of_reading_as_no_change(
         pr_plan._changed_paths(repo, "no-such-ref...HEAD")
     with pytest.raises(subprocess.CalledProcessError):
         pr_plan.added_paths(repo, "no-such-ref...HEAD")
+
+
+# ---------------------------------------------------------------------------
+# wrapup_freshness tests for verified-base behavior
+# ---------------------------------------------------------------------------
+
+
+def test_wrapup_freshness_stale_when_verified_base_differs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A recorded ``verified-base:`` differing from the PR's baseRefName => fresh False.
+
+    SCENARIO: GitHub retargeted a stacked child after its parent merged.
+    MOCK SETUP: gh returns baseRefName 'new-base' and a wrap-up comment
+    stamped ``verified-base: old-base``.
+    EXPECTED: fresh=False; reason names both bases; verified_base and
+    current_base fields are set.
+    """
+    stdout = json.dumps(
+        {
+            "headRefOid": "abcdef123456",
+            "baseRefName": "new-base",
+            "comments": [
+                {"body": "verified-at: abcdef12\nverified-base: old-base\nwrap-up"}
+            ],
+        }
+    )
+    monkeypatch.setattr(pr_plan.subprocess, "run", make_fake_run(stdout=stdout))
+
+    result = pr_plan.wrapup_freshness(7)
+
+    assert result.fresh is False
+    assert "old-base" in result.reason
+    assert "new-base" in result.reason
+    assert result.verified_base == "old-base"
+    assert result.current_base == "new-base"
+
+
+def test_wrapup_freshness_fresh_when_base_matches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """verified-base equal to baseRefName and verified-at prefixing head => fresh True.
+
+    SCENARIO: Nothing moved: same base, same head.
+    MOCK SETUP: gh returns baseRefName 'main' and a wrap-up comment stamped
+    with both headers.
+    EXPECTED: fresh=True.
+    """
+    stdout = json.dumps(
+        {
+            "headRefOid": "abcdef123456",
+            "baseRefName": "main",
+            "comments": [
+                {"body": "verified-at: abcdef12\nverified-base: main\nwrap-up"}
+            ],
+        }
+    )
+    monkeypatch.setattr(pr_plan.subprocess, "run", make_fake_run(stdout=stdout))
+
+    result = pr_plan.wrapup_freshness(7)
+
+    assert result.fresh is True
+    assert result.verified_base == "main"
+    assert result.current_base == "main"
+
+
+def test_wrapup_freshness_back_compat_skips_base_comparison_when_no_verified_base_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wrap-up without a verified-base header skips the base check (old wrap-ups).
+
+    SCENARIO: Old wrap-up comment carrying only verified-at.
+    MOCK SETUP: gh returns baseRefName 'main' and a comment with no
+    verified-base line.
+    EXPECTED: fresh=True on the head prefix; verified_base is None.
+    """
+    stdout = json.dumps(
+        {
+            "headRefOid": "abcdef123456",
+            "baseRefName": "main",
+            "comments": [{"body": "verified-at: abcdef12 wrap-up"}],
+        }
+    )
+    monkeypatch.setattr(pr_plan.subprocess, "run", make_fake_run(stdout=stdout))
+
+    result = pr_plan.wrapup_freshness(7)
+
+    assert result.fresh is True
+    assert result.verified_base is None

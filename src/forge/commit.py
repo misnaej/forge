@@ -58,6 +58,7 @@ from forge.git_utils import (
     git_env_overrides_removed,
     merge_in_progress,
     push_branch,
+    ref_exists,
     repo_root,
     run_git,
 )
@@ -109,6 +110,7 @@ class Request:
     message: str
     paths: tuple[str, ...]
     push: bool
+    base: str | None = None
 
 
 def check_message(message: str) -> None:
@@ -420,7 +422,8 @@ def commit_and_push(root: Path, request: Request) -> int:
         render_edit_receipt(subagent_edits(root, paths=set(request.paths))),
     )
     try:
-        create_commit(root, request.message)
+        env = {"FORGE_PR_BASE_REF": request.base} if request.base else None
+        create_commit(root, request.message, env=env)
     except subprocess.CalledProcessError as exc:
         msg = (
             "the commit was blocked (pre-commit hook or git); nothing committed. "
@@ -514,6 +517,16 @@ def _build_parser() -> argparse.ArgumentParser:
             "deferred to the next real commit."
         ),
     )
+    parser.add_argument(
+        "--base",
+        metavar="REF",
+        help=(
+            "Explicit PR base ref for this commit's pre-commit gate, for a "
+            "stacked branch before its PR exists: threaded to the hook as "
+            "FORGE_PR_BASE_REF — below GITHUB_BASE_REF, above the open-PR "
+            "and configured-base fallbacks. Real commits only."
+        ),
+    )
     return parser
 
 
@@ -535,8 +548,8 @@ def _dispatch(args: argparse.Namespace, root: Path) -> int:
     # verdict, so deferred checks (FORGE_MERGE_SYNC / FORGE_WIP_SYNC) are
     # paid here at push time.
     if args.push_only:
-        if args.paths or args.message or args.wip_sync:
-            msg = "--push-only takes no files, no message and no --wip-sync."
+        if args.paths or args.message or args.wip_sync or args.base:
+            msg = "--push-only takes no files, no message, no --wip-sync and no --base."
             raise CommitRefusedError(msg)
         return push(root, current_branch(root))
     if not args.message:
@@ -546,8 +559,22 @@ def _dispatch(args: argparse.Namespace, root: Path) -> int:
         if args.paths:
             msg = "--wip-sync takes no files: a checkpoint commits the whole tree."
             raise CommitRefusedError(msg)
+        if args.base:
+            msg = "--wip-sync defers the gate; --base applies to real commits only."
+            raise CommitRefusedError(msg)
         return checkpoint(root, args.message, push_after=not args.no_push)
-    request = Request(args.message, tuple(args.paths), push=not args.no_push)
+    base = args.base
+    if base:
+        if base.startswith("-"):
+            msg = f"--base looks like an option: {base!r}."
+            raise CommitRefusedError(msg)
+        if not ref_exists(root, f"origin/{base}") and not ref_exists(root, base):
+            msg = (
+                f"--base {base!r} is not a resolvable ref "
+                f"(tried origin/{base} and {base})."
+            )
+            raise CommitRefusedError(msg)
+    request = Request(args.message, tuple(args.paths), push=not args.no_push, base=base)
     return commit_and_push(root, request)
 
 
