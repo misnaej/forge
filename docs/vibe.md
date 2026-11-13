@@ -71,7 +71,7 @@ root `AGENTS.md` — gitignored files git never restores.
 
 | Claude Code event | Status in Vibe | Workaround |
 |---|---|---|
-| `SessionStart` (continuation note, caveman, foundation sync) | no equivalent | **shipped**: `post_agent` `vibe_session_start.sh` (match `main`) injects a once-per-session continuation reminder; foundation sync is covered by the post-merge drift check |
+| `SessionStart` (plugin version, foundation sync) | `session_start` (non-blocking) on current Vibe | **shipped**: `session_start` extra `print_loaded_plugin_version.sh` prints the loaded release (match `startup|resume`); foundation sync stays on the post-merge drift check. Older Vibe without `session_start`: `post_agent` `vibe_session_start.sh` (match `main`) injects a once-per-session continuation reminder |
 | `PreCompact` state write | no equivalent | **shipped**: `post_agent` `vibe_continuation_state.sh` (match `main`) refreshes the status panel every turn |
 | `SubagentStart` | no equivalent | `post_agent` fires per subagent (`match = config_name`) for timing/logging |
 | `SubagentStop` blocking gate | post-turn, cannot block | not enforceable; listed as an unenforced protection at install |
@@ -86,14 +86,14 @@ Forge's guards are Claude-shaped at the base with per-harness adapters on top to
 ## Terse output (caveman)
 
 Every generated subagent prompt (`.vibe/prompts/*.md`) carries an
-always-on terse-output block, because Vibe has no SessionStart/SubagentStart
+always-on terse-output block, because Vibe has no blocking SessionStart/SubagentStart
 hook to enforce a voice on subagents and skills don't inherit into spawned
 subagents — the style rule lives in the prompt itself. On top of that:
 
 The `/caveman`, `/ultracave` and `/megacave` voice skills are vendored into
 `skills/` (Apache-2.0, attribution in `src/forge/data/VENDORED.md`) and
-published to `.agents/skills/`. Vibe has no SessionStart hook, so there is no
-auto-activation — invoke `/caveman` manually per session.
+published to `.agents/skills/`. Vibe's `session_start` extra only prints the
+plugin version, so there is no auto-activation — invoke `/caveman` manually per session.
 
 ## Checking the install
 
