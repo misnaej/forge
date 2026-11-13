@@ -22,10 +22,12 @@ keystroke (FOUNDATION §2, §6):
 5. Anything left stops the run: the paths are listed, an intake lesson
    records the stop, and the next step is named — ``forge:merge-resolver``
    edits the files, then ``forge-update-branch --continue``.
-6. Commit the merge and push. A merge only this command resolved commits
+6. Commit the merge. A merge only this command resolved commits
    without the local gate, like a merge git completes itself; CI and the
    next ordinary commit check it. A merge with hand-edited files runs the
-   pre-commit gate, because those edits are new code.
+   pre-commit gate, because those edits are new code. The branch is not
+   pushed: publication goes through the gated push path
+   (``forge-commit``), so nothing reaches the remote unchecked.
 
 ``--continue`` needs no saved state: the conflicted set and both sides
 are recomputed from ``HEAD`` and ``MERGE_HEAD``. It refuses unless the
@@ -33,9 +35,8 @@ merge in progress is of the base, nothing is unresolved, and the staged
 result differs from git's own automatic merge only at conflicted paths.
 
 Exit codes:
-    0  merged (or already up to date) and pushed
+    0  merged (or already up to date) and committed locally
     1  refused — nothing changed, or the merge left in progress
-    2  push failed; the merge commit stays local
     3  stopped on conflicts that need judgment; the merge stays in progress
 """
 
@@ -55,7 +56,6 @@ from forge.commit import (
     CommitRefusedError,
     checkpoint,
     current_branch,
-    push,
 )
 from forge.config import load_config
 from forge.gh_comments import ValidationError, validate_no_ai_attribution
@@ -548,14 +548,13 @@ def _commit(root: Path, message: str, *, gated: bool) -> None:
         raise UpdateRefusedError(msg) from exc
 
 
-def _finish(root: Path, base_ref: str, done: Resolution, *, push_after: bool) -> int:
-    """Check, commit and push a fully resolved merge.
+def _finish(root: Path, base_ref: str, done: Resolution) -> int:
+    """Check and commit a fully resolved merge.
 
     Args:
         root: Repo root, mid-merge.
         base_ref: The merged base ref.
         done: Every automatic resolution made.
-        push_after: Push once committed.
 
     Returns:
         An exit code.
@@ -569,8 +568,14 @@ def _finish(root: Path, base_ref: str, done: Resolution, *, push_after: bool) ->
         )
     _commit(root, _message(base_ref, branch, done), gated=bool(hand))
     sha = run_git("rev-parse", "--short", "HEAD", cwd=root).strip()
-    logger.info("forge-update-branch: merged %s into %s (%s).", base_ref, branch, sha)
-    return push(root, branch, tool="forge-update-branch") if push_after else EXIT_OK
+    logger.info(
+        "forge-update-branch: merged %s into %s (%s); not pushed — publish via "
+        "forge-commit, which gates the push on the pre-commit verdict.",
+        base_ref,
+        branch,
+        sha,
+    )
+    return EXIT_OK
 
 
 def _stop(root: Path, base_ref: str, done: Resolution) -> int:
@@ -600,13 +605,12 @@ def _stop(root: Path, base_ref: str, done: Resolution) -> int:
     return EXIT_STOPPED
 
 
-def start(root: Path, base: str | None, *, push_after: bool) -> int:
+def start(root: Path, base: str | None) -> int:
     """Merge the base into the current branch and resolve what is mechanical.
 
     Args:
         root: Repo root.
         base: ``--base`` value.
-        push_after: Push once committed.
 
     Returns:
         An exit code.
@@ -629,7 +633,7 @@ def start(root: Path, base: str | None, *, push_after: bool) -> int:
         logger.info("forge-update-branch: already up to date with %s.", base_ref)
         return EXIT_OK
     if _dirty(root):
-        checkpoint(root, f"wip-sync: before updating from {base_ref}", push_after=False)
+        checkpoint(root, f"wip-sync: before updating from {base_ref}")
     # Exit 1 on conflicts is expected; whether the merge started is read
     # from MERGE_HEAD, not from the exit status.
     run_git(
@@ -652,16 +656,15 @@ def start(root: Path, base: str | None, *, push_after: bool) -> int:
     done = resolve(root)
     if done.remaining:
         return _stop(root, base_ref, done)
-    return _finish(root, base_ref, done, push_after=push_after)
+    return _finish(root, base_ref, done)
 
 
-def resume(root: Path, base: str | None, *, push_after: bool) -> int:
+def resume(root: Path, base: str | None) -> int:
     """Finish a merge in progress once its judgment conflicts are resolved.
 
     Args:
         root: Repo root.
         base: ``--base`` value.
-        push_after: Push once committed.
 
     Returns:
         An exit code.
@@ -687,7 +690,7 @@ def resume(root: Path, base: str | None, *, push_after: bool) -> int:
     done = resolve(root)
     if done.remaining:
         return _stop(root, base_ref, done)
-    return _finish(root, base_ref, done, push_after=push_after)
+    return _finish(root, base_ref, done)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -696,8 +699,9 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="forge-update-branch",
         description=(
             "Merge the base into the current branch, resolve the predictable "
-            "conflicts, and commit the merge (exit 0 done, 1 refused, 2 push "
-            "failed, 3 stopped on conflicts that need judgment)."
+            "conflicts, and commit the merge (exit 0 done, 1 refused, "
+            "3 stopped on conflicts that need judgment). The branch is not "
+            "pushed; publish via forge-commit."
         ),
     )
     parser.add_argument(
@@ -711,7 +715,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Branch to merge from (default: [tool.forge].base_branch); a "
         "stacked branch passes its parent.",
     )
-    parser.add_argument("--no-push", action="store_true", help="Commit only.")
     return parser
 
 
@@ -725,13 +728,12 @@ def main(argv: list[str] | None = None) -> int:
         The exit code (see the module docstring).
     """
     args = _build_parser().parse_args(sys.argv[1:] if argv is None else argv)
-    push_after = not args.no_push
     try:
         with git_env_overrides_removed():
             root = repo_root()
             if args.resume:
-                return resume(root, args.base, push_after=push_after)
-            return start(root, args.base, push_after=push_after)
+                return resume(root, args.base)
+            return start(root, args.base)
     except (UpdateRefusedError, CommitRefusedError) as exc:
         logger.warning("forge-update-branch: refused — %s", exc)
         return EXIT_REFUSED
