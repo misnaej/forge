@@ -69,7 +69,8 @@ silently merge.** Which variant depends on Step 0:
   recovery (base side of both files, restore consumed fragments from the
   merge base, re-run `forge-changelog release`).
 - **Behind but clean** (left count > 0, not conflicting) → run
-  `forge-update-branch --base <base>` and proceed, saying what was done — **no confirmation
+  `forge-update-branch --base <base>` (commits the merge locally), then
+  push via `forge-commit --push-only`, and proceed, saying what was done — **no confirmation
   needed** (FOUNDATION §6's resolution rule governs): it refreshes the
   branch so verification reflects the real merge result and re-triggers
   CI.
@@ -509,11 +510,10 @@ Skip when `forge.run_context.is_ci()` — nobody is there to answer them
 
 ## Step 7: Background PR monitor (default)
 
-19. Delegate the background PR monitor per FOUNDATION §6 "PR
-    finalization" — the canonical description of what it watches, what
-    runs on merge (local cleanup + `issue-triage` `post-pr` mode +
-    `forge-metrics record --pr <number>`, i.e. Step 5 no longer waits for
-    a later session), and when to skip.
+19. Start the background PR monitor with `forge-pr-watch start --pr <N>`
+    (per FOUNDATION §6 "PR finalization" — the canonical description of
+    what it watches, what runs on merge, and when to skip; the command
+    owns the lifecycle: `list` to enumerate, `stop --pr <N>` to stop).
     Call-site delta: new review comments route to `/pr-comments`.
 
 ## Rules

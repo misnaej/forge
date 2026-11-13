@@ -31,7 +31,8 @@ Run the standard commit workflow:
      detached branch, bad message). Pre-commit failure → back to step 1;
      else fix cause, rerun. Never route around a refusal.
    - `2` → push failed, commit stays local. Investigate (behind remote →
-     `forge-update-branch --base <branch>`, which merges and pushes).
+     `forge-update-branch --base <branch>`, which merges and commits; push
+     separately via `forge-commit --push-only`, which gates on the verdict).
      Never force.
    - Refused mid-merge → finish the merge with `forge-update-branch
      --continue`; forge-commit commits your own edits, not merges.

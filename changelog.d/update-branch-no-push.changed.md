@@ -1,0 +1,3 @@
+bump: major
+- `forge-update-branch` no longer pushes: it merges the base, commits the merge locally, and stops. The `--no-push` flag is removed with the default push. Publish the branch with `forge-commit --push-only` (or a normal `forge-commit`), whose push seam now requires a passing pre-commit verdict — so a branch reaches the remote only through a path that ran the checks, and checks deferred mid-merge (`FORGE_MERGE_SYNC` / `FORGE_WIP_SYNC`) are paid at push time instead of never. Exit code 2 ("push failed") no longer exists for this command.
+- **Breaking change**: scripts relying on exit 0 from `forge-update-branch` meaning "merged and pushed" must now push separately.

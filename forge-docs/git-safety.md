@@ -239,8 +239,9 @@ endpoint or the flags from the text a hook can read:
 ## Base sync
 
 One command: `forge-update-branch` (`--base <parent>` for a stacked
-branch, `--no-push` to keep it local). Never rebase, never stash, never
-`git reset --hard`.
+branch). It commits the merge locally but never pushes — publish via
+`forge-commit`, whose push seam gates on the pre-commit verdict. Never
+rebase, never stash, never `git reset --hard`.
 
 1. Refuses on the protected branch or a detached HEAD; fetches the base;
    already up to date → exit 0.
@@ -256,7 +257,9 @@ branch, `--no-push` to keep it local). Never rebase, never stash, never
      source conflicts remain, never textually merged;
    - **the version slot** — `forge-rebump`'s resolution.
 4. All resolved → commits the merge (no local gate, like a merge git
-   completes itself: CI and the next commit check it) and pushes.
+   completes itself: CI and the next commit check it). The branch is not
+   pushed; `forge-commit --push-only` publishes it through the verdict
+   gate, so deferred checks are paid at push time instead of never.
 5. Otherwise exit 3: the merge stays in progress, the paths are listed,
    an intake lesson records the stop. `forge:merge-resolver` edits the
    files (or the main agent does), then `forge-update-branch --continue`

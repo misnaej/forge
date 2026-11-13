@@ -126,42 +126,47 @@ def _lessons(repo: Path) -> list[Path]:
     return sorted((repo / "docs" / "intake" / "lessons").glob("*.md"))
 
 
-def test_start_merges_pushes_and_is_idempotent(tmp_path: Path) -> None:
+def test_start_merges_commits_but_does_not_push_and_is_idempotent(
+    tmp_path: Path,
+) -> None:
     """SCENARIO: base advanced with an unrelated file; run twice.
 
-    EXPECTED BEHAVIOR: first run commits a two-parent merge and pushes it
-    (origin's branch is local HEAD); second run is up to date and adds no
-    commit.
+    EXPECTED BEHAVIOR: first run commits a two-parent merge locally but
+    leaves the remote untouched (origin's branch stays at its old tip);
+    second run is up to date and adds no commit.
     """
     repo, origin = _repo_with_origin(tmp_path)
+    git_stdout(repo, "push", "-q", "origin", "feature/x")
+    remote_before = git_stdout(origin, "rev-parse", "feature/x").strip()
     _advance_origin(tmp_path, origin, {"unrelated.txt": "moved\n"})
 
-    assert update_branch.start(repo, None, push_after=True) == 0
+    assert update_branch.start(repo, None) == 0
 
     assert len(_parents(repo)) == 2
     head = git_stdout(repo, "rev-parse", "HEAD").strip()
-    assert git_stdout(origin, "rev-parse", "feature/x").strip() == head
+    assert head != remote_before
+    assert git_stdout(origin, "rev-parse", "feature/x").strip() == remote_before
     assert (repo / "unrelated.txt").read_text() == "moved\n"
 
-    assert update_branch.start(repo, None, push_after=True) == 0
+    assert update_branch.start(repo, None) == 0
     assert git_stdout(repo, "rev-parse", "HEAD").strip() == head
 
 
-def test_start_logs_the_calling_tool_when_pushing(
+def test_start_logs_that_the_merge_is_not_pushed(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """SCENARIO: clean merge pushed to the bare origin.
+    """SCENARIO: clean merge committed locally.
 
-    EXPECTED BEHAVIOR: the push log names `forge-update-branch`, not the
-    `forge-commit` default.
+    EXPECTED BEHAVIOR: the log names the gated publish path
+    (`forge-commit`), not a push.
     """
     repo, origin = _repo_with_origin(tmp_path)
     _advance_origin(tmp_path, origin, {"unrelated.txt": "moved\n"})
 
     with caplog.at_level("INFO"):
-        assert update_branch.start(repo, None, push_after=True) == 0
+        assert update_branch.start(repo, None) == 0
 
-    assert "forge-update-branch: pushed" in caplog.text
+    assert "not pushed" in caplog.text
 
 
 def test_start_does_not_take_a_base_revert_as_already_seen(tmp_path: Path) -> None:
@@ -182,9 +187,7 @@ def test_start_does_not_take_a_base_revert_as_already_seen(tmp_path: Path) -> No
     commit_all(repo, "branch edits shared")
     _advance_origin(tmp_path, origin, {"shared.txt": _SHARED})
 
-    assert (
-        update_branch.start(repo, None, push_after=False) == update_branch.EXIT_STOPPED
-    )
+    assert update_branch.start(repo, None) == update_branch.EXIT_STOPPED
 
     assert _merge_in_progress(repo)
     assert unmerged_paths(repo) == ["shared.txt"]
@@ -200,7 +203,7 @@ def test_start_checkpoints_a_dirty_tree_before_merging(tmp_path: Path) -> None:
     (repo / "scratch.txt").write_text("wip\n")
     _advance_origin(tmp_path, origin, {"unrelated.txt": "moved\n"})
 
-    assert update_branch.start(repo, None, push_after=False) == 0
+    assert update_branch.start(repo, None) == 0
 
     first_parent = git_stdout(repo, "log", "-1", "--format=%s", "HEAD^1").strip()
     assert first_parent.startswith("wip-sync:")
@@ -227,7 +230,7 @@ def test_start_takes_the_branch_side_for_a_parent_already_squash_merged(
     commit_all(repo, "child edit")
     _advance_origin(tmp_path, origin, {"shared.txt": "one\nparent\nthree\n"})
 
-    assert update_branch.start(repo, None, push_after=False) == 0
+    assert update_branch.start(repo, None) == 0
 
     assert (repo / "shared.txt").read_text() == "one\nchild\nthree\n"
     assert not _merge_in_progress(repo)
@@ -246,7 +249,7 @@ def test_start_stops_on_a_genuine_conflict_and_records_a_lesson(
     repo, _ = _conflicted_repo(tmp_path)
 
     with caplog.at_level("WARNING", logger=update_branch.__name__):
-        code = update_branch.start(repo, None, push_after=False)
+        code = update_branch.start(repo, None)
 
     assert code == update_branch.EXIT_STOPPED
     assert _merge_in_progress(repo)
@@ -291,27 +294,31 @@ def test_resume_commits_a_hand_resolved_merge(
 
     MOCK SETUP: stub pre-commit hook records `FORGE_MERGE_SYNC`.
     EXPECTED BEHAVIOR: marker-free file is staged by resume, merge commit
-    created and pushed. New content runs the gate (`FORGE_MERGE_SYNC=0`); content
-    equal to a side commits ungated (`FORGE_MERGE_SYNC=1`). Without the
-    stage step the commit would see an unmerged index; without the env
-    split both cases would record the same value.
+    created locally but not pushed. New content runs the gate
+    (`FORGE_MERGE_SYNC=0`); content equal to a side commits ungated
+    (`FORGE_MERGE_SYNC=1`). Without the stage step the commit would see an
+    unmerged index; without the env split both cases would record the same
+    value.
 
     Args:
         resolved: Hand-written content for the conflicted file.
         gate_seen: Expected `FORGE_MERGE_SYNC` value the hook recorded.
     """
     repo, origin = _conflicted_repo(tmp_path)
-    assert update_branch.start(repo, None, push_after=False) == 3
+    git_stdout(repo, "push", "-q", "origin", "feature/x")
+    remote_before = git_stdout(origin, "rev-parse", "feature/x").strip()
+    assert update_branch.start(repo, None) == 3
     record = _stub_gate(repo, tmp_path)
     (repo / "shared.txt").write_text(resolved)
 
-    assert update_branch.resume(repo, None, push_after=True) == 0
+    assert update_branch.resume(repo, None) == 0
 
     assert len(_parents(repo)) == 2
     assert not _merge_in_progress(repo)
     assert record.read_text().strip() == gate_seen
     head = git_stdout(repo, "rev-parse", "HEAD").strip()
-    assert git_stdout(origin, "rev-parse", "feature/x").strip() == head
+    assert head != remote_before
+    assert git_stdout(origin, "rev-parse", "feature/x").strip() == remote_before
 
 
 def test_resume_gates_a_hand_edit_even_when_the_env_defers_the_gate(
@@ -325,11 +332,11 @@ def test_resume_gates_a_hand_edit_even_when_the_env_defers_the_gate(
     """
     monkeypatch.setenv("FORGE_MERGE_SYNC", "1")
     repo, _ = _conflicted_repo(tmp_path)
-    assert update_branch.start(repo, None, push_after=False) == 3
+    assert update_branch.start(repo, None) == 3
     record = _stub_gate(repo, tmp_path)
     (repo / "shared.txt").write_text("one\nmerged\nthree\n")
 
-    assert update_branch.resume(repo, None, push_after=False) == 0
+    assert update_branch.resume(repo, None) == 0
 
     assert record.read_text().strip() == "0"
 
@@ -341,10 +348,10 @@ def test_resume_stages_a_file_with_a_bare_equals_line(tmp_path: Path) -> None:
     and commits the merge.
     """
     repo, _ = _conflicted_repo(tmp_path)
-    assert update_branch.start(repo, None, push_after=False) == 3
+    assert update_branch.start(repo, None) == 3
     (repo / "shared.txt").write_text("one\nTitle\n=======\nthree\n")
 
-    assert update_branch.resume(repo, None, push_after=False) == 0
+    assert update_branch.resume(repo, None) == 0
 
     assert not _merge_in_progress(repo)
     assert "=======" in (repo / "shared.txt").read_text()
@@ -377,7 +384,7 @@ def _staged_outside(repo: Path) -> None:
     Args:
         repo: The conflicted checkout to resolve and stage in.
     """
-    assert update_branch.start(repo, None, push_after=False) == 3
+    assert update_branch.start(repo, None) == 3
     (repo / "shared.txt").write_text("one\nmerged\nthree\n")
     (repo / "extra.txt").write_text("sneaked in\n")
     git_stdout(repo, "add", "extra.txt")
@@ -415,7 +422,7 @@ def test_continue_refuses_and_names_a_remedy(
     monkeypatch.setattr(update_branch, "repo_root", lambda: repo)
 
     with caplog.at_level("WARNING", logger=update_branch.__name__):
-        code = update_branch.main(["--continue", "--no-push"])
+        code = update_branch.main(["--continue"])
 
     assert code == 1
     assert remedy in caplog.text
@@ -451,7 +458,7 @@ def test_start_regenerates_a_generated_conflict(
     monkeypatch.setattr(update_branch, "regen_commands", lambda _r: {"gen.txt": ("g",)})
     monkeypatch.setattr(update_branch, "regenerate_artifact", _fake_regenerate)
 
-    assert update_branch.start(repo, None, push_after=False) == 0
+    assert update_branch.start(repo, None) == 0
 
     assert (repo / "gen.txt").read_text() == "generated\n"
     assert "Regenerated: gen.txt" in git_stdout(repo, "log", "-1", "--format=%B")
@@ -486,7 +493,7 @@ def test_start_resolves_the_version_slot_through_rebump(
 
     monkeypatch.setattr(update_branch, "rebump", _fake_rebump)
 
-    assert update_branch.start(repo, None, push_after=False) == 0
+    assert update_branch.start(repo, None) == 0
 
     assert '"1.3.0"' in (repo / slot).read_text()
     assert f"Version slot: {slot}" in git_stdout(repo, "log", "-1", "--format=%B")
@@ -527,14 +534,12 @@ def test_generated_path_waits_for_source_conflicts_then_regenerates(
     monkeypatch.setattr(update_branch, "regen_commands", lambda _r: {"gen.txt": ("g",)})
     monkeypatch.setattr(update_branch, "regenerate_artifact", _fake_regenerate)
 
-    assert (
-        update_branch.start(repo, None, push_after=False) == update_branch.EXIT_STOPPED
-    )
+    assert update_branch.start(repo, None) == update_branch.EXIT_STOPPED
     assert calls == []
     assert "gen.txt" in unmerged_paths(repo)
 
     (repo / "shared.txt").write_text("one\nmerged\nthree\n")
-    assert update_branch.resume(repo, None, push_after=False) == 0
+    assert update_branch.resume(repo, None) == 0
 
     assert calls == ["gen.txt"]
     assert (repo / "gen.txt").read_text() == "generated\n"
@@ -568,10 +573,7 @@ def test_start_stops_when_rebump_refuses_the_version_slot(
     monkeypatch.setattr(update_branch, "rebump", lambda _root: refusal)
 
     with caplog.at_level("WARNING"):
-        assert (
-            update_branch.start(repo, None, push_after=False)
-            == update_branch.EXIT_STOPPED
-        )
+        assert update_branch.start(repo, None) == update_branch.EXIT_STOPPED
 
     assert _merge_in_progress(repo)
     assert unmerged_paths(repo) == [slot]
@@ -594,14 +596,10 @@ def test_resume_does_not_auto_stage_a_modify_delete_conflict(tmp_path: Path) -> 
     commit_all(other, "base deletes shared")
     git_stdout(other, "push", "-q", "origin", "main")
 
-    assert (
-        update_branch.start(repo, None, push_after=False) == update_branch.EXIT_STOPPED
-    )
+    assert update_branch.start(repo, None) == update_branch.EXIT_STOPPED
     assert unmerged_paths(repo) == ["shared.txt"]
 
-    assert (
-        update_branch.resume(repo, None, push_after=False) == update_branch.EXIT_STOPPED
-    )
+    assert update_branch.resume(repo, None) == update_branch.EXIT_STOPPED
 
     assert unmerged_paths(repo) == ["shared.txt"]
     assert _merge_in_progress(repo)
@@ -610,7 +608,7 @@ def test_resume_does_not_auto_stage_a_modify_delete_conflict(tmp_path: Path) -> 
 def test_start_refuses_when_a_merge_is_already_in_progress(tmp_path: Path) -> None:
     """A second `start` mid-merge refuses and points at `--continue`."""
     repo, _ = _conflicted_repo(tmp_path)
-    assert update_branch.start(repo, None, push_after=False) == 3
+    assert update_branch.start(repo, None) == 3
 
     with pytest.raises(UpdateRefusedError, match=r"--continue"):
-        update_branch.start(repo, None, push_after=False)
+        update_branch.start(repo, None)
