@@ -579,6 +579,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `read_pr_state(root: Path) -> PrState | None` — Read the current branch's open PR from GitHub.
 - `refresh_state(root: Path, *, with_pr: bool = False, attempt: str | None = None) -> int` — Rewrite the status panel, optionally re-reading the PR first.
 - `check_note(root: Path) -> int` — Report the written section's line usage against its budget.
+- `reset_note(root: Path, *, force: bool = False) -> int` — Replace the written section with a skeleton and regenerate the panel.
+- `_live_work_signals(root: Path, text: str) -> list[str]` _(internal)_ — Return live-work signals visible in the current panel text.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Build the ``forge-continuation`` argument parser.
 - `main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int` — Run ``forge-continuation``.
 
@@ -604,7 +606,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `judgment_max_lines(root: Path) -> int` — Return the written section's line budget.
 - `note_is_ignored(root: Path) -> bool` — Return whether git ignores the note, so a write can never be committed.
 - `_utc_token() -> str` _(internal)_ — Return the current UTC time as a panel-safe token.
-- `_pr_fields(previous: dict[str, tuple[str, str | None]], pr: PrState | None) -> dict[str, tuple[str, str | None]]` _(internal)_ — Choose fresh PR fields or carry the previous ones forward.
+- `_pr_fields(pr: PrState | None) -> dict[str, tuple[str, str | None]]` _(internal)_ — Return fresh PR fields, or ``unknown`` when GitHub was not read.
 - `write_state(root: Path, *, attempt: str | None = None, pr: PrState | None = None) -> WriteOutcome` — Rewrite the note's status panel, migrating an old-format note first.
 
 ## `forge.doctor`

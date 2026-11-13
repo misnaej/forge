@@ -394,21 +394,24 @@ options:
 ## forge-continuation
 
 ```text
-usage: forge-continuation [-h] {state,check} ...
+usage: forge-continuation [-h] {state,check,reset} ...
 
 Keep .plan/CONTINUATION.md's generated status panel current and check its
 written section's line budget.
 
 positional arguments:
-  {state,check}
-    state        Rewrite the status panel; every byte outside it stays
-                 identical.
-    check        Report the written section's line usage against
-                 [tool.forge.continuation].judgment_max_lines; exit 1 on bad
-                 markers.
+  {state,check,reset}
+    state              Rewrite the status panel; every byte outside it stays
+                       identical.
+    check              Report the written section's line usage against
+                       [tool.forge.continuation].judgment_max_lines; exit 1 on
+                       bad markers.
+    reset              Replace the written section with a skeleton and
+                       regenerate the panel; refuses on live work unless
+                       --force.
 
 options:
-  -h, --help     show this help message and exit
+  -h, --help           show this help message and exit
 ```
 
 ## forge-doctor

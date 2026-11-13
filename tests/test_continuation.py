@@ -90,14 +90,15 @@ def test_state_without_with_pr_never_reads_github(
 def test_with_pr_refreshes_and_a_failed_read_keeps_the_last_fields(
     ignored_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``--with-pr`` writes fresh fields; an unreadable PR leaves the old ones."""
+    """``--with-pr`` writes fresh fields; an unreadable PR reports unknown."""
     good = cs.PrState("61", "clean", "passed", "fresh", "abc1234")
     _stub_pr(monkeypatch, good)
     assert cont.main(["state", "--with-pr"], repo_root=ignored_repo) == 0
     assert "- pr: 61 (as of abc1234)" in _text(ignored_repo)
     _stub_pr(monkeypatch, None)
     assert cont.main(["state", "--with-pr"], repo_root=ignored_repo) == 0
-    assert "- pr: 61 (as of abc1234)" in _text(ignored_repo)
+    # A failed re-read must not carry the previous answer forward.
+    assert "- pr: unknown" in _text(ignored_repo)
 
 
 def test_state_exits_one_when_markers_refuse_the_write(ignored_repo: Path) -> None:
@@ -255,3 +256,44 @@ def test_read_pr_state_no_pr_is_none_fields_and_other_errors_are_unreadable(
     assert state.number == "none"
     _fake_gh(monkeypatch, returncode=1, stdout="", stderr="HTTP 502")
     assert cont.read_pr_state(ignored_repo) is None
+
+
+def test_reset_replaces_written_section_with_skeleton(
+    ignored_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``reset`` rewrites the written half to the five §10 headings, keeps the panel."""
+    monkeypatch.delenv("CI", raising=False)
+    cont.main(["state"], repo_root=ignored_repo)
+    path = ignored_repo / cs.CONTINUATION_PATH
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text + "\nold handoff content\nmore lines\n", encoding="utf-8")
+
+    assert cont.main(["reset", "--force"], repo_root=ignored_repo) == 0
+
+    new_text = path.read_text(encoding="utf-8")
+    assert "## Intent" in new_text
+    assert "## Next step" in new_text
+    assert "old handoff content" not in new_text
+    assert cs.BEGIN_MARKER in new_text
+    assert cs.END_MARKER in new_text
+
+
+def test_reset_refuses_on_dirty_tree_without_force(
+    ignored_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dirty tree blocks reset; --force overrides."""
+    monkeypatch.delenv("CI", raising=False)
+    cont.main(["state"], repo_root=ignored_repo)
+    (ignored_repo / "dirty.txt").write_text("wip\n", encoding="utf-8")
+
+    assert cont.main(["reset"], repo_root=ignored_repo) == 1
+    assert cont.main(["reset", "--force"], repo_root=ignored_repo) == 0
+
+
+def test_reset_in_ci_is_a_noop(
+    ignored_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CI self-skips: exit 0, no file written."""
+    monkeypatch.setenv("CI", "1")
+    assert cont.main(["reset"], repo_root=ignored_repo) == 0
+    assert not (ignored_repo / cs.CONTINUATION_PATH).exists()

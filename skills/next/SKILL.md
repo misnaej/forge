@@ -200,9 +200,10 @@ task-selection precedence rule in Important Rules).
     start the next task.
 
     "Reset" here means **rewrite in place**, never `rm`: run
-    `forge-continuation state` to refresh the status panel, then rewrite
-    the written section for the newly selected task — intent, the first
-    concrete steps, any decision already taken.
+    `forge-continuation state --with-pr` to refresh the status panel, then
+    rewrite the written section for the newly selected task — intent, the
+    first concrete steps, any decision already taken. (Or
+    `forge-continuation reset`, which does the written half for you.)
 
 15. **Continuation hygiene** (every `/next`):
 
@@ -220,7 +221,7 @@ task-selection precedence rule in Important Rules).
       `/memory-audit` — never run it silently. No memory directory →
       skip.
 
-    If `.plan/CONTINUATION.md` does not exist, `forge-continuation state`
+    If `.plan/CONTINUATION.md` does not exist, `forge-continuation state --with-pr`
     creates it with an empty written section. It is gitignored.
 
 ## Important Rules
