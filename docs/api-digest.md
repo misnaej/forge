@@ -1782,6 +1782,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `added_paths(root: Path, diff_range: str) -> list[str]` — Return the new paths across *diff_range* (``--diff-filter=ACR``).
 - `_line_count(root: Path, diff_range: str, pathspec: list[str] | None = None) -> int` _(internal)_ — Return insertions + deletions across *diff_range*.
 - `gh_pr_view(pr_number: int, json_fields: str, *, repo: str | None = None) -> dict[str, object] | None` — Return ``gh pr view N --json <fields>`` decoded, or ``None``.
+- `_newest_header(comments: list[dict[str, object]], extractor: Callable[[str], list[str]]) -> str | None` _(internal)_ — Return the first header value of the newest comment carrying one.
 - `_newest_header_sha(comments: list[dict[str, object]]) -> str | None` _(internal)_ — Return the header ``verified-at:`` SHA of the newest comment carrying one.
 - `_newest_header_base(comments: list[dict[str, object]]) -> str | None` _(internal)_ — Return the header ``verified-base:`` branch of the newest comment carrying one.
 - `_latest_verified_sha(pr_number: int) -> str | None` _(internal)_ — Return the newest ``verified-at:`` SHA among the PR's comments.

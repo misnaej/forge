@@ -131,6 +131,7 @@ from forge.rebump import PLUGIN_PATH
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 
@@ -346,15 +347,36 @@ def gh_pr_view(
     return data if isinstance(data, dict) else None
 
 
-def _newest_header_sha(comments: list[dict[str, object]]) -> str | None:
-    """Return the header ``verified-at:`` SHA of the newest comment carrying one.
+def _newest_header(
+    comments: list[dict[str, object]], extractor: Callable[[str], list[str]]
+) -> str | None:
+    """Return the first header value of the newest comment carrying one.
 
     Two rules, both from the reporter-header contract: within one comment
-    only the *first* ``verified-at:`` counts — a wrap-up embeds the
-    reporter sub-reports it summarises, each stamped at its own (older)
-    SHA, and reading the last match in the text would mistake a quoted
-    stamp for the header; across comments the newest in posting order
-    wins.
+    only the *first* header value counts — a wrap-up embeds the reporter
+    sub-reports it summarises, each stamped at its own (older) value, and
+    reading the last match in the text would mistake a quoted stamp for
+    the header; across comments the newest in posting order wins.
+
+    Args:
+        comments: ``gh pr view --json comments`` entries, posting order.
+        extractor: Header extractor, e.g. ``extract_verified_shas`` for
+            ``verified-at:`` or ``extract_verified_bases`` for
+            ``verified-base:``.
+
+    Returns:
+        The winning header value, or ``None`` when no comment carries one.
+    """
+    latest: str | None = None
+    for comment in comments:
+        values = extractor(str(comment.get("body", "")))
+        if values:
+            latest = values[0]
+    return latest
+
+
+def _newest_header_sha(comments: list[dict[str, object]]) -> str | None:
+    """Return the header ``verified-at:`` SHA of the newest comment carrying one.
 
     Args:
         comments: ``gh pr view --json comments`` entries, posting order.
@@ -362,21 +384,11 @@ def _newest_header_sha(comments: list[dict[str, object]]) -> str | None:
     Returns:
         The winning short SHA, or ``None`` when no comment carries one.
     """
-    latest: str | None = None
-    for comment in comments:
-        shas = extract_verified_shas(str(comment.get("body", "")))
-        if shas:
-            latest = shas[0]
-    return latest
+    return _newest_header(comments, extract_verified_shas)
 
 
 def _newest_header_base(comments: list[dict[str, object]]) -> str | None:
     """Return the header ``verified-base:`` branch of the newest comment carrying one.
-
-    Same first-match-per-comment, newest-comment-wins rule as
-    :func:`_newest_header_sha`: a wrap-up embeds the sub-reports it
-    summarises, and only its own header line describes the base the
-    whole wrap-up was verified against.
 
     Args:
         comments: ``gh pr view --json comments`` entries, posting order.
@@ -386,12 +398,7 @@ def _newest_header_base(comments: list[dict[str, object]]) -> str | None:
         carries a ``verified-base:`` line (wrap-ups posted before the
         header existed).
     """
-    latest: str | None = None
-    for comment in comments:
-        bases = extract_verified_bases(str(comment.get("body", "")))
-        if bases:
-            latest = bases[0]
-    return latest
+    return _newest_header(comments, extract_verified_bases)
 
 
 def _latest_verified_sha(pr_number: int) -> str | None:
