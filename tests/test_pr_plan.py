@@ -1438,6 +1438,117 @@ def test_wrapup_freshness_returns_none_when_no_verified_at_comment(
     assert result.head_oid == "abcdef0000000000000000000000000000000000"
 
 
+# --- wrapup_freshness(): cause field ---------------------------------------
+
+
+def test_wrapup_freshness_cause_ok_on_fresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A fresh verdict carries cause=ok."""
+    stdout = json.dumps(
+        {
+            "headRefOid": "cafebabe1234",
+            "comments": [{"body": "verified-at: cafebab wrap-up"}],
+        }
+    )
+    monkeypatch.setattr(pr_plan.subprocess, "run", make_fake_run(stdout=stdout))
+
+    result = pr_plan.wrapup_freshness(7)
+
+    assert result.fresh is True
+    assert result.cause == "ok"
+
+
+def test_wrapup_freshness_cause_ok_on_stale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale verdict carries cause=ok (the question was answerable)."""
+    stdout = json.dumps(
+        {
+            "headRefOid": "deadbeef9999",
+            "comments": [{"body": "verified-at: cafebab wrap-up"}],
+        }
+    )
+    monkeypatch.setattr(pr_plan.subprocess, "run", make_fake_run(stdout=stdout))
+
+    result = pr_plan.wrapup_freshness(7)
+
+    assert result.fresh is False
+    assert result.cause == "ok"
+
+
+def test_wrapup_freshness_cause_no_pr_view_on_gh_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A gh failure with a repo resolved degrades with cause=no-pr-view."""
+
+    def _raise(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.CalledProcessError(1, ["gh"])
+
+    monkeypatch.setattr(pr_plan.subprocess, "run", _raise)
+
+    result = pr_plan.wrapup_freshness(7, repo="o/r")
+
+    assert result.fresh is None
+    assert result.cause == "no-pr-view"
+
+
+def test_wrapup_freshness_cause_no_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing headRefOid degrades with cause=no-head."""
+    stdout = json.dumps({"comments": []})
+    monkeypatch.setattr(pr_plan.subprocess, "run", make_fake_run(stdout=stdout))
+
+    result = pr_plan.wrapup_freshness(7, repo="o/r")
+
+    assert result.fresh is None
+    assert result.cause == "no-head"
+
+
+def test_wrapup_freshness_cause_no_verified_at(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No verified-at comment degrades with cause=no-verified-at."""
+    stdout = json.dumps(
+        {"headRefOid": "abcdef0000", "comments": [{"body": "no stamp here"}]}
+    )
+    monkeypatch.setattr(pr_plan.subprocess, "run", make_fake_run(stdout=stdout))
+
+    result = pr_plan.wrapup_freshness(7, repo="o/r")
+
+    assert result.fresh is None
+    assert result.cause == "no-verified-at"
+
+
+def test_main_freshness_threads_repo_flag(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--repo is passed as --repo to gh in the freshness path."""
+    captured: list[list[str]] = []
+    stdout = json.dumps(
+        {
+            "headRefOid": "cafebabe1234",
+            "comments": [{"body": "verified-at: cafebab wrap-up"}],
+        }
+    )
+
+    def fake_run(cmd: list[str], **_kw: object) -> subprocess.CompletedProcess[str]:
+        captured.append(cmd)
+        return make_fake_run(stdout=stdout)(cmd)
+
+    monkeypatch.setattr(pr_plan.subprocess, "run", fake_run)
+
+    pr_plan.main(["--freshness", "--pr", "7", "--repo", "myorg/myrepo"])
+
+    out = json.loads(capsys.readouterr().out)
+    assert out["fresh"] is True
+    gh_call = next(c for c in captured if "pr" in c)
+    assert "--repo" in gh_call
+    assert "myorg/myrepo" in gh_call
+
+
 # --- main(): --freshness usage errors -------------------------------------
 
 
@@ -1481,12 +1592,23 @@ def test_main_freshness_happy_path_emits_verdict_json(
     monkeypatch.setattr(
         pr_plan.subprocess, "run", make_fake_run(stdout=stdout, captured=captured)
     )
+    # main() resolves the repo from the checkout before the gh call; stub
+    # repo_root to raise so the auto-resolution degrades to None cleanly.
+    monkeypatch.setattr(
+        pr_plan, "repo_root", lambda: (_ for _ in ()).throw(SystemExit(1))
+    )
 
     rc = pr_plan.main(["--freshness", "--pr", "7"])
 
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
-    assert set(payload) == {"fresh", "head_oid", "latest_verified_at", "reason"}
+    assert set(payload) == {
+        "fresh",
+        "head_oid",
+        "latest_verified_at",
+        "reason",
+        "cause",
+    }
     assert payload["fresh"] is True
     assert payload["head_oid"] == "cafebabe1234567890000000000000000000000"
     assert payload["latest_verified_at"] == "cafebab"

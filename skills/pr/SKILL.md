@@ -509,11 +509,10 @@ Skip when `forge.run_context.is_ci()` — nobody is there to answer them
 
 ## Step 7: Background PR monitor (default)
 
-19. Delegate the background PR monitor per FOUNDATION §6 "PR
-    finalization" — the canonical description of what it watches, what
-    runs on merge (local cleanup + `issue-triage` `post-pr` mode +
-    `forge-metrics record --pr <number>`, i.e. Step 5 no longer waits for
-    a later session), and when to skip.
+19. Start the background PR monitor with `forge-pr-watch start --pr <N>`
+    (per FOUNDATION §6 "PR finalization" — the canonical description of
+    what it watches, what runs on merge, and when to skip; the command
+    owns the lifecycle: `list` to enumerate, `stop --pr <N>` to stop).
     Call-site delta: new review comments route to `/pr-comments`.
 
 ## Rules
