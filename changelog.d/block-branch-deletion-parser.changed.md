@@ -1,0 +1,2 @@
+bump: patch
+- Internal refactor, no behavior change: gh-api command parsing now lives in one place. `git_anchor.sh` gains `guard_gh_api_calls`, which emits `METHOD`/`ENDPOINT`/`FIELDS` per real `gh ... api` call (every `-X`/`--method` spelling, attached or separate, lowercase or clustered); `block_branch_deletion.sh` and `block_force_push.sh` consume its rows instead of hand-rolled parsing, and all three ref-write guards now fail closed when the anchor lib predates a helper they call.
