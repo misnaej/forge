@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import argparse
 import logging
 import os
 import subprocess
@@ -823,3 +824,161 @@ def test_wip_sync_on_protected_branch_refused(main_env: Path) -> None:
 
     assert commit.main(["--wip-sync", "-m", "wip-sync: x", "--no-push"]) == 1
     assert git_stdout(main_env, "log", "-1", "--format=%s").strip() == "chore: seed"
+
+
+# ---------------------------------------------------------------------------
+# forge-commit --base tests
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_refuses_base_with_push_only(tmp_path: Path) -> None:
+    """--base is refused with --push-only.
+
+    SCENARIO: CLI attempts to combine mutually exclusive flags.
+    EXPECTED: CommitRefusedError raised.
+    """
+    args = argparse.Namespace(
+        push_only=True,
+        paths=[],
+        message=None,
+        wip_sync=False,
+        base="some-ref",
+        no_push=False,
+    )
+    with pytest.raises(
+        CommitRefusedError,
+        match="--push-only takes no files, no message, no --wip-sync and no --base",
+    ):
+        commit._dispatch(args, tmp_path)
+
+
+def test_dispatch_refuses_base_with_wip_sync(tmp_path: Path) -> None:
+    """--base is refused with --wip-sync.
+
+    SCENARIO: CLI attempts to combine mutually exclusive flags.
+    EXPECTED: CommitRefusedError raised.
+    """
+    args = argparse.Namespace(
+        push_only=False,
+        paths=[],
+        message="wip",
+        wip_sync=True,
+        base="some-ref",
+        no_push=False,
+    )
+    with pytest.raises(
+        CommitRefusedError,
+        match="--wip-sync defers the gate; --base applies to real commits only",
+    ):
+        commit._dispatch(args, tmp_path)
+
+
+def test_dispatch_refuses_unresolvable_base(tmp_path: Path) -> None:
+    """--base with an unresolvable ref is refused.
+
+    SCENARIO: CLI provides an invalid base ref.
+    EXPECTED: CommitRefusedError raised.
+    """
+    args = argparse.Namespace(
+        push_only=False,
+        paths=[],
+        message="fix: x",
+        wip_sync=False,
+        base="nonexistent-branch",
+        no_push=False,
+    )
+    with pytest.raises(
+        CommitRefusedError, match="--base 'nonexistent-branch' is not a resolvable ref"
+    ):
+        commit._dispatch(args, tmp_path)
+
+
+@pytest.mark.usefixtures("_fake_evidence")
+def test_dispatch_with_valid_base_creates_request_with_base(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """--base with a valid ref creates Request with base set.
+
+    SCENARIO: CLI provides a valid base ref.
+    MOCK SETUP: ref_exists returns True for the base.
+    EXPECTED: Request carries the base value.
+    """
+    calls: list[object] = []
+
+    def _fake_ref_exists(_root: Path, ref: str) -> bool:
+        return ref == "origin/feature-base"
+
+    monkeypatch.setattr(commit, "ref_exists", _fake_ref_exists)
+    monkeypatch.setattr(commit, "current_branch", lambda _: "feature")
+    monkeypatch.setattr(commit, "refuse_mid_merge", lambda _: None)
+    monkeypatch.setattr(commit, "check_message", lambda _: None)
+    monkeypatch.setattr(commit, "stage_exactly", lambda *_: None)
+    monkeypatch.setattr(commit, "check_verdict", lambda _: None)
+    monkeypatch.setattr(commit, "committed_paths", lambda _: set())
+    monkeypatch.setattr(commit, "push", lambda *_: commit.EXIT_OK)
+    monkeypatch.setattr(commit, "run_git", lambda *_a, **_k: "abc1234")
+
+    def _fake_create_commit(
+        root: Path, message: str, *, env: dict[str, str] | None = None
+    ) -> None:
+        calls.append((root, message, env))
+
+    monkeypatch.setattr(commit, "create_commit", _fake_create_commit)
+
+    args = argparse.Namespace(
+        push_only=False,
+        paths=[],
+        message="fix: x",
+        wip_sync=False,
+        base="feature-base",
+        no_push=False,
+    )
+    commit._dispatch(args, tmp_path)
+
+    assert len(calls) == 1
+    _, _, env = calls[0]
+    assert env == {"FORGE_PR_BASE_REF": "feature-base"}
+
+
+@pytest.mark.usefixtures("_fake_evidence")
+def test_dispatch_without_base_creates_request_without_base(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Without --base, Request has base=None and env is None.
+
+    SCENARIO: CLI omits --base.
+    MOCK SETUP: ref_exists not called for base.
+    EXPECTED: Request carries base=None and create_commit receives env=None.
+    """
+    calls: list[object] = []
+
+    def _fake_create_commit(
+        root: Path, message: str, *, env: dict[str, str] | None = None
+    ) -> None:
+        calls.append((root, message, env))
+
+    monkeypatch.setattr(commit, "create_commit", _fake_create_commit)
+    monkeypatch.setattr(commit, "current_branch", lambda _: "feature")
+    monkeypatch.setattr(commit, "refuse_mid_merge", lambda _: None)
+    monkeypatch.setattr(commit, "check_message", lambda _: None)
+    monkeypatch.setattr(commit, "stage_exactly", lambda *_: None)
+    monkeypatch.setattr(commit, "check_verdict", lambda _: None)
+    monkeypatch.setattr(commit, "committed_paths", lambda _: set())
+    monkeypatch.setattr(commit, "push", lambda *_: commit.EXIT_OK)
+    monkeypatch.setattr(commit, "run_git", lambda *_a, **_k: "abc1234")
+
+    args = argparse.Namespace(
+        push_only=False,
+        paths=[],
+        message="fix: x",
+        wip_sync=False,
+        base=None,
+        no_push=False,
+    )
+    commit._dispatch(args, tmp_path)
+
+    assert len(calls) == 1
+    _, _, env = calls[0]
+    assert env is None

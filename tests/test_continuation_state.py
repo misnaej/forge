@@ -290,18 +290,18 @@ def test_attempt_outcome_is_passed_when_only_advisory_steps_fail() -> None:
 def test_pr_fields_carry_forward_with_their_label_then_refresh(
     ignored_repo: Path,
 ) -> None:
-    """Without a PR read the last fields stay labelled; a fresh read replaces them."""
+    """A bare state run reports unknown; a PR read replaces the fields."""
     cs.write_state(ignored_repo, pr=_pr(number="61", as_of="abc1234"))
     cs.write_state(ignored_repo, attempt="passed")
     text = _note(ignored_repo).read_text(encoding="utf-8")
-    assert "- pr: 61 (as of abc1234)" in text
-    assert "- pr-ci: passed (as of abc1234)" in text
-    cs.write_state(ignored_repo, pr=_pr(number="61", as_of="def5678", ci="failed"))
-    text = _note(ignored_repo).read_text(encoding="utf-8")
-    assert "- pr-ci: failed (as of def5678)" in text
+    assert "- pr: unknown" in text
     assert "abc1234" not in "\n".join(
         line for line in text.splitlines() if line.startswith("- pr")
     )
+    cs.write_state(ignored_repo, pr=_pr(number="61", as_of="def5678", ci="failed"))
+    text = _note(ignored_repo).read_text(encoding="utf-8")
+    assert "- pr: 61 (as of def5678)" in text
+    assert "- pr-ci: failed (as of def5678)" in text
 
 
 def test_pr_fields_are_unknown_before_any_read(ignored_repo: Path) -> None:

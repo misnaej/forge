@@ -1987,7 +1987,9 @@ def _open_pr_base_branch(root: Path) -> str | None:
     )
 
 
-def resolve_pr_base_ref(root: Path | None, base_branch: str) -> str | None:
+def resolve_pr_base_ref(
+    root: Path | None, base_branch: str, *, base_override: str | None = None
+) -> str | None:
     """Return the ref this branch's PR actually lands on, falling back to the base.
 
     A stacked PR (opened against another unmerged PR's branch) diverges
@@ -1995,10 +1997,15 @@ def resolve_pr_base_ref(root: Path | None, base_branch: str) -> str | None:
     anything counted "since the fork with ``origin/<base_branch>``"
     includes the parent PR's commits — its changelog fragment, for
     instance. The PR's real base tells the two apart. Resolution order:
-    ``GITHUB_BASE_REF`` (set by GitHub Actions on ``pull_request`` runs),
-    then the open PR's ``base.ref`` via ``gh``, then
-    :func:`resolve_base_branch_ref` — the configured base, which keeps
-    every offline or PR-less workstation on today's behaviour.
+    ``GITHUB_BASE_REF`` (set by GitHub Actions on ``pull_request`` runs,
+    always authoritative in CI), then the explicit local override —
+    the ``base_override`` argument or the ``FORGE_PR_BASE_REF``
+    environment variable, which ``forge-commit --base REF`` sets for
+    its commit's pre-commit hook — then the open PR's ``base.ref`` via
+    ``gh``, then :func:`resolve_base_branch_ref` — the configured base,
+    which keeps every offline or PR-less workstation on today's
+    behaviour. The override only applies when explicitly passed; nothing
+    else reads ``FORGE_PR_BASE_REF``.
     Deliberately a sibling of :func:`resolve_base_branch_ref`, not a
     change to it: the diff-scoped steps that call that function must not
     pay a network round-trip per commit.
@@ -2007,6 +2014,9 @@ def resolve_pr_base_ref(root: Path | None, base_branch: str) -> str | None:
         root: Git repo root; ``None`` uses the cached process-wide
             :func:`repo_root`.
         base_branch: Configured base-branch name (the last fallback).
+        base_override: Explicit PR base ref for this call, below
+            ``GITHUB_BASE_REF`` and above every fallback; ``None`` reads
+            ``FORGE_PR_BASE_REF`` from the environment instead.
 
     Returns:
         A resolvable ref (``origin/<name>`` preferred, local ``<name>``
@@ -2014,8 +2024,10 @@ def resolve_pr_base_ref(root: Path | None, base_branch: str) -> str | None:
     """
     if root is None:
         root = repo_root()
+    override = base_override or os.environ.get("FORGE_PR_BASE_REF", "")
     candidates = [
         os.environ.get("GITHUB_BASE_REF", ""),
+        override,
         _open_pr_base_branch(root) or "",
     ]
     for name in candidates:
@@ -2756,11 +2768,20 @@ def get_modified_files(
 
     if current_branch and current_branch != base_branch:
         base = resolve_base_branch_ref(repo_root, base_branch)
+        label = "configured base"
+        override = os.environ.get("FORGE_PR_BASE_REF", "")
+        if override and not override.startswith("-") and repo_root is not None:
+            for ref in (f"origin/{override}", override):
+                if ref_exists(repo_root, ref):
+                    base = ref
+                    label = "explicit --base override"
+                    break
         if base is not None:
             logger.info(
-                "Checking files modified in '%s' compared to '%s'...",
+                "Checking files modified in '%s' compared to '%s' (%s)...",
                 current_branch,
                 base,
+                label,
             )
 
             # Branch commits + staged + unstaged

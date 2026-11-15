@@ -446,7 +446,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_collect_valid_fragments(root: Path) -> tuple[list[Fragment], list[str]]` _(internal)_ — Parse every pending fragment, splitting valid ones from errors.
 - `check_pending(root: Path) -> list[str]` — Validate every pending fragment under *root*.
 - `check_staged(root: Path, paths: list[str]) -> list[str]` — Validate the staged (index) copy of each fragment in *paths*.
-- `branch_added_fragments(root: Path) -> list[str]` — Return the fragment paths this branch adds and the base does not have.
+- `branch_added_fragments(root: Path, *, base_ref: str | None = None) -> list[str]` — Return the fragment paths this branch adds and the base does not have.
 - `_fragments_in_tag_tree(root: Path, tag: str) -> set[str]` _(internal)_ — Return the repo-relative fragment paths present in *tag*'s tree.
 - `_partition_by_release_tag(root: Path, fragments: list[Fragment]) -> tuple[list[tuple[str, list[Fragment]]], list[Fragment]]` _(internal)_ — Group *fragments* by the earliest tag whose tree holds each one.
 - `plan_assembly(root: Path, latest_tag: str) -> AssemblyPlan | None` — Plan the assembly: tag-aware version and per-tag fragment groups.
@@ -579,6 +579,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `read_pr_state(root: Path) -> PrState | None` — Read the current branch's open PR from GitHub.
 - `refresh_state(root: Path, *, with_pr: bool = False, attempt: str | None = None) -> int` — Rewrite the status panel, optionally re-reading the PR first.
 - `check_note(root: Path) -> int` — Report the written section's line usage against its budget.
+- `reset_note(root: Path, *, force: bool = False) -> int` — Replace the written section with a skeleton and regenerate the panel.
+- `_live_work_signals(root: Path, text: str) -> list[str]` _(internal)_ — Return live-work signals visible in the current panel text.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Build the ``forge-continuation`` argument parser.
 - `main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int` — Run ``forge-continuation``.
 
@@ -604,7 +606,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `judgment_max_lines(root: Path) -> int` — Return the written section's line budget.
 - `note_is_ignored(root: Path) -> bool` — Return whether git ignores the note, so a write can never be committed.
 - `_utc_token() -> str` _(internal)_ — Return the current UTC time as a panel-safe token.
-- `_pr_fields(previous: dict[str, tuple[str, str | None]], pr: PrState | None) -> dict[str, tuple[str, str | None]]` _(internal)_ — Choose fresh PR fields or carry the previous ones forward.
+- `_pr_fields(pr: PrState | None) -> dict[str, tuple[str, str | None]]` _(internal)_ — Return fresh PR fields, or ``unknown`` when GitHub was not read.
 - `write_state(root: Path, *, attempt: str | None = None, pr: PrState | None = None) -> WriteOutcome` — Rewrite the note's status panel, migrating an old-format note first.
 
 ## `forge.doctor`
@@ -987,7 +989,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `file_has_conflict_markers(path: Path) -> bool` — Return whether the file at *path* holds unresolved conflict markers.
 - `resolve_base_branch_ref(root: Path | None, base_branch: str) -> str | None` — Return the ref diff-scoped checks should compare against, origin-first.
 - `_open_pr_base_branch(root: Path) -> str | None` _(internal)_ — Return the base branch of the open PR for the checked-out branch, if any.
-- `resolve_pr_base_ref(root: Path | None, base_branch: str) -> str | None` — Return the ref this branch's PR actually lands on, falling back to the base.
+- `resolve_pr_base_ref(root: Path | None, base_branch: str, *, base_override: str | None = None) -> str | None` — Return the ref this branch's PR actually lands on, falling back to the base.
 - `merge_base_with_head(root: Path | None, base_branch: str) -> str` — Return the merge-base SHA of ``HEAD`` and the resolved base ref.
 - `fork_point_time(root: Path | None, base_branch: str) -> int | None` — Return when this branch left its base: the merge-base's commit time.
 - `get_tree_sha(repo_root: Path, ref: str) -> str | None` — Return the git **tree** SHA of *ref*, or ``None`` when unresolvable.
@@ -1490,6 +1492,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 - `path_classifier(extra_hub: Sequence[str] = ()) -> Callable[[str], PathClass]` — Return a classifier sorting a path into generated, hub or other.
 - `extract_verified_shas(text: str) -> list[str]` — Return every ``verified-at:`` SHA referenced in *text*.
+- `extract_verified_bases(text: str) -> list[str]` — Return every ``verified-base:`` branch name referenced in *text*.
 - `fenced_line_indexes(lines: list[str]) -> set[int]` — Return the indexes of *lines* inside fenced code blocks, delimiters included.
 - `strip_fences(lines: list[str]) -> list[str]` — Return *lines* without fenced code blocks (fence lines included).
 - `find_closing_refs(text: str) -> list[int]` — Return the issue numbers a PR body or commit message would close.
@@ -1781,9 +1784,11 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `added_paths(root: Path, diff_range: str) -> list[str]` — Return the new paths across *diff_range* (``--diff-filter=ACR``).
 - `_line_count(root: Path, diff_range: str, pathspec: list[str] | None = None) -> int` _(internal)_ — Return insertions + deletions across *diff_range*.
 - `gh_pr_view(pr_number: int, json_fields: str, *, repo: str | None = None) -> dict[str, object] | None` — Return ``gh pr view N --json <fields>`` decoded, or ``None``.
+- `_newest_header(comments: list[dict[str, object]], extractor: Callable[[str], list[str]]) -> str | None` _(internal)_ — Return the first header value of the newest comment carrying one.
 - `_newest_header_sha(comments: list[dict[str, object]]) -> str | None` _(internal)_ — Return the header ``verified-at:`` SHA of the newest comment carrying one.
+- `_newest_header_base(comments: list[dict[str, object]]) -> str | None` _(internal)_ — Return the header ``verified-base:`` branch of the newest comment carrying one.
 - `_latest_verified_sha(pr_number: int) -> str | None` _(internal)_ — Return the newest ``verified-at:`` SHA among the PR's comments.
-- `wrapup_freshness(pr_number: int, *, repo: str | None = None) -> WrapupFreshness` — Compare the PR's newest ``verified-at:`` SHA against its current head.
+- `wrapup_freshness(pr_number: int, *, repo: str | None = None) -> WrapupFreshness` — Compare the PR's newest ``verified-at:`` SHA and base against its current state.
 - `_try_delta(root: Path, pr_number: int | None, reasons: list[str], branch_paths: list[str]) -> bool` _(internal)_ — Evaluate delta-mode eligibility, appending the trail to *reasons*.
 - `class _RawEntry` _(internal)_ — One changed path as ``git diff --raw`` reports it.
 - `_raw_entries(root: Path, diff_range: str) -> list[_RawEntry]` _(internal)_ — Return status, path and modes per changed file across *diff_range*.
@@ -1843,14 +1848,17 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_check_gh_auth(failures: list[str]) -> None` _(internal)_ — Append a failure when gh auth is not logged in.
 - `_check_pr_view(repo: str, pr: int, failures: list[str]) -> None` _(internal)_ — Parse one full gh pr view and append failures for missing signals.
 - `_poll_once(repo: str, pr: int) -> list[str]` _(internal)_ — Run one poll cycle and return alert lines.
-- `_state_alerts(pr: int, view: dict[str, object]) -> list[str]` _(internal)_ — Return alerts for the PR's state and mergeable fields.
-- `_ci_alerts(repo: str, pr: int) -> list[str]` _(internal)_ — Return CI-failure alerts from ``gh pr checks``.
+- `_stack_parent(repo: str, base_ref: str) -> bool` _(internal)_ — Return whether *base_ref* is another open PR's head branch.
+- `_state_alerts(pr: int, view: dict[str, object], *, stack_child: bool = False) -> list[str]` _(internal)_ — Return alerts for the PR's state and mergeable fields.
+- `_ci_alerts(repo: str, pr: int, *, stack_child: bool = False, base_ref: str = '') -> list[str]` _(internal)_ — Return CI-failure alerts from ``gh pr checks``.
 - `_staleness_alerts(repo: str, pr: int) -> list[str]` _(internal)_ — Return a wrap-up-staleness alert when the freshness verdict is stale.
 - `_monitor_loop(repo: str, pr: int, interval: int, bound: int, registry_path: Path) -> None` _(internal)_ — The bounded poll loop (runs in the spawned child process).
 - `cmd_start(args: argparse.Namespace) -> int` — Start a bounded monitor for a PR.
 - `_pid_cmdline(pid: int) -> str` _(internal)_ — Return the command line of *pid*, or empty when unreadable.
 - `cmd_stop(args: argparse.Namespace) -> int` — Stop one or all monitors, verifying process identity before signalling.
 - `cmd_list(_args: argparse.Namespace) -> int` — List registered monitors.
+- `_stack_order(prs: list[dict[str, object]]) -> list[dict[str, object]]` _(internal)_ — Order open PRs so every parent precedes its stacked children.
+- `cmd_stack(args: argparse.Namespace) -> int` — List the open-PR stack in dependency order with per-PR state.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — The CLI surface.
 - `main(argv: Sequence[str] | None = None) -> int` — Entry point for ``forge-pr-watch``.
 

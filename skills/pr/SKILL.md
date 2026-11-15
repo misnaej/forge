@@ -58,6 +58,20 @@ silently merge.** Which variant depends on Step 0:
   `<base>` is the branch the PR will target (`[tool.forge].base_branch`
   when set, else the repo default branch).
 
+- **Stacked PRs** (a PR whose base is another open PR's branch):
+  `CONFLICTING` against the unmerged parent is the expected steady
+  state — the §6 monitor does not alert on it for stack members, and a
+  child's CI failures are marked as run against the unmerged parent.
+  `forge-pr-watch stack` lists the open stack in dependency order with
+  each PR's base, mergeability, freshness and monitor state. Wrap-up
+  freshness is base-aware: the wrap-up records `verified-base:` next to
+  `verified-at:`, and when GitHub retargets the child after the parent
+  merges, `forge-pr-plan --freshness` reports `fresh: false` naming the
+  old and new base — refresh via `/pr <N>` delta. A stacked branch's
+  first commit, before its PR exists, takes `forge-commit --base
+  origin/<parent-branch>` so the fragment gate resolves against the
+  parent (see `docs/consumer-release.md` "Stacked PRs").
+
 - **`mergeable: CONFLICTING`** → do not finalize yet. Run
   **`forge-update-branch --base <base>`**: it resolves generated
   artifacts, the version slot and files the branch already holds (every

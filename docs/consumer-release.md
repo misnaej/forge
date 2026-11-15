@@ -312,7 +312,7 @@ the per-tag headings and syncs the manifest to the latest tag.
 No-version opt-outs (`NO_VERSION=1`, branch token, commit marker) apply
 unchanged.
 
-**Stacked PRs.** A branch opened on top of another unmerged PR's branch carries the parent's fragment. The gate counts fragments since the fork with the PR's *real* base — `GITHUB_BASE_REF` in CI, the open PR's target via `gh` on a workstation, the configured base otherwise — so the parent's fragment is not yours and is never counted. Never merge or delete a fragment your change did not create; if the count still trips, retarget the PR or wait for the parent to merge.
+**Stacked PRs.** A branch opened on top of another unmerged PR's branch carries the parent's fragment. The gate counts fragments since the fork with the PR's *real* base — `GITHUB_BASE_REF` in CI (always authoritative there), an explicit `forge-commit --base <ref>` override on a workstation (threaded to the pre-commit hook as `FORGE_PR_BASE_REF`, so it applies only when passed), the open PR's target via `gh`, the configured base otherwise — so the parent's fragment is not yours and is never counted. Before the stacked PR exists, its first commit has no PR to read a base from: pass `--base origin/<parent-branch>` explicitly, and the gate's refusal names that remedy. Never merge or delete a fragment your change did not create; if the count still trips, retarget the PR or wait for the parent to merge.
 
 ## Choosing the bump
 

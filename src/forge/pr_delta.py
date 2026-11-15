@@ -269,6 +269,28 @@ def extract_verified_shas(text: str) -> list[str]:
     return [m.group("sha") for m in VERIFIED_AT_RE.finditer(text)]
 
 
+# The base the wrap-up was verified against, recorded next to the
+# `verified-at:` header: `verified-base: main   (PR #56)`. GitHub keeps
+# no base history on the PR object, so a retargeted stack child is
+# only detectable by comparing this against the PR's current baseRefName.
+VERIFIED_BASE_RE: Final[re.Pattern[str]] = re.compile(
+    r"^verified-base:\s*(?P<base>[^\s(]+)",
+    re.MULTILINE,
+)
+
+
+def extract_verified_bases(text: str) -> list[str]:
+    """Return every ``verified-base:`` branch name referenced in *text*.
+
+    Args:
+        text: Raw markdown body (typically a PR comment).
+
+    Returns:
+        Ordered list of base branch names as they appear in the text.
+    """
+    return [m.group("base") for m in VERIFIED_BASE_RE.finditer(text)]
+
+
 _FENCE_RE: Final[re.Pattern[str]] = re.compile(
     r"^\s*(?P<fence>`{3,}|~{3,})(?P<info>.*)$"
 )

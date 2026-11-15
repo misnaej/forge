@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -208,3 +210,130 @@ def test_resolve_repo_from_origin(
 def test_resolve_repo_explicit_arg(watch_repo: Path) -> None:
     """An explicit --repo wins over the remote."""
     assert pr_watch._resolve_repo(watch_repo, "foo/bar") == "foo/bar"
+
+
+def _completed(stdout: str) -> subprocess.CompletedProcess[str]:
+    """A successful gh call carrying *stdout*.
+
+    Args:
+        stdout: The decoded payload gh printed.
+
+    Returns:
+        A CompletedProcess with returncode 0.
+    """
+    return subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout)
+
+
+# ---------------------------------------------------------------------------
+# Stack-aware signals: _state_alerts / _ci_alerts / _stack_parent / stack / cmd_stack
+# ---------------------------------------------------------------------------
+
+
+def test_state_alerts_suppresses_conflicting_for_stack_child() -> None:
+    """CONFLICTING is expected in a stack: no alert when stack_child is True."""
+    view = {"state": "OPEN", "mergeable": "CONFLICTING"}
+    alerts = pr_watch._state_alerts(1, view, stack_child=True)
+    assert alerts == []
+    alerts = pr_watch._state_alerts(1, view, stack_child=False)
+    assert any("CONFLICTING" in a for a in alerts)
+    merged = pr_watch._state_alerts(
+        1, {"state": "MERGED", "mergeable": ""}, stack_child=True
+    )
+    assert any("MERGED" in a for a in merged)
+
+
+def test_ci_alerts_marks_unmerged_parent_for_stack_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stack child's CI line names the unmerged parent base."""
+    checks = json.dumps([{"name": "ci", "bucket": "fail"}])
+    monkeypatch.setattr(pr_watch, "_gh", lambda *_a, **_k: _completed(checks))
+    alerts = pr_watch._ci_alerts("o/r", 1, stack_child=True, base_ref="feat/parent")
+    assert alerts == [
+        "PR #1 CI FAILED: ci (CI run against unmerged parent base feat/parent)"
+    ]
+    plain = pr_watch._ci_alerts("o/r", 1, stack_child=False)
+    assert plain == ["PR #1 CI FAILED: ci"]
+
+
+def test_stack_parent_matches_open_pr_head(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_stack_parent is True exactly when base_ref is an open PR's headRefName."""
+    listing = json.dumps([{"headRefName": "feat/parent"}, {"headRefName": "other"}])
+    monkeypatch.setattr(pr_watch, "_gh", lambda *_a, **_k: _completed(listing))
+    assert pr_watch._stack_parent("o/r", "feat/parent") is True
+    assert pr_watch._stack_parent("o/r", "main") is False
+
+
+def test_stack_order_parents_before_children() -> None:
+    """A chain a <- b <- c orders as [a, b, c]; a cycle terminates in number order."""
+    chain = [
+        {"number": 3, "headRefName": "c", "baseRefName": "b"},
+        {"number": 1, "headRefName": "a", "baseRefName": "main"},
+        {"number": 2, "headRefName": "b", "baseRefName": "a"},
+    ]
+    assert [p["number"] for p in pr_watch._stack_order(chain)] == [1, 2, 3]
+    cycle = [
+        {"number": 2, "headRefName": "b", "baseRefName": "a"},
+        {"number": 1, "headRefName": "a", "baseRefName": "b"},
+    ]
+    assert [p["number"] for p in pr_watch._stack_order(cycle)] == [1, 2]
+
+
+def test_cmd_stack_prints_prs_in_dependency_order(
+    watch_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """cmd_stack lists open PRs in dependency order with per-PR state."""
+    listing = json.dumps(
+        [
+            {
+                "number": 3,
+                "title": "child",
+                "headRefName": "c",
+                "baseRefName": "b",
+                "mergeable": "CONFLICTING",
+            },
+            {
+                "number": 1,
+                "title": "root",
+                "headRefName": "a",
+                "baseRefName": "main",
+                "mergeable": "MERGEABLE",
+            },
+            {
+                "number": 2,
+                "title": "mid",
+                "headRefName": "b",
+                "baseRefName": "a",
+                "mergeable": "MERGEABLE",
+            },
+        ]
+    )
+    monkeypatch.setattr(pr_watch, "_gh", lambda *_a, **_k: _completed(listing))
+    monkeypatch.setattr(
+        pr_watch,
+        "wrapup_freshness",
+        lambda _n, **_k: SimpleNamespace(fresh=True),
+    )
+    code = pr_watch.cmd_stack(argparse.Namespace(repo="o/r"))
+    assert code == pr_watch.EXIT_OK
+    lines = capsys.readouterr().out.splitlines()
+    assert [line.split()[0] for line in lines] == ["#1", "#2", "#3"]
+    assert "base=main" in lines[0]
+    assert "fresh=fresh" in lines[0]
+    assert "base=a" in lines[1]
+    assert "base=b" in lines[2]
+    assert "monitor=no-monitor" in lines[0]
+
+
+def test_cmd_stack_empty_list_prints_no_open_prs(
+    watch_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """With no open PRs, cmd_stack prints the empty marker."""
+    monkeypatch.setattr(pr_watch, "_gh", lambda *_a, **_k: _completed("[]"))
+    code = pr_watch.cmd_stack(argparse.Namespace(repo="o/r"))
+    assert code == pr_watch.EXIT_OK
+    assert "no open PRs" in capsys.readouterr().out

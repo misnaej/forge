@@ -243,6 +243,13 @@ branch). It commits the merge locally but never pushes — publish via
 `forge-commit`, whose push seam gates on the pre-commit verdict. Never
 rebase, never stash, never `git reset --hard`.
 
+A stacked branch's *first* commit, before any PR exists, has no PR to
+read a base from: `forge-commit --base origin/<parent-branch> -m ...
+<files>` tells the pre-commit gate the real base (the one-fragment gate
+would otherwise count the unmerged parent's fragment and fail with the
+remedy named in its refusal). The flag only exists for that explicit
+pass — it never becomes a hidden default.
+
 1. Refuses on the protected branch or a detached HEAD; fetches the base;
    already up to date → exit 0.
 2. Dirty tree → a `wip-sync:` checkpoint commit first (the whole tree,

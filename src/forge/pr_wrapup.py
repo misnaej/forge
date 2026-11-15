@@ -76,6 +76,7 @@ from forge.pr_delta import (
     FOLLOW_UP_RE,
     PROVENANCE_GATE_STEPS,
     VERIFIED_AT_RE,
+    VERIFIED_BASE_RE,
     extract_verified_shas,
     fenced_line_indexes,
     find_closing_refs,
@@ -246,6 +247,7 @@ def _check_head(head: list[str]) -> list[str]:
         if line.strip()
         and i not in evidence
         and not _MODE_RE.match(line)
+        and not VERIFIED_BASE_RE.match(line)
         and not line.startswith("# ")
         and not line.startswith("<!--")
     ]
@@ -936,8 +938,20 @@ def _gather_inputs(root: Path, args: argparse.Namespace) -> ComposeInputs:
         for flag, name in _REPORT_FLAGS
         if (text := _read_optional(getattr(args, flag))) is not None
     }
-    view = gh_pr_view(args.pr, "body,statusCheckRollup,isDraft") if args.pr else None
+    view = (
+        gh_pr_view(args.pr, "body,statusCheckRollup,isDraft,baseRefName")
+        if args.pr
+        else None
+    )
     body = str(view.get("body") or "") if view else ""
+    # The base the wrap-up is verified against: the PR's real base when
+    # one exists (a stacked PR's parent branch), else the --base ref
+    # with any remote prefix stripped. Recorded as verified-base: so a
+    # later retarget reads as stale in wrapup_freshness.
+    if view is not None and view.get("baseRefName"):
+        verified_base = str(view["baseRefName"])
+    else:
+        verified_base = args.base.removeprefix("origin/")
     # Forge squash-merges, so only the PR body's keywords ever close an
     # issue; commit messages are searched only before the PR exists, as
     # the best guess at what its body will say.
@@ -962,6 +976,7 @@ def _gather_inputs(root: Path, args: argparse.Namespace) -> ComposeInputs:
         head_sha=run_git(
             "rev-parse", "--short", "HEAD", cwd=root, check=False, log_errors=False
         ),
+        verified_base=verified_base,
         mode=mode,
         reasons=reasons,
         reporters=reporters,

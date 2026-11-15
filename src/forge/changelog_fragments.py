@@ -500,7 +500,7 @@ def check_staged(root: Path, paths: list[str]) -> list[str]:
     return errors
 
 
-def branch_added_fragments(root: Path) -> list[str]:
+def branch_added_fragments(root: Path, *, base_ref: str | None = None) -> list[str]:
     """Return the fragment paths this branch adds and the base does not have.
 
     Enforcement seam for the one-fragment-per-PR convention. A fragment
@@ -528,6 +528,10 @@ def branch_added_fragments(root: Path) -> list[str]:
 
     Args:
         root: Repository root directory.
+        base_ref: Pre-resolved PR base ref; ``None`` resolves via
+            :func:`forge.git_utils.resolve_pr_base_ref`. Callers that
+            also report the resolved base pass it here so the gh
+            lookup runs once.
 
     Returns:
         Repo-relative paths of branch-added fragments, sorted; empty
@@ -535,7 +539,8 @@ def branch_added_fragments(root: Path) -> list[str]:
         the count check degrades open rather than failing on repos
         where the fork point is unknowable.
     """
-    base_ref = resolve_pr_base_ref(root, load_config(root).base_branch)
+    if base_ref is None:
+        base_ref = resolve_pr_base_ref(root, load_config(root).base_branch)
     if base_ref is None:
         return []
     fork = run_git("merge-base", base_ref, "HEAD", cwd=root, check=False)

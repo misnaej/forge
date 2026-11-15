@@ -8096,6 +8096,23 @@ def test_fragment_gate_passes_single_branch_added_fragment(tmp_path: Path) -> No
     assert result.passed
 
 
+def test_fragment_gate_refusal_names_forge_commit_base(tmp_path: Path) -> None:
+    """Refusal text for >1 fragments names the forge-commit --base remedy.
+
+    SCENARIO: Two fragments added on one branch.
+    EXPECTED: Message names the stacked-PR remedy explicitly.
+    """
+    work = _init_fragments_mode_repo(tmp_path)
+    (work / "changelog.d").mkdir()
+    (work / "changelog.d" / "a.added.md").write_text("bump: minor\n- a\n")
+    (work / "changelog.d" / "b.added.md").write_text("bump: patch\n- b\n")
+    commit_all(work, "feat: two fragments")
+    result = precommit.step_changelog_version(work)
+    assert not result.passed
+    assert "forge-commit --base origin/" in result.output
+    assert result.output.count("added") >= 2  # mentions added fragments count
+
+
 def _changelog_updated_on_branch_with_source_change(
     work: Path, monkeypatch: pytest.MonkeyPatch
 ) -> precommit.StepResult:
