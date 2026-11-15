@@ -46,9 +46,10 @@ pass, and a slot several releases old resolves the same way.
 
 ## No check confirms the restart
 
-Forge reads which slot is *installed*; nothing exposes which slot a running
-session *loaded*. Every version check stays green across exactly this
-failure.
+The session-start line prints which slot the running session *loaded*
+(`forge plugin loaded: <version>` — the live slot; `/reload-plugins`
+re-reads it). But no check confirms the *restart*: every version check
+stays green across exactly this failure.
 
 - Green check = evidence about the filesystem, never the session
   (FOUNDATION §1, absence of evidence).

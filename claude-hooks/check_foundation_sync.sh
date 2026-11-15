@@ -7,6 +7,10 @@
 # knows to install forge-scripts.
 set -euo pipefail
 
+# Report which plugin release this session loaded (the live slot) —
+# derived from this hook's own path, so it needs no forge-scripts import.
+"$(dirname "$0")/print_loaded_plugin_version.sh" || true
+
 if ! command -v install-forge-claude-md >/dev/null 2>&1; then
     echo "[forge] install-forge-claude-md not on PATH." >&2
     echo "[forge] Run \`pip install forge-scripts\` (or your repo's equivalent)." >&2

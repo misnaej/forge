@@ -1,11 +1,20 @@
 # Vibe-only hooks, merged into the generated .vibe/hooks.toml at generation
-# time. These replace Claude events Vibe does not have (SessionStart /
-# PreCompact) with post_agent equivalents, so they run the script directly
-# (post_agent cannot block; strict is forbidden on it) instead of routing
-# through forge-hook-dispatch.
+# time. session_start covers the plugin-version line on current Vibe; the
+# post_agent entries replace the Claude events older Vibe does not have
+# (SessionStart continuation load / PreCompact state write), so they run
+# the script directly (post_agent cannot block; strict is forbidden on it)
+# instead of routing through forge-hook-dispatch.
 #
 # Format: [[hooks]] with Vibe-native fields: type, match (agent matcher for
-# post_agent), command, timeout. Commands are repo-relative script paths.
+# post_agent, start-reason matcher for session_start), command, timeout.
+# Commands are repo-relative script paths.
+
+[[hooks]]
+name = "vibe-session-start-plugin-version"
+type = "session_start"
+match = "startup|resume"
+command = "claude-hooks/print_loaded_plugin_version.sh"
+timeout = 5
 
 [[hooks]]
 name = "vibe-session-start"

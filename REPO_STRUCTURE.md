@@ -214,6 +214,7 @@ enforcement:
 - block_raw_wrapup_post.sh: block a raw `gh pr comment`/`gh api` post of `code_health/pr_wrapup.md` — the wrap-up is posted only through `forge-pr-wrapup post` (validation, supersede-collapse, squash-last)
 - block_unverified_pr_create.sh: refuse a raw create outright and name `forge-pr-create`, which publishes; the verification it used to attempt here now lives in that command, which runs in the checkout it publishes rather than inferring the branch from command text (FOUNDATION §6)
 - block_raw_ruff.sh: hard-block raw `ruff check` / `ruff format` from agents (no bypass — agents use forge-precommit)
+- print_loaded_plugin_version.sh: SessionStart line printing the loaded plugin release from the hook's own slot (Claude SessionStart hook + Vibe session_start extra); fail-open
 - vibe_session_start.sh: Vibe post_agent replacement for SessionStart continuation load (once per session, deny-inject)
 - vibe_continuation_state.sh: Vibe post_agent replacement for PreCompact state write (every main turn)
 - block_vibe_config.sh: block agent edits to the generated Vibe guard config under .vibe/ (hooks.toml, forge-roster.json, agents/, prompts/) — regeneration is a CLI job (`install-forge-vibe`), never an agent edit

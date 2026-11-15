@@ -205,6 +205,12 @@ def test_unenforced_hooks_reported_never_silently_dropped(plugin_repo: Path) -> 
         "vibe-session-start",
         "vibe-continuation-state",
     }
+    # session_start is informational only (cannot block); its shipped extra
+    # prints the loaded plugin version and runs directly like post_agent.
+    session_start = [
+        e for e in _entries(toml_content) if e.get("event") == "session_start"
+    ]
+    assert {e["name"] for e in session_start} == {"vibe-session-start-plugin-version"}
 
 
 def test_every_entry_routes_through_forge_hook_dispatch_with_roster(
@@ -221,9 +227,10 @@ def test_every_entry_routes_through_forge_hook_dispatch_with_roster(
     assert entries
     for entry in entries:
         command = entry["command"]
-        if entry.get("event") == "post_agent":
-            # post_agent cannot block (strict forbidden); Vibe-only extras
-            # run their script directly, no dispatcher routing.
+        if entry.get("event") in ("post_agent", "session_start"):
+            # Non-blocking Vibe-only extras (post_agent replacements, the
+            # session_start informational line) cannot take strict and run
+            # their script directly — no dispatcher routing.
             assert not command.startswith("forge-hook-dispatch")
             assert entry.get("strict") in (None, False)
             continue
