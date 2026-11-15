@@ -46,6 +46,11 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
+# Fail CLOSED on a lib that predates a helper this hook calls.
+if ! declare -F guard_begin command_positions guard_gh_api_calls > /dev/null; then
+    echo "BLOCKED: the guard anchor lib at $ANCHOR_LIB lacks a helper this hook needs (older or damaged plugin copy) — refusing the command rather than running unguarded." >&2
+    exit 2
+fi
 guard_begin
 
 # Cheap bail: no real git push or gh api at all. Found on the shared
@@ -165,14 +170,30 @@ BEGIN { NP = split(PROTECTED, P, /[[:space:]]+/); found = 0 }
                 hit(b, "git push deletes \x27" b "\x27")
         }
     }
-    if (match(seg, GHRE) && toupper(seg) ~ /(-X|--METHOD)[[:space:]=]*DELETE/) {
-        for (i = 1; i <= NP; i++)
-            if (P[i] != "" && seg ~ ("(refs/heads/|/branches/)" P[i] "/?([^A-Za-z0-9._/-]|$)"))
-                hit(P[i], "gh api DELETE of \x27" P[i] "\x27")
-    }
-}') || verdict="protected	the deletion check could not run"
-blocked="${verdict%%	*}"
-reason="${verdict#*	}"
+}') || verdict="protected\tthe deletion check could not run"
+
+# The gh-api path: the shared lib parses each `gh ... api` call into
+# METHOD/ENDPOINT/FIELDS rows (git_anchor.sh guard_gh_api_calls); this hook
+# matches only DELETE against the protected list on the endpoint column.
+# The endpoint is NOT URL-decoded (%6Dain stays allowed here, as before),
+# and the boundary regex keeps `main` from matching `main-thing`.
+GH_ROWS=$(guard_gh_api_calls "$COMMAND") || GH_ROWS="__unreadable__"
+if [ "$GH_ROWS" = "__unreadable__" ]; then
+    verdict="protected\tthe deletion check could not run"
+elif [ -z "$blocked" ]; then
+    ghv=$(printf '%s\n' "$GH_ROWS" | LC_ALL=C awk -F'\t' -v PROTECTED="$protected" '
+BEGIN { NP = split(PROTECTED, P, /[[:space:]]+/); found = 0 }
+{
+    if (toupper($1) != "DELETE") next
+    for (i = 1; i <= NP; i++)
+        if (P[i] != "" && $2 ~ ("(refs/heads/|/branches/)" P[i] "/?([^A-Za-z0-9._/-]|$)"))
+            { printf "%s\tgh api DELETE of \\x27%s\\x27\n", P[i], P[i]; found = 1; exit }
+}
+END { exit found ? 0 : 1 }') || ghv=""
+    [ -n "$ghv" ] && verdict="$ghv"
+fi
+blocked="${verdict%%\t*}"
+reason="${verdict#*\t}"
 
 if [ -n "$blocked" ]; then
     echo "BLOCKED: refusing to delete a protected remote branch (${reason}). Deleting the base branch is irreversible and bypasses server-side rulesets when run with a privileged account (an agent runs with your credentials). If this is genuinely intended, run it yourself: ! ${COMMAND}" >&2
