@@ -1243,3 +1243,91 @@ guard_chunks() {
     for ((i = 0; i < ${#set}; i++)); do nls+=$'\n'; done
     printf '%s\n' "$2" | LC_ALL=C tr "$set" "$nls"
 }
+
+
+# guard_gh_api_calls <command>
+# One row per real `gh ... api` invocation: METHOD<TAB>ENDPOINT<TAB>FIELDS.
+# METHOD is the uppercased -X/--method value in every spelling (-X PATCH,
+# -XPATCH, -X=PATCH, --method PATCH, --method=PATCH, lowercase, and X hidden
+# in a short cluster), whether the flag sits before or after `api`; empty
+# for a plain GET. ENDPOINT joins the positionals after `api` (usually one),
+# space-joined — never URL-decoded, so %6Dain stays visible and a
+# substituted endpoint keeps its text. FIELDS joins the values of
+# -f/-F/--field/--raw-field/--input on either side of `api`. Columns, not a
+# verdict: consumers match differently (DELETE of a protected branch vs
+# any write to git/refs). Segmentation is the same words view the hooks
+# use, with separators inside parentheses neutralised so a $(…) cannot end
+# a call early. A segmentation failure exits non-zero with no rows, so a
+# caller that captures the output and treats non-zero as "cannot judge"
+# fails closed.
+guard_gh_api_calls() {
+    command_positions --words --no-redir "$1" | sed -E 's/(&&|\|\||;|\|)/\n/g' \
+        | LC_ALL=C awk -v GHRE="gh[[:space:]]+${GH_OPTS}api" '
+function scan(lo, hi,    i, t, name, val, hasval, uname, body, ub, j, c, r, found) {
+    for (i = lo; i <= hi; i++) {
+        t = T[i]
+        if (t == "") continue
+        if (pendmeth) { method = t; pendmeth = 0; continue }
+        if (pendfield) { fields = fields (fields ? " " : "") t; pendfield = 0; continue }
+        if (skip) { skip = 0; continue }
+        if (!endopt && t == "--") { endopt = 1; continue }
+        if (!endopt && substr(t, 1, 2) == "--") {
+            name = t; val = ""; hasval = 0
+            if (index(t, "=")) { name = substr(t, 1, index(t, "=") - 1); val = substr(t, index(t, "=") + 1); hasval = 1 }
+            uname = toupper(name)
+            if (uname == "--METHOD") { if (hasval) method = val; else pendmeth = 1; continue }
+            if (uname == "--FIELD" || uname == "--RAW-FIELD" || uname == "--INPUT") {
+                if (hasval) fields = fields (fields ? " " : "") val; else pendfield = 1
+                continue
+            }
+            if (uname == "--HEADER" || uname == "--JQ" || uname == "--TEMPLATE") { if (!hasval) skip = 1; continue }
+            continue
+        }
+        if (!endopt && substr(t, 1, 1) == "-") {
+            body = substr(t, 2)
+            if (body == "") continue
+            ub = toupper(body)
+            found = 0
+            for (j = 1; j <= length(ub); j++) {
+                c = substr(ub, j, 1)
+                if (c == "X") {
+                    r = substr(body, j + 1); sub(/^=/, "", r)
+                    if (r != "") method = r; else pendmeth = 1
+                    found = 1; break
+                }
+                if (c == "F") {
+                    r = substr(body, j + 1); sub(/^=/, "", r)
+                    if (r != "") fields = fields (fields ? " " : "") r; else pendfield = 1
+                    found = 1; break
+                }
+            }
+            if (found) continue
+            if (substr(ub, length(ub), 1) ~ /[XHfqto]/) skip = 1
+            continue
+        }
+        if (inapi) endpoint = endpoint (endpoint ? " " : "") t
+    }
+}
+{
+    line = $0; out = ""; depth = 0
+    for (i = 1; i <= length(line); i++) {
+        c = substr(line, i, 1)
+        if (c == "(") depth++
+        else if (c == ")" && depth > 0) depth--
+        if (depth > 0 && (c == ";" || c == "&" || c == "|")) c = "_"
+        out = out c
+    }
+    if (!match(out, GHRE)) next
+    full = substr(out, RSTART)
+    n = split(full, T, /[[:space:]]+/)
+    apiidx = 0
+    for (i = 1; i <= n; i++) if (tolower(T[i]) == "api") { apiidx = i; break }
+    if (!apiidx) next
+    method = ""; endpoint = ""; fields = ""; endopt = 0; skip = 0
+    pendmeth = 0; pendfield = 0; inapi = 0
+    scan(2, apiidx - 1)
+    inapi = 1
+    scan(apiidx + 1, n)
+    printf "%s\t%s\t%s\n", toupper(method), endpoint, fields
+}'
+}

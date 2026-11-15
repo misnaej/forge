@@ -5490,6 +5490,30 @@ _HOOK_HELPERS = [
             ("restore", "git restore f"),
         )
     ),
+    pytest.param(
+        "block_branch_deletion.sh",
+        "gh api -X DELETE repos/o/r/branches/main",
+        ("guard_begin", "command_positions", "guard_gh_api_calls"),
+        id="branch-deletion",
+    ),
+    pytest.param(
+        "block_force_push.sh",
+        "gh api -X PATCH repos/o/r/git/refs/heads/main -f force=true",
+        (
+            "guard_begin",
+            "command_positions",
+            "invoked",
+            "guard_help_only",
+            "guard_gh_api_calls",
+        ),
+        id="force-push",
+    ),
+    pytest.param(
+        _PROTECTED,
+        "git push origin HEAD:main",
+        ("guard_begin", "command_positions", "guard_help_only"),
+        id="protected-branches",
+    ),
 ]
 
 

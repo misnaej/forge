@@ -35,6 +35,11 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
+# Fail CLOSED on a lib that predates a helper this hook calls.
+if ! declare -F guard_begin command_positions guard_help_only > /dev/null; then
+    echo "BLOCKED: the guard anchor lib at $ANCHOR_LIB lacks a helper this hook needs (older or damaged plugin copy) — refusing the command rather than running unguarded." >&2
+    exit 2
+fi
 guard_begin
 # Only inspect git commit / git push — checkout, status, log, etc. always
 # allowed. Commands are found on the command-positions view (git_anchor.sh):

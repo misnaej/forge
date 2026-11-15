@@ -28,6 +28,11 @@ if [ ! -r "$ANCHOR_LIB" ]; then
     exit 2
 fi
 source "$ANCHOR_LIB"
+# Fail CLOSED on a lib that predates a helper this hook calls.
+if ! declare -F guard_begin command_positions invoked guard_help_only guard_gh_api_calls > /dev/null; then
+    echo "BLOCKED: the guard anchor lib at $ANCHOR_LIB lacks a helper this hook needs (older or damaged plugin copy) — refusing the command rather than running unguarded." >&2
+    exit 2
+fi
 guard_begin
 # Find the push on the command-positions view (quoted mentions are not
 # pushes; `bash -c "git push -f"` is), then read its flags from the
@@ -81,32 +86,16 @@ fi
 # A pure READ stays allowed: `gh api repos/o/r/git/refs/heads/x`, with
 # `-q` / `--jq` / `--paginate`, carries no method or body flag.
 if invoked "${GH_ANCHOR}api\b"; then
-    # One segment per real `gh api` call, bounded at the next separator.
-    # A separator INSIDE parentheses is neutralised first: a `|` or `;`
-    # within a `$(…)` would otherwise end the segment early and leave the
-    # endpoint in a fragment no stage reads. Only the separator characters
-    # change, never the text, so an endpoint spelled inside a substitution
-    # stays visible. `)` is not itself a bound.
-    # The scan and the extraction are separate steps, not one pipeline: in a
-    # pipeline only the LAST status survives, so a scan that died would read
-    # as "grep found nothing" and the call would run. A scan failure blocks;
-    # only a clean scan with no match means there is nothing to judge.
-    GH_SCAN=$(command_positions --words --no-redir "$COMMAND" \
-        | LC_ALL=C awk '{
-    out = ""; depth = 0
-    for (i = 1; i <= length($0); i++) {
-        c = substr($0, i, 1)
-        if (c == "(") depth++
-        else if (c == ")" && depth > 0) depth--
-        if (depth > 0 && (c == ";" || c == "&" || c == "|")) c = "_"
-        out = out c
-    }
-    print out
-}') || {
+    # One row per real `gh api` call comes from the shared parser
+    # (git_anchor.sh guard_gh_api_calls): METHOD<TAB>ENDPOINT<TAB>FIELDS,
+    # with separators inside a `$(...)` already neutralised there. A parser
+    # failure exits non-zero and blocks — a scan that died must never read
+    # as "nothing found".
+    GH_ROWS=$(guard_gh_api_calls "$COMMAND") || GH_ROWS="__unreadable__"
+    if [ "$GH_ROWS" = "__unreadable__" ]; then
         echo "BLOCKED: the gh-api check could not read this command, so it is refused rather than run unguarded. If a human truly intends it, they run it: ! $COMMAND" >&2
         exit 2
-    }
-    GH_API=$(echo "$GH_SCAN" | grep -oE "gh[[:space:]]+${GH_OPTS}api\b[^;&|]*") || GH_API=""
+    fi
     # Any ref including tags: a force-moved release tag is worse than a
     # moved branch, not better.
     #
@@ -114,22 +103,21 @@ if invoked "${GH_ANCHOR}api\b"; then
     # endpoint rather than a field value — otherwise a PR comment whose
     # body discusses `git/refs` would be refused, and agents write those.
     #
-    # `-X` / `--method` set a method; `-f` / `-F` / `--field` /
-    # `--raw-field` / `--input` carry a body. Attached forms (`-XPATCH`,
-    # `-fforce=true`, `--method=PATCH`) begin with the same characters. The
-    # short test allows letters BEFORE the one that counts, since a cluster
-    # hides the flag otherwise — the same `-[a-zA-Z]*f` shape the git stage
-    # above uses for `-uf` / `-fu`.
+    # The rule stays coarse, as before: a call whose endpoint names
+    # `git/refs` and that carries ANY method (-X/--method, in any spelling
+    # the parser resolves) or ANY body field (-f/-F/--field/--raw-field/
+    # --input) is refused, whatever the values say. A ref write that cannot
+    # be told apart from a force is treated as one.
     #
     # The verdict is a printed token, not an exit status, so an awk that
-    # dies mid-run fails CLOSED (`|| ghapi=…` below) instead of reading as
+    # dies mid-run fails CLOSED (`|| ghapi=...` below) instead of reading as
     # "nothing found". The two cases get different messages: one states a
     # ref write, the other says only that the check could not run.
-    ghapi=$(echo "$GH_API" | LC_ALL=C awk '
-/(^|[[:space:]])[^[:space:]=]*git\/refs/ {
-    if ($0 ~ /(^|[[:space:]])[-][a-zA-Z]*(X|f|F)/) { print "write"; exit }
-    if ($0 ~ /(^|[[:space:]])[-][-](method|field|raw-field|input)/) { print "write"; exit }
-}') || ghapi="unreadable"
+    ghapi=$(printf '%s\n' "$GH_ROWS" | LC_ALL=C awk -F'\t' '{
+        text = $2 " " $3
+        if (text !~ /(^|[[:space:]])[^[:space:]=]*git\/refs/) next
+        if ($1 != "" || $3 != "") { print "write"; exit }
+    }') || ghapi="unreadable"
     if [ "$ghapi" = "unreadable" ]; then
         echo "BLOCKED: the gh-api ref check could not run, so this command is refused rather than run unguarded. If a human truly intends it, they run it: ! $COMMAND" >&2
         exit 2
@@ -142,8 +130,9 @@ if invoked "${GH_ANCHOR}api\b"; then
     # allow-on-false path: a `force:false` token elsewhere in the command
     # must not disarm it. `refId` is an opaque node id, so this stage can
     # say a force update was requested but never which ref it names.
-    if echo "$GH_API" | grep -qE "graphql[^;&|]*updateRef" \
-        && echo "$GH_API" | grep -qE "updateRef[^;&|]*force|force[^;&|]*updateRef"; then
+    if printf '%s\n' "$GH_ROWS" | LC_ALL=C awk -F'\t' '
+        { if ($2 ~ /^graphql([[:space:]]|$)/ && $3 ~ /updateRef/ && $3 ~ /force/) { print "gql"; exit } }' \
+        | grep -q gql; then
         echo "BLOCKED: the updateRef mutation with a force rewrites published history exactly as a force push does. Sync a branch with \`forge-update-branch\`; if a human truly intends this, they run it: ! $COMMAND" >&2
         exit 2
     fi
