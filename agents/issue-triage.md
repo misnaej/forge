@@ -246,13 +246,13 @@ duplicate. No Index.
 
 ## Backlog Index regeneration
 
-`forge-backlog-index` renders the body from live GitHub data and
-overwrites the Index — never hand-edit it. Pass any
-`--lane LABEL=HEADING` the caller asks for. Exit 1 (short listing,
-zero or several `📋 Backlog Index` issues, empty body, tiers 1–2
-alone over GitHub's size limit) leaves the old
-Index standing; exit 2 means GitHub was unreadable. Relay a refusal
-verbatim, never route around it; report any `trimmed:` line.
+`forge-backlog-index` renders the Index from live GitHub data — never
+hand-edit it. The Index body is agent-facing and terse, not people-facing
+(FOUNDATION §8): size is bounded, not voiced down. Pass
+caller-asked `--lane LABEL=HEADING` values. Exit 1 (short listing,
+duplicate or empty Index, tiers 1–2 over GitHub's size limit) leaves the old
+Index standing; exit 2 = GitHub unreadable. Relay a refusal verbatim; report
+any `trimmed:` line.
 
 ## Scope Boundaries
 
