@@ -100,9 +100,10 @@ command resolves, the skill is loaded.
 
 That answers whether a skill is *present*, not whether it is
 *current*. A skill from a slot several releases old resolves exactly
-the same way, and its content is what the session executes. Nothing
-distinguishes the two from inside the session — see FOUNDATION §11
-"Plugin staleness", which is why a restart, not a reload, is the
+the same way, and its content is what the session executes. The
+session-start line (`forge plugin loaded: <version>`) reports which
+slot the session loaded — but it cannot confirm a restart, so see
+FOUNDATION §11 "Plugin staleness": a restart, not a reload, is the
 terminal step of a plugin-moving upgrade.
 
 ## Terse agent traffic (caveman mode)
