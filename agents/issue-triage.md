@@ -247,8 +247,8 @@ duplicate. No Index.
 ## Backlog Index regeneration
 
 `forge-backlog-index` renders the Index from live GitHub data — never
-hand-edit it. The Index body is people-facing plain English even when
-agent-generated (FOUNDATION §8): size is bounded, not voiced down. Pass
+hand-edit it. The Index body is agent-facing and terse, not people-facing
+(FOUNDATION §8): size is bounded, not voiced down. Pass
 caller-asked `--lane LABEL=HEADING` values. Exit 1 (short listing,
 duplicate or empty Index, tiers 1–2 over GitHub's size limit) leaves the old
 Index standing; exit 2 = GitHub unreadable. Relay a refusal verbatim; report

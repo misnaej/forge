@@ -487,9 +487,9 @@ Reviewed by `forge:design-checker` (foundation) + per-repo wrappers.
   (`[tool.forge.hooks].caveman`). People-facing text (PRs, issues, commits,
   human docs): plain concise English. Config comments, file headers: 1–2
   lines, details referenced; advisory pin's comment = its id; unpinned
-  advisory → one line why. Issue bodies are people-facing even when an
-  agent generates them (e.g. the Backlog Index): plain concise English,
-  never caveman; size is bounded, not voiced down.
+  advisory → one line why. Exception: agent-generated issue bodies (e.g.
+  the Backlog Index) are agent-facing, not people-facing — terse; size is
+  bounded, not voiced down.
 - **Google-style docstrings** for all public classes / functions / methods, incl. `__init__`.
 - **Args** match function signature exactly. Read implementation to confirm names.
 - **Returns** required for non-`None` returning functions. Omit for `None`-returning, `@property`, `@abstractmethod`.
