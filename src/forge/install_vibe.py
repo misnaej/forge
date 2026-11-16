@@ -38,13 +38,15 @@ from pathlib import Path
 
 from forge.agent_harness import (
     UNENFORCED_VIBE_HOOKS,
+    HarnessName,
     get_harness_profile,
+    map_plugin_references,
     resolve_hooks_base,
 )
-from forge.gen_vibe_agents import generate_vibe_agents
+from forge.gen_vibe_agents import flatten_vibe_instructions, generate_vibe_agents
 from forge.gen_vibe_hooks import verify_existing_hooks, write_vibe_hooks
 from forge.git_utils import configure_cli_logging
-from forge.instruction_files import flatten_agents_md, shipped_path
+from forge.instruction_files import shipped_path
 
 
 configure_cli_logging()
@@ -233,11 +235,13 @@ def _generate_subagent_toml(agent_file: Path) -> tuple[str, str]:
 def _generate_prompt_file(agent_file: Path) -> str:
     """Generate a prompt file from an agent.md file.
 
-    The agent's markdown is used verbatim. The terse-output rule is not
-    appended here — it is required in every agent source by
-    agents/_TEMPLATE.md and enforced by forge-audit-agents, so generated
-    prompts carry it from the source (Vibe has no SessionStart/SubagentStart
-    hook to enforce a voice on subagents).
+    The agent's markdown carries over as authored, except that references
+    to other forge agents are mapped into this harness's namespace — an
+    agent doc routes work to its peers by name, and the canonical namespace
+    does not resolve here. The terse-output rule is not appended: it is
+    required in every agent source by agents/_TEMPLATE.md and enforced by
+    forge-audit-agents, so generated prompts carry it from the source (Vibe
+    has no SessionStart/SubagentStart hook to enforce a voice on subagents).
 
     Args:
         agent_file: Path to the agent.md file.
@@ -245,7 +249,9 @@ def _generate_prompt_file(agent_file: Path) -> str:
     Returns:
         Prompt content.
     """
-    return agent_file.read_text(encoding="utf-8")
+    return map_plugin_references(
+        agent_file.read_text(encoding="utf-8"), harness=HarnessName.VIBE.value
+    )
 
 
 def _publish_subagents(
@@ -370,7 +376,7 @@ def _install_agents_md(repo_root: Path) -> bool:
     Returns:
         True if AGENTS.md was created or updated.
     """
-    content = flatten_agents_md(repo_root)
+    content = flatten_vibe_instructions(repo_root)
     if content is None:
         return False
     return _write_if_changed(repo_root / "AGENTS.md", content)
@@ -633,7 +639,7 @@ def _verify_vibe_installation(repo_root: Path | None = None) -> int:
 
     # AGENTS.md content drift: present but stale vs the flattened sources
     agents_md = repo_root / "AGENTS.md"
-    expected = flatten_agents_md(repo_root)
+    expected = flatten_vibe_instructions(repo_root)
     if (
         agents_md.is_file()
         and expected is not None

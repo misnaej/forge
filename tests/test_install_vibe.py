@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import re
 import tomllib
 from pathlib import Path
 
@@ -15,6 +16,7 @@ import pytest
 
 from forge.audit.agents import REQUIRED_SECTIONS
 from forge.install_vibe import _generate_roster_sidecar, install_vibe
+from forge.instruction_files import shipped_path
 
 
 _HOOKS_DIR = "${CLAUDE_PLUGIN_ROOT}/claude-hooks"
@@ -186,6 +188,23 @@ def test_agents_md_generation_drops_foundation_directive(consumer_repo: Path) ->
     assert "More rules." in content
 
 
+def test_agents_md_install_then_verify_agree_on_mapped_content(
+    consumer_repo: Path,
+) -> None:
+    """Verify accepts the AGENTS.md the installer just wrote after name mapping.
+
+    Behavior: the writer and the drift check must share one composer; if
+    verify compared against unmapped text it would flag a fresh install.
+    """
+    (consumer_repo / "FOUNDATION.md").write_text(
+        "# Foundation\n\nSpawn forge:design-checker.\n"
+        "<!-- forge:state:begin -->\nx\n<!-- forge:state:end -->\n",
+        encoding="utf-8",
+    )
+    assert install_vibe(consumer_repo) == 0
+    assert install_vibe(consumer_repo, verify_mode=True) == 0
+
+
 def test_model_presets_written_and_idempotent(tmp_path: Path) -> None:
     """Install writes forge-* [[models]] presets once; re-run adds nothing.
 
@@ -302,6 +321,62 @@ class TestBareConsumerRepo:
         assert (root / ".vibe" / "forge-roster.json").is_file()
         skills = list((root / ".agents" / "skills").iterdir())
         assert len(skills) == 19
+
+    def test_generated_vibe_output_has_no_unresolvable_spawn_form(
+        self, tmp_path: Path
+    ) -> None:
+        """No generated Vibe file names a shipped agent/skill as ``forge:<name>``.
+
+        Behavior regression: Vibe has no plugin namespace, so a verbatim
+        ``forge:<agent>`` spawn instruction cannot resolve. The name oracle
+        is the packaged file stems, never ``shipped_plugin_names()`` — the
+        roster is the code under test.
+        """
+        root = tmp_path / "bare"
+        root.mkdir()
+        (root / "pyproject.toml").write_text(
+            '[project]\nname = "bare"\nversion = "0.1.0"\n', encoding="utf-8"
+        )
+        (root / "FOUNDATION.md").write_text(
+            "# Foundation\n\nSpawn forge:design-checker.\n"
+            "<!-- forge:state:begin -->\nbody\n<!-- forge:state:end -->\n"
+            "Literal placeholder forge:<name> stays.\n",
+            encoding="utf-8",
+        )
+        (root / "CLAUDE.md").write_text("# Rules\n\n@FOUNDATION.md\n", encoding="utf-8")
+        agents_src = shipped_path(root, "agents")
+        skills_src = shipped_path(root, "skills")
+        names = {p.stem for p in agents_src.glob("*.md")} | {
+            p.name for p in skills_src.iterdir() if p.is_dir()
+        }
+        reference = re.compile(r"forge:([\w-]+)")
+
+        def shipped_refs(text: str) -> list[str]:
+            return [m for m in reference.findall(text) if m in names]
+
+        sources = [*agents_src.glob("*.md"), *skills_src.glob("*/SKILL.md")]
+        # B: precondition — the oracle is non-empty and the sources really
+        # carry shipped references, so A cannot pass vacuously.
+        assert names
+        assert any(shipped_refs(p.read_text(encoding="utf-8")) for p in sources)
+
+        assert install_vibe(root) == 0
+        generated = [
+            *(root / ".vibe" / "prompts").glob("*.md"),
+            *(root / ".agents" / "skills").glob("*/SKILL.md"),
+            root / "AGENTS.md",
+        ]
+        assert generated
+        for path in generated:
+            text = path.read_text(encoding="utf-8")
+            # A: nothing shipped keeps the unresolvable namespaced form.
+            assert shipped_refs(text) == [], path
+        # C: the bare prefix is never rewritten — only shipped names are.
+        instructions = (root / "AGENTS.md").read_text(encoding="utf-8")
+        assert "<!-- forge:state:begin -->" in instructions
+        assert "<!-- forge:state:end -->" in instructions
+        assert "forge:<name>" in instructions
+        assert "Spawn design-checker." in instructions
 
     def test_bare_consumer_verify_passes_after_install(self, tmp_path: Path) -> None:
         """--verify is green on a bare consumer once install ran."""

@@ -129,6 +129,38 @@ def test_translate_event_claude_is_identity() -> None:
     assert translate_event("anything_at_all", "claude") == "anything_at_all"
 
 
+_MAP_INPUT = (
+    "Spawn forge:test-writer then forge:state, not forge:nonexistent-thing "
+    "or forge:<name>."
+)
+
+
+@pytest.mark.parametrize(
+    ("harness", "expected"),
+    [
+        ("claude", _MAP_INPUT),
+        (
+            "vibe",
+            (
+                "Spawn test-writer then forge:state, not forge:nonexistent-thing "
+                "or forge:<name>."
+            ),
+        ),
+    ],
+)
+def test_map_plugin_references_parametrized(harness: str, expected: str) -> None:
+    """Claude keeps text verbatim; Vibe strips the prefix of shipped names only.
+
+    Hyphenated shipped names map whole; ``state``, unknown names and the
+    ``forge:<name>`` placeholder survive in both harnesses.
+
+    Args:
+        harness: Harness profile name passed to the mapper ("claude" or "vibe").
+        expected: Text the mapper must return for ``_MAP_INPUT`` under that harness.
+    """
+    assert agent_harness.map_plugin_references(_MAP_INPUT, harness=harness) == expected
+
+
 def test_translate_tool_matcher_vibe() -> None:
     """Vibe matchers translate to Claude tool names; unknown -> None."""
     assert translate_tool_matcher("re:bash|process_start", "vibe") == "Bash"

@@ -65,6 +65,7 @@ from pathlib import Path
 
 from forge import config
 from forge.config import installed_console_scripts
+from forge.gen_vibe_agents import flatten_vibe_instructions
 from forge.git_utils import (
     FORGE_DIST_NAME,
     code_health_dir,
@@ -74,7 +75,6 @@ from forge.git_utils import (
     parse_semver,
     run_git,
 )
-from forge.instruction_files import flatten_agents_md
 from forge.upgrade import pin_revision_mismatch, pip_command
 from forge.version_surfaces import (
     SKEW_REMEDIATION,
@@ -967,7 +967,7 @@ def _vibe_agents_md_result(repo_root: Path) -> CheckResult:
             passed=False,
             detail=f"missing {agents_md} — run `install-forge-vibe`",
         )
-    expected = flatten_agents_md(repo_root)
+    expected = flatten_vibe_instructions(repo_root)
     if expected is not None and agents_md.read_text(encoding="utf-8") != expected:
         return CheckResult(
             name="vibe:AGENTS.md",

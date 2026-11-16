@@ -40,6 +40,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `translate_tool_matcher(harness_matcher: str, harness_name: str) -> str | None` — Translate a harness-specific tool matcher to Claude matcher.
 - `translate_payload_field(field_name: str, harness_name: str) -> str | None` — Translate a payload field name from harness format to Claude format.
 - `resolve_hooks_base(repo_root: Path, plugin_dir: Path) -> Path` — Return the directory guard scripts live in for this checkout.
+- `shipped_plugin_names() -> frozenset[str]` — Return the names forge ships under the plugin namespace.
+- `map_plugin_references(text: str, *, harness: str, names: Iterable[str] | None = None) -> str` — Rewrite canonical agent and skill references into *harness*'s namespace.
 
 ## `forge.agent_profile`
 
@@ -872,6 +874,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _Generate .agents/skills/ from skills/ and update references for Vibe._
 
+- `flatten_vibe_instructions(repo_root: Path) -> str | None` — Compose the flattened instruction file as this harness needs it.
 - `_update_skill_content(content: str) -> str` _(internal)_ — Update skill content to use Vibe-compatible references.
 - `_copy_skills(src_dir: Path, dest_dir: Path) -> tuple[int, list[str]]` _(internal)_ — Copy skills from skills/ to .agents/skills/ with updates.
 - `_check_file_references(file_path: Path) -> list[str]` _(internal)_ — Check a single file for references.

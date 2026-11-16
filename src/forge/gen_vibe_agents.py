@@ -6,7 +6,7 @@ This module provides the generator that publishes skills to the Vibe-compatible
 Publishes skills for the Vibe harness:
 - Publish skills/*/SKILL.md to .agents/skills/<name>/SKILL.md
 - Frontmatter is nearly compatible
-- Bodies have 73 forge:<agent> references and 17 CLAUDE.md references
+- Bodies carry forge:<agent> and CLAUDE.md references
 - Map agent names and instruction-file names through harness profile
 - Do not hardcode either vocabulary
 
@@ -22,7 +22,8 @@ import re
 import sys
 from pathlib import Path
 
-from forge.instruction_files import shipped_path
+from forge.agent_harness import HarnessName, map_plugin_references
+from forge.instruction_files import flatten_agents_md, shipped_path
 
 
 logger = logging.getLogger(__name__)
@@ -33,15 +34,45 @@ logger = logging.getLogger(__name__)
 CLAUDE_MD_REFERENCE = "CLAUDE.md"
 AGENTS_MD_REFERENCE = "AGENTS.md"
 
-# Pattern to match forge:<agent> references
-FORGE_AGENT_PATTERN = re.compile(r"forge:(\w+)")
+# Pattern to match forge:<agent> references. The name class includes the
+# hyphen every shipped agent name carries: `\w` alone matched only up to it,
+# so a reference read as `forge:design` rather than `forge:design-checker`.
+FORGE_AGENT_PATTERN = re.compile(r"forge:([\w-]+)")
 
 # Pattern to match CLAUDE.md references
 CLAUDE_MD_PATTERN = re.compile(r"CLAUDE\.md")
 
 
+def flatten_vibe_instructions(repo_root: Path) -> str | None:
+    """Compose the flattened instruction file as this harness needs it.
+
+    The flattened sources name forge's agents — FOUNDATION's delegation
+    table is read as a rule, not as one call site — so the canonical
+    namespace is mapped here. The single composer exists because the
+    writer and both drift checks (``install-forge-vibe``, ``forge-doctor``)
+    must agree byte for byte; mapping at the write alone would report the
+    file permanently stale.
+
+    Args:
+        repo_root: Repository root containing the flatten sources.
+
+    Returns:
+        The content to write, or None when a source file is missing.
+    """
+    content = flatten_agents_md(repo_root)
+    if content is None:
+        return None
+    return map_plugin_references(content, harness=HarnessName.VIBE.value)
+
+
 def _update_skill_content(content: str) -> str:
     """Update skill content to use Vibe-compatible references.
+
+    Both vocabularies are mapped through the harness profile rather than
+    hardcoded here. The agent half matters most: a skill body carries the
+    spawn instruction itself, and the canonical namespace does not resolve
+    on Vibe, so an unmapped body instructs every session to call an agent
+    type that cannot exist.
 
     Args:
         content: The original skill content.
@@ -49,8 +80,8 @@ def _update_skill_content(content: str) -> str:
     Returns:
         Updated content with Vibe-compatible references.
     """
-    # Replace CLAUDE.md references with AGENTS.md
-    return CLAUDE_MD_PATTERN.sub(AGENTS_MD_REFERENCE, content)
+    mapped = map_plugin_references(content, harness=HarnessName.VIBE.value)
+    return CLAUDE_MD_PATTERN.sub(AGENTS_MD_REFERENCE, mapped)
 
 
 def _copy_skills(src_dir: Path, dest_dir: Path) -> tuple[int, list[str]]:
