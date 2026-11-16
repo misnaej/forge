@@ -26,11 +26,11 @@ from __future__ import annotations
 
 import json
 import re
-import tomllib
 from dataclasses import dataclass
 from enum import Enum
-from importlib import resources
 from typing import TYPE_CHECKING, Final
+
+from forge.plugin_roster import shipped_plugin_names
 
 
 if TYPE_CHECKING:
@@ -497,42 +497,6 @@ def resolve_hooks_base(repo_root: Path, plugin_dir: Path) -> Path:
     if local.exists() and not (plugin_dir / "claude-hooks").exists():
         return repo_root
     return plugin_dir
-
-
-def shipped_plugin_names() -> frozenset[str]:
-    """Return the names forge ships under the plugin namespace.
-
-    Agents and skills both resolve as ``forge:<name>`` under the Claude
-    Code plugin, so both belong to the namespace a generator must map.
-    Read from the packaged roster rather than the source tree so a consumer
-    install, which has no forge checkout, resolves the same set; the roster
-    is regenerated and drift-checked against those sources.
-
-    Returns:
-        Names without any namespace prefix. Empty when the roster is absent
-        or unreadable — callers then map nothing, which leaves content
-        untouched rather than mangling it on a half-built install.
-    """
-    try:
-        text = (
-            resources.files("forge")
-            .joinpath("data/plugin-roster.toml")
-            .read_text(encoding="utf-8")
-        )
-        roster = tomllib.loads(text)
-        names = [
-            name
-            for kind in ("agents", "skills")
-            for name in roster.get(kind, {}).get("names", [])
-        ]
-    # A roster of the wrong shape raises past the parse: a non-table kind
-    # fails .get, a non-list names iterates wrongly. Every failure maps
-    # nothing rather than raising out of an installer or a commit gate.
-    except (OSError, ValueError, AttributeError, TypeError, ModuleNotFoundError):
-        return frozenset()
-    # A non-string or empty entry is not a name; the reference pattern
-    # could never match one, so dropping them keeps the set meaningful.
-    return frozenset(n for n in names if isinstance(n, str) and n)
 
 
 def map_plugin_references(

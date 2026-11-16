@@ -53,7 +53,6 @@ import subprocess
 import sys
 import tomllib
 from dataclasses import dataclass
-from importlib import resources
 from typing import TYPE_CHECKING
 
 from forge.config import (
@@ -65,6 +64,7 @@ from forge.config import (
     read_tool_forge_section,
 )
 from forge.git_utils import capturing_to_step_log, configure_cli_logging, repo_root
+from forge.plugin_roster import roster_names
 
 
 if TYPE_CHECKING:
@@ -121,47 +121,19 @@ def _config_doc_path(root: Path) -> str | None:
 
 
 def _plugin_roster() -> dict[str, set[str]]:
-    """Read the shipped roster of forge's plugin skills and hook stems.
+    """Select the plugin skill and hook names this checker enriches with.
 
-    ``data/plugin-roster.toml`` ships with the pip package so a consumer
-    repo's agent doc can name plugin-provided skills and hooks without
-    the checker calling them dangling (#375). A forge-repo test
-    regenerates the file from ``skills/*/SKILL.md`` +
-    ``claude-hooks/*.sh`` and diffs, so it cannot go stale.
-
-    Returns:
-        ``{"skills": set, "hooks": set}``; both empty when the data file
-        is absent (older installed package) or unparseable — enrichment
-        degrades, never blocks.
-    """
-    return {kind: _roster_names(kind) for kind in ("skills", "hooks")}
-
-
-def _roster_names(kind: str) -> set[str]:
-    """Names one ``[kind]`` table of ``data/plugin-roster.toml`` lists.
-
-    Args:
-        kind: ``"skills"``, ``"hooks"`` or ``"agents"``.
+    A consumer repo's agent doc may name plugin-provided skills and hooks,
+    and without the shipped roster the checker would call every one of
+    them dangling. The two kinds this checker cares about are picked here;
+    :mod:`forge.plugin_roster` owns reading them and the degrade rules.
 
     Returns:
-        The names; empty when the file is absent or unparseable.
+        ``{"skills": set, "hooks": set}``; either is empty when the
+        packaged roster cannot be read, so enrichment degrades rather
+        than blocking.
     """
-    try:
-        text = resources.files("forge").joinpath("data/plugin-roster.toml").read_text()
-        data = tomllib.loads(text)
-    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
-        return set()
-    names = data.get(kind, {}).get("names", [])
-    return {n for n in names if isinstance(n, str)}
-
-
-def shipped_agent_names() -> frozenset[str]:
-    """Agent names forge's plugin ships, without the ``forge:`` prefix.
-
-    Returns:
-        The names from the shipped roster; empty when it cannot be read.
-    """
-    return frozenset(_roster_names("agents"))
+    return {kind: set(roster_names(kind)) for kind in ("skills", "hooks")}
 
 
 def _extra_roster(root: Path) -> dict[str, set[str]]:
