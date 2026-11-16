@@ -6,11 +6,13 @@
 # never gates. Registered in plugin.json as separate "Write"/"Edit" matcher
 # groups (a combined "Write|Edit" matcher would be misread as an agent regex
 # by gen_vibe_hooks and mapped to match every post_tool event); on Vibe they
-# become post_tool write_file/edit via forge-gen-vibe-hooks. The Bash group
-# exists because the note is just as often rewritten by a shell command
-# (heredoc, redirect, sed -i) as by the Write/Edit tools — a harness that
-# steers an agent toward shell editing would otherwise skip the check
-# entirely, which is the one moment FOUNDATION §10 wants it reported.
+# become post_tool write_file/edit via forge-gen-vibe-hooks. It also rides the
+# shared "Bash" group, because the note is just as often rewritten by a shell
+# command (heredoc, redirect, sed -i) as by the Write/Edit tools — a harness
+# that steers an agent toward shell editing would otherwise skip the check
+# entirely, which is the one moment FOUNDATION §10 wants it reported. It joins
+# that group rather than adding a second "Bash" one: a roster keys hooks by
+# matcher, so a duplicate matcher drops one group's hooks outright.
 set -uo pipefail
 
 command -v jq >/dev/null 2>&1 || exit 0
