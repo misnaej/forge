@@ -270,8 +270,8 @@ forbidden.
 
 ### Agent naming convention
 
-Foundation agents resolve as `forge:<name>`; bare name fails with
-`Agent type '<name>' not found`. The fourteen:
+Agents carry the harness's namespace: `forge:<name>` with the Claude
+plugin, bare `<name>` in-repo. The fourteen:
 `forge:design-checker`, `forge:docs-types-checker`, `forge:issue-triage`, `forge:knowledge-search`, `forge:merge-resolver`, `forge:perf-optimizer`,
 `forge:pr-manager`, `forge:precommit-fixer`, `forge:prior-art`,
 `forge:security-checker`, `forge:test-advisor`, `forge:test-writer`,

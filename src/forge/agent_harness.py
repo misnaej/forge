@@ -25,13 +25,16 @@ It must NOT default to 'claude'.
 from __future__ import annotations
 
 import json
+import re
+import tomllib
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING
+from importlib import resources
+from typing import TYPE_CHECKING, Final
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping
+    from collections.abc import Callable, Iterable, Mapping
     from pathlib import Path
 
 
@@ -57,6 +60,19 @@ class VerdictEmitter:
     emit_error: Callable[[str], tuple[int, str]]
 
 
+# The namespace the canonical agent and skill content is authored in.
+# Claude Code's plugin resolves agents under it; generators rewrite it into
+# the target harness's own namespace.
+CANONICAL_AGENT_NAMESPACE: Final = "forge:"
+
+# A namespaced reference: the canonical prefix plus the whole name token.
+# The hyphen is in the class because every shipped name carries one; `\w`
+# alone stopped at it and read `forge:design` for `forge:design-checker`.
+PLUGIN_REFERENCE_RE: Final = re.compile(
+    rf"{re.escape(CANONICAL_AGENT_NAMESPACE)}([\w-]+)"
+)
+
+
 @dataclass(frozen=True)
 class HarnessProfile:
     """Frozen profile for a single agent harness.
@@ -80,6 +96,11 @@ class HarnessProfile:
             identity; Vibe maps to the forge-owned [[models]] presets that
             install-forge-vibe writes. "inherit"/unknown tiers map to None
             (emit nothing — the subagent inherits the session model).
+        agent_namespace: Prefix this harness requires to address a shipped
+            forge agent. The canonical content is written in Claude Code's
+            plugin namespace, so Claude is identity and a harness that
+            discovers agents in-repo takes the bare name. Generators map
+            through this rather than hardcoding either vocabulary.
     """
 
     name: str
@@ -89,6 +110,7 @@ class HarnessProfile:
     verdict_emitter: VerdictEmitter
     blocking_events: frozenset[str]
     model_alias_map: Mapping[str, str | None]
+    agent_namespace: str
 
 
 def _emit_claude_deny(_reason: str) -> tuple[int, str]:
@@ -208,6 +230,8 @@ CLAUDE_PROFILE = HarnessProfile(
             "PostToolUse",
         }
     ),
+    # The canonical content is already written in this namespace.
+    agent_namespace=CANONICAL_AGENT_NAMESPACE,
 )
 
 # Vibe profile: maps Vibe concepts to Claude Code equivalents
@@ -256,6 +280,9 @@ VIBE_PROFILE = HarnessProfile(
     # post_agent cannot block in Vibe (deny only injects a retry message,
     # and strict is forbidden on it).
     blocking_events=frozenset({"pre_tool", "post_tool"}),
+    # Vibe discovers subagents from the generated config, so they are
+    # addressed by bare name; the plugin prefix resolves to nothing there.
+    agent_namespace="",
 )
 
 # Registry of all known harness profiles
@@ -470,3 +497,77 @@ def resolve_hooks_base(repo_root: Path, plugin_dir: Path) -> Path:
     if local.exists() and not (plugin_dir / "claude-hooks").exists():
         return repo_root
     return plugin_dir
+
+
+def shipped_plugin_names() -> frozenset[str]:
+    """Return the names forge ships under the plugin namespace.
+
+    Agents and skills both resolve as ``forge:<name>`` under the Claude
+    Code plugin, so both belong to the namespace a generator must map.
+    Read from the packaged roster rather than the source tree so a consumer
+    install, which has no forge checkout, resolves the same set; the roster
+    is regenerated and drift-checked against those sources.
+
+    Returns:
+        Names without any namespace prefix. Empty when the roster is absent
+        or unreadable — callers then map nothing, which leaves content
+        untouched rather than mangling it on a half-built install.
+    """
+    try:
+        text = (
+            resources.files("forge")
+            .joinpath("data/plugin-roster.toml")
+            .read_text(encoding="utf-8")
+        )
+        roster = tomllib.loads(text)
+        names = [
+            name
+            for kind in ("agents", "skills")
+            for name in roster.get(kind, {}).get("names", [])
+        ]
+    # A roster of the wrong shape raises past the parse: a non-table kind
+    # fails .get, a non-list names iterates wrongly. Every failure maps
+    # nothing rather than raising out of an installer or a commit gate.
+    except (OSError, ValueError, AttributeError, TypeError, ModuleNotFoundError):
+        return frozenset()
+    # A non-string or empty entry is not a name; the reference pattern
+    # could never match one, so dropping them keeps the set meaningful.
+    return frozenset(n for n in names if isinstance(n, str) and n)
+
+
+def map_plugin_references(
+    text: str, *, harness: str, names: Iterable[str] | None = None
+) -> str:
+    """Rewrite canonical agent and skill references into *harness*'s namespace.
+
+    A reference is rewritten only when the **whole** token after the prefix
+    is a name forge ships. Matching the prefix by substring would strip it
+    from any token a shipped name merely begins — ``forge:fixture`` reads
+    as the skill ``fix``, and ``forge:precommit-managed`` as ``pr`` — so
+    the token is taken whole and tested for membership. A placeholder
+    (``forge:<name>``), the handoff note's ``forge:state`` markers and a
+    name forge does not ship therefore all survive untouched.
+
+    Args:
+        text: Canonical content, authored in ``CANONICAL_AGENT_NAMESPACE``.
+        harness: Target harness identifier.
+        names: Names to map; defaults to the shipped roster.
+
+    Returns:
+        The content with each shipped reference in the target harness's
+        namespace. Unchanged when the target shares the canonical
+        namespace.
+
+    Raises:
+        ValueError: If *harness* is not a known harness.
+    """
+    namespace = get_harness_profile(harness).agent_namespace
+    if namespace == CANONICAL_AGENT_NAMESPACE:
+        return text
+    known = frozenset(shipped_plugin_names() if names is None else names)
+
+    def _rewrite(match: re.Match[str]) -> str:
+        name = match.group(1)
+        return f"{namespace}{name}" if name in known else match.group(0)
+
+    return PLUGIN_REFERENCE_RE.sub(_rewrite, text)

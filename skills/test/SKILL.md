@@ -37,7 +37,7 @@ nothing consumer-specific.
 
 ## Notes
 
-- The agents are foundation agents (`forge:` prefix). A consumer that layers
+- The agents are foundation agents (Claude Code: `forge:` prefix). A consumer that layers
   stricter test rules ships a wrapper agent (e.g. `test-writer-<scope>`) per
   FOUNDATION §3 / §16 and points this flow at it.
 - **Does NOT commit.** After the tests pass review, run `/forge:commit` (or the
