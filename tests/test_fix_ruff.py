@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import subprocess
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
@@ -12,16 +12,22 @@ from forge.git_utils import code_health_dir
 from tests.conftest import commit_all, git_stdout, init_git_repo
 
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
-
 # MOCKING STRATEGY: ``_stub_subprocess`` replaces every subprocess call with a
 # canned stub (no git repo needed). The restage tests instead run real git in
 # a tmp repo and fake ONLY ruff: ``fix_ruff.subprocess.run`` is patched with a
 # closure that rewrites files for ruff argvs and delegates the rest to the
-# real ``subprocess.run`` captured at import time.
+# real ``subprocess.run`` captured at import time. The last two tests
+# (``unused_suppression`` / ``ci_mode``) fake nothing: they run real ruff in a
+# tmp git repo. An autouse fixture pins ``fix_ruff.is_ci`` to False for every
+# test (so ``CI=true`` on a runner changes nothing); the CI-mode test
+# re-patches it to True.
 _REAL_RUN = subprocess.run
+
+
+@pytest.fixture(autouse=True)
+def _local_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin local (repairing) mode so a CI runner's ``CI=true`` cannot flip it."""
+    monkeypatch.setattr(fix_ruff, "is_ci", lambda: False)
 
 
 def _stub_subprocess(
@@ -333,3 +339,73 @@ def test_unreadable_git_status_stages_nothing_and_logs_note(
     assert _cached(repo) == set()
     log = (code_health_dir(repo) / "ruff.log").read_text()
     assert "git status unreadable; nothing re-staged." in log
+
+
+def _run_main_with_real_ruff(
+    monkeypatch: pytest.MonkeyPatch, repo: Path, *, root: str = "src"
+) -> int:
+    """Run ``fix_ruff.main`` in *repo* with the real ruff binary.
+
+    Args:
+        monkeypatch: pytest monkeypatch fixture.
+        repo: Git repository root where ``fix_ruff.main`` runs.
+        root: Scan root passed on the command line.
+
+    Returns:
+        Exit code of ``fix_ruff.main``.
+    """
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr("sys.argv", ["fix-forge-ruff", root])
+    return fix_ruff.main()
+
+
+def test_unused_suppression_fails_and_file_is_not_rewritten(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A suppression that suppresses nothing fails the run; the file is kept as is.
+
+    Behavior test: pins that forge's own ``ruff.toml`` (copied in here, since
+    the contract is that *forge's* config reports this) lists ``RUF100`` as
+    unfixable. Detects dropping it, or a return to silent repair.
+
+    SCENARIO: src/mod.py carries ``# noqa: E501`` on a short line.
+    MOCK SETUP: none; real ruff and real git in a tmp repo, local mode.
+    EXPECTED BEHAVIOR: non-zero exit; file bytes unchanged; ruff.log names RUF100.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "ruff.toml").write_bytes(
+        (Path(__file__).parent.parent / "ruff.toml").read_bytes()
+    )
+    (tmp_path / "src").mkdir()
+    source = tmp_path / "src" / "mod.py"
+    source.write_bytes(b'"""Doc."""\n\nX = 1  # noqa: E501\n')
+    before = source.read_bytes()
+    commit_all(tmp_path, "add source")
+    assert _run_main_with_real_ruff(monkeypatch, tmp_path) != 0
+    assert source.read_bytes() == before
+    assert "RUF100" in (code_health_dir(tmp_path) / "ruff.log").read_text()
+
+
+def test_ci_mode_formatting_only_difference_fails_without_rewriting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In CI a formatting-only difference fails the run and is not repaired.
+
+    Behavior test: with no lint finding, only ``ruff format --check``'s exit
+    code can fail the run. Detects that term being removed or inverted.
+
+    SCENARIO: src/mod.py has a formatting defect and no lint finding.
+    MOCK SETUP: none; real ruff and real git (default ruff config, so the
+        file is lint-clean); ``fix_ruff.is_ci`` patched to True.
+    EXPECTED BEHAVIOR: exit 1; file bytes unchanged; ruff.log says reporting only.
+    """
+    monkeypatch.setattr(fix_ruff, "is_ci", lambda: True)
+    init_git_repo(tmp_path)
+    (tmp_path / "src").mkdir()
+    source = tmp_path / "src" / "mod.py"
+    source.write_bytes(b"X = [1,2]\n")
+    before = source.read_bytes()
+    commit_all(tmp_path, "add source")
+    assert _run_main_with_real_ruff(monkeypatch, tmp_path) == 1
+    assert source.read_bytes() == before
+    assert "CI: reporting only" in (code_health_dir(tmp_path) / "ruff.log").read_text()
