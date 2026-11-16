@@ -10,16 +10,6 @@ repo-specific rules.
 
 ---
 
-**Sections:** 1 Critical Thinking · 2 Core Safety Rules · 3 Mandatory Delegation
-· 4 Pre-commit Enforcement · 5 Ruff Configuration · 6 Git & PR Workflow · 7
-Design Principles · 8 Documentation Standards · 9 Logging Pattern · 10
-Continuation Protocol · 11 Agent Boundary Protocol · 12 Single Source of Truth ·
-13 `code_health/` Convention · 14 Issue Tracking & Triage · 15 Runtime Context
-Awareness · 16 Extending shipped agents/skills/CLIs · 17 Smart-test depth
-model · 18 Cost Goals.
-
----
-
 ## 1. Critical Thinking Directive
 
 **Do not be a yes-man.** Help reach best decision, not agree with user.
