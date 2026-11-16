@@ -307,6 +307,22 @@ def test_requires_wrapped_residue_still_fails_closed() -> None:
     assert parsed.unparsed == ("#5 and something uncheckable",)
 
 
+def test_requires_stops_at_recorder_field_labels() -> None:
+    r"""The plan payload's `Bump:`/`track:` lines are fields, not continuations.
+
+    Regression: the recorder writes `Requires: nothing\\nBump: patch` on
+    adjacent lines; the wrap-join must not swallow the Bump line into the
+    Requires entry (that failed every plan-validated comment's prereq).
+    """
+    parsed = ps.parse_requires(["Requires: nothing\nBump: patch"])
+    assert parsed.found is True
+    assert parsed.refs == ()
+    assert parsed.unparsed == ()
+    parsed = ps.parse_requires(["Requires: PR #5\nand #7\nBump: minor\ntrack: foo"])
+    assert parsed.refs == (5, 7)
+    assert parsed.unparsed == ()
+
+
 def test_prerequisites_notes_but_does_not_refuse_both_labels() -> None:
     """Both labels are drift's refusal; prerequisites notes it and still answers."""
     gh = _source("Requires: nothing", [], "blocked", "plan-ready")

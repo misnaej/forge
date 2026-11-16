@@ -335,9 +335,11 @@ def _requires_rest(line: str) -> str | None:
 
 
 # A line starting a new markdown block (heading, list, quote, fence,
-# comment) ends a soft-wrapped Requires: paragraph.
+# comment) ends a soft-wrapped Requires: paragraph — and so does a
+# recorder field label (Bump:, track:), which the plan payload writes on
+# the line right after Requires:.
 _BLOCK_START_RE: Final[re.Pattern[str]] = re.compile(
-    r"^\s{0,3}(?:#{1,6}\s|[-*+]\s|\d+[.)]\s|>|```|<!--)"
+    r"^\s{0,3}(?:#{1,6}\s|[-*+]\s|\d+[.)]\s|>|```|<!--|Bump\s*:|track\s*:)"
 )
 
 
@@ -348,8 +350,8 @@ def _is_requires_continuation(line: str) -> bool:
         line: One line of issue text.
 
     Returns:
-        ``True`` when the line is non-blank, starts no new block, and is
-        not itself a ``Requires:`` line.
+        ``True`` when the line is non-blank, starts no new block or
+        recorder field, and is not itself a ``Requires:`` line.
     """
     if not line.strip() or _requires_rest(line) is not None:
         return False
