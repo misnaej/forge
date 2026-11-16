@@ -10,6 +10,13 @@ single responsibility):
 2. Run ``ruff format`` in-place.
 3. Run ``ruff check --fix --unsafe-fixes``. Unsafe fixes are on by
    default; forge always applies them.
+
+   Under :func:`forge.run_context.is_ci` both run in reporting mode
+   instead (``ruff format --check``, ``ruff check --no-fix``). Repairing
+   is a gate only where the repair can be kept: a commit carries it
+   locally, while CI commits nothing, so a repair there is computed,
+   discarded, and the step still exits 0 — leaving every fixable finding,
+   formatting included, unable to fail the run.
 4. ``git add`` back only the files that were staged before ruff ran, so
    ruff's fixes land in the commit being made and nothing the author left
    unstaged is swept in. A partly-staged file (staged, then edited again)
@@ -18,9 +25,10 @@ single responsibility):
 5. Write the combined output to ``code_health/ruff.log``.
 
 Both ruff invocations are idempotent — when nothing needs fixing they
-are near-instant no-ops. Exit code is the exit code of ``ruff check
---fix``: 0 when every violation cleared, non-zero when residue remains
-(rules without an autofix).
+are near-instant no-ops. Exit code is the exit code of ``ruff check``:
+0 when every violation cleared, non-zero when residue remains (rules
+without an autofix locally, any finding at all in reporting mode, where
+a formatting difference fails on its own too).
 
 Can be invoked directly (e.g. by the ``forge:precommit-fixer`` agent to
 refresh just the ruff log) or by ``forge-precommit`` as part of the full
@@ -44,6 +52,7 @@ from forge.git_utils import (
     staged_unstaged_paths,
     write_step_log,
 )
+from forge.run_context import is_ci
 
 
 configure_cli_logging()
@@ -202,13 +211,23 @@ def main() -> int:
 
     require_cli("ruff", caller="fix-forge-ruff")
 
-    snapshot = _staging_snapshot(repo_root, source_dirs)
-    format_cmd = ["ruff", "format", "--", *source_dirs]
+    # Repairing is only a gate where the repair can be kept. A commit
+    # carries it locally, so fixing in place is the dev loop. CI commits
+    # nothing: a repair there is computed, discarded, and the run still
+    # exits 0, so every fixable finding passes unseen. Report instead.
+    reporting_only = is_ci()
+    snapshot = None if reporting_only else _staging_snapshot(repo_root, source_dirs)
+    format_cmd = [
+        "ruff",
+        "format",
+        *(["--check"] if reporting_only else []),
+        "--",
+        *source_dirs,
+    ]
     check_cmd = [
         "ruff",
         "check",
-        "--fix",
-        "--unsafe-fixes",
+        *(["--no-fix"] if reporting_only else ["--fix", "--unsafe-fixes"]),
         "--no-cache",
         "--",
         *source_dirs,
@@ -219,7 +238,10 @@ def main() -> int:
     chk_proc = subprocess.run(
         check_cmd, cwd=repo_root, capture_output=True, text=True, check=False
     )
-    restaged, refusal = _restage_or_refuse(repo_root, snapshot)
+    restaged: list[str] = []
+    refusal: str | None = None
+    if not reporting_only:
+        restaged, refusal = _restage_or_refuse(repo_root, snapshot)
 
     sections = [
         "$ " + " ".join(format_cmd),
@@ -228,7 +250,9 @@ def main() -> int:
         "$ " + " ".join(check_cmd),
         (chk_proc.stdout + chk_proc.stderr).strip() or "(no output)",
     ]
-    if snapshot is None:
+    if reporting_only:
+        sections.extend(["", "CI: reporting only — findings are not repaired."])
+    elif snapshot is None:
         sections.extend(["", "git status unreadable; nothing re-staged."])
     if restaged:
         sections.extend(["", "Re-staged: " + ", ".join(restaged)])
@@ -237,7 +261,11 @@ def main() -> int:
     output = "\n".join(sections)
     write_step_log(repo_root, "ruff", output)
     logger.info("%s", output)
-    return 1 if refusal and chk_proc.returncode == 0 else chk_proc.returncode
+    if refusal and chk_proc.returncode == 0:
+        return 1
+    # Reporting only, so a formatting difference is a finding rather than
+    # something already repaired, and it has to fail on its own.
+    return chk_proc.returncode or (fmt_proc.returncode if reporting_only else 0)
 
 
 if __name__ == "__main__":
