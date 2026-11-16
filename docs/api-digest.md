@@ -2042,6 +2042,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_report_freshness(only: list[str], *, as_json: bool) -> int` _(internal)_ — Report each ``code_health/`` log's freshness against the working tree.
 - `_attempt_outcome(results: Sequence[StepResult]) -> str` _(internal)_ — Name a finished run's result for the continuation status panel.
 - `_write_continuation_panel(outcome: str) -> None` _(internal)_ — Record this commit attempt in ``.plan/CONTINUATION.md``'s status panel.
+- `_worktree_dirs(root: Path) -> tuple[str, str] | None` _(internal)_ — Return ``(common_dir, git_dir)`` when *root* is a linked worktree.
+- `_sync_short_circuit(root: Path) -> int | None` _(internal)_ — Return the exit code for a merge/wip sync that skips the gate.
 - `main() -> int` — CLI entry point.
 
 ## `forge.rebump`
