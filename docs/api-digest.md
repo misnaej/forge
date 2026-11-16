@@ -40,6 +40,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `translate_tool_matcher(harness_matcher: str, harness_name: str) -> str | None` — Translate a harness-specific tool matcher to Claude matcher.
 - `translate_payload_field(field_name: str, harness_name: str) -> str | None` — Translate a payload field name from harness format to Claude format.
 - `resolve_hooks_base(repo_root: Path, plugin_dir: Path) -> Path` — Return the directory guard scripts live in for this checkout.
+- `map_plugin_references(text: str, *, harness: str, names: Iterable[str] | None = None) -> str` — Rewrite canonical agent and skill references into *harness*'s namespace.
 
 ## `forge.agent_profile`
 
@@ -872,6 +873,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _Generate .agents/skills/ from skills/ and update references for Vibe._
 
+- `flatten_vibe_instructions(repo_root: Path) -> str | None` — Compose the flattened instruction file as this harness needs it.
 - `_update_skill_content(content: str) -> str` _(internal)_ — Update skill content to use Vibe-compatible references.
 - `_copy_skills(src_dir: Path, dest_dir: Path) -> tuple[int, list[str]]` _(internal)_ — Copy skills from skills/ to .agents/skills/ with updates.
 - `_check_file_references(file_path: Path) -> list[str]` _(internal)_ — Check a single file for references.
@@ -1439,6 +1441,14 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `check_merge_order(prs: Sequence[OpenPR], base_ref: str, probe: Callable[[str, str], bool | None], *, cap: int = MERGE_ORDER_CAP) -> Report` — Probe *prs* against the base and each other, then suggest a merge order.
 - `git_merge_probe(root: Path) -> Callable[[str, str], bool | None]` — Return a merge probe over *root*'s object store.
 - `fetch_pr_heads(root: Path, prs: Sequence[OpenPR], report: Report) -> list[OpenPR]` — Fetch each PR's head commit so it can be probed; drop the failures.
+
+## `forge.plugin_roster`
+
+> _Names forge's plugin ships, read from the packaged roster._
+
+- `roster_names(kind: str) -> frozenset[str]` — Names listed under one ``[kind]`` table of the packaged roster.
+- `shipped_plugin_names() -> frozenset[str]` — Every name the plugin addresses under its own namespace.
+- `shipped_agent_names() -> frozenset[str]` — Agent names forge's plugin ships, without the namespace prefix.
 
 ## `forge.plugin_sync`
 
@@ -2371,9 +2381,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 > _verify-forge-agent-doc — keep a hand-maintained agent-architecture doc in line._
 
 - `_config_doc_path(root: Path) -> str | None` _(internal)_ — Return the configured agent-doc path, or ``None`` to self-skip.
-- `_plugin_roster() -> dict[str, set[str]]` _(internal)_ — Read the shipped roster of forge's plugin skills and hook stems.
-- `_roster_names(kind: str) -> set[str]` _(internal)_ — Names one ``[kind]`` table of ``data/plugin-roster.toml`` lists.
-- `shipped_agent_names() -> frozenset[str]` — Agent names forge's plugin ships, without the ``forge:`` prefix.
+- `_plugin_roster() -> dict[str, set[str]]` _(internal)_ — Select the plugin skill and hook names this checker enriches with.
 - `_extra_roster(root: Path) -> dict[str, set[str]]` _(internal)_ — Read the consumer escape-hatch roster additions from config.
 - `_roster(root: Path) -> dict[str, set[str]]` _(internal)_ — Discover the repo's agents, skills, hooks, and CLIs.
 - `_check_doc(doc: str, roster: dict[str, set[str]]) -> list[str]` _(internal)_ — Return coverage + dangling problems for *doc* against *roster*.

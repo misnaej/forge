@@ -18,6 +18,7 @@ from unittest.mock import patch
 import pytest
 
 from forge import doctor, git_utils, precommit, version_surfaces
+from forge.install_vibe import install_vibe
 from tests.conftest import make_fake_run, manifest_repo, write_install
 
 
@@ -976,6 +977,32 @@ def _vibe_repo(tmp_path: Path) -> Path:
     (skill_dir / "SKILL.md").write_text("---\nname: skill1\n---\n", encoding="utf-8")
     (repo / "AGENTS.md").write_text("# Agents\n", encoding="utf-8")
     return repo
+
+
+def test_vibe_agents_md_check_matches_installer_output(tmp_path: Path) -> None:
+    """Doctor accepts the installer's own AGENTS.md and flags any later drift.
+
+    Behavior: the installer's output is the oracle (no hand-written bytes).
+    The drift branch is reachable only with FOUNDATION.md and CLAUDE.md
+    present, which ``_vibe_repo`` omits, so this builds its own repo.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "pyproject.toml").write_text(
+        '[project]\nname = "x"\nversion = "0.1.0"\n', encoding="utf-8"
+    )
+    (repo / "FOUNDATION.md").write_text(
+        "# Foundation\n\nSpawn forge:design-checker.\n"
+        "<!-- forge:state:begin -->\nx\n<!-- forge:state:end -->\n",
+        encoding="utf-8",
+    )
+    (repo / "CLAUDE.md").write_text("# Rules\n\n@FOUNDATION.md\n", encoding="utf-8")
+    assert install_vibe(repo) == 0
+    assert doctor._vibe_agents_md_result(repo).passed is True
+
+    agents_md = repo / "AGENTS.md"
+    agents_md.write_text(agents_md.read_text(encoding="utf-8") + "x", encoding="utf-8")
+    assert doctor._vibe_agents_md_result(repo).passed is False
 
 
 def test_vibe_check_advisory_when_not_installed(

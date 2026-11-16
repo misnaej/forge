@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from forge import agent_harness
+from forge import agent_harness, plugin_roster
 from forge.agent_harness import (
     CLAUDE_PROFILE,
     UNENFORCED_VIBE_HOOKS,
@@ -127,6 +127,79 @@ def test_translate_event_claude_is_identity() -> None:
     """Claude profile maps every event to itself, even unknown ones."""
     assert translate_event("PreToolUse", "claude") == "PreToolUse"
     assert translate_event("anything_at_all", "claude") == "anything_at_all"
+
+
+_MAP_INPUT = (
+    "Spawn forge:test-writer then forge:state, not forge:nonexistent-thing "
+    "or forge:<name>."
+)
+
+
+@pytest.mark.parametrize(
+    ("harness", "expected"),
+    [
+        ("claude", _MAP_INPUT),
+        (
+            "vibe",
+            (
+                "Spawn test-writer then forge:state, not forge:nonexistent-thing "
+                "or forge:<name>."
+            ),
+        ),
+    ],
+)
+def test_map_plugin_references_parametrized(harness: str, expected: str) -> None:
+    """Claude keeps text verbatim; Vibe strips the prefix of shipped names only.
+
+    Hyphenated shipped names map whole; ``state``, unknown names and the
+    ``forge:<name>`` placeholder survive in both harnesses.
+
+    Args:
+        harness: Harness profile name passed to the mapper ("claude" or "vibe").
+        expected: Text the mapper must return for ``_MAP_INPUT`` under that harness.
+    """
+    assert agent_harness.map_plugin_references(_MAP_INPUT, harness=harness) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("forge:fix", "fix"),
+        ("forge:pr", "pr"),
+        ("forge:fixture", "forge:fixture"),
+        ("forge:precommit-managed", "forge:precommit-managed"),
+        ("forge:prx", "forge:prx"),
+    ],
+)
+def test_map_plugin_references_matches_whole_token_not_prefix(
+    text: str, expected: str
+) -> None:
+    """A name that merely begins with a shipped name is left untouched.
+
+    Behavior regression: prefix replacement turned ``forge:fixture`` into
+    ``fixture`` (via skill ``fix``) and ``forge:prx`` into ``prx`` (via
+    ``pr``), silently corrupting a consumer's flattened ``CLAUDE.md``.
+
+    Args:
+        text: Reference text fed to the mapper.
+        expected: Text the mapper must return under the Vibe harness.
+    """
+    assert agent_harness.map_plugin_references(text, harness="vibe") == expected
+
+
+def test_state_is_not_a_shipped_plugin_name() -> None:
+    """``state`` is reserved: it is the handoff note's panel marker token.
+
+    The note's panel is delimited by ``<!-- forge:state:begin -->`` and
+    ``<!-- forge:state:end -->``. A shipped agent or skill named ``state``
+    would make the Vibe mapper rewrite those markers, corrupting the
+    handoff note. The roster drift test does not catch that collision.
+    """
+    assert "state" not in plugin_roster.shipped_plugin_names(), (
+        "a shipped agent/skill named 'state' collides with the "
+        "'<!-- forge:state:begin/end -->' handoff-note markers: the Vibe "
+        "mapper would rewrite them and break the panel; rename it"
+    )
 
 
 def test_translate_tool_matcher_vibe() -> None:

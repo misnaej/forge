@@ -57,6 +57,9 @@ def test_claude_md_references_rewritten_to_agents_md(skills_repo: Path) -> None:
     )
     assert "AGENTS.md" in published
     assert "CLAUDE.md" not in published
+    # Vibe has no plugin namespace: the spawn form must be the bare name.
+    assert "Run test-writer;" in published
+    assert "forge:test-writer" not in published
     # The untouched skill produces no drift warning; alpha does.
     assert warnings == ["Updated references in alpha/SKILL.md"]
     # Beta's body is byte-identical to its source.
@@ -73,7 +76,7 @@ def test_check_mode_writes_nothing_but_reports_references(skills_repo: Path) -> 
     assert count == 0
     assert warnings == []
     assert not (skills_repo / ".agents").exists()
-    assert any("forge:test" in ref for ref in references)
+    assert any("forge:test-writer" in ref for ref in references)
     assert any("CLAUDE.md" in ref for ref in references)
     assert publish_skills(skills_repo, check_mode=True) == 0
     assert not (skills_repo / ".agents").exists()

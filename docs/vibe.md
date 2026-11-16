@@ -31,6 +31,15 @@ agents.spawn(config_name="prior-art")
 
 The `forge:<name>` form is the Claude Code plugin namespace and is **not** a valid subagent type under Vibe.
 
+The canonical agent and skill sources are authored in that namespace, so the
+generators map it: every shipped agent and skill name is rewritten to its bare
+form in the generated prompts, skills and instruction file. Only names forge
+ships are mapped — a literal `forge:<name>` placeholder, and the continuation
+note's `forge:state` markers, are left as written. The mapping lives in
+`forge.agent_harness.map_plugin_references`, keyed off each harness profile's
+`agent_namespace`, so a future target declares its namespace rather than adding
+another rewrite path.
+
 ## AGENTS.md and `@`-includes
 
 Vibe renders `AGENTS.md` verbatim — it has no `@include` directive (unlike
