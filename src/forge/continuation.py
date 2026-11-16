@@ -17,8 +17,10 @@ Usage:
   attempt's result: ``passed``, ``blocked:<step>``, ``error`` or
   ``interrupted`` (free-form, sanitized).
 - ``forge-continuation check`` — report the written section's line usage
-  against ``[tool.forge.continuation].judgment_max_lines``; exits ``1``
-  when the panel markers are mismatched or duplicated.
+  against ``[tool.forge.continuation].judgment_max_lines`` plus how many
+  written lines name landed work (closed issue / merged PR); exits ``1``
+  when the panel markers are mismatched or duplicated, or — with
+  ``--strict`` — when over budget or any line names landed work.
 - ``forge-continuation reset`` — replace the written section with a
   skeleton (§10's five headings), regenerate the panel, never delete the
   file. Refuses while the panel shows live work unless ``--force``.
@@ -32,6 +34,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -48,6 +51,7 @@ from forge.continuation_state import (
     short_head,
     write_state,
     written_line_count,
+    written_section,
 )
 from forge.git_utils import (
     GH_TIMEOUT_S,
@@ -55,6 +59,7 @@ from forge.git_utils import (
     behind_ahead,
     configure_cli_logging,
     emit,
+    github_slug,
 )
 from forge.pr_plan import wrapup_freshness
 from forge.pr_wrapup_compose import summarize_rollup
@@ -69,6 +74,8 @@ _PR_FIELDS = "number,state,headRefOid,baseRefName,mergeable,statusCheckRollup,is
 _NO_PR_MARKER = "no pull requests found"
 _SHORT_SHA = 7
 _FRESHNESS_WORD = {True: "fresh", False: "stale", None: "unknown"}
+_REF_RE: Final = re.compile(r"#(\d+)")
+_MAX_STALE_REFS = 10
 
 
 def _no_pr(root: Path) -> PrState:
@@ -169,14 +176,133 @@ def refresh_state(
     return 1 if write_state(root, attempt=attempt, pr=pr) == "refused" else 0
 
 
-def check_note(root: Path) -> int:
-    """Report the written section's line usage against its budget.
+def _query_reference_states(root: Path, numbers: list[int]) -> dict | None:
+    """Fetch issue/PR states for *numbers* in one batched GraphQL call.
+
+    Per-number ``issue``/``pullRequest`` aliases keep this at a single
+    ``gh`` round trip. A number that is only one of the two types makes
+    the other alias a NOT_FOUND error, so ``gh`` exits 1 while ``data``
+    is still present — stdout is parsed regardless of the exit code, and
+    a null alias simply means "not that type". Numbers arrive as ints
+    extracted by :data:`_REF_RE`, so note text (an injection sink,
+    FOUNDATION §14) never reaches the query string.
+
+    Args:
+        root: Repo root — the origin remote names the GitHub repo.
+        numbers: Distinct referenced numbers, at most
+            :data:`_MAX_STALE_REFS`.
+
+    Returns:
+        The GraphQL ``repository`` object with one ``i<N>``/``p<N>``
+        alias per number, or ``None`` when gh is unusable.
+    """
+    slug = github_slug(root)
+    if slug is None:
+        return None
+    owner, _, name = slug.partition("/")
+    fields = " ".join(
+        f"i{i}: issue(number: {n}) {{ state }} "
+        f"p{i}: pullRequest(number: {n}) {{ state }}"
+        for i, n in enumerate(numbers)
+    )
+    query = (
+        "query($owner: String!, $name: String!) { "
+        f"repository(owner: $owner, name: $name) {{ {fields} }} }}"
+    )
+    try:
+        proc = subprocess.run(
+            [
+                "gh",
+                "api",
+                "graphql",
+                "-f",
+                f"query={query}",
+                "-f",
+                f"owner={owner}",
+                "-f",
+                f"name={name}",
+            ],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=GH_TIMEOUT_S,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if not proc.stdout.strip():
+        return None
+    try:
+        return json.loads(proc.stdout)["data"]["repository"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return None
+
+
+def _landed_references(root: Path, numbers: list[int]) -> set[int] | None:
+    """Return which referenced issue/PR numbers are closed or merged.
+
+    Args:
+        root: Repo root — the origin remote names the GitHub repo.
+        numbers: Distinct referenced numbers.
+
+    Returns:
+        The landed subset; ``None`` when the list exceeds
+        :data:`_MAX_STALE_REFS` or gh is unusable, so the caller reports
+        staleness as unavailable rather than as a checked zero.
+    """
+    if not numbers:
+        return set()
+    if len(numbers) > _MAX_STALE_REFS:
+        return None
+    repo = _query_reference_states(root, numbers)
+    if repo is None:
+        return None
+    landed: set[int] = set()
+    for i, n in enumerate(numbers):
+        issue = (repo.get(f"i{i}") or {}).get("state")
+        pr = (repo.get(f"p{i}") or {}).get("state")
+        if issue == "CLOSED" or pr in ("CLOSED", "MERGED"):
+            landed.add(n)
+    return landed
+
+
+def _stale_line_count(root: Path, text: str) -> int | None:
+    """Count written-section lines that name landed (closed/merged) work.
 
     Args:
         root: Repo root.
+        text: The note's content, with :func:`marker_problems` empty.
 
     Returns:
-        ``1`` when the panel markers are mismatched or duplicated; else ``0``.
+        The line count, or ``None`` when staleness could not be read —
+        never zero-on-failure, which would read as "checked, nothing
+        landed".
+    """
+    lines_with_refs = [
+        {int(m) for m in _REF_RE.findall(line)}
+        for line in written_section(text).splitlines()
+    ]
+    lines_with_refs = [nums for nums in lines_with_refs if nums]
+    if not lines_with_refs:
+        return 0
+    numbers = sorted({n for nums in lines_with_refs for n in nums})
+    landed = _landed_references(root, numbers)
+    if landed is None:
+        return None
+    return sum(1 for nums in lines_with_refs if nums & landed)
+
+
+def check_note(root: Path, *, strict: bool = False) -> int:
+    """Report the written section's usage, budget and staleness.
+
+    Args:
+        root: Repo root.
+        strict: Exit ``1`` when over budget or any written line names
+            landed work, so a caller can gate on the note.
+
+    Returns:
+        ``1`` when the panel markers are mismatched or duplicated, or when
+        ``strict`` and a budget/staleness violation is found; else ``0``.
     """
     path = root / CONTINUATION_PATH
     if not path.is_file():
@@ -189,8 +315,16 @@ def check_note(root: Path) -> int:
             emit(f"{CONTINUATION_PATH}: {problem}")
         return 1
     used, budget = written_line_count(text), judgment_max_lines(root)
-    verdict = "over budget — trim it" if used > budget else "within budget"
+    over = used > budget
+    verdict = "over budget — trim it" if over else "within budget"
     emit(f"{CONTINUATION_PATH}: written section {used}/{budget} lines ({verdict})")
+    stale = _stale_line_count(root, text)
+    if stale is None:
+        emit(f"{CONTINUATION_PATH}: staleness unavailable (gh not usable)")
+    else:
+        emit(f"{CONTINUATION_PATH}: {stale} line(s) name work that has landed")
+    if strict and (over or stale):
+        return 1
     return 0
 
 
@@ -325,10 +459,17 @@ def _build_parser() -> argparse.ArgumentParser:
             "or `interrupted` (free-form; sanitized)."
         ),
     )
-    sub.add_parser(
+    check = sub.add_parser(
         "check",
         help="Report the written section's line usage against "
-        "[tool.forge.continuation].judgment_max_lines; exit 1 on bad markers.",
+        "[tool.forge.continuation].judgment_max_lines, plus lines naming "
+        "landed work; exit 1 on bad markers.",
+    )
+    check.add_argument(
+        "--strict",
+        action="store_true",
+        help="Also exit 1 when over budget or any written line names "
+        "landed (closed/merged) work, so a caller can gate on the note.",
     )
     reset = sub.add_parser(
         "reset",
@@ -357,7 +498,7 @@ def main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int
     args = _build_parser().parse_args(argv)
     root = repo_root if repo_root is not None else Path.cwd()
     if args.command == "check":
-        return check_note(root)
+        return check_note(root, strict=args.strict)
     if args.command == "reset":
         return reset_note(root, force=args.force)
     return refresh_state(root, with_pr=args.with_pr, attempt=args.attempt)

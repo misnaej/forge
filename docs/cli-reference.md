@@ -410,8 +410,8 @@ positional arguments:
     state              Rewrite the status panel; every byte outside it stays
                        identical.
     check              Report the written section's line usage against
-                       [tool.forge.continuation].judgment_max_lines; exit 1 on
-                       bad markers.
+                       [tool.forge.continuation].judgment_max_lines, plus
+                       lines naming landed work; exit 1 on bad markers.
     reset              Replace the written section with a skeleton and
                        regenerate the panel; refuses on live work unless
                        --force.

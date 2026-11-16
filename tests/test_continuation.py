@@ -155,6 +155,161 @@ def test_check_with_no_note_is_a_no_op(
     assert "absent" in capsys.readouterr().out
 
 
+def _fake_gh_landed(
+    monkeypatch: pytest.MonkeyPatch, payload: str, *, returncode: int = 1
+) -> None:
+    """Fake gh api graphql for staleness read, preserving gh-exit-1-with-data shape.
+
+    A number that is only an issue or only a PR makes the other GraphQL
+    alias a NOT_FOUND error, so real ``gh`` exits 1 while ``data`` is
+    present; the fake reproduces that to lock the parse-anyway contract.
+
+    Args:
+        monkeypatch: Pytest fixture for patching.
+        payload: The JSON stdout the fake returns.
+        returncode: The fake's exit code (1 by default, matching GraphQL
+            partial errors).
+    """
+
+    def _run(*_a: object, **_kw: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess([], returncode, payload, "NOT_FOUND")
+
+    monkeypatch.setattr(cont.subprocess, "run", _run)
+
+
+def test_check_reports_landed_reference(
+    ignored_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A written line naming a closed issue prints the landed-work line; rc 0.
+
+    Detects: staleness line missing/wrong.
+    """
+    (ignored_repo / "pyproject.toml").write_text(
+        "[tool.forge.continuation]\njudgment_max_lines = 3\n", encoding="utf-8"
+    )
+    cont.main(["state"], repo_root=ignored_repo)
+    monkeypatch.setattr(cont, "github_slug", lambda _: "o/r")
+    _fake_gh_landed(
+        monkeypatch, '{"data":{"repository":{"i0":{"state":"CLOSED"},"p0":null}}}'
+    )
+    path = ignored_repo / cs.CONTINUATION_PATH
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text + "\n- Fixed issue #1\n", encoding="utf-8")
+    assert cont.main(["check"], repo_root=ignored_repo) == 0
+    out = capsys.readouterr().out
+    assert "1 line(s) name work that has landed" in out
+    assert "written section 3/3 lines" in out
+
+
+def test_check_with_no_refs_skips_gh(
+    ignored_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No ``#refs`` prints a zero landed count without any gh call.
+
+    Detects: gh called needlessly / wrong count.
+    """
+    (ignored_repo / "pyproject.toml").write_text(
+        "[tool.forge.continuation]\njudgment_max_lines = 3\n", encoding="utf-8"
+    )
+    cont.main(["state"], repo_root=ignored_repo)
+
+    def _run(*_a: object, **_kw: object) -> subprocess.CompletedProcess[str]:
+        msg = "gh must not run when the written section has no references"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(cont.subprocess, "run", _run)
+    path = ignored_repo / cs.CONTINUATION_PATH
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text + "\n- Some text without refs\n", encoding="utf-8")
+    assert cont.main(["check"], repo_root=ignored_repo) == 0
+    out = capsys.readouterr().out
+    assert "0 line(s) name work that has landed" in out
+    assert "written section 3/3 lines" in out
+
+
+def test_check_staleness_unavailable_without_gh(
+    ignored_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An unusable gh prints "staleness unavailable" beside the usage line; rc 0.
+
+    Detects: crash or fake-zero on gh failure.
+    """
+    (ignored_repo / "pyproject.toml").write_text(
+        "[tool.forge.continuation]\njudgment_max_lines = 3\n", encoding="utf-8"
+    )
+    cont.main(["state"], repo_root=ignored_repo)
+    monkeypatch.setattr(cont, "github_slug", lambda _: "o/r")
+    _fake_gh_landed(monkeypatch, "", returncode=1)
+    path = ignored_repo / cs.CONTINUATION_PATH
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text + "\n- Fixed issue #1\n", encoding="utf-8")
+    assert cont.main(["check"], repo_root=ignored_repo) == 0
+    out = capsys.readouterr().out
+    assert "staleness unavailable (gh not usable)" in out
+    assert "written section 3/3 lines" in out
+
+
+def test_check_strict_exits_nonzero_on_landed_and_over_budget(
+    ignored_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``--strict`` exits 1 on a landed ref and when over budget, 0 when clean.
+
+    Detects: --strict gate wiring.
+    """
+    (ignored_repo / "pyproject.toml").write_text(
+        "[tool.forge.continuation]\njudgment_max_lines = 3\n", encoding="utf-8"
+    )
+    cont.main(["state"], repo_root=ignored_repo)
+    monkeypatch.setattr(cont, "github_slug", lambda _: "o/r")
+    _fake_gh_landed(
+        monkeypatch, '{"data":{"repository":{"i0":{"state":"CLOSED"},"p0":null}}}'
+    )
+    path = ignored_repo / cs.CONTINUATION_PATH
+    text = path.read_text(encoding="utf-8")
+    path.write_text(text + "\n- Fixed issue #1\n", encoding="utf-8")
+    assert cont.main(["check", "--strict"], repo_root=ignored_repo) == 1
+    path.write_text(text + "\na\nb\nc\nd\n", encoding="utf-8")
+    assert cont.main(["check", "--strict"], repo_root=ignored_repo) == 1
+    path.write_text(text + "\n- Regular text\n", encoding="utf-8")
+    assert cont.main(["check", "--strict"], repo_root=ignored_repo) == 0
+
+
+def test_check_staleness_over_ref_cap_unavailable(
+    ignored_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """More than the reference cap prints "staleness unavailable"; rc 0.
+
+    Detects: cap behavior (no unbounded gh fan-out).
+    """
+    (ignored_repo / "pyproject.toml").write_text(
+        "[tool.forge.continuation]\njudgment_max_lines = 60\n", encoding="utf-8"
+    )
+    cont.main(["state"], repo_root=ignored_repo)
+    path = ignored_repo / cs.CONTINUATION_PATH
+    text = path.read_text(encoding="utf-8")
+    new_lines = "\n".join(f"- Fixed issue #{i}" for i in range(1, 12))
+    path.write_text(text + "\n" + new_lines + "\n", encoding="utf-8")
+
+    def _run(*_a: object, **_kw: object) -> subprocess.CompletedProcess[str]:
+        msg = "gh must not run past the reference cap"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(cont.subprocess, "run", _run)
+    assert cont.main(["check"], repo_root=ignored_repo) == 0
+    out = capsys.readouterr().out
+    assert "staleness unavailable" in out
+
+
 def _fake_gh(
     monkeypatch: pytest.MonkeyPatch, *, returncode: int, stdout: str, stderr: str = ""
 ) -> None:

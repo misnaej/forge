@@ -201,6 +201,7 @@ enforcement:
 - block_pr_merge.sh: block autonomous PR merges
 - block_protected_files.sh: protect foundation-owned files
 - check_commit_format.sh: enforce conventional commit format
+- check_continuation_budget.sh: PostToolUse(Write|Edit) advisory hook — print `forge-continuation check` after writes to `.plan/CONTINUATION.md`; never blocks
 - check_foundation_sync.sh: verify FOUNDATION.md sync
 - warn_pr_checks.sh: warn on PR check status
 - block_git_destructive.sh: block destructive git recovery verbs from agents — all `git reset` forms, forced `git clean`, literal `git checkout .` / `git restore .`, `git stash drop`/`clear`, untracked-including stash (`-u`/`-a`), branch resets that drop commits (`git checkout -B` / `git switch -C`; fail-closed when unverifiable) (no bypass — stop-and-report is the sanctioned recovery)

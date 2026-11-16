@@ -578,7 +578,10 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_no_pr(root: Path) -> PrState` _(internal)_ — Return the PR fields for a branch with no open PR.
 - `read_pr_state(root: Path) -> PrState | None` — Read the current branch's open PR from GitHub.
 - `refresh_state(root: Path, *, with_pr: bool = False, attempt: str | None = None) -> int` — Rewrite the status panel, optionally re-reading the PR first.
-- `check_note(root: Path) -> int` — Report the written section's line usage against its budget.
+- `_query_reference_states(root: Path, numbers: list[int]) -> dict | None` _(internal)_ — Fetch issue/PR states for *numbers* in one batched GraphQL call.
+- `_landed_references(root: Path, numbers: list[int]) -> set[int] | None` _(internal)_ — Return which referenced issue/PR numbers are closed or merged.
+- `_stale_line_count(root: Path, text: str) -> int | None` _(internal)_ — Count written-section lines that name landed (closed/merged) work.
+- `check_note(root: Path, *, strict: bool = False) -> int` — Report the written section's usage, budget and staleness.
 - `reset_note(root: Path, *, force: bool = False) -> int` — Replace the written section with a skeleton and regenerate the panel.
 - `_live_work_signals(root: Path, text: str) -> list[str]` _(internal)_ — Return live-work signals visible in the current panel text.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Build the ``forge-continuation`` argument parser.
