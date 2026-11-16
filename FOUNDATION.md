@@ -680,12 +680,12 @@ Every forge-shipped agent follows `agents/_TEMPLATE.md`. Invariants:
 ### Probing
 
 **Probing happens in a scratch copy, never the checkout.** Experiments
-(plant a bug, check whether a failure predates a change, build a repo to probe
-git) run in a `forge-scratch-repo` copy (`snapshot` of checkout, or `build`
-from a spec), addressed by absolute path or `git -C <path>`, never `cd … &&`
-(failed `cd` runs the rest in the real checkout). Probe needing a
-guard-blocked operation → report as finding, never route around (§2 "On
-deviation").
+(plant a bug, age a failure, probe git) run in a `forge-scratch-repo` copy
+(`snapshot` or `build`), addressed by absolute path or `git -C <path>`, never
+`cd … &&` (failed `cd` runs in the real checkout). Prefer `forge-scratch-repo`
+over hand-rolled worktrees; keep the scratch repo for the branch's lifetime,
+delete it when the branch work lands. Guard-blocked probe → report as finding,
+never route around (§2).
 
 ### Plugin staleness — symptoms and recovery
 

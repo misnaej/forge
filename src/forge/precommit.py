@@ -4077,13 +4077,72 @@ def _write_continuation_panel(outcome: str) -> None:
         )
 
 
+def _worktree_dirs(root: Path) -> tuple[str, str] | None:
+    """Return ``(common_dir, git_dir)`` when *root* is a linked worktree.
+
+    A linked worktree's ``.git`` is a file pointing into the main
+    checkout's common dir, so ``--git-common-dir`` and ``--git-dir``
+    resolve to different directories; in the main checkout they are the
+    same. A non-repo or a failed rev-parse is not a worktree.
+
+    Args:
+        root: Repo root to inspect.
+
+    Returns:
+        The differing directory pair, or ``None`` in the main checkout.
+    """
+    common = run_git(
+        "rev-parse", "--git-common-dir", cwd=root, check=False, log_errors=False
+    )
+    git_dir = run_git("rev-parse", "--git-dir", cwd=root, check=False, log_errors=False)
+    if not common or not git_dir:
+        return None
+    if Path(common).resolve() == Path(git_dir).resolve():
+        return None
+    return common, git_dir
+
+
+def _sync_short_circuit(root: Path) -> int | None:
+    """Return the exit code for a merge/wip sync that skips the gate.
+
+    Args:
+        root: Repo root.
+
+    Returns:
+        ``0`` for a ``FORGE_MERGE_SYNC`` mid-merge or ``FORGE_WIP_SYNC``
+        checkpoint, else ``None`` to run the full battery.
+    """
+    # forge-update-branch commits a merge it resolved itself without the
+    # gate, like a merge git completes on its own; honoured only mid-merge,
+    # and agents cannot type it (check_commit_format refuses it).
+    if os.environ.get("FORGE_MERGE_SYNC") == "1" and merge_in_progress(root):
+        emit(
+            f"{YELLOW}base merge resolved by forge-update-branch — no local "
+            f"gate; CI and the next commit check the merged tree.{NC}"
+        )
+        return 0
+
+    if os.environ.get("FORGE_WIP_SYNC") == "1":
+        emit(
+            f"{YELLOW}wip-sync checkpoint — full gate deferred to the next "
+            f"real commit.{NC}"
+        )
+        emit(
+            "This commit only secures in-progress work before a base merge "
+            "(FOUNDATION §2 base sync); every non-wip commit and the PR "
+            "squash still run the full battery."
+        )
+        return 0
+    return None
+
+
 def main() -> int:
     """CLI entry point.
 
     Returns:
         ``0`` if every non-skipped step passed (or the run was a
         ``FORGE_WIP_SYNC=1`` checkpoint, which runs no steps); ``1``
-        otherwise.
+        otherwise; ``2`` when run inside a linked git worktree.
     """
     parser = argparse.ArgumentParser(
         prog="forge-precommit",
@@ -4149,6 +4208,19 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    # In a linked worktree repo_root() resolves to the worktree, so hooks
+    # and code_health would hit the wrong tree; fail loud instead of
+    # silently checking the wrong checkout (probe with forge-scratch-repo,
+    # FOUNDATION §11).
+    worktree = _worktree_dirs(get_repo_root())
+    if worktree is not None:
+        emit(
+            "forge-precommit: refusing to run in a git worktree "
+            f"(--git-common-dir {worktree[0]} != --git-dir {worktree[1]}). "
+            "Run from the main checkout; probe with forge-scratch-repo."
+        )
+        return 2
+
     # Read-only reports: they must not reach the wip-sync banner or the
     # step-forcing environment below.
     if args.freshness:
@@ -4159,27 +4231,8 @@ def main() -> int:
             emit(line)
         return 0 if passed else 1
 
-    # forge-update-branch commits a merge it resolved itself without the
-    # gate, like a merge git completes on its own; honoured only mid-merge,
-    # and agents cannot type it (check_commit_format refuses it).
-    if os.environ.get("FORGE_MERGE_SYNC") == "1" and merge_in_progress(get_repo_root()):
-        emit(
-            f"{YELLOW}base merge resolved by forge-update-branch — no local "
-            f"gate; CI and the next commit check the merged tree.{NC}"
-        )
-        return 0
-
-    if os.environ.get("FORGE_WIP_SYNC") == "1":
-        emit(
-            f"{YELLOW}wip-sync checkpoint — full gate deferred to the next "
-            f"real commit.{NC}"
-        )
-        emit(
-            "This commit only secures in-progress work before a base merge "
-            "(FOUNDATION §2 base sync); every non-wip commit and the PR "
-            "squash still run the full battery."
-        )
-        return 0
+    if (rc := _sync_short_circuit(get_repo_root())) is not None:
+        return rc
 
     skip = _split_csv(args.skip)
     only = _split_csv(args.only)

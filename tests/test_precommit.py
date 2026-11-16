@@ -1173,6 +1173,63 @@ def test_main_wip_sync_near_miss_values_run_normal_path(
     assert len(calls) == 1
 
 
+def test_worktree_dirs_detects_only_linked_worktrees(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_worktree_dirs returns the dir pair only when common-dir != git-dir.
+
+    MOCK SETUP: run_git stubbed per argv — differing dirs (worktree),
+    equal dirs (main checkout), empty output (not a repo).
+    EXPECTED BEHAVIOR: pair, None, None respectively.
+    """
+    init_git_repo(tmp_path)
+
+    def fake_run_git(*args: str, **kwargs: object) -> str:
+        if args[1] == "--git-common-dir":
+            return str(tmp_path / ".git")
+        return str(tmp_path / ".git" / "worktrees" / "wt")
+
+    monkeypatch.setattr(precommit, "run_git", fake_run_git)
+    assert precommit._worktree_dirs(tmp_path) is not None
+
+    monkeypatch.setattr(precommit, "run_git", lambda *_a, **_k: str(tmp_path / ".git"))
+    assert precommit._worktree_dirs(tmp_path) is None
+
+    monkeypatch.setattr(precommit, "run_git", lambda *_a, **_k: "")
+    assert precommit._worktree_dirs(tmp_path) is None
+
+
+def test_main_in_linked_worktree_refuses_with_exit_two(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """main() in a real linked worktree exits 2 and names forge-scratch-repo.
+
+    SCENARIO: a second `git worktree` of a tmp repo — repo_root() resolves
+    to the worktree, so the gate must refuse before any step runs (#985).
+    MOCK SETUP: get_repo_root pinned to the worktree path; run_all spied
+    to prove it never fires.
+    EXPECTED BEHAVIOR: rc == 2, message names the worktree and
+    forge-scratch-repo, run_all not called.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+    worktree = tmp_path / "wt"
+    git_utils.run_git("worktree", "add", str(worktree), cwd=tmp_path)
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: worktree)
+    spy, calls = _run_all_spy()
+    monkeypatch.setattr(precommit, "run_all", spy)
+
+    with patch.object(precommit.sys, "argv", ["forge-precommit"]):
+        rc = precommit.main()
+
+    assert rc == 2
+    out = capsys.readouterr().out
+    assert "refusing to run in a git worktree" in out
+    assert "forge-scratch-repo" in out
+    assert calls == []
+
+
 def test_main_wip_sync_short_circuit_beats_json_flag(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
