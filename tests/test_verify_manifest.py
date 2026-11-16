@@ -5,14 +5,14 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+import pytest
+
 from forge import verify_manifest
 from forge.git_utils import code_health_dir
 
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 def test_skipped_when_no_plugin_dir(
@@ -176,3 +176,142 @@ def test_version_error_returns_none_on_malformed_json(tmp_path: Path) -> None:
     p = tmp_path / "plugin.json"
     p.write_text("{not valid")
     assert verify_manifest._version_error(p) is None
+
+
+_HOOK = {"command": "x.sh"}
+
+
+@pytest.fixture
+def manifest_with_repeated_matchers(tmp_path: Path) -> Path:
+    """A plugin.json repeating ``Bash`` (PreToolUse) and no-matcher (SubagentStop).
+
+    Returns:
+        Path of the written plugin.json.
+    """
+    p = tmp_path / "plugin.json"
+    hooks = {
+        "PreToolUse": [
+            {"matcher": "Bash", "hooks": [_HOOK]},
+            {"matcher": "Bash", "hooks": [_HOOK]},
+        ],
+        "SubagentStop": [{"hooks": [_HOOK]}, {"hooks": [_HOOK]}],
+    }
+    p.write_text(json.dumps({"hooks": hooks}))
+    return p
+
+
+def test_duplicate_matcher_error_names_every_repeated_pair(
+    manifest_with_repeated_matchers: Path,
+) -> None:
+    """Every repeated event/matcher pair is named, absent matcher included."""
+    err = verify_manifest._duplicate_matcher_error(manifest_with_repeated_matchers)
+    assert err is not None
+    assert "PreToolUse/Bash" in err
+    assert "SubagentStop/(no matcher)" in err
+
+
+@pytest.mark.parametrize(
+    "hooks",
+    [
+        {"PreToolUse": [{"matcher": "Bash"}, {"matcher": "Edit"}]},
+        {
+            "PreToolUse": [{"matcher": "Bash"}],
+            "PostToolUse": [{"matcher": "Bash"}],
+        },
+        None,
+        ["not", "a", "dict"],
+        {"PreToolUse": "not a list"},
+        {"PreToolUse": ["not a dict", "not a dict"]},
+        {"PreToolUse": [{"matcher": 5}, {"matcher": 5}]},
+    ],
+    ids=[
+        "distinct-matchers",
+        "same-matcher-different-events",
+        "hooks-absent",
+        "hooks-not-a-dict",
+        "event-not-a-list",
+        "group-not-a-dict",
+        "non-str-matcher",
+    ],
+)
+def test_duplicate_matcher_error_returns_none_when_nothing_repeats(
+    tmp_path: Path, hooks: object
+) -> None:
+    """Non-repeating or malformed-shape hooks yield None, never a false positive.
+
+    Args:
+        hooks: Parametrized ``hooks`` value written to the manifest;
+            ``None`` omits the key.
+    """
+    p = tmp_path / "plugin.json"
+    manifest = {} if hooks is None else {"hooks": hooks}
+    p.write_text(json.dumps(manifest))
+    assert verify_manifest._duplicate_matcher_error(p) is None
+
+
+@pytest.mark.parametrize(
+    "payload",
+    ["[]", "null", "1", '"x"'],
+    ids=["list", "null", "number", "string"],
+)
+def test_duplicate_matcher_error_returns_none_for_non_dict_manifest(
+    tmp_path: Path, payload: str
+) -> None:
+    """Valid JSON that is not an object yields None rather than raising.
+
+    Args:
+        payload: Raw manifest text that parses but is not an object.
+
+    The earlier guards both return None for these, so this function is
+    reached with a non-mapping ``data``. Without the isinstance check it
+    raised ``AttributeError`` and the manifest_json step reported a
+    traceback instead of naming the problem.
+    """
+    p = tmp_path / "plugin.json"
+    p.write_text(payload)
+    assert verify_manifest._duplicate_matcher_error(p) is None
+
+
+@pytest.mark.parametrize(
+    ("name", "content"),
+    [
+        (
+            "marketplace.json",
+            json.dumps(
+                {"hooks": {"Stop": [{"matcher": "A"}, {"matcher": "A"}]}},
+            ),
+        ),
+        ("plugin.json", "{not valid"),
+    ],
+    ids=["non-plugin-file", "unparseable-plugin-json"],
+)
+def test_duplicate_matcher_error_ignores_non_plugin_files_and_unparseable(
+    tmp_path: Path, name: str, content: str
+) -> None:
+    """Only a parseable plugin.json is checked; anything else returns None.
+
+    Direct-call-only for the unparseable case: :func:`main` short-circuits on
+    ``_parse_json_error`` first.
+
+    Args:
+        name: Parametrized file name the manifest content is written to.
+        content: Parametrized file content; may be valid or unparseable JSON.
+    """
+    p = tmp_path / name
+    p.write_text(content)
+    assert verify_manifest._duplicate_matcher_error(p) is None
+
+
+def test_fail_on_duplicate_matcher(
+    manifest_with_repeated_matchers: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A repeated matcher in plugin.json → exit 1, log names the event."""
+    root = manifest_with_repeated_matchers.parent
+    plugin_dir = root / ".claude-plugin"
+    plugin_dir.mkdir()
+    manifest_with_repeated_matchers.rename(plugin_dir / "plugin.json")
+    monkeypatch.chdir(root)
+    monkeypatch.setattr("sys.argv", ["verify-forge-manifest"])
+    assert verify_manifest.main() == 1
+    log = (code_health_dir(root) / "manifest_json.log").read_text()
+    assert "SubagentStop" in log

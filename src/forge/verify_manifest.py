@@ -3,6 +3,8 @@
 Standalone phase CLI for the ``manifest_json`` step in the forge
 pre-commit sequence. Owns the manifest-validation phase end to end —
 checks every ``.json`` file under ``.claude-plugin/`` parses as JSON,
+rejects a hook matcher repeated within one event (a roster keys hooks by
+matcher, so a repeat drops one group's hooks silently),
 and additionally schema-checks ``plugin.json``'s ``version`` field
 (strict bare semver) when present. The schema check exists because a
 version value carrying JSON escapes can be *valid JSON* while smuggling
@@ -94,20 +96,94 @@ def _version_error(manifest: Path) -> str | None:
     return None
 
 
+def _repeated_matchers(groups: list[object]) -> list[str]:
+    """Return each matcher that repeats within one event's group list, in order.
+
+    Args:
+        groups: One event's hook groups; non-dict groups and non-str
+            matchers are skipped.
+
+    Returns:
+        The repeated matcher strings, in order of their second appearance.
+    """
+    seen: set[str] = set()
+    repeated: list[str] = []
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        matcher = group.get("matcher", "")
+        if not isinstance(matcher, str):
+            continue
+        if matcher in seen:
+            repeated.append(matcher)
+        seen.add(matcher)
+    return repeated
+
+
+def _duplicate_matcher_error(manifest: Path) -> str | None:
+    """Return an error if a hook event repeats a matcher, else None.
+
+    A harness roster keys hooks by matcher rather than appending them
+    (``forge.install_vibe`` writes ``events[event].matchers[matcher]``),
+    so a second group naming a matcher the event already used replaces
+    the first group's hooks instead of adding to them. Whichever group
+    loses is dropped in silence, which is how a registered guard stops
+    running with nothing on screen. Groups sharing a matcher belong
+    merged into one ``hooks`` list in the manifest.
+
+    Args:
+        manifest: Manifest file to inspect.
+
+    Returns:
+        A message naming every repeated ``event/matcher`` pair, or
+        ``None`` when the file is not ``plugin.json``, carries no hook
+        table, or repeats nothing.
+    """
+    if manifest.name != "plugin.json":
+        return None
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    hooks = data.get("hooks")
+    if not isinstance(hooks, dict):
+        return None
+    repeated: list[str] = []
+    for event, groups in hooks.items():
+        if not isinstance(groups, list):
+            continue
+        repeated.extend(
+            f"{event}/{matcher or '(no matcher)'}"
+            for matcher in _repeated_matchers(groups)
+        )
+    if not repeated:
+        return None
+    return (
+        f"{manifest.name}: matcher repeated within one event: "
+        f"{', '.join(repeated)} — a roster keys hooks by matcher, so the "
+        "later group silently replaces the earlier one; merge their hooks "
+        "lists into a single group"
+    )
+
+
 def main() -> int:
     """Validate every ``.claude-plugin/*.json`` file and write the log.
 
     Returns:
         ``0`` on success or when no ``.claude-plugin/`` dir exists (skip).
-        ``1`` when at least one manifest fails to parse, or
-        ``plugin.json`` carries a non-strict-semver version value.
+        ``1`` when at least one manifest fails to parse, ``plugin.json``
+        carries a non-strict-semver version value, or ``plugin.json``
+        repeats a hook matcher within one event.
     """
     argparse.ArgumentParser(
         prog="verify-forge-manifest",
         description=(
-            "Validate that every .claude-plugin/*.json file parses as JSON "
-            "and that plugin.json's version field, when present, is bare "
-            "X.Y.Z semver. Writes code_health/manifest_json.log."
+            "Validate that every .claude-plugin/*.json file parses as JSON, "
+            "that no hook event in plugin.json repeats a matcher, and that "
+            "plugin.json's version field, when present, is bare X.Y.Z "
+            "semver. Writes code_health/manifest_json.log."
         ),
     ).parse_args()
 
@@ -121,7 +197,11 @@ def main() -> int:
         errors = [
             err
             for manifest in plugin_dir.glob("*.json")
-            if (err := _parse_json_error(manifest) or _version_error(manifest))
+            if (
+                err := _parse_json_error(manifest)
+                or _version_error(manifest)
+                or _duplicate_matcher_error(manifest)
+            )
             is not None
         ]
         if errors:

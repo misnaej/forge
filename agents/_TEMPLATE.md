@@ -1,8 +1,9 @@
 # Canonical agent shape
 
-**Not an agent.** Underscore-prefix excludes this file from Claude Code's
-plugin auto-discovery. Forge agents copy this structure; the
-`forge-audit-agents` CLI flags drift.
+**Not a forge agent.** Forge's own tooling skips underscore-prefixed files,
+but Claude Code does not: it lists this one as a spawnable `forge:_TEMPLATE`.
+Nothing routes to it: it has no frontmatter. Forge agents copy
+this structure; the `forge-audit-agents` CLI flags drift.
 
 See [FOUNDATION §11](../FOUNDATION.md#11-agent-boundary-protocol) for
 the policy this template implements.

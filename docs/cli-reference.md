@@ -1389,9 +1389,9 @@ options:
 ```text
 usage: verify-forge-manifest [-h]
 
-Validate that every .claude-plugin/*.json file parses as JSON and that
-plugin.json's version field, when present, is bare X.Y.Z semver. Writes
-code_health/manifest_json.log.
+Validate that every .claude-plugin/*.json file parses as JSON, that no hook
+event in plugin.json repeats a matcher, and that plugin.json's version field,
+when present, is bare X.Y.Z semver. Writes code_health/manifest_json.log.
 
 options:
   -h, --help  show this help message and exit

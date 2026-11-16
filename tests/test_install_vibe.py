@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from forge.audit.agents import REQUIRED_SECTIONS
-from forge.install_vibe import install_vibe
+from forge.install_vibe import _generate_roster_sidecar, install_vibe
 
 
 _HOOKS_DIR = "${CLAUDE_PLUGIN_ROOT}/claude-hooks"
@@ -107,6 +107,35 @@ def test_roster_sidecar_shape_project_root_and_expansion(consumer_repo: Path) ->
         assert (
             consumer_repo / command.removeprefix(str(consumer_repo) + "/")
         ).is_file()
+
+
+def test_roster_sidecar_merges_duplicate_matcher_hooks_and_warns(
+    consumer_repo: Path,
+) -> None:
+    """Two groups sharing a matcher keep both hooks and warn once.
+
+    Behavior test: a roster keys hooks by matcher, so assignment used to
+    drop the earlier group silently.
+    """
+    hooks_dir = consumer_repo / ".claude-plugin" / "claude-hooks"
+    (hooks_dir / "block_other.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    plugin_json_path = consumer_repo / ".claude-plugin" / "plugin.json"
+    plugin_json = json.loads(plugin_json_path.read_text(encoding="utf-8"))
+    plugin_json["hooks"]["PreToolUse"] = [
+        {"matcher": "Bash", "hooks": [{"command": f"{_HOOKS_DIR}/block_demo.sh"}]},
+        {"matcher": "Bash", "hooks": [{"command": f"{_HOOKS_DIR}/block_other.sh"}]},
+    ]
+    plugin_json_path.write_text(json.dumps(plugin_json), encoding="utf-8")
+
+    roster, warnings = _generate_roster_sidecar(plugin_json_path, consumer_repo)
+
+    commands = [
+        guard["command"] for guard in roster["events"]["PreToolUse"]["matchers"]["Bash"]
+    ]
+    assert any(command.endswith("block_demo.sh") for command in commands)
+    assert any(command.endswith("block_other.sh") for command in commands)
+    repeated = [w for w in warnings if "PreToolUse" in w and "Bash" in w]
+    assert len(repeated) == 1
 
 
 def test_subagent_toml_schema_and_prompt_pair(consumer_repo: Path) -> None:

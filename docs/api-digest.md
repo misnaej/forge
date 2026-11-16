@@ -2474,6 +2474,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 - `_parse_json_error(manifest: Path) -> str | None` _(internal)_ — Return a formatted error if *manifest* is invalid JSON, else None.
 - `_version_error(manifest: Path) -> str | None` _(internal)_ — Return an error when ``plugin.json``'s version is not strict semver.
+- `_repeated_matchers(groups: list[object]) -> list[str]` _(internal)_ — Return each matcher that repeats within one event's group list, in order.
+- `_duplicate_matcher_error(manifest: Path) -> str | None` _(internal)_ — Return an error if a hook event repeats a matcher, else None.
 - `main() -> int` — Validate every ``.claude-plugin/*.json`` file and write the log.
 
 ## `forge.verify_plugin_version`
