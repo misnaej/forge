@@ -619,8 +619,8 @@ documents its own logging entry point in its `CLAUDE.md`.)
 
 ## 10. Continuation Protocol
 
-`.plan/CONTINUATION.md` (gitignored) is the note a session leaves for the
-next. Exists for one moment: context about to be lost — cleared, or
+`.plan/CONTINUATION.md` (gitignored) is the note between sessions. Exists
+for one moment: context about to be lost — cleared, or
 summarised by Claude Code's lossy compaction. Git and GitHub hold history;
 note holds what they don't: where work stands now, and why.
 
@@ -637,13 +637,13 @@ note holds what they don't: where work stands now, and why.
      too), by `forge-pr-wrapup post`, and by a `PreCompact` hook before
      compaction.
    - Not written in CI, by `forge-precommit --only` or `--skip` runs, by a
-     checkpoint or `forge-update-branch` merge (none is a real attempt), or when note is
-     not gitignored — that refusal is logged, never silent.
+     checkpoint or `forge-update-branch` merge, or when note is not
+     gitignored — that refusal is logged, never silent.
 2. **The written section** — everything outside panel, written by main
    agent: intent, decisions and why, what was rejected, open question,
    next step. Capped at `[tool.forge.continuation].judgment_max_lines`
-   (default 60); `forge-continuation check` reports usage. Prune, never
-   grow into a log — done items belong in git.
+   (default 60); `forge-continuation check` reports usage and landed-work
+   refs (`--strict` gates). Prune, never grow into a log.
 
 ### Rules
 
@@ -653,11 +653,12 @@ note holds what they don't: where work stands now, and why.
   sanitized by forge; written section is only as safe as what was written.
 - **Gitignored** — never commit it; **never delete it**; rewrite written
   section in place.
+- **Out-list** — never hold what git/GitHub/another file re-derives (SHAs,
+  branch, PR state, CI). Thin note = work landed; read the log.
 - **When context runs low, hand off; never clear.** Write both parts
   (`forge-continuation state --with-pr`, then written section), then say
-  "handoff complete — `/clear` is safe now". Offer the clear; user takes it.
-- Only main agent writes the note; panel is mechanical, written section is
-  main agent's.
+  "handoff complete — `/clear` is safe now".
+- Only main agent writes the note; panel is mechanical.
 
 ---
 
