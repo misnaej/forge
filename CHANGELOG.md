@@ -20,6 +20,14 @@ fragment type (**Features / Changes / Fixes / Removed / Docs**).
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v12.1.0 — 2026-11-16
+
+### Fixes
+- `forge-precommit` now refuses to run inside a linked git worktree (exit 2, `--git-common-dir` != `--git-dir`) with an error naming `forge-scratch-repo`, instead of silently resolving hooks and `code_health/` against the worktree; FOUNDATION §11 probing rule now states the scratch-repo-over-worktrees preference (word-neutral swap)
+
+### Docs
+- FOUNDATION word-budget baseline rounded 8676 → 8700 (same shrink-only ratchet, round ceiling); preamble section TOC removed from FOUNDATION.md (headings are the TOC) — 8588 words, no rule content changed
+
 ## v13.0.0 — 2026-11-16
 
 ### Features
