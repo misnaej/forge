@@ -76,7 +76,8 @@ def _generate_roster_sidecar(
         repo_root: Repository root directory.
 
     Returns:
-        Tuple of (roster_dict, warnings).
+        Tuple of (roster_dict, warnings). Warnings name each event whose
+        hook groups repeat a matcher; those groups are merged, not dropped.
     """
     warnings: list[str] = []
 

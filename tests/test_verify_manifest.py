@@ -250,6 +250,29 @@ def test_duplicate_matcher_error_returns_none_when_nothing_repeats(
 
 
 @pytest.mark.parametrize(
+    "payload",
+    ["[]", "null", "1", '"x"'],
+    ids=["list", "null", "number", "string"],
+)
+def test_duplicate_matcher_error_returns_none_for_non_dict_manifest(
+    tmp_path: Path, payload: str
+) -> None:
+    """Valid JSON that is not an object yields None rather than raising.
+
+    Args:
+        payload: Raw manifest text that parses but is not an object.
+
+    The earlier guards both return None for these, so this function is
+    reached with a non-mapping ``data``. Without the isinstance check it
+    raised ``AttributeError`` and the manifest_json step reported a
+    traceback instead of naming the problem.
+    """
+    p = tmp_path / "plugin.json"
+    p.write_text(payload)
+    assert verify_manifest._duplicate_matcher_error(p) is None
+
+
+@pytest.mark.parametrize(
     ("name", "content"),
     [
         (

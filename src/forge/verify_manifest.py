@@ -145,6 +145,8 @@ def _duplicate_matcher_error(manifest: Path) -> str | None:
         data = json.loads(manifest.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+    if not isinstance(data, dict):
+        return None
     hooks = data.get("hooks")
     if not isinstance(hooks, dict):
         return None
@@ -171,15 +173,17 @@ def main() -> int:
 
     Returns:
         ``0`` on success or when no ``.claude-plugin/`` dir exists (skip).
-        ``1`` when at least one manifest fails to parse, or
-        ``plugin.json`` carries a non-strict-semver version value.
+        ``1`` when at least one manifest fails to parse, ``plugin.json``
+        carries a non-strict-semver version value, or ``plugin.json``
+        repeats a hook matcher within one event.
     """
     argparse.ArgumentParser(
         prog="verify-forge-manifest",
         description=(
-            "Validate that every .claude-plugin/*.json file parses as JSON "
-            "and that plugin.json's version field, when present, is bare "
-            "X.Y.Z semver. Writes code_health/manifest_json.log."
+            "Validate that every .claude-plugin/*.json file parses as JSON, "
+            "that no hook event in plugin.json repeats a matcher, and that "
+            "plugin.json's version field, when present, is bare X.Y.Z "
+            "semver. Writes code_health/manifest_json.log."
         ),
     ).parse_args()
 
