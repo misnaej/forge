@@ -1,0 +1,3 @@
+bump: patch
+- A lint suppression that suppresses nothing now fails the commit gate instead of being removed silently. The ruff step repairs what it can and reports the result as a pass, so a finding it was able to fix never failed anything: in CI the repair is computed, discarded, and the run goes green. One unused suppression was therefore added, removed, re-added and removed again across four pull requests, every one of them passing. The rule that detects it is now excluded from automatic repair, so it is reported and a person decides whether the rule or the code is wrong.
+- Removed seven suppressions from the docstring and test-naming verifiers that had never suppressed anything.
