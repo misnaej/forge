@@ -334,13 +334,40 @@ def _requires_rest(line: str) -> str | None:
     return match.group("rest").lstrip("*").split("**")[0].replace("`", "")
 
 
+# A line starting a new markdown block (heading, list, quote, fence,
+# comment) ends a soft-wrapped Requires: paragraph — and so does a
+# recorder field label (Bump:, track:), which the plan payload writes on
+# the line right after Requires:.
+_BLOCK_START_RE: Final[re.Pattern[str]] = re.compile(
+    r"^\s{0,3}(?:#{1,6}\s|[-*+]\s|\d+[.)]\s|>|```|<!--|Bump\s*:|track\s*:)"
+)
+
+
+def _is_requires_continuation(line: str) -> bool:
+    """Return whether *line* continues a soft-wrapped ``Requires:`` line.
+
+    Args:
+        line: One line of issue text.
+
+    Returns:
+        ``True`` when the line is non-blank, starts no new block or
+        recorder field, and is not itself a ``Requires:`` line.
+    """
+    if not line.strip() or _requires_rest(line) is not None:
+        return False
+    return _BLOCK_START_RE.match(line) is None
+
+
 def parse_requires(texts: Iterable[str]) -> Requires:
-    """Parse every ``Requires:`` line in *texts*.
+    """Parse every ``Requires:`` line in *texts*, soft-wraps included.
 
     An entry is understood when, once parentheticals and connecting words
     are removed, only ``#N`` / ``PR #N`` references — or a lone
-    ``nothing`` — remain. Anything else is kept verbatim as unparsed, so
-    the caller fails closed on a prerequisite it cannot check.
+    ``nothing`` — remain. A ``Requires:`` header soft-wrapped onto
+    following paragraph lines is joined first (markdown renders the wrap
+    as one paragraph), so a wrapped reference is not silently dropped.
+    Anything else is kept verbatim as unparsed, so the caller fails closed
+    on a prerequisite it cannot check.
 
     Args:
         texts: Markdown bodies to scan (issue body, plan payload).
@@ -353,10 +380,18 @@ def parse_requires(texts: Iterable[str]) -> Requires:
     refs: list[int] = []
     unparsed: list[str] = []
     for text in texts:
-        for line in strip_fences(text.splitlines()):
-            rest = _requires_rest(line)
+        lines = strip_fences(text.splitlines())
+        i = 0
+        while i < len(lines):
+            rest = _requires_rest(lines[i])
+            i += 1
             if rest is None:
                 continue
+            parts = [rest]
+            while i < len(lines) and _is_requires_continuation(lines[i]):
+                parts.append(lines[i].strip())
+                i += 1
+            rest = " ".join(parts)
             found = True
             stripped = _PAREN_RE.sub(" ", rest)
             numbers = [int(n) for n in ISSUE_REF_RE.findall(stripped)]

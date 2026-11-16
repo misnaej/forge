@@ -1353,7 +1353,8 @@ A compact index of this codebase's symbols — every top-level function and clas
   - `exit_code(self) -> int` — Return 2 on any unknown, else 1 on any finding, else 0.
   - `render(self) -> str` — Return the report lines followed by one verdict line.
 - `_requires_rest(line: str) -> str | None` _(internal)_ — Return the text after a ``Requires:`` marker on *line*, or None.
-- `parse_requires(texts: Iterable[str]) -> Requires` — Parse every ``Requires:`` line in *texts*.
+- `_is_requires_continuation(line: str) -> bool` _(internal)_ — Return whether *line* continues a soft-wrapped ``Requires:`` line.
+- `parse_requires(texts: Iterable[str]) -> Requires` — Parse every ``Requires:`` line in *texts*, soft-wraps included.
 - `prerequisite_verdict(status: RefStatus) -> tuple[bool, str]` — Decide whether one prerequisite has landed.
 - `delivering_prs(statuses: Mapping[int, RefStatus]) -> dict[int, int]` — Map each merged PR that delivered a prerequisite to that prerequisite.
 - `capped_echo(text: str) -> str` — Return *text* fenced and capped at :data:`ECHO_CAP` characters.
