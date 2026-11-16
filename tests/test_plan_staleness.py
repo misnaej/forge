@@ -271,6 +271,58 @@ def test_requires_nothing_is_satisfied() -> None:
     assert report.exit_code == ps.EXIT_CLEAN
 
 
+def test_requires_soft_wrapped_line_parses_whole() -> None:
+    r"""Behavior: a soft-wrapped `Requires:` line parses its continuation (#983).
+
+    Markdown renders `Requires: PR #5\\nand #7` as one paragraph, so both
+    references must land in refs — before the fix, #7 was silently dropped.
+    """
+    parsed = ps.parse_requires(["Requires: PR #5\nand #7"])
+    assert parsed.refs == (5, 7)
+    assert parsed.unparsed == ()
+
+
+def test_requires_multiple_continuation_lines_join() -> None:
+    """Several continuation lines all join the same Requires: paragraph."""
+    parsed = ps.parse_requires(["Requires: #5,\n#6 and\nPR #7"])
+    assert parsed.refs == (5, 6, 7)
+    assert parsed.unparsed == ()
+
+
+def test_requires_continuation_stops_at_new_block_or_new_requires() -> None:
+    """A blank line, a heading, a list item or a second Requires: ends the wrap."""
+    body = (
+        "Requires: #5\nand #6\n\n## Next\nRequires: #9\n- item stops the wrap\n"
+        "\nRequires: #11\nand #12\n"
+    )
+    parsed = ps.parse_requires([body])
+    assert parsed.refs == (5, 6, 9, 11, 12)
+    assert parsed.unparsed == ()
+
+
+def test_requires_wrapped_residue_still_fails_closed() -> None:
+    """A wrapped line whose residue is unparseable lands in unparsed whole."""
+    parsed = ps.parse_requires(["Requires: #5\nand something uncheckable"])
+    assert parsed.refs == ()
+    assert parsed.unparsed == ("#5 and something uncheckable",)
+
+
+def test_requires_stops_at_recorder_field_labels() -> None:
+    r"""The plan payload's `Bump:`/`track:` lines are fields, not continuations.
+
+    Regression: the recorder writes `Requires: nothing\\nBump: patch` on
+    adjacent lines; the wrap-join must not swallow the Bump line into the
+    Requires entry (that failed every plan-validated comment's prereq).
+    """
+    parsed = ps.parse_requires(["Requires: nothing\nBump: patch"])
+    assert parsed.found is True
+    assert parsed.refs == ()
+    assert parsed.unparsed == ()
+    parsed = ps.parse_requires(["Requires: PR #5\nand #7\nBump: minor\ntrack: foo"])
+    assert parsed.refs == (5, 7)
+    assert parsed.unparsed == ()
+
+
 def test_prerequisites_notes_but_does_not_refuse_both_labels() -> None:
     """Both labels are drift's refusal; prerequisites notes it and still answers."""
     gh = _source("Requires: nothing", [], "blocked", "plan-ready")
