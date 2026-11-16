@@ -76,6 +76,7 @@ from forge.git_utils import (
     require_cli,
     run_git,
 )
+from forge.plugin_roster import shipped_agent_names
 from forge.pr_metrics_bench import (
     BenchError,
     RunRequest,
@@ -107,7 +108,6 @@ from forge.pr_metrics_report import (
 )
 from forge.regen_docs import forge_version, is_forge_repo
 from forge.upgrade import pinned_ref
-from forge.verify_agent_doc import shipped_agent_names
 
 
 if TYPE_CHECKING:

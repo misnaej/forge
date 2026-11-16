@@ -16,6 +16,7 @@ from importlib import resources
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from forge import plugin_roster
 from forge import verify_agent_doc as vad
 
 
@@ -247,89 +248,12 @@ def test_plugin_roster_reads_shipped_file_non_empty() -> None:
     assert roster["skills"]
     assert roster["hooks"]
     data = tomllib.loads(
-        resources.files("forge").joinpath("data/plugin-roster.toml").read_text()
+        resources.files("forge")
+        .joinpath(plugin_roster.ROSTER_RESOURCE)
+        .read_text(encoding="utf-8")
     )
     assert roster["skills"] == set(data["skills"]["names"])
     assert roster["hooks"] == set(data["hooks"]["names"])
-
-
-def test_plugin_roster_degrades_to_empty_on_read_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A missing/unreadable shipped data file degrades to empty sets, never raises."""
-
-    class _MissingResource:
-        """Null-object resource whose read_text always raises FileNotFoundError."""
-
-        def joinpath(self, _name: str) -> _MissingResource:
-            """Return self so the chained `.joinpath(...).read_text()` call resolves.
-
-            Args:
-                _name: Resource filename to locate (unused).
-
-            Returns:
-                Self, enabling chained calls.
-            """
-            return self
-
-        def read_text(self) -> str:
-            """Simulate an older installed package lacking the data file."""
-            raise FileNotFoundError
-
-    monkeypatch.setattr(vad.resources, "files", lambda _pkg: _MissingResource())
-    assert vad._plugin_roster() == {"skills": set(), "hooks": set()}
-
-
-class _TextResource:
-    """Null-object resource whose ``read_text`` returns a fixed string."""
-
-    def __init__(self, text: str) -> None:
-        """Store the text the fake resource file returns.
-
-        Args:
-            text: Content returned by `read_text`.
-        """
-        self._text = text
-
-    def joinpath(self, _name: str) -> _TextResource:
-        """Return self so the chained `.joinpath(...).read_text()` call resolves.
-
-        Args:
-            _name: Resource filename to locate (unused).
-
-        Returns:
-            Self, enabling chained calls.
-        """
-        return self
-
-    def read_text(self) -> str:
-        """Return the fixed text supplied at construction."""
-        return self._text
-
-
-def test_plugin_roster_degrades_to_empty_on_invalid_toml(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Invalid shipped TOML degrades to empty sets, never raises."""
-    monkeypatch.setattr(
-        vad.resources, "files", lambda _pkg: _TextResource("not [ valid toml @@@")
-    )
-    assert vad._plugin_roster() == {"skills": set(), "hooks": set()}
-
-
-def test_plugin_roster_drops_non_string_names(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A `names` array mixing ints with strings keeps only the string entries.
-
-    SCENARIO: the shipped roster file is well-formed TOML, but its `names`
-    arrays carry stray non-string entries (a hand-edit footgun).
-    EXPECTED BEHAVIOR: each kind's set contains only the string names — the
-    ints are dropped rather than raising.
-    """
-    text = '[skills]\nnames = [1, "commit", 2]\n\n[hooks]\nnames = ["block_push", 3]\n'
-    monkeypatch.setattr(vad.resources, "files", lambda _pkg: _TextResource(text))
-    assert vad._plugin_roster() == {"skills": {"commit"}, "hooks": {"block_push"}}
 
 
 # --- _check_doc -------------------------------------------------------------
@@ -1357,7 +1281,7 @@ def test_plugin_roster_toml_matches_repo_skills_and_hooks() -> None:
     `src/forge/data/plugin-roster.toml`.
     """
     generated = _generate_plugin_roster_toml(_REPO_ROOT)
-    shipped = (_REPO_ROOT / "src" / "forge" / "data" / "plugin-roster.toml").read_text(
+    shipped = (_REPO_ROOT / "src" / "forge" / plugin_roster.ROSTER_RESOURCE).read_text(
         encoding="utf-8"
     )
     assert generated == shipped, (

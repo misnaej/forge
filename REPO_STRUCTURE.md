@@ -74,6 +74,7 @@ Checked on every commit by `verify-forge-repo-structure`: every listed file and 
      doc generators
    - doctor.py: `forge-doctor` — environment diagnostics
    - version_surfaces.py: the version surfaces of one forge install (pip package, git-hook sidecar, this checkout's own Claude Code plugin install) plus the editable-install origin, the install-record and global-install readers, and the per-surface remediation strings — read once here for `forge-doctor`, `forge-plugin-sync` and `forge-precommit`'s `env_sync` / `plugin_sync` gates
+   - plugin_roster.py: the one reader of the packaged `data/plugin-roster.toml` — `roster_names(kind)` plus the agent-name and namespaced-name (agents + skills, never hooks) unions; stdlib-only leaf, every failure and unexpected shape degrades to an empty set so a commit gate, an installer and a metrics report never block on a missing or malformed data file
    - plugin_sync.py: `forge-plugin-sync` — installs this checkout's own forge release as its Claude Code plugin from a per-version marketplace
    - install_githooks.py: `install-forge-githooks` — git hook installer (managed marker carries `body-sha` only — never the forge version, so wrappers stay byte-stable across bumps; the version lives in the gitignored `.forge-hook-version` sidecar; modified wrappers survive refresh)
    - post_merge.py: `forge-post-merge` — managed post-merge git-hook entrypoint (foundation drift check + backgrounded self-refresh of hook wrappers)
@@ -128,7 +129,7 @@ Checked on every commit by `verify-forge-repo-structure`: every listed file and 
    - mermaid.min.js: vendored Mermaid UMD bundle (MIT, pinned) — copied next to `forge-gen-c4 --format html` output so the diagram renders offline
    - mermaid-layout-elk.iife.min.js: vendored Mermaid v11 ELK layout loader, re-bundled to a classic-script IIFE (esbuild, chunks inlined) so it loads from `file://` where the upstream ESM build can't; the HTML registers it for clean cross-cluster layout with a dagre fallback (MIT, pinned)
    - vibe-extra-hooks.toml: shipped Vibe-only extra hooks (post_agent replacements) merged into .vibe/hooks.toml at generation
-   - plugin-roster.toml: shipped roster of forge's plugin skills, hooks and agents, read by `verify-forge-agent-doc` so consumer agent docs can name them and by `forge-metrics` to keep shipped agent types; regenerated and drift-checked by `tests/test_verify_agent_doc.py`
+   - plugin-roster.toml: shipped roster of forge's plugin skills, hooks and agents, read through `plugin_roster` by `verify-forge-agent-doc` (consumer agent docs can name them), the Vibe installer and generators (namespace mapping) and `forge-metrics` (shipped agent types); regenerated and drift-checked by `tests/test_verify_agent_doc.py`
    - bench/: `forge-metrics bench` data — `sample/` (the `tally` sample project; `.py` files ship as `.py.tmpl`, `dot-<name>` as `.<name>`, so forge's own tools skip them), `tasks/*.toml` (five task specs: prompt + outcome checks), `files/` (task setup files and hidden check tests), `workflow.md` (the shared workflow rules appended to every prompt)
    - docs/: symlinks to the `forge-docs/` reference pages, shipped so `install-forge-claude-md` can write them into consumer repos
    - agents/: symlink to the repo-root `agents/` — shipped so `install-forge-vibe` generates the per-agent TOMLs in consumer repos from the installed package
@@ -313,6 +314,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_verify_manifest.py: tests for verify_manifest
    - test_verify_doc_consistency.py: tests for verify_doc_consistency
    - test_verify_agent_doc.py: tests for verify_agent_doc
+   - test_plugin_roster.py: tests for plugin_roster (the one roster reader: kind lookup, misshapen tables degrade to empty, wrong read signature still raises, hooks excluded from the namespaced union)
    - test_verify_cve_usage.py: tests for verify_cve_usage (active/inactive CVE, usage/no-usage, comment + self exclusion, pip-audit-missing skip, checked-of-reported coverage matrix + NOT-checked exit, bad-regex tolerance, `--audit-json` sidecar reuse, `--list-inactive` reporter)
    - test_pip_audit_json.py: tests for pip_audit_json (run_json binary-missing/parse paths, advisories + ids_from_data alias collection + malformed-shape filtering, render_report primary-id-only, advisory-count invariant, scan_postdates_fork boundary)
    - test_install_readme_badges.py: tests for install_readme_badges (badge sources, drift-aware injection, opt-in gating, --check)
