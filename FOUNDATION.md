@@ -255,22 +255,24 @@ Git procedures (gate kinds, destructive forms, base sync):
 ---
 ## 3. Mandatory Delegation
 
-Listed tasks **must** go to their subagent; handling them directly is
-forbidden.
+Listed tasks **must** go to their subagent.
+
+**Reuse before spawning (Vibe).** Before spawning, send a follow-up
+message to an existing idle child — its context persists — instead of
+spawning a new one.
 
 ### Agent naming convention
 
-Agents carry the harness's namespace: `forge:<name>` with the Claude
-plugin, bare `<name>` in-repo. The fourteen:
+Agents carry the harness namespace: `forge:<name>` on Claude, bare
+`<name>` in-repo. Fourteen:
 `forge:design-checker`, `forge:docs-types-checker`, `forge:issue-triage`, `forge:knowledge-search`, `forge:merge-resolver`, `forge:perf-optimizer`,
 `forge:pr-manager`, `forge:precommit-fixer`, `forge:prior-art`,
 `forge:security-checker`, `forge:test-advisor`, `forge:test-writer`,
 `forge:token-optimizer`, `forge:weekly-summary`.
 
-**Consumer wrappers MUST use distinct names** — local
-`.claude/agents/<name>.md` matching a shipped name shadows it, making
-`forge:<name>` unreachable. Suffix repo/scope (`design-checker-<repo>`),
-delegate per §16 Pattern A.
+**Consumer wrappers MUST use distinct names** — a local
+`.claude/agents/<name>.md` matching a shipped name shadows it. Suffix
+repo/scope (`design-checker-<repo>`); delegate per §16 Pattern A.
 
 | Task | Agent | Trigger |
 |---|---|---|
@@ -299,9 +301,9 @@ delegate per §16 Pattern A.
 
 ### Standard workflow orders
 
-**Commit:** `forge:prior-art` (when creating files/symbols — first; REUSE verdict ends plan) → `forge:design-checker` (pre-write) → code changes → `forge:precommit-fixer` → `forge-commit`
+**Commit:** `forge:prior-art` (first; REUSE verdict ends plan) → `forge:design-checker` (pre-write) → code changes → `forge:precommit-fixer` → `forge-commit`
 
-**PR finalization:** `forge:design-checker` + `forge:security-checker` + `forge:docs-types-checker` (parallel) → `forge:precommit-fixer` (mode `strict`) → `forge:pr-manager` → background PR monitor (§6 — "The flow does not end at posting")
+**PR finalization:** `forge:design-checker` + `forge:security-checker` + `forge:docs-types-checker` (parallel) → `forge:precommit-fixer` (mode `strict`) → `forge:pr-manager` → background PR monitor (§6)
 
 **Test writing:** `forge:test-advisor` (advise) → `forge:test-writer` → `forge:test-advisor` (review) → `forge:precommit-fixer`
 

@@ -40,6 +40,15 @@ note's `forge:state` markers, are left as written. The mapping lives in
 `agent_namespace`, so a future target declares its namespace rather than adding
 another rewrite path.
 
+## Subagent child limit
+
+Vibe never discards a subagent when its turn ends — the child stays idle
+and reusable, but still counts against the child limit (default 32,
+`subagent_max_children` in Vibe's runtime config), and agents have no
+close/discard tool. Before spawning, send a follow-up message to an
+existing idle child — its context persists — instead of spawning a new
+one (`agents.send_message` on the child's name, not `agents.spawn`).
+
 ## AGENTS.md and `@`-includes
 
 Vibe renders `AGENTS.md` verbatim — it has no `@include` directive (unlike

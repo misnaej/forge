@@ -61,6 +61,14 @@ the first hand-back while a launched helper has not stopped; background
 shell jobs are invisible to it, so for those the rule alone holds. Applies to
 every agent with `Task` in its tools, not only §16 reporter wrappers.
 
+## Reuse idle children before spawning (Vibe)
+
+Under Vibe, spawned subagents are never discarded when a turn ends: the
+child limit (default 32, `subagent_max_children` in Vibe config) counts
+idle children, and agents have no close/discard tool. Before spawning,
+send a follow-up message to an existing idle child — its context persists —
+instead of spawning a new one.
+
 ## Output style (always)
 
 Write terse: answer first, no ceremony, no recap. Drop articles (a/an/the)
