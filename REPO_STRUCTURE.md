@@ -143,7 +143,7 @@ Foundation agents shipped via the Claude Code plugin. ``_TEMPLATE.md``
 documents the canonical agent shape (frontmatter, length budget,
 ownership model) — see [FOUNDATION §11](FOUNDATION.md#11-agent-boundary-protocol).
 
-- _TEMPLATE.md: canonical agent template (excluded from plugin auto-discovery via underscore prefix)
+- _TEMPLATE.md: canonical agent template; the underscore prefix excludes it from forge's own tooling only — Claude Code discovers it as a spawnable agent like every other file here, so it is listed as `forge:_TEMPLATE` (no manifest key suppresses this; its placeholder description is what keeps routing off it)
 - design-checker.md: design review agent
 - docs-types-checker.md: docs and type-hint checker agent
 - issue-triage.md: GitHub issue triage agent
