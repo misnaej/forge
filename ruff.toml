@@ -9,13 +9,9 @@ ignore = [
     "CPY001",  # missing-copyright-notice — forge has no copyright-header
                 # policy; would fire on every file
 ]
-# The pre-commit step runs `ruff check --fix --unsafe-fixes`, so a finding
-# ruff can fix is applied and reported as a pass. In CI nothing is committed,
-# so the fix is computed, discarded, and the run goes green: an unused
-# suppression can be added and removed repeatedly with every PR passing.
-# Listed here, RUF100 reports instead of being fixed, so a suppression that
-# does nothing fails the gate and a person decides whether the rule or the
-# code is wrong.
+
+# RUF100 is reported, never auto-removed: a suppression that suppresses
+# nothing means the rule or the code is wrong, and a person decides which.
 unfixable = ["RUF100"]
 
 [lint.per-file-ignores]

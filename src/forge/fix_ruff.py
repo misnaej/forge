@@ -27,8 +27,9 @@ single responsibility):
 Both ruff invocations are idempotent — when nothing needs fixing they
 are near-instant no-ops. Exit code is the exit code of ``ruff check``:
 0 when every violation cleared, non-zero when residue remains (rules
-without an autofix locally, any finding at all in reporting mode, where
-a formatting difference fails on its own too).
+without an autofix locally). In reporting mode any finding is residue,
+and a formatting difference fails on its own too (``ruff format --check``
+exit code).
 
 Can be invoked directly (e.g. by the ``forge:precommit-fixer`` agent to
 refresh just the ruff log) or by ``forge-precommit`` as part of the full
@@ -162,8 +163,9 @@ def main() -> int:
     """Apply ruff fixes and write ``code_health/ruff.log``.
 
     Returns:
-        Exit code from ``ruff check --fix`` (0 if every violation was
-        cleared, non-zero if residue remains). ``0`` when no source dirs
+        Exit code from ``ruff check`` (0 if every violation was cleared,
+        non-zero if residue remains); in CI reporting mode also non-zero
+        when ``ruff format --check`` finds a difference. ``0`` when no source dirs
         are present or when ``--scope diff`` finds no modified files (the
         step is skipped in both cases).
     """
@@ -173,7 +175,8 @@ def main() -> int:
             "Run `ruff format` + `ruff check --fix --unsafe-fixes` "
             "in-place, re-stage the files that were already staged (failing "
             "if ruff rewrote a partly-staged file), and write "
-            "code_health/ruff.log."
+            "code_health/ruff.log. In CI, report only: `ruff format --check` "
+            "+ `ruff check --no-fix`, nothing rewritten or re-staged."
         ),
     )
     parser.add_argument(
