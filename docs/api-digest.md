@@ -1895,6 +1895,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_branch_messages(root: Path, base_ref: str) -> str` _(internal)_ — Return the commit messages on HEAD since *base_ref*.
 - `_also_closed(body: str, listed: list[int]) -> list[int]` _(internal)_ — Return issues the PR body closes in prose that *listed* omits.
 - `_gather_inputs(root: Path, args: argparse.Namespace) -> ComposeInputs` _(internal)_ — Collect everything ``compose`` renders from.
+- `_quarantine_wrapup(root: Path, reason: str) -> None` _(internal)_ — Park the previous wrap-up as ``pr_wrapup.stale.md`` with a header.
 - `_cmd_compose(args: argparse.Namespace) -> int` _(internal)_ — Write ``code_health/pr_wrapup.md`` with slots for the author to fill.
 - `_is_emergency_post(root: Path, text: str, pr: int) -> bool` _(internal)_ — Return whether *text* is the recorded emergency PR's own wrap-up.
 - `_emit_post_notes(pr: int, view: dict[str, object], follow_ups: list[int]) -> None` _(internal)_ — Print what the caller should know once a wrap-up has posted.

@@ -1517,31 +1517,125 @@ def test_main_compose_reports_a_compose_error_as_exit_two(
     assert "missing report for required reporter" in capsys.readouterr().out
 
 
-def test_main_compose_dash_prefixed_base_refuses_before_touching_repo_root(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+def test_main_compose_dash_prefixed_base_refuses_and_quarantines(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A `--base` value shaped like a flag is refused before any git call.
+    """A `--base` value shaped like a flag is refused (exit 2) and quarantines.
 
     Mirrors `pr_plan.main`'s and `git_utils.fetch_quietly`'s own dash-prefix
-    guard: `_cmd_compose` checks `args.base` before ever calling
-    `repo_root()`, so `repo_root` is faked to fail the test if it runs.
+    guard: `_cmd_compose` checks `args.base` first, but still resolves
+    `repo_root()` so a previous wrap-up can be parked as
+    `pr_wrapup.stale.md` (#981).
+
+    MOCK SETUP: `repo_root` patched to a real (git-initialized) tmp repo
+    holding a pre-existing `code_health/pr_wrapup.md`.
+    EXPECTED BEHAVIOR: exit 2, the wrap-up is moved to
+    `pr_wrapup.stale.md` with a refusal header, content preserved.
     """
-
-    def _fail() -> object:
-        """Fail the test if `repo_root` (and thus any git call) runs.
-
-        Raises:
-            AssertionError: Always.
-        """
-        msg = "must not resolve repo_root for a dash-prefixed --base"
-        raise AssertionError(msg)
-
-    monkeypatch.setattr(mod, "repo_root", _fail)
+    init_git_repo(tmp_path)
+    monkeypatch.setattr(mod, "repo_root", lambda: tmp_path)
+    health = code_health_dir(tmp_path)
+    health.mkdir(parents=True, exist_ok=True)
+    (health / "pr_wrapup.md").write_text("old wrap-up\n", encoding="utf-8")
 
     rc = mod.main(["compose", "--base=-evil"])
 
     assert rc == 2
     assert "invalid --base" in capsys.readouterr().out
+    assert not (health / "pr_wrapup.md").exists()
+    stale = (health / "pr_wrapup.stale.md").read_text(encoding="utf-8")
+    assert stale.startswith("<!-- refused compose at ")
+    assert "invalid --base '-evil' -->" in stale.splitlines()[0]
+    assert stale.endswith("old wrap-up\n")
+
+
+def test_main_compose_refusal_quarantines_existing_wrapup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A ComposeError refusal (missing reporter reports) parks the old wrap-up.
+
+    MOCK SETUP: real tmp repo with a pre-existing `code_health/pr_wrapup.md`;
+    a full-mode plan with no report files, so `_gather_inputs` raises.
+    EXPECTED BEHAVIOR: exit 2, wrap-up moved to `pr_wrapup.stale.md` with the
+    refusal header naming the ComposeError reason, original content intact.
+    """
+    init_git_repo(tmp_path)
+    monkeypatch.setattr(mod, "repo_root", lambda: tmp_path)
+    health = code_health_dir(tmp_path)
+    health.mkdir(parents=True, exist_ok=True)
+    (health / "pr_wrapup.md").write_text("old wrap-up\n", encoding="utf-8")
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps(
+            {
+                "mode": "full",
+                "reporters": ["design-checker"],
+                "reasons": [],
+            }
+        )
+    )
+
+    rc = mod.main(["compose", "--base", "HEAD", "--plan", str(plan_path)])
+
+    assert rc == 2
+    assert "missing report for required reporter" in capsys.readouterr().out
+    assert not (health / "pr_wrapup.md").exists()
+    stale = (health / "pr_wrapup.stale.md").read_text(encoding="utf-8")
+    assert stale.startswith("<!-- refused compose at ")
+    assert "missing report for required reporter" in stale.splitlines()[0]
+    assert stale.endswith("old wrap-up\n")
+
+
+def test_main_compose_refusal_without_existing_wrapup_creates_no_stale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A refusal with no previous wrap-up leaves no `.stale.md` behind.
+
+    MOCK SETUP: real tmp repo, no `code_health/` content, full-mode plan
+    with a missing report.
+    EXPECTED BEHAVIOR: exit 2 and no `pr_wrapup.stale.md` is created.
+    """
+    init_git_repo(tmp_path)
+    monkeypatch.setattr(mod, "repo_root", lambda: tmp_path)
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps({"mode": "full", "reporters": ["design-checker"], "reasons": []})
+    )
+
+    rc = mod.main(["compose", "--base", "HEAD", "--plan", str(plan_path)])
+
+    assert rc == 2
+    capsys.readouterr()
+    health = code_health_dir(tmp_path)
+    assert not (health / "pr_wrapup.stale.md").exists()
+    assert not (health / "pr_wrapup.md").exists()
+
+
+def test_main_compose_success_deletes_a_leftover_stale_wrapup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A successful compose removes a quarantined `.stale.md` from a prior refusal.
+
+    MOCK SETUP: real tmp repo with a leftover `code_health/pr_wrapup.stale.md`
+    and a light-code plan (writes the wrap-up, exit 0).
+    EXPECTED BEHAVIOR: `pr_wrapup.md` written, `pr_wrapup.stale.md` deleted.
+    """
+    init_git_repo(tmp_path)
+    monkeypatch.setattr(mod, "repo_root", lambda: tmp_path)
+    health = code_health_dir(tmp_path)
+    health.mkdir(parents=True, exist_ok=True)
+    (health / "pr_wrapup.stale.md").write_text("stale\n", encoding="utf-8")
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps({"mode": "light-code", "reporters": [], "reasons": ["small diff"]})
+    )
+
+    rc = mod.main(["compose", "--base", "HEAD", "--plan", str(plan_path)])
+
+    assert rc == 0
+    capsys.readouterr()
+    assert (health / "pr_wrapup.md").exists()
+    assert not (health / "pr_wrapup.stale.md").exists()
 
 
 def test_main_compose_armed_emergency_skips_reporters_and_sets_wrapup_mode(

@@ -47,6 +47,7 @@ import logging
 import re
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
@@ -155,6 +156,10 @@ SUPERSEDED_SUMMARY: Final[str] = (
 )
 
 WRAPUP_NAME: Final[str] = "pr_wrapup.md"
+
+# Where a refused compose parks the previous wrap-up, with a refusal
+# header — preserved as evidence, but no longer postable as-is.
+STALE_WRAPUP_NAME: Final[str] = "pr_wrapup.stale.md"
 
 # Exit code for a publication `post` refuses (stale head, conflict, behind
 # base) — distinct from 2 (invalid body) so a caller can tell a fixable
@@ -1006,11 +1011,35 @@ def _gather_inputs(root: Path, args: argparse.Namespace) -> ComposeInputs:
     )
 
 
+def _quarantine_wrapup(root: Path, reason: str) -> None:
+    """Park the previous wrap-up as ``pr_wrapup.stale.md`` with a header.
+
+    A refused compose must not leave a stale wrap-up in place, postable
+    as-is; moving it aside keeps it as evidence while making it invalid
+    for posting. Crash paths never call this — only exit-2 refusals.
+
+    Args:
+        root: Repo root.
+        reason: Why the compose was refused, recorded in the header.
+    """
+    code_health = code_health_dir(root)
+    wrapup_path = code_health / WRAPUP_NAME
+    if not wrapup_path.exists():
+        return
+    stale_path = code_health / STALE_WRAPUP_NAME
+    timestamp = datetime.now(UTC).isoformat(timespec="seconds")
+    header = f"<!-- refused compose at {timestamp}: {reason} -->\n"
+    content = wrapup_path.read_text(encoding="utf-8")
+    stale_path.write_text(header + content, encoding="utf-8")
+    wrapup_path.unlink()
+
+
 def _cmd_compose(args: argparse.Namespace) -> int:
     """Write ``code_health/pr_wrapup.md`` with slots for the author to fill.
 
     For a light-code wrap-up it also prints the classifier's reasons,
     which the wrap-up itself replaces with a one-line Recommendation.
+    A refused compose (exit 2) quarantines any previous wrap-up first.
 
     Args:
         args: Parsed ``compose`` arguments.
@@ -1019,19 +1048,23 @@ def _cmd_compose(args: argparse.Namespace) -> int:
         ``0`` when written; ``2`` when evidence is missing or unreadable,
         or ``--base`` looks like an option.
     """
-    if args.base.startswith("-"):
-        emit(f"pr-wrapup: invalid --base {args.base!r}")
-        return 2
     root = repo_root()
+    if args.base.startswith("-"):
+        reason = f"invalid --base {args.base!r}"
+        emit(f"pr-wrapup: {reason}")
+        _quarantine_wrapup(root, reason)
+        return 2
     try:
         inputs = _gather_inputs(root, args)
         text = render_wrapup(inputs)
     except ComposeError as exc:
         emit(f"pr-wrapup: {exc}")
+        _quarantine_wrapup(root, str(exc))
         return 2
     path = code_health_dir(root) / WRAPUP_NAME
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+    (code_health_dir(root) / STALE_WRAPUP_NAME).unlink(missing_ok=True)
     slots = unfilled_slots(text)
     todo = (
         f"{len(slots)} slot(s) to fill: {', '.join(slots)}"
