@@ -11,7 +11,8 @@ usage: fix-forge-ruff [-h] [--scope {all,diff}] [dirs ...]
 
 Run `ruff format` + `ruff check --fix --unsafe-fixes` in-place, re-stage the
 files that were already staged (failing if ruff rewrote a partly-staged file),
-and write code_health/ruff.log.
+and write code_health/ruff.log. In CI, report only: `ruff format --check` +
+`ruff check --no-fix`, nothing rewritten or re-staged.
 
 positional arguments:
   dirs                Source dirs to fix. If empty, resolve from
@@ -913,13 +914,14 @@ usage: forge-precommit [-h] [--json] [--skip STEP[,STEP...]]
                        [--only STEP[,STEP...]] [--freshness] [--verdict]
 
 Run the forge pre-commit check sequence: ruff (format + check, self-healing
-with --unsafe-fixes on failure) + docstring verification (diff vs main) +
-test-name verification (diff vs main) + repo-structure verification
-(REPO_STRUCTURE.md vs the tree) + plugin manifest JSON + plugin version drift
-guard + pip-audit (non-blocking) — when applicable. Ruff fixes apply
-automatically on every run; fixed files are re-staged. Pytest is not in the
-default sequence — run it in CI or wire it into .githooks/pre-commit
-explicitly. Used by any repo that adopts forge via install-forge-githooks.
+with --unsafe-fixes on failure; report-only in CI) + docstring verification
+(diff vs main) + test-name verification (diff vs main) + repo-structure
+verification (REPO_STRUCTURE.md vs the tree) + plugin manifest JSON + plugin
+version drift guard + pip-audit (non-blocking) — when applicable. Locally,
+ruff fixes apply automatically on every run and fixed files are re-staged; in
+CI ruff only reports. Pytest is not in the default sequence — run it in CI or
+wire it into .githooks/pre-commit explicitly. Used by any repo that adopts
+forge via install-forge-githooks.
 
 options:
   -h, --help            show this help message and exit

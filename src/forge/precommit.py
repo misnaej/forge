@@ -8,10 +8,11 @@ via ``FORGE_NO_AUTO_REBUILD``), env-sync (a deadly-fast install-freshness
 gate — blocks when a declared ``[project.scripts]`` CLI is not installed,
 i.e. a stale editable install), regen-docs (regenerates + re-stages the
 otherwise-unwired generated docs — ``api-digest`` / ``cli-reference`` —
-non-blocking), ruff (always ``ruff format`` + ``ruff check --fix
+non-blocking), ruff (``ruff format`` + ``ruff check --fix
 --unsafe-fixes`` in-place, with modified tracked files re-staged via
-``git add``), docstring verification (over the diff vs main), test-name
-verification (over the diff vs main), repo-structure verification
+``git add``; report-only in CI: ``--check`` / ``--no-fix``), docstring
+verification (over the diff vs main), test-name verification (over the
+diff vs main), repo-structure verification
 (``REPO_STRUCTURE.md`` vs the actual tree), plugin manifest JSON
 validation, Claude Code plugin-version drift guard (when applicable), a
 CHANGELOG-history guard (fires only on a branch that merged the base
@@ -868,8 +869,8 @@ def step_ruff(repo_root: Path) -> StepResult:
     """Run ``fix-forge-ruff`` — owns the ruff phase end-to-end.
 
     Thin shell-out so the orchestration logic (auto-detect dirs, ruff
-    format, ruff check --fix --unsafe-fixes, git-add re-stage, write
-    log) lives in one place — ``forge.fix_ruff``. Same pattern as the
+    format, ruff check --fix --unsafe-fixes (report-only in CI), git-add
+    re-stage, write log) lives in one place — ``forge.fix_ruff``. Same pattern as the
     other step CLIs (verify-forge-docstrings, verify-forge-test-naming,
     etc.).
 
@@ -4148,12 +4149,14 @@ def main() -> int:
         prog="forge-precommit",
         description=(
             "Run the forge pre-commit check sequence: ruff (format + check, "
-            "self-healing with --unsafe-fixes on failure) + docstring "
+            "self-healing with --unsafe-fixes on failure; "
+            "report-only in CI) + docstring "
             "verification (diff vs main) + test-name verification (diff vs "
             "main) + repo-structure verification (REPO_STRUCTURE.md vs the "
             "tree) + plugin manifest JSON + plugin version drift guard + "
-            "pip-audit (non-blocking) — when applicable. Ruff fixes apply "
-            "automatically on every run; fixed files are re-staged. Pytest "
+            "pip-audit (non-blocking) — when applicable. Locally, ruff "
+            "fixes apply automatically on every run and fixed files are "
+            "re-staged; in CI ruff only reports. Pytest "
             "is not in the default sequence — run it in CI or wire it into "
             ".githooks/pre-commit explicitly. Used by any repo that adopts "
             "forge via install-forge-githooks."

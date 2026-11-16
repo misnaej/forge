@@ -10,6 +10,10 @@ ignore = [
                 # policy; would fire on every file
 ]
 
+# RUF100 is reported, never auto-removed: a suppression that suppresses
+# nothing means the rule or the code is wrong, and a person decides which.
+unfixable = ["RUF100"]
+
 [lint.per-file-ignores]
 "src/forge/audit/orphans.py" = [
     "PLC0415",  # guarded optional import (vulture) inside _load_vulture
