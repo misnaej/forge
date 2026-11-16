@@ -52,6 +52,7 @@ names = [
     "block_vibe_config",
     "caveman_mode",
     "check_commit_format",
+    "check_continuation_budget",
     "check_foundation_sync",
     "git_anchor",
     "keep_continuation_state",
