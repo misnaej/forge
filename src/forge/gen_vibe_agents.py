@@ -22,7 +22,11 @@ import re
 import sys
 from pathlib import Path
 
-from forge.agent_harness import HarnessName, map_plugin_references
+from forge.agent_harness import (
+    PLUGIN_REFERENCE_RE,
+    HarnessName,
+    map_plugin_references,
+)
 from forge.instruction_files import flatten_agents_md, shipped_path
 
 
@@ -34,10 +38,10 @@ logger = logging.getLogger(__name__)
 CLAUDE_MD_REFERENCE = "CLAUDE.md"
 AGENTS_MD_REFERENCE = "AGENTS.md"
 
-# Pattern to match forge:<agent> references. The name class includes the
-# hyphen every shipped agent name carries: `\w` alone matched only up to it,
-# so a reference read as `forge:design` rather than `forge:design-checker`.
-FORGE_AGENT_PATTERN = re.compile(r"forge:([\w-]+)")
+# The reference pattern lives with the namespace it is built from, so the
+# check that reports references and the mapping that rewrites them cannot
+# disagree about what one looks like.
+FORGE_AGENT_PATTERN = PLUGIN_REFERENCE_RE
 
 # Pattern to match CLAUDE.md references
 CLAUDE_MD_PATTERN = re.compile(r"CLAUDE\.md")

@@ -203,6 +203,9 @@ def _generate_subagent_toml(agent_file: Path) -> tuple[str, str]:
     description = _extract_frontmatter_field(content, "description") or (
         f"Forge {agent_name} agent"
     )
+    # A description is a routing trigger, and some name the peer agent to
+    # reach for, so it carries the same references the body does.
+    description = map_plugin_references(description, harness=HarnessName.VIBE.value)
     # Escape double quotes for TOML
     description = description.replace('"', '\\"')
     prompt_id = agent_name

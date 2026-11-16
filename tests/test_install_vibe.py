@@ -378,6 +378,25 @@ class TestBareConsumerRepo:
         assert "forge:<name>" in instructions
         assert "Spawn design-checker." in instructions
 
+    def test_subagent_description_has_no_namespaced_reference(
+        self, tmp_path: Path
+    ) -> None:
+        """The packaged test-writer subagent description names no ``forge:`` token.
+
+        Behavior: a description is a routing trigger and may name the peer
+        agent to reach for, so it must carry a name this harness resolves.
+        """
+        root = tmp_path / "bare"
+        root.mkdir()
+        (root / "pyproject.toml").write_text(
+            '[project]\nname = "bare"\nversion = "0.1.0"\n', encoding="utf-8"
+        )
+        assert install_vibe(root) == 0
+        with (root / ".vibe" / "agents" / "test-writer.toml").open("rb") as f:
+            description = tomllib.load(f)["description"]
+        assert "test-advisor" in description
+        assert "forge:" not in description
+
     def test_bare_consumer_verify_passes_after_install(self, tmp_path: Path) -> None:
         """--verify is green on a bare consumer once install ran."""
         root = tmp_path / "bare"

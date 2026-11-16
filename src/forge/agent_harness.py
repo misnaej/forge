@@ -25,6 +25,7 @@ It must NOT default to 'claude'.
 from __future__ import annotations
 
 import json
+import re
 import tomllib
 from dataclasses import dataclass
 from enum import Enum
@@ -64,6 +65,13 @@ class VerdictEmitter:
 # the target harness's own namespace.
 CANONICAL_AGENT_NAMESPACE: Final = "forge:"
 
+# A namespaced reference: the canonical prefix plus the whole name token.
+# The hyphen is in the class because every shipped name carries one; `\w`
+# alone stopped at it and read `forge:design` for `forge:design-checker`.
+PLUGIN_REFERENCE_RE: Final = re.compile(
+    rf"{re.escape(CANONICAL_AGENT_NAMESPACE)}([\w-]+)"
+)
+
 
 @dataclass(frozen=True)
 class HarnessProfile:
@@ -102,7 +110,7 @@ class HarnessProfile:
     verdict_emitter: VerdictEmitter
     blocking_events: frozenset[str]
     model_alias_map: Mapping[str, str | None]
-    agent_namespace: str = ""
+    agent_namespace: str
 
 
 def _emit_claude_deny(_reason: str) -> tuple[int, str]:
@@ -517,9 +525,14 @@ def shipped_plugin_names() -> frozenset[str]:
             for kind in ("agents", "skills")
             for name in roster.get(kind, {}).get("names", [])
         ]
-    except (OSError, ValueError, ModuleNotFoundError):
+    # A roster of the wrong shape raises past the parse: a non-table kind
+    # fails .get, a non-list names iterates wrongly. Every failure maps
+    # nothing rather than raising out of an installer or a commit gate.
+    except (OSError, ValueError, AttributeError, TypeError, ModuleNotFoundError):
         return frozenset()
-    return frozenset(n for n in names if isinstance(n, str))
+    # A non-string or empty entry is not a name; the reference pattern
+    # could never match one, so dropping them keeps the set meaningful.
+    return frozenset(n for n in names if isinstance(n, str) and n)
 
 
 def map_plugin_references(
@@ -527,14 +540,13 @@ def map_plugin_references(
 ) -> str:
     """Rewrite canonical agent and skill references into *harness*'s namespace.
 
-    Only a reference naming something forge actually ships is rewritten, so
-    a literal placeholder (``forge:<name>``) and any unrelated occurrence of
-    the prefix survive untouched — the prefix alone is not the signal.
-
-    Substitution order does not matter: each rewrite swaps the prefix and
-    keeps the rest of the token, so mapping a name that prefixes a longer
-    one (``test`` before ``test-writer``) still yields the longer name's
-    correct form.
+    A reference is rewritten only when the **whole** token after the prefix
+    is a name forge ships. Matching the prefix by substring would strip it
+    from any token a shipped name merely begins — ``forge:fixture`` reads
+    as the skill ``fix``, and ``forge:precommit-managed`` as ``pr`` — so
+    the token is taken whole and tested for membership. A placeholder
+    (``forge:<name>``), the handoff note's ``forge:state`` markers and a
+    name forge does not ship therefore all survive untouched.
 
     Args:
         text: Canonical content, authored in ``CANONICAL_AGENT_NAMESPACE``.
@@ -552,6 +564,10 @@ def map_plugin_references(
     namespace = get_harness_profile(harness).agent_namespace
     if namespace == CANONICAL_AGENT_NAMESPACE:
         return text
-    for name in shipped_plugin_names() if names is None else names:
-        text = text.replace(f"{CANONICAL_AGENT_NAMESPACE}{name}", f"{namespace}{name}")
-    return text
+    known = frozenset(shipped_plugin_names() if names is None else names)
+
+    def _rewrite(match: re.Match[str]) -> str:
+        name = match.group(1)
+        return f"{namespace}{name}" if name in known else match.group(0)
+
+    return PLUGIN_REFERENCE_RE.sub(_rewrite, text)
