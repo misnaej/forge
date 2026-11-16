@@ -206,6 +206,11 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/log_agent_timing.sh",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/require_helpers_stopped.sh",
+            "timeout": 10
           }
         ]
       },
@@ -216,15 +221,6 @@
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/require_fixer_verdict.sh",
             "timeout": 60
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/require_helpers_stopped.sh",
-            "timeout": 10
           }
         ]
       }
@@ -262,6 +258,11 @@
       {
         "matcher": "Bash",
         "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/check_continuation_budget.sh",
+            "timeout": 20
+          },
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/claude-hooks/keep_squash_comment_last.sh",

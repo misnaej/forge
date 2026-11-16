@@ -76,7 +76,8 @@ def _generate_roster_sidecar(
         repo_root: Repository root directory.
 
     Returns:
-        Tuple of (roster_dict, warnings).
+        Tuple of (roster_dict, warnings). Warnings name each event whose
+        hook groups repeat a matcher; those groups are merged, not dropped.
     """
     warnings: list[str] = []
 
@@ -116,12 +117,22 @@ def _generate_roster_sidecar(
                     expanded_hook["command"] = expanded_cmd
                 expanded_hooks.append(expanded_hook)
 
-            if "matcher" in matcher_config:
-                matcher = matcher_config["matcher"]
-                roster["events"][event]["matchers"][matcher] = expanded_hooks
+            # No matcher specified - applies to all
+            matcher = matcher_config.get("matcher", "")
+            # Extend, never replace: the roster keys hooks by matcher, so
+            # assigning would drop the hooks of whichever group lost the
+            # key, in silence. verify-forge-manifest rejects a repeated
+            # matcher at the source; this keeps a manifest that slipped
+            # past it from costing a guard.
+            matchers = roster["events"][event]["matchers"]
+            if matcher in matchers:
+                warnings.append(
+                    f"{event}: matcher {matcher or '(none)'} appears in more "
+                    "than one group; merged their hooks (fix plugin.json)"
+                )
+                matchers[matcher].extend(expanded_hooks)
             else:
-                # No matcher specified - applies to all
-                roster["events"][event]["matchers"][""] = expanded_hooks
+                matchers[matcher] = expanded_hooks
 
     return roster, warnings
 
