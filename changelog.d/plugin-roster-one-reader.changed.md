@@ -1,3 +1,0 @@
-bump: patch
-- The packaged roster of names forge ships now has a single reader. Two had grown up separately — one enriching a consumer's agent doc, one deciding which references a harness generator rewrites — and they disagreed: one let a misshapen roster crash the agent-doc check, the other swallowed more failures but read a scalar as characters. Every failure and every unexpected shape now degrades to an empty set in one place.
-- A scalar where the roster expects a list of names is now treated as no names at all. Read as a list of characters, it would have offered each character as a name for a generator to rewrite in prose.
