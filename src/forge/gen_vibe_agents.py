@@ -38,11 +38,6 @@ logger = logging.getLogger(__name__)
 CLAUDE_MD_REFERENCE = "CLAUDE.md"
 AGENTS_MD_REFERENCE = "AGENTS.md"
 
-# The reference pattern lives with the namespace it is built from, so the
-# check that reports references and the mapping that rewrites them cannot
-# disagree about what one looks like.
-FORGE_AGENT_PATTERN = PLUGIN_REFERENCE_RE
-
 # Pattern to match CLAUDE.md references
 CLAUDE_MD_PATTERN = re.compile(r"CLAUDE\.md")
 
@@ -148,8 +143,8 @@ def _check_file_references(file_path: Path) -> list[str]:
     references: list[str] = []
     try:
         content = file_path.read_text(encoding="utf-8")
-        if FORGE_AGENT_PATTERN.search(content):
-            matches = FORGE_AGENT_PATTERN.findall(content)
+        if PLUGIN_REFERENCE_RE.search(content):
+            matches = PLUGIN_REFERENCE_RE.findall(content)
             references.append(f"{file_path}: forge:{', forge:'.join(set(matches))}")
         if CLAUDE_MD_PATTERN.search(content):
             references.append(f"{file_path}: CLAUDE.md")
