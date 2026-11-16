@@ -5,11 +5,12 @@ resolves the same names without a forge checkout. A forge-repo test
 regenerates it from ``agents/*.md``, ``skills/*/SKILL.md`` and
 ``claude-hooks/*.sh`` and diffs, so it cannot go stale.
 
-One reader, because the two that existed before disagreed about which
-failures to swallow: a verifier enriching an agent doc, and a generator
-deciding which references to rewrite for a harness. A roster the second
-reader rejected but the first accepted would have produced content that
-silently kept the wrong namespace. Leaf module — stdlib only.
+One reader, because the two that existed before disagreed: the agent-doc
+verifier let a roster of the wrong shape escape as an exception and kept
+empty names, while the harness generator swallowed more failures but
+iterated a scalar ``names`` as characters and offered each as a name to
+rewrite. Callers: the agent-doc verifier, the Vibe installer and
+generators, and ``forge-metrics``. Leaf module — stdlib only.
 """
 
 from __future__ import annotations
@@ -23,16 +24,16 @@ ROSTER_RESOURCE: Final = "data/plugin-roster.toml"
 
 # The kinds the roster carries. Agents and skills share the plugin's
 # ``forge:`` namespace; hooks are addressed by path and never namespaced.
-NAMESPACED_KINDS: Final = ("agents", "skills")
+_NAMESPACED_KINDS: Final = ("agents", "skills")
 
 
 def roster_names(kind: str) -> frozenset[str]:
     """Names listed under one ``[kind]`` table of the packaged roster.
 
-    Every failure yields an empty set rather than raising. This reader
-    runs inside a commit gate, an installer and a doctor check, so a
-    packaged file that is missing on an older install, or malformed,
-    degrades the caller instead of blocking the commit. A non-string or
+    Every read or parse failure yields an empty set rather than raising.
+    This reader runs inside a commit gate, an installer and a metrics
+    report, so a packaged file that is missing on an older install, or
+    malformed, degrades the caller instead of blocking the commit. A non-string or
     empty entry is not a name and is dropped.
 
     Args:
@@ -71,7 +72,7 @@ def shipped_plugin_names() -> frozenset[str]:
         The union of the agent and skill names. Hooks are excluded: they
         are referenced by path, so no generator rewrites them.
     """
-    return frozenset().union(*(roster_names(kind) for kind in NAMESPACED_KINDS))
+    return frozenset().union(*(roster_names(kind) for kind in _NAMESPACED_KINDS))
 
 
 def shipped_agent_names() -> frozenset[str]:

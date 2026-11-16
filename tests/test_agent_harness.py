@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from forge import agent_harness
+from forge import agent_harness, plugin_roster
 from forge.agent_harness import (
     CLAUDE_PROFILE,
     UNENFORCED_VIBE_HOOKS,
@@ -195,7 +195,7 @@ def test_state_is_not_a_shipped_plugin_name() -> None:
     would make the Vibe mapper rewrite those markers, corrupting the
     handoff note. The roster drift test does not catch that collision.
     """
-    assert "state" not in agent_harness.shipped_plugin_names(), (
+    assert "state" not in plugin_roster.shipped_plugin_names(), (
         "a shipped agent/skill named 'state' collides with the "
         "'<!-- forge:state:begin/end -->' handoff-note markers: the Vibe "
         "mapper would rewrite them and break the panel; rename it"

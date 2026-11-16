@@ -16,6 +16,7 @@ from importlib import resources
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from forge import plugin_roster
 from forge import verify_agent_doc as vad
 
 
@@ -247,7 +248,9 @@ def test_plugin_roster_reads_shipped_file_non_empty() -> None:
     assert roster["skills"]
     assert roster["hooks"]
     data = tomllib.loads(
-        resources.files("forge").joinpath("data/plugin-roster.toml").read_text()
+        resources.files("forge")
+        .joinpath(plugin_roster.ROSTER_RESOURCE)
+        .read_text(encoding="utf-8")
     )
     assert roster["skills"] == set(data["skills"]["names"])
     assert roster["hooks"] == set(data["hooks"]["names"])
@@ -1278,7 +1281,7 @@ def test_plugin_roster_toml_matches_repo_skills_and_hooks() -> None:
     `src/forge/data/plugin-roster.toml`.
     """
     generated = _generate_plugin_roster_toml(_REPO_ROOT)
-    shipped = (_REPO_ROOT / "src" / "forge" / "data" / "plugin-roster.toml").read_text(
+    shipped = (_REPO_ROOT / "src" / "forge" / plugin_roster.ROSTER_RESOURCE).read_text(
         encoding="utf-8"
     )
     assert generated == shipped, (
