@@ -3911,15 +3911,22 @@ def verdict(root: Path) -> tuple[bool, list[str]]:
     """
     verdicts = freshness_verdicts(root)
     timing = code_health_dir(root) / "precommit_timing.log"
+    timing_missing = not timing.is_file()
     markers = (
-        timing_markers(timing.read_text(encoding="utf-8")) if timing.is_file() else {}
+        timing_markers(timing.read_text(encoding="utf-8")) if not timing_missing else {}
     )
     lines: list[str] = []
-    stale = verdicts.get("precommit_timing") != "fresh"
-    if stale:
-        lines.append("STALE precommit_timing (last full run describes another tree)")
     failing: list[str] = []
     missing: list[str] = []
+    # A missing timing log is not a stale one: there is no run to describe
+    # another tree, so it gets its own MISSING line and the closing cause
+    # names "missing", never "describes another tree".
+    stale = not timing_missing and verdicts.get("precommit_timing") != "fresh"
+    if timing_missing:
+        missing.append("precommit_timing")
+        lines.append("MISSING precommit_timing (no full run recorded)")
+    elif stale:
+        lines.append("STALE precommit_timing (last full run describes another tree)")
     for step in resolve_steps(root):
         marker = markers.get(step.name)
         if marker is None:

@@ -9000,6 +9000,29 @@ def test_verdict_stale_timing_log_fails(
     assert lines[-1].startswith("verdict: FAIL — evidence describes another tree")
 
 
+def test_verdict_absent_timing_log_reports_missing_not_stale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No precommit_timing.log at all: MISSING line, closing cause "missing".
+
+    BEHAVIOR: a missing timing log is not evidence about another tree, so
+    the verdict must not claim "describes another tree" (#982). Every
+    enabled step still prints its own MISSING line, as today.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+
+    ok, lines = precommit.verdict(tmp_path)
+
+    assert ok is False
+    assert "MISSING precommit_timing (no full run recorded)" in lines
+    assert not any("describes another tree" in line for line in lines)
+    assert lines[-1].startswith("verdict: FAIL — missing:")
+    assert "precommit_timing" in lines[-1]
+
+
 def test_verdict_stale_evidence_takes_precedence_over_failing_cause(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
