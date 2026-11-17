@@ -20,6 +20,13 @@ fragment type (**Features / Changes / Fixes / Removed / Docs**).
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v13.1.0 — 2026-11-17
+
+### Fixes
+- `forge-precommit` now refuses to run inside a linked git worktree (exit 2, `--git-common-dir` != `--git-dir`) with an error naming `forge-scratch-repo`, instead of silently resolving hooks and `code_health/` against the worktree; FOUNDATION §11 probing rule now states the scratch-repo-over-worktrees preference (word-neutral swap)
+- A lint or formatting problem that the tooling can repair itself no longer passes a continuous-integration run. The step repaired what it could and reported that as a pass, which is right on a workstation — the repair goes into the commit being made — but wrong on a runner, where nothing is committed, so the repair was computed, thrown away, and the run went green. Every repairable problem, formatting included, was therefore unable to fail a CI run. A project whose own continuous integration was green on such a problem will now see it reported, so the first run after upgrading may fail where it did not before. On a runner the step now reports instead of repairing. On a workstation it still repairs, except for the suppression case below.
+- A lint suppression that suppresses nothing now fails instead of being removed silently. One such suppression was added, removed, re-added and removed again across four pull requests, every one of them passing, because removing it counted as a repair. Seven that had never suppressed anything are gone.
+
 ## v13.0.0 — 2026-11-16
 
 ### Features
@@ -88,6 +95,7 @@ versions follow forge's rolling-next convention.
 ### Docs
 - FOUNDATION §8 and the issue-triage agent doc now carve out agent-generated issue bodies (e.g. the Backlog Index) as agent-facing and terse, not people-facing — size is bounded, not voiced down
 - `docs/vibe.md` now states the Vibe spawn convention for forge agents: bare name (`agents.spawn(config_name="prior-art")`), since the `forge:<name>` prefix is the Claude Code plugin namespace and not a valid Vibe subagent type — and fixes the artifact table's agent count (13, not 12).
+- FOUNDATION word-budget baseline rounded 8676 → 8700 (same shrink-only ratchet, round ceiling); preamble section TOC removed from FOUNDATION.md (headings are the TOC) — 8588 words, no rule content changed
 
 ## v12.0.0 — 2026-11-11
 
