@@ -533,20 +533,21 @@ def install_vibe(
     if repo_root is None:
         repo_root = Path.cwd()
 
-    if verify_mode:
-        return _verify_vibe_installation(repo_root)
-
-    before = _artifact_snapshot(repo_root)
-
-    # Fail closed before writing anything: the roster names absolute
-    # script paths, so a wired guard that does not ship would be
-    # registered and then silently disarmed at runtime — a hook whose
-    # command is missing exits 127, which does not block the tool call.
+    # Fail closed before anything else — including --verify, which must
+    # not pass an install whose guards are missing from the package: the
+    # roster names absolute script paths, so a wired guard that does not
+    # ship would be registered and then silently disarmed at runtime (a
+    # missing hook command exits 127, which does not block the tool call).
     try:
         validate_shipped_scripts()
     except HookWiringError as exc:
         sys.stderr.write(f"install-forge-vibe: {exc}\n")
         return 2
+
+    if verify_mode:
+        return _verify_vibe_installation(repo_root)
+
+    before = _artifact_snapshot(repo_root)
 
     # Step 1: Generate .vibe/hooks.toml
     if write_vibe_hooks(repo_root, check_mode=check_mode) != 0:

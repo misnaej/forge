@@ -17,6 +17,7 @@ no guards in it and reports success, so every protection in FOUNDATION
 
 from __future__ import annotations
 
+import re
 import tomllib
 from importlib import resources
 from typing import TYPE_CHECKING, Final, NamedTuple
@@ -27,6 +28,19 @@ from forge.instruction_files import shipped_path
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
+
+
+HOOKS_RESOURCE: Final = "data/hooks.toml"
+
+# Vibe-only hook extras, merged into the generated Vibe wiring alongside
+# the canonical wiring — their scripts are guard surface too.
+VIBE_EXTRA_RESOURCE: Final = "data/vibe-extra-hooks.toml"
+
+# A script referenced relative to the calling script's own directory —
+# ``source "$(dirname "$0")/x.sh"`` or ``ANCHOR_LIB="$(dirname "$0")/x.sh"``.
+# Deliberately not any ``*.sh`` token: comments name scripts that are not
+# sourced, and requiring those would fail validation on a missing mention.
+_SH_REF: Final = re.compile(r'\$\(dirname "\$0"\)/([\w.-]+\.sh)')
 
 
 HOOKS_RESOURCE: Final = "data/hooks.toml"
@@ -236,13 +250,11 @@ def required_scripts(source: Path, wired: frozenset[str]) -> frozenset[str]:
 
     A wired guard may ``source`` a shipped helper — the git-command
     anchor, the once-marker, the wrap-up anchor — which the wiring never
-    names because nothing fires it directly. Copying only the wired set
-    leaves those helpers behind, and a guard that cannot source its
-    helper refuses the call it was protecting: the guards fail closed, so
-    the omission disarms nothing but blocks everything.
-
-    Dependencies are read from the scripts themselves rather than listed
-    here, so a helper added later needs no change in this module.
+    names because nothing fires it directly. References are discovered
+    from the scripts' **text**, not by intersecting with what is on disk:
+    a helper that failed to arrive is still referenced, so it still
+    enters the required set and fails validation — discovering by glob
+    would make exactly the missing-file case invisible.
 
     Args:
         source: Directory holding the shipped guard scripts. Passed in
@@ -253,22 +265,47 @@ def required_scripts(source: Path, wired: frozenset[str]) -> frozenset[str]:
         wired: Script names the canonical wiring references.
 
     Returns:
-        The wired scripts plus every shipped script they reference,
+        The wired scripts plus every script their text references,
         transitively.
     """
-    shipped = {p.name for p in source.glob("*.sh")}
     needed = set(wired)
     pending = list(wired)
     while pending:
         path = source / pending.pop()
         if not path.is_file():
             continue
-        text = path.read_text(encoding="utf-8")
-        for candidate in shipped - needed:
-            if candidate in text:
-                needed.add(candidate)
-                pending.append(candidate)
+        for ref in _SH_REF.findall(path.read_text(encoding="utf-8")):
+            if ref not in needed:
+                needed.add(ref)
+                pending.append(ref)
     return frozenset(needed)
+
+
+def _vibe_extra_script_names() -> frozenset[str]:
+    """Return the script names the Vibe-only hook extras run.
+
+    Returns:
+        Basenames of every ``command`` in :data:`VIBE_EXTRA_RESOURCE`.
+
+    Raises:
+        HookWiringError: If the extras resource cannot be read or parsed.
+    """
+    try:
+        text = (
+            resources.files("forge")
+            .joinpath(VIBE_EXTRA_RESOURCE)
+            .read_text(encoding="utf-8")
+        )
+        table = tomllib.loads(text)
+    except (OSError, ModuleNotFoundError, ValueError) as exc:
+        msg = f"{VIBE_EXTRA_RESOURCE} is unreadable: {exc}"
+        raise HookWiringError(msg) from exc
+    hooks = table.get("hooks", [])
+    return frozenset(
+        str(hook["command"]).rsplit("/", 1)[-1]
+        for hook in hooks
+        if isinstance(hook, dict) and hook.get("command")
+    )
 
 
 def validate_shipped_scripts(source: Path | None = None) -> frozenset[str]:
@@ -279,7 +316,9 @@ def validate_shipped_scripts(source: Path | None = None) -> frozenset[str]:
     is no copy step that would notice a missing file. This check is what
     stands between a wiring entry and a silently disarmed guard: a hook
     whose command does not exist exits 127, and 127 does not block the
-    tool call.
+    tool call. The required set is the canonical wiring's scripts, the
+    scripts their text references (sourced helpers — a *missing* helper
+    is still required), and the Vibe-only extras' scripts.
 
     Args:
         source: Directory holding the shipped guard scripts; defaults to
@@ -287,15 +326,15 @@ def validate_shipped_scripts(source: Path | None = None) -> frozenset[str]:
             exercise a synthetic tree.
 
     Returns:
-        The wired scripts plus every shipped script they source,
-        transitively — all verified present on disk.
+        The wired scripts plus every referenced or extra script, all
+        verified present on disk.
 
     Raises:
         HookWiringError: When any required script does not ship.
     """
     if source is None:
         source = shipped_path(HOOKS_DIR)
-    needed = required_scripts(source, script_names())
+    needed = required_scripts(source, script_names() | _vibe_extra_script_names())
     for name in sorted(needed):
         if not (source / name).is_file():
             msg = (

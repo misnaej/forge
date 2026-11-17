@@ -65,8 +65,7 @@ from forge.git_utils import configure_cli_logging
 from forge.hook_registry import (
     HookWiringError,
     rendered_hooks,
-    required_scripts,
-    script_names,
+    validate_shipped_scripts,
 )
 from forge.instruction_files import (
     generated_name,
@@ -326,31 +325,25 @@ def _publish_hooks(
 ) -> list[str]:
     """Copy the guard scripts into ``.claude/hooks/``, executable.
 
+    The caller validates the set first
+    (:func:`forge.hook_registry.validate_shipped_scripts`), so copying
+    nothing on a missing script is that one check's job — kept single
+    there, not re-implemented here.
+
     Args:
         repo_root: The checkout being installed into.
         scripts: Script names to copy — the wired set plus the helpers
-            they source (:func:`required_scripts`).
+            they reference (:func:`forge.hook_registry.required_scripts`).
         check: Report what would change without writing.
 
     Returns:
         Repo-relative paths that were written, or would be.
-
-    Raises:
-        HookWiringError: When a required script does not ship. Copying
-            nothing in that case would register a command pointing at a
-            file that never arrives.
     """
     source = shipped_path("claude-hooks")
     dest_dir = repo_root / CLAUDE_DIR / HOOKS_SUBDIR
     written: list[str] = []
     for name in sorted(scripts):
         src = source / name
-        if not src.is_file():
-            msg = (
-                f"wiring references {name}, which forge does not ship at "
-                f"{source}. Reinstall forge-scripts."
-            )
-            raise HookWiringError(msg)
         dest = dest_dir / name
         content = src.read_text(encoding="utf-8")
         changed = not dest.is_file() or dest.read_text(encoding="utf-8") != content
@@ -571,8 +564,9 @@ def install_claude(
         groups = forge_hook_groups()
         # The wired set registers the guards; the required set is what
         # gets copied, since a guard that cannot source its helper
-        # refuses every call it was protecting.
-        scripts = required_scripts(shipped_path("claude-hooks"), script_names())
+        # refuses every call it was protecting. Validated here so a
+        # script that does not ship fails before anything is written.
+        scripts = validate_shipped_scripts()
     except HookWiringError as exc:
         return [], str(exc)
 

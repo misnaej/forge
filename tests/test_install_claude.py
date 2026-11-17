@@ -21,13 +21,12 @@ import pytest
 
 from forge import install_claude as ic
 from forge.agent_harness import PLUGIN_REFERENCE_RE
-from forge.hook_registry import script_names
+from forge.hook_registry import required_scripts, script_names
 from forge.install_claude import (
     hook_command,
     install_claude,
     is_forge_group,
     merge_settings,
-    required_scripts,
 )
 from forge.instruction_files import generated_name, shipped_path
 from forge.plugin_roster import shipped_plugin_names

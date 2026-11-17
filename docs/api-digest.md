@@ -1045,6 +1045,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `rendered_hooks(command_for: Callable[[str], str]) -> dict[str, list[dict[str, object]]]` — Render the wiring into the event/matcher/command shape harnesses use.
 - `script_names() -> frozenset[str]` — Return every script the canonical wiring references.
 - `required_scripts(source: Path, wired: frozenset[str]) -> frozenset[str]` — Return every script needed for the wired ones to run.
+- `_vibe_extra_script_names() -> frozenset[str]` _(internal)_ — Return the script names the Vibe-only hook extras run.
 - `validate_shipped_scripts(source: Path | None = None) -> frozenset[str]` — Return the full guard script set, failing closed if any is missing.
 
 ## `forge.import_graph`
