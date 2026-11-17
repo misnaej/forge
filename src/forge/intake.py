@@ -136,7 +136,7 @@ Entry: `# <title>`, then `- key: value` fields, then sections.
   misses; `occurrences: N` with `branch: migrated` marks a lesson moved
   from the old `docs/lessons.md`, standing for N earlier sightings.
 
-`forge-intake group` shows recurrences; `/report-to-forge` files a
+`forge-intake group` shows recurrences; `/forge-report-to-forge` files a
 finding group and `forge-intake retire` records it in `_LEDGER.md`.
 """
 

@@ -19,7 +19,7 @@ Four concrete mechanisms ship with forge:
 | `block_protected_files` Claude Code hook | Blocks edits to known secret files (`.env`, `.hf_token`, etc.) before they reach git | `${CLAUDE_PLUGIN_ROOT}/claude-hooks/block_protected_files.sh` |
 | `pip_audit` pre-commit step | Scans dependencies for known CVEs once per branch by default, and always at PR finalization, which forces it (non-blocking warning; `[tool.forge.pip_audit].cadence` sets the rhythm). `forge-pr-create` refuses to publish a branch with no scan since it left its base — in every wrap-up mode, emergency included — unless the repo disables the step | `forge-precommit` sequence, `forge-pr-create` |
 | FOUNDATION §2 rules | "No secrets in code or commits"; "No private organizational names in code, docs, or examples" | [`FOUNDATION.md`](../FOUNDATION.md) |
-| `forge:security-checker` agent | Reviews PRs for dangerous patterns, secrets, dependency issues, agent prompt safety | `agents/security-checker.md` |
+| `forge-security-checker` agent | Reviews PRs for dangerous patterns, secrets, dependency issues, agent prompt safety | `agents/security-checker.md` |
 
 > The cadence is a deliberate trade. A branch that never reaches PR finalization is
 > scanned once, at its start, and a CVE published for an already-installed package
@@ -108,7 +108,7 @@ Forge is public — no auth required.
 
 ## Code patterns to avoid
 
-The `forge:security-checker` agent flags these on review:
+The `forge-security-checker` agent flags these on review:
 
 - `eval()`, `exec()`, `compile()` on user input — RCE.
 - `pickle.loads()` / `marshal.loads()` on untrusted data — RCE.

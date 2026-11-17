@@ -1,6 +1,6 @@
 """forge-next-prep — prepare main for the next task (fetch, pull, tag, prune).
 
-Single source of truth for the mechanical git work the ``/next`` skill
+Single source of truth for the mechanical git work the ``/forge-next`` skill
 runs at the start of a fresh task. Extracted from inline bash in the
 skill so the version-compare + tag-bump logic is testable and reusable.
 
@@ -20,7 +20,7 @@ Operations (in order, each idempotent):
    local branches whose remote shows ``[origin/...: gone]``. Uses
    ``git branch -d`` (safe) — never ``-D``.
 5. **Prune merged remote branches** (``--prune-remote``, default off;
-   ``/next`` always passes it): delete an origin branch only when a
+   ``/forge-next`` always passes it): delete an origin branch only when a
    same-repo PR from it merged into the base branch, no PR from it is
    open, and origin's live tip still equals that PR's head commit. The
    delete is lease-pinned to that commit, so a branch that moved since
@@ -545,7 +545,7 @@ def main() -> int:
         description=(
             "Prepare main for the next task: fetch + pull --ff-only, "
             "optionally tag the rolling-next release, prune stale local "
-            "branches. Used by the /next skill."
+            "branches. Used by the /forge-next skill."
         ),
     )
     parser.add_argument(

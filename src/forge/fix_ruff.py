@@ -31,7 +31,7 @@ without an autofix locally). In reporting mode any finding is residue,
 and a formatting difference fails on its own too (``ruff format --check``
 exit code).
 
-Can be invoked directly (e.g. by the ``forge:precommit-fixer`` agent to
+Can be invoked directly (e.g. by the ``forge-precommit-fixer`` agent to
 refresh just the ruff log) or by ``forge-precommit`` as part of the full
 sequence — output is the same in both cases.
 """

@@ -29,7 +29,20 @@ INPUT=$(cat)
     IFS= read -r CWD
 } <<< "$(jq -r '.agent_type // "", .agent_id // "", .session_id // "", .cwd // "."' <<< "$INPUT" 2>/dev/null)"
 
-if [ "$AGENT_TYPE" != "precommit-fixer" ] && [ "$AGENT_TYPE" != "forge:precommit-fixer" ]; then
+# Scoped by FORGE_HOOK_AGENT, resolved at generation from the canonical
+# stem in data/hooks.toml: this guard spells no agent name, so renaming
+# the agent cannot leave it matching nothing. Unset means the integration
+# was generated wrong — say so rather than passing silently.
+# Unset means a stale generated settings file is driving a newer script —
+# the state a mid-session regeneration leaves behind. Blocking here is
+# worse than standing aside: this runs on SubagentStop, so a block keeps
+# the agent from ever stopping, wedging it over a configuration fault.
+# Report it on the way past instead.
+if [ -z "${FORGE_HOOK_AGENT:-}" ]; then
+    echo "[forge] require_fixer_verdict: FORGE_HOOK_AGENT unset — the fixer's verdict is NOT being required. Run install-forge-claude and restart the session." >&2
+    exit 0
+fi
+if [ "$AGENT_TYPE" != "$FORGE_HOOK_AGENT" ]; then
     exit 0
 fi
 [ -n "$AGENT_ID" ] || exit 0

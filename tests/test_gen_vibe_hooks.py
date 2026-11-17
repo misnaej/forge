@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import re
 import tomllib
 from typing import TYPE_CHECKING
 
@@ -19,6 +20,7 @@ from forge.gen_vibe_hooks import (
     verify_existing_hooks,
     write_vibe_hooks,
 )
+from forge.instruction_files import generated_name
 
 
 if TYPE_CHECKING:
@@ -203,10 +205,11 @@ def test_unenforced_hooks_reported_never_silently_dropped(plugin_repo: Path) -> 
     toml_content, unenforced, warnings = generate_vibe_hooks(plugin_repo)
     assert "SessionStart: caveman_mode.sh" in unenforced
     assert "SubagentStop: log_agent_timing.sh" in unenforced
-    assert (
-        "SubagentStop[^(forge:)?precommit-fixer$]: require_fixer_verdict.sh"
-        in unenforced
-    )
+    # The matcher is derived from the wiring's canonical agent stem, so the
+    # expectation is derived too — spelling it here is how the retired
+    # `^(forge:)?precommit-fixer$` pattern survived a rename unnoticed.
+    scoped = f"^{re.escape(generated_name('precommit-fixer'))}$"
+    assert f"SubagentStop[{scoped}]: require_fixer_verdict.sh" in unenforced
     assert any("Unenforced hooks" in w for w in warnings)
     # SubagentStop hooks are unenforced, but the shipped Vibe-only extra
     # hooks (post_agent replacements) are merged in as direct entries.

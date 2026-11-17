@@ -14,5 +14,5 @@ source "$ANCHOR_LIB"
 CMDPOS=$(command_positions "$COMMAND")
 CREATE_RE="${GH_ANCHOR}pr[[:space:]]+${GH_OPTS}create\b"
 if echo "$CMDPOS" | grep -qE "$CREATE_RE" && ! guard_help_only "$CMDPOS" "$CREATE_RE"; then
-    echo "REMINDER: Before creating a PR, verify these agents ran: design-checker, security-checker, precommit-fixer (mode: strict). Use pr-manager subagent for the full workflow."
+    echo "REMINDER: Before creating a PR, verify these agents ran: forge-design-checker, forge-security-checker, forge-precommit-fixer (mode: strict). Use forge-pr-manager subagent for the full workflow."
 fi

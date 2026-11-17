@@ -1,6 +1,6 @@
-"""pr_delta — thresholds and helpers for pr-manager finalization short-circuits.
+"""pr_delta — thresholds and helpers for forge-pr-manager finalization short-circuits.
 
-`forge:pr-manager` (via the `/pr` skill) has five independent ways to
+`forge-pr-manager` (via the `/forge-pr` skill) has five independent ways to
 skip the full three-agent re-verification: **delta mode** (diff since
 the last verified SHA is small, out of high-blast-radius areas),
 the **docs-only light path** (whole diff doc-shaped), **regen-only
@@ -85,7 +85,7 @@ DOCS_ONLY_GLOBS: Final[tuple[str, ...]] = (
 
 
 # Forge-managed regen artifacts a resync PR's diff may consist entirely
-# of. The `/pr` regen-verified light path classifies with
+# of. The `/forge-pr` regen-verified light path classifies with
 # :func:`regen_only_diff` and then EARNS the escape per-PR by running the
 # provenance gates (`forge-precommit --only` over
 # :data:`PROVENANCE_GATE_STEPS`) — classification alone never skips
@@ -188,7 +188,7 @@ def path_classifier(extra_hub: Sequence[str] = ()) -> Callable[[str], PathClass]
 # The pre-commit steps that byte-verify MANAGED_REGEN_PATHS against the
 # installed package. Executable callers (`forge-resync`'s PR-body
 # evidence) build their `forge-precommit --only` argv from this tuple;
-# the `/pr` skill's prose names the same three steps.
+# the `/forge-pr` skill's prose names the same three steps.
 PROVENANCE_GATE_STEPS: Final[tuple[str, ...]] = (
     "foundation_md_check",
     "cli_reference_check",
@@ -215,7 +215,7 @@ SOURCE_PATHS: Final[tuple[str, ...]] = ("src/",)
 
 # The rule surface: files an agent loads as instructions. A PR touching
 # any of them may make a persistent agent memory redundant or wrong, so
-# `/pr` offers a memory audit when one is changed. Entries ending in `/`
+# `/forge-pr` offers a memory audit when one is changed. Entries ending in `/`
 # are directory prefixes; the rest are exact repo-root paths.
 RULE_SURFACE_PATHS: Final[tuple[str, ...]] = (
     "CLAUDE.md",
@@ -389,7 +389,7 @@ def find_closing_refs(text: str) -> list[int]:
     """Return the issue numbers a PR body or commit message would close.
 
     Only a line whose whole content is closing items counts — the form
-    `pr-manager` and `/next` already require, because a keyword inside a
+    `pr-manager` and `/forge-next` already require, because a keyword inside a
     sentence or behind a list marker is easy to miss when reviewing.
 
     Args:

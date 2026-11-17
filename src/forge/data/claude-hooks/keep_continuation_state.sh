@@ -3,7 +3,7 @@
 # Claude Code summarises the conversation.
 #
 # FOUNDATION §10 — summarising is lossy, and the note is what the next
-# context reads back. Pre-commit and `/pr` already rewrite the panel; this
+# context reads back. Pre-commit and `/forge-pr` already rewrite the panel; this
 # is the backstop for a session that compacts between those writes, so
 # the panel the summary is followed by describes the tree as it is now.
 #

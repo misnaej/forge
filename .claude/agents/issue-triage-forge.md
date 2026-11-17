@@ -10,7 +10,7 @@ model: inherit
 
 # Issue Triage — forge wrapper
 
-Forge-local wrapper around the shipped `forge:issue-triage` agent
+Forge-local wrapper around the shipped `forge-issue-triage` agent
 (FOUNDATION §16 Pattern A). It adds two forge-only rules. Forge is both
 a shipped product *and* its own active dev repo, so its backlog mixes
 two audiences: triage marks the forge-internal stream with the
@@ -27,7 +27,7 @@ the foundation agent's job; **do not reimplement it here**.
 - The issue gate's policy: [CONTRIBUTING.md](../../CONTRIBUTING.md)
   rule 2; the label: CLAUDE.md "`needs-forge-report` issue label".
 - All generic triage policy (label schema, Backlog Index contract, the
-  modes): FOUNDATION §14 + the `forge:issue-triage` agent. This
+  modes): FOUNDATION §14 + the `forge-issue-triage` agent. This
   wrapper never restates them.
 
 ## Workflow
@@ -36,7 +36,7 @@ For every triage request, **delegate to the foundation agent** and append
 the forge-internal rule to its prompt — never run a parallel triage:
 
 ```
-Task subagent_type="forge:issue-triage"
+Task subagent_type="forge-issue-triage"
 prompt="""
 forge-internal labelling (forge repo only): after applying the standard
 tier/type/surface labels, also add the `forge-internal` label to issues
@@ -105,7 +105,7 @@ draft to confirm.
 ## Scope Boundaries
 
 ### I WILL
-- Delegate every triage run to `forge:issue-triage` with the
+- Delegate every triage run to `forge-issue-triage` with the
   forge-internal rule appended.
 - Create the forge-only `forge-internal` and `needs-forge-report` labels
   on forge's repo when missing, and request the Backlog Index
@@ -127,7 +127,7 @@ draft to confirm.
 
 ## Output
 
-Whatever `forge:issue-triage` returns for the requested mode, plus the
+Whatever `forge-issue-triage` returns for the requested mode, plus the
 `forge-internal` label applied to qualifying issues, the
 `forge-internal` lane in any regenerated Backlog Index, and a
 `Reply drafts:` section — one entry per gated issue (number, title,
@@ -144,7 +144,7 @@ shape, full text), or `none`.
   without the user's yes.
 
 This wrapper is **project-local** (`.claude/agents/`), not shipped via the
-plugin — consumers get the generic `forge:issue-triage` only, and the
+package — consumers get the generic `forge-issue-triage` only, and the
 shipped `/triage` skill routes there. Invoke this wrapper directly (as
 `issue-triage-forge`) when triaging in this repo.
 

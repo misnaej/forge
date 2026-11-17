@@ -12,6 +12,13 @@
 
 [[PreToolUse]]
 matcher = "Bash"
+# The agent whose behavior this group's agent-scoped guards restrict,
+# named by canonical stem. A tool matcher selects a tool, not an agent,
+# so a guard that restricts one agent has to check that itself: the
+# converter resolves this stem and hands each script the current
+# generated name, so no guard spells one. Harmless for the guards that
+# ignore it.
+agent = "precommit-fixer"
 hooks = [
   { script = "block_protected_branches.sh", timeout = 5 },
   { script = "block_force_push.sh", timeout = 5 },
@@ -75,7 +82,13 @@ hooks = [
 ]
 
 [[SubagentStop]]
-matcher = "^(forge:)?precommit-fixer$"
+# Scoped to one agent by its canonical stem, never by the name it is
+# generated under: the converter resolves the stem to the current
+# generated name and builds both the matcher and the guard's own copy of
+# it from that one declaration. A rename therefore cannot leave a
+# matcher behind — which is what happened when the `forge:` namespace
+# became the `forge-` prefix and this group silently matched nothing.
+agent = "precommit-fixer"
 hooks = [
   { script = "require_fixer_verdict.sh", timeout = 60 },
 ]

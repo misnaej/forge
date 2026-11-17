@@ -910,7 +910,7 @@ def test_wrapup_freshness_returns_stale_when_verified_sha_does_not_prefix_head(
     assert result.fresh is False
     assert "fffffff" in result.reason
     assert "1234567890abcdef0000000000000000000000" in result.reason
-    assert "re-run /pr" in result.reason
+    assert "re-run /forge-pr" in result.reason
 
 
 def test_wrapup_freshness_last_comment_wins_over_earlier_fresh_comment(

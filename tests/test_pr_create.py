@@ -1141,7 +1141,7 @@ def test_base_sync_refusal_follows_the_branch_state(
         assert result is not None
         assert text is not None
         assert text in result
-        assert "/pr" in result
+        assert "/forge-pr" in result
     else:
         assert result is None
     if kind == "warn":

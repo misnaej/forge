@@ -21,6 +21,7 @@ import pytest
 
 from forge import agent_profile, pr_metrics
 from forge.agent_profile_tokens import TokenUsage
+from forge.instruction_files import generated_name, shipped_path
 from tests.conftest import commit_all, git_stdout, init_git_repo
 from tests.test_agent_profile import _iso, _write_jsonl
 from tests.test_agent_profile_tokens import _at, _request, on_branch
@@ -31,6 +32,17 @@ if TYPE_CHECKING:
 
 
 SLUG = "acme/widget"
+
+_DESIGN, _SECURITY, *_ = pr_metrics.REPORTER_TYPES
+
+
+def _shipped_stems() -> list[str]:
+    """Return canonical stems of the shipped agents, enumerated from disk."""
+    return [
+        p.stem
+        for p in shipped_path("agents").glob("*.md")
+        if not p.name.startswith("_")
+    ]
 
 
 class FakeGitHub:
@@ -156,9 +168,9 @@ def transcripts(tmp_path: Path) -> Path:
     )
     # Two review passes: design-checker ran twice, security-checker once.
     for agent_id, agent_type, at in (
-        ("d1", "forge:design-checker", 10),
-        ("d2", "forge:design-checker", 40),
-        ("s1", "forge:security-checker", 41),
+        ("d1", _DESIGN, 10),
+        ("d2", _DESIGN, 40),
+        ("s1", _SECURITY, 41),
     ):
         path = root / "s1" / "subagents" / f"agent-{agent_id}.jsonl"
         _write_jsonl(path, [on_branch("feat/a", _request(at, f"r{agent_id}"))])
@@ -216,8 +228,8 @@ def test_record_attributes_tokens_by_head_branch(
     assert _tokens(db, 1) == {
         "main": 200,
         "other": 50,
-        "forge:design-checker": 0,
-        "forge:security-checker": 0,
+        _DESIGN: 0,
+        _SECURITY: 0,
     }
     with sqlite3.connect(db) as conn:
         row = conn.execute(
@@ -266,12 +278,12 @@ def test_reused_branch_name_splits_usage_at_each_merge(
     assert _tokens(db, 1) == {
         "main": 100,
         "other": 50,
-        "forge:design-checker": 0,
+        _DESIGN: 0,
     }
     assert _tokens(db, 2) == {
         "main": 100,
-        "forge:design-checker": 0,
-        "forge:security-checker": 0,
+        _DESIGN: 0,
+        _SECURITY: 0,
     }
 
 
@@ -583,24 +595,49 @@ def test_unknown_or_legacy_database_is_refused(
 def test_fold_keeps_public_agent_types_and_sums_the_rest_as_other() -> None:
     """Behavior: only main, shipped forge agents and Claude Code built-ins keep names.
 
-    A ``forge:`` prefix is not enough: a repo's own agent often carries
+    The forge prefix is not enough: a repo's own agent often carries
     its name.
     """
     usage = {
         name: TokenUsage(input_tokens=n, requests=1)
         for name, n in (
             ("main", 10),
-            ("forge:design-checker", 5),
+            (_DESIGN, 5),
             ("Explore", 4),
-            ("forge:acme-reviewer", 3),
+            (generated_name("acme-reviewer"), 3),
             ("design-checker-acme", 2),
         )
     }
 
     folded = pr_metrics.fold_agent_types(usage)
 
-    assert set(folded) == {"main", "forge:design-checker", "Explore", "other"}
+    assert set(folded) == {"main", _DESIGN, "Explore", "other"}
     assert folded["other"].input_tokens == 5
+
+
+@pytest.mark.parametrize("stem", sorted(_shipped_stems()))
+def test_fold_keeps_every_shipped_agent_under_its_generated_name(stem: str) -> None:
+    """Behavior: a shipped agent's generated name is never folded into other.
+
+    Stems come from disk, names from `generated_name`: a literal here
+    would keep passing after the matcher under test stopped matching.
+
+    Args:
+        stem: Shipped agent file stem, supplied by parametrize.
+    """
+    name = generated_name(stem)
+
+    folded = pr_metrics.fold_agent_types({name: TokenUsage(input_tokens=1)})
+
+    assert set(folded) == {name}
+
+
+def test_metrics_and_profile_agree_on_generated_names() -> None:
+    """Behavior: the reporter and fixer constants are names forge generates."""
+    shipped = {generated_name(stem) for stem in _shipped_stems()}
+
+    assert generated_name("precommit-fixer") == agent_profile.PRECOMMIT_FIXER_AGENT
+    assert set(pr_metrics.REPORTER_TYPES) <= shipped
 
 
 def test_fold_refuses_an_empty_roster(monkeypatch: pytest.MonkeyPatch) -> None:

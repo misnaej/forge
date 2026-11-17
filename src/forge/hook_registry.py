@@ -17,9 +17,12 @@ no guards in it and reports success, so every protection in FOUNDATION
 
 from __future__ import annotations
 
+import re
 import tomllib
 from importlib import resources
 from typing import TYPE_CHECKING, Final, NamedTuple
+
+from forge.instruction_files import generated_name, shipped_path
 
 
 if TYPE_CHECKING:
@@ -55,11 +58,16 @@ class HookGroup(NamedTuple):
         matcher: Tool-name pattern the harness matches before running the
             group, or ``None`` for an event that carries no matcher (a
             session or compaction event fires regardless of tool).
+        agent: Canonical stem of the one agent this group is scoped to,
+            or ``None`` for a group that runs whatever the agent. The
+            stem is never the name the agent is addressed by: it is
+            resolved at render time, so a rename cannot strand it.
         entries: The scripts to run, in declaration order. Order is part
             of the contract: a guard that blocks is cheapest first.
     """
 
     matcher: str | None
+    agent: str | None
     entries: tuple[HookEntry, ...]
 
 
@@ -139,27 +147,97 @@ def read_wiring() -> dict[str, tuple[HookGroup, ...]]:
         if not isinstance(raw_groups, list) or not raw_groups:
             msg = f"{HOOKS_RESOURCE}: event {event} declares no groups"
             raise HookWiringError(msg)
-        groups: list[HookGroup] = []
-        for raw in raw_groups:
-            if not isinstance(raw, dict):
-                msg = f"{HOOKS_RESOURCE}: {event} group is not a table"
-                raise HookWiringError(msg)
-            matcher = raw.get("matcher")
-            if matcher is not None and not isinstance(matcher, str):
-                msg = f"{HOOKS_RESOURCE}: {event} matcher is not a string"
-                raise HookWiringError(msg)
-            raw_hooks = raw.get("hooks")
-            if not isinstance(raw_hooks, list) or not raw_hooks:
-                msg = f"{HOOKS_RESOURCE}: {event} group lists no hooks"
-                raise HookWiringError(msg)
-            groups.append(
-                HookGroup(
-                    matcher=matcher,
-                    entries=tuple(_entry(h, event) for h in raw_hooks),
-                )
-            )
-        wiring[event] = tuple(groups)
+        wiring[event] = tuple(_group(raw, event) for raw in raw_groups)
     return wiring
+
+
+def _group(raw: object, event: str) -> HookGroup:
+    """Validate one declared group and return it.
+
+    Split from :func:`read_wiring` so each function validates one level
+    of the file: the caller owns events, this owns a group, and
+    :func:`_entry` owns a hook.
+
+    Args:
+        raw: The group as parsed from TOML, not yet known to be a table.
+        event: Event name the group was declared under, for messages.
+
+    Returns:
+        The validated group.
+
+    Raises:
+        HookWiringError: When the group is not a table, its ``matcher``
+            or ``agent`` is not a string, or it lists no hooks.
+    """
+    if not isinstance(raw, dict):
+        msg = f"{HOOKS_RESOURCE}: {event} group is not a table"
+        raise HookWiringError(msg)
+    matcher = raw.get("matcher")
+    if matcher is not None and not isinstance(matcher, str):
+        msg = f"{HOOKS_RESOURCE}: {event} matcher is not a string"
+        raise HookWiringError(msg)
+    # `agent` and `matcher` are orthogonal and may both appear. A
+    # SubagentStop matcher selects an agent, so a group carrying only
+    # `agent` has its matcher built from it. A PreToolUse matcher selects
+    # a *tool*, so such a group keeps its own matcher and `agent` only
+    # tells the script which agent it restricts — which is why those
+    # scripts check the agent themselves.
+    agent = raw.get("agent")
+    if agent is not None and not isinstance(agent, str):
+        msg = f"{HOOKS_RESOURCE}: {event} agent is not a string"
+        raise HookWiringError(msg)
+    raw_hooks = raw.get("hooks")
+    if not isinstance(raw_hooks, list) or not raw_hooks:
+        msg = f"{HOOKS_RESOURCE}: {event} group lists no hooks"
+        raise HookWiringError(msg)
+    return HookGroup(
+        matcher=matcher,
+        agent=agent,
+        entries=tuple(_entry(h, event) for h in raw_hooks),
+    )
+
+
+def _resolved_agent(stem: str | None, event: str) -> str | None:
+    """Resolve a group's canonical agent stem to its generated name.
+
+    Raises rather than falling back, because every fallback here is a
+    silent fail-open: an unknown stem that rendered no matcher would
+    scope the group to *every* agent, and one that rendered an empty
+    matcher would scope it to none. Both leave a guard that reports
+    success while guarding nothing — the failure this indirection
+    exists to prevent.
+
+    Args:
+        stem: Canonical stem from the wiring, or ``None`` when the group
+            is not agent-scoped.
+        event: Event name, for the error message.
+
+    Returns:
+        The name the agent is generated under, or ``None`` when *stem*
+        is ``None``.
+
+    Raises:
+        HookWiringError: When *stem* names no shipped agent, or no
+            shipped agents can be enumerated at all.
+    """
+    if stem is None:
+        return None
+    source = shipped_path("agents")
+    shipped = {p.stem for p in source.glob("*.md") if not p.name.startswith("_")}
+    if not shipped:
+        msg = (
+            f"{HOOKS_RESOURCE}: {event} is scoped to agent {stem!r}, but no "
+            f"shipped agents could be read from {source}. Reinstall "
+            "forge-scripts."
+        )
+        raise HookWiringError(msg)
+    if stem not in shipped:
+        msg = (
+            f"{HOOKS_RESOURCE}: {event} is scoped to agent {stem!r}, which "
+            f"forge does not ship. Shipped: {', '.join(sorted(shipped))}."
+        )
+        raise HookWiringError(msg)
+    return generated_name(stem)
 
 
 def rendered_hooks(
@@ -189,6 +267,13 @@ def rendered_hooks(
     for event, groups in read_wiring().items():
         blocks: list[dict[str, object]] = []
         for group in groups:
+            agent_name = _resolved_agent(group.agent, event)
+            matcher = group.matcher
+            if agent_name is not None and matcher is None:
+                # Only an agent-selecting event (SubagentStop) derives its
+                # matcher from the scope. A tool-selecting matcher stays
+                # as declared; there the scope only reaches the script.
+                matcher = f"^{re.escape(agent_name)}$"
             hooks: list[dict[str, object]] = []
             for entry in group.entries:
                 hook: dict[str, object] = {
@@ -198,11 +283,20 @@ def rendered_hooks(
                 if entry.timeout is not None:
                     hook["timeout"] = entry.timeout
                 hooks.append(hook)
-            blocks.append(
-                {"matcher": group.matcher, "hooks": hooks}
-                if group.matcher is not None
+            block: dict[str, object] = (
+                {"matcher": matcher, "hooks": hooks}
+                if matcher is not None
                 else {"hooks": hooks}
             )
+            if agent_name is not None:
+                # Carried as data, never baked into the command: the
+                # Claude settings file runs a command through a shell, so
+                # it can prefix an assignment, while the Vibe dispatcher
+                # execs the command as a bare path and would read any
+                # prefix as part of the filename. Each converter delivers
+                # it the way its harness can receive it.
+                block["agent"] = agent_name
+            blocks.append(block)
         rendered[event] = blocks
     return rendered
 

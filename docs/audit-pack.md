@@ -2,7 +2,7 @@
 
 Deterministic CLI scripts that surface design issues code review keeps
 missing. Each script writes its findings to `code_health/audit_<name>.log`;
-the [`forge:design-checker`](../agents/design-checker.md) agent reads
+the [`forge-design-checker`](../agents/design-checker.md) agent reads
 those logs as mandatory **Investigation Recipes** instead of pattern-
 matching abstract principles file-by-file.
 
@@ -55,7 +55,7 @@ repo root.
 | `forge-audit-suppressions`  | every `# noqa` / `# type: ignore` / `# pragma: no cover` with rule lookup | KISS / YAGNI surface |
 | `forge-audit-orphans`       | unused symbols (vulture wrapper) | YAGNI |
 | `forge-audit-data`          | CSV / JSON / TOML / YAML integrity + jsonschema | data invariants |
-| `forge-audit-claims`        | docstring/comment claims for verification by `forge:knowledge-search` | domain truthfulness |
+| `forge-audit-claims`        | docstring/comment claims for verification by `forge-knowledge-search` | domain truthfulness |
 | `forge-audit-layering`      | positive layer-composition contracts (`composes_all_of`); blocking only on added/moved modules | SDP / SAP, layer admission |
 | `forge-audit-all`           | run everything; aggregate summary | — |
 
@@ -221,11 +221,11 @@ lexicon = ["kl", "rmsd", "sie", "conserved", "stable", "folded"]
 ```
 
 Each match is emitted at **REVIEW** severity — extraction only, no
-verification. The `forge:design-checker` agent batches these into a
-single `forge:knowledge-search` query against the repo's methodology doc
+verification. The `forge-design-checker` agent batches these into a
+single `forge-knowledge-search` query against the repo's methodology doc
 and external sources, mapping verdicts to severity:
 
-| `forge:knowledge-search` verdict | Severity in design-check report |
+| `forge-knowledge-search` verdict | Severity in design-check report |
 |---|---|
 | CONTRADICTED | CRITICAL |
 | UNCERTAIN | MEDIUM |

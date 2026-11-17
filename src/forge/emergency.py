@@ -598,7 +598,7 @@ def _cmd_end(root: Path, *, abandon: bool = False) -> int:
             f"emergency: debt outstanding on ledger #{state.ledger_issue} — "
             + (
                 f"PR #{pr_number} has no posted wrap-up naming its head. "
-                "Run the full verification (/pr) against it first."
+                "Run the full verification (/forge-pr) against it first."
                 if pr_number
                 else "no emergency PR recorded on the ledger yet."
             )

@@ -94,7 +94,7 @@ class ComposeInputs:
         reasons: ``forge-pr-plan`` reasons, in order.
         reporters: Reporter names the plan requires.
         reports: Reporter name → full report text.
-        prior_art_report: The ``forge:prior-art`` report, when one exists.
+        prior_art_report: The ``forge-prior-art`` report, when one exists.
         added_reviewable_paths: Added files other than changelog
             fragments and intake records (a non-empty tuple requires a
             prior-art report).

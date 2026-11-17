@@ -106,6 +106,16 @@ def _generate_roster_sidecar(repo_root: Path) -> tuple[dict, list[str]]:
                 if isinstance(hook, dict)
             ]
 
+            # An agent-scoped group carries the resolved agent name. The
+            # dispatcher execs a command as a bare path, so the name
+            # cannot ride in the command the way it does in Claude's
+            # shell-run settings: it travels per hook and the dispatcher
+            # puts it in the environment.
+            scoped_agent = matcher_config.get("agent")
+            if isinstance(scoped_agent, str):
+                for hook in expanded_hooks:
+                    hook["agent"] = scoped_agent
+
             # No matcher specified - applies to all
             matcher = matcher_config.get("matcher", "")
             # Extend, never replace: the roster keys hooks by matcher, so

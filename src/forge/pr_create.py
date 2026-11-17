@@ -382,7 +382,7 @@ def _read_verified_wrapup(root: Path, branch: str) -> tuple[str | None, str | No
     if not wrapup.is_file():
         return None, (
             f"no authored wrap-up at {wrapup} for branch '{branch}'. "
-            "Author it (`/pr` Step 3.92) before publishing."
+            "Author it (`/forge-pr` Step 3.92) before publishing."
         )
     try:
         text = wrapup.read_text(encoding="utf-8", errors="replace")
@@ -394,7 +394,7 @@ def _read_verified_wrapup(root: Path, branch: str) -> tuple[str | None, str | No
     if not _verified(text, head):
         return None, (
             f"{wrapup} does not name {head[:7]} in a verified-at: line — "
-            "it was authored for a different tree. Re-run /pr Step 3.92."
+            "it was authored for a different tree. Re-run /forge-pr Step 3.92."
         )
     return text, None
 
@@ -461,7 +461,7 @@ def _base_sync_refusal(root: Path, base: str, *, emergency: bool) -> str | None:
     ``forge-pr-wrapup post`` refuses the same branch minutes later, after
     the pull request is public and reviewers are notified; refusing here,
     before it exists, costs nothing to retry. The base can move during
-    verification, so the ``/pr`` base-sync gate that ran earlier does not
+    verification, so the ``/forge-pr`` base-sync gate that ran earlier does not
     cover this. The rule itself is :func:`forge.pr_wrapup.base_sync_verdict`,
     shared with the post; an unreadable base or an untestable merge is a
     warning, not a refusal.
@@ -491,7 +491,7 @@ def _base_sync_refusal(root: Path, base: str, *, emergency: bool) -> str | None:
         behind=counts[0] if counts is not None else None,
         emergency=emergency,
         base=base,
-        rerun="/pr",
+        rerun="/forge-pr",
     )
     if refusals:
         return refusals[0]

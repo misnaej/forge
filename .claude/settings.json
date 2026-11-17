@@ -108,97 +108,97 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block_protected_branches.sh",
+            "command": "FORGE_HOOK_AGENT=forge-precommit-fixer ${CLAUDE_PROJECT_DIR}/.claude/hooks/block_protected_branches.sh",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block_force_push.sh",
+            "command": "FORGE_HOOK_AGENT=forge-precommit-fixer ${CLAUDE_PROJECT_DIR}/.claude/hooks/block_force_push.sh",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block_git_rebase.sh",
+            "command": "FORGE_HOOK_AGENT=forge-precommit-fixer ${CLAUDE_PROJECT_DIR}/.claude/hooks/block_git_rebase.sh",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block_git_destructive.sh",
+            "command": "FORGE_HOOK_AGENT=forge-precommit-fixer ${CLAUDE_PROJECT_DIR}/.claude/hooks/block_git_destructive.sh",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block_amend_pushed_commit.sh",
+            "command": "FORGE_HOOK_AGENT=forge-precommit-fixer ${CLAUDE_PROJECT_DIR}/.claude/hooks/block_amend_pushed_commit.sh",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block_pr_merge.sh",
+            "command": "FORGE_HOOK_AGENT=forge-precommit-fixer ${CLAUDE_PROJECT_DIR}/.claude/hooks/block_pr_merge.sh",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block_unverified_pr_create.sh",
+            "command": "FORGE_HOOK_AGENT=forge-precommit-fixer ${CLAUDE_PROJECT_DIR}/.claude/hooks/block_unverified_pr_create.sh",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block_branch_deletion.sh",
+            "command": "FORGE_HOOK_AGENT=forge-precommit-fixer ${CLAUDE_PROJECT_DIR}/.claude/hooks/block_branch_deletion.sh",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block_no_verify.sh",
+            "command": "FORGE_HOOK_AGENT=forge-precommit-fixer ${CLAUDE_PROJECT_DIR}/.claude/hooks/block_no_verify.sh",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block_install_deps.sh",
+            "command": "FORGE_HOOK_AGENT=forge-precommit-fixer ${CLAUDE_PROJECT_DIR}/.claude/hooks/block_install_deps.sh",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block_claude_attribution.sh",
+            "command": "FORGE_HOOK_AGENT=forge-precommit-fixer ${CLAUDE_PROJECT_DIR}/.claude/hooks/block_claude_attribution.sh",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block_continuation_delete.sh",
+            "command": "FORGE_HOOK_AGENT=forge-precommit-fixer ${CLAUDE_PROJECT_DIR}/.claude/hooks/block_continuation_delete.sh",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/check_commit_format.sh",
+            "command": "FORGE_HOOK_AGENT=forge-precommit-fixer ${CLAUDE_PROJECT_DIR}/.claude/hooks/check_commit_format.sh",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/warn_pr_checks.sh",
+            "command": "FORGE_HOOK_AGENT=forge-precommit-fixer ${CLAUDE_PROJECT_DIR}/.claude/hooks/warn_pr_checks.sh",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block_raw_ruff.sh",
+            "command": "FORGE_HOOK_AGENT=forge-precommit-fixer ${CLAUDE_PROJECT_DIR}/.claude/hooks/block_raw_ruff.sh",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block_raw_git.sh",
+            "command": "FORGE_HOOK_AGENT=forge-precommit-fixer ${CLAUDE_PROJECT_DIR}/.claude/hooks/block_raw_git.sh",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block_raw_wrapup_post.sh",
+            "command": "FORGE_HOOK_AGENT=forge-precommit-fixer ${CLAUDE_PROJECT_DIR}/.claude/hooks/block_raw_wrapup_post.sh",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block_fixer_recon.sh",
+            "command": "FORGE_HOOK_AGENT=forge-precommit-fixer ${CLAUDE_PROJECT_DIR}/.claude/hooks/block_fixer_recon.sh",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block_vibe_config.sh",
+            "command": "FORGE_HOOK_AGENT=forge-precommit-fixer ${CLAUDE_PROJECT_DIR}/.claude/hooks/block_vibe_config.sh",
             "timeout": 5
           }
         ]
@@ -297,11 +297,11 @@
         ]
       },
       {
-        "matcher": "^(forge:)?precommit-fixer$",
+        "matcher": "^forge\\-precommit\\-fixer$",
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/require_fixer_verdict.sh",
+            "command": "FORGE_HOOK_AGENT=forge-precommit-fixer ${CLAUDE_PROJECT_DIR}/.claude/hooks/require_fixer_verdict.sh",
             "timeout": 60
           }
         ]

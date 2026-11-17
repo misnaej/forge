@@ -27,4 +27,4 @@ command_positions "$COMMAND" | grep -qE "${GIT_ANCHOR}merge\b" || exit 0
 # A merge in progress with unmerged paths is the only case worth a line.
 git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 || exit 0
 [ -n "$(git diff --name-only --diff-filter=U 2>/dev/null)" ] || exit 0
-echo "[forge] this merge stopped on conflicts — run \`forge-update-branch --continue\`: it resolves generated files, the version slot and files the branch already holds, then commits the merge (forge-commit refuses mid-merge). Conflicts it cannot resolve go to forge:merge-resolver first. Base syncs normally start with \`forge-update-branch\`, not \`git merge\`."
+echo "[forge] this merge stopped on conflicts — run \`forge-update-branch --continue\`: it resolves generated files, the version slot and files the branch already holds, then commits the merge (forge-commit refuses mid-merge). Conflicts it cannot resolve go to forge-merge-resolver first. Base syncs normally start with \`forge-update-branch\`, not \`git merge\`."

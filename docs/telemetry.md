@@ -87,7 +87,7 @@ are the ones worth chasing:
   mean CPU are usually parallelizable or waiting on something they
   shouldn't be.
 - **CPU pinned high across the whole run** with modest RSS: compute
-  bound — a candidate for the `forge:perf-optimizer` benchmark loop
+  bound — a candidate for the `forge-perf-optimizer` benchmark loop
   rather than more memory.
 - **A spike that moved between runs**: compare two saved logs (copy
   them out of `code_health/` first — each run overwrites) before and

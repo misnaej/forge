@@ -86,7 +86,8 @@ CANONICAL_LABELS: list[dict[str, str]] = [
     {
         "name": "needs-recheck",
         "color": "F9D0C4",
-        "description": "A merge changed a planned file; /sentinel re-reads the diff",
+        "description": "A merge changed a planned file; "
+        "/forge-sentinel re-reads the diff",
     },
     {
         "name": "emergency-mode",

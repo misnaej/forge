@@ -117,6 +117,11 @@ _SCRIPTS = frozenset({"a.sh", "b.sh"})
 
 
 def _group(*commands: object) -> dict[str, object]:
+    """Build one hooks group holding a command entry per given command.
+
+    Args:
+        *commands: Command strings, one command entry each.
+    """
     return {"hooks": [{"type": "command", "command": c} for c in commands]}
 
 
@@ -191,6 +196,44 @@ def test_install_twice_keeps_consumer_files_and_registration(
     assert forge_groups
     assert settings["permissions"] == {"allow": ["Bash(ls:*)"]}
     assert settings["enabledPlugins"] == {"other@market": True}
+
+
+def test_install_replaces_a_stale_agent_matcher_group_not_adds_one(
+    bare_repo: Path,
+) -> None:
+    """Behavior: an upgrade swaps a leftover agent matcher for the current one.
+
+    SCENARIO: settings from before the rename hold a forge-owned
+    SubagentStop group whose matcher is a retired agent spelling.
+    EXPECTED BEHAVIOR: after install exactly one group runs the verdict
+    guard, its matcher is the freshly derived one, and no stale group stays.
+    """
+    stale_matcher = "^(forge:)?precommit-fixer$"
+    settings_path = bare_repo / ".claude/settings.json"
+    settings_path.parent.mkdir(parents=True)
+    stale = {
+        "matcher": stale_matcher,
+        "hooks": [
+            {"type": "command", "command": hook_command("require_fixer_verdict.sh")}
+        ],
+    }
+    settings_path.write_text(
+        json.dumps({"hooks": {"SubagentStop": [stale]}}), encoding="utf-8"
+    )
+
+    _, error = install_claude(bare_repo)
+    assert error is None
+
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    verdict_groups = [
+        g
+        for g in settings["hooks"]["SubagentStop"]
+        if any("require_fixer_verdict.sh" in h["command"] for h in g["hooks"])
+    ]
+    assert len(verdict_groups) == 1
+    assert verdict_groups[0]["matcher"] != stale_matcher
+    assert re.fullmatch(verdict_groups[0]["matcher"], generated_name("precommit-fixer"))
+    assert stale not in settings["hooks"]["SubagentStop"]
 
 
 # --- 6. required_scripts ----------------------------------------------------
@@ -503,6 +546,11 @@ def test_gitignore_hides_generated_files_and_not_consumer_ones(
 
 
 def _bad_settings(root: Path) -> None:
+    """Write an unparseable settings.json under root/.claude.
+
+    Args:
+        root: Directory that receives the .claude folder.
+    """
     (root / ".claude").mkdir()
     (root / ".claude" / "settings.json").write_text("{ nope", encoding="utf-8")
 

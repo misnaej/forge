@@ -525,7 +525,7 @@ def _commit(root: Path, message: str, *, gated: bool) -> None:
     except subprocess.CalledProcessError as exc:
         msg = (
             "the merge commit was blocked by the pre-commit gate; the merge "
-            "stays in progress. Run forge:precommit-fixer, then "
+            "stays in progress. Run forge-precommit-fixer, then "
             "`forge-update-branch --continue`."
             if gated
             else f"git refused the merge commit; the merge stays in progress. {exc}"
@@ -579,7 +579,7 @@ def _stop(root: Path, base_ref: str, done: Resolution) -> int:
     record = _record_stop(root, base_ref, done)
     logger.warning(
         "forge-update-branch: stopped — these conflicts need judgment: %s.\n"
-        "Next: spawn forge:merge-resolver to resolve them (or resolve and "
+        "Next: spawn forge-merge-resolver to resolve them (or resolve and "
         "`git add` them yourself), then run `forge-update-branch --continue`."
         "%s",
         ", ".join(done.remaining),
