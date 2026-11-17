@@ -14,7 +14,7 @@ publishing a branch with no wrap-up at all.
 This command removes the inference instead of improving it. It runs in the
 checkout it publishes, so the branch is not a guess — it is where the
 process is standing. It verifies that checkout's own wrap-up against that
-checkout's own HEAD, earns the light, light-release and emergency escapes
+checkout's own HEAD, earns the light and emergency escapes
 in the same place, refuses a branch with no CVE scan since it left its
 base (in every mode, emergency included) or one behind or conflicting with
 that base, and only then creates the pull request. The guard's
@@ -77,7 +77,6 @@ SHORT_FLAG_LENGTH: Final[int] = 2
 # it has nothing to re-earn.
 EARNED_WRAPUP_MODES: Final[dict[str, str]] = {
     "light": "light-code",
-    "light-release": "light-release",
 }
 
 # Passthrough is an ALLOWLIST, not a denylist. It forwards to a
@@ -169,11 +168,11 @@ def _verified(wrapup_text: str, head_sha: str) -> bool:
 def _earn_escape(root: Path, base: str, declared: str) -> str | None:
     """Re-run the classifier so a reporter-skipping wrap-up is earned, not asserted.
 
-    A ``light`` or ``light-release`` wrap-up skips reporters, so the
-    escape is proved at publish time rather than taken on the author's
-    word. The classifier is called as a function, not shelled out to and
-    re-parsed: one implementation, and its verdict cannot drift from the
-    CLI's. Fails CLOSED — any error or any verdict but the one
+    A ``light`` wrap-up skips reporters, so the escape is proved at
+    publish time rather than taken on the author's word. The classifier
+    is called as a function, not shelled out to and re-parsed: one
+    implementation, and its verdict cannot drift from the CLI's. Fails
+    CLOSED — any error or any verdict but the one
     :data:`EARNED_WRAPUP_MODES` names for *declared* refuses.
 
     Args:

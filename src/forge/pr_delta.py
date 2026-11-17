@@ -29,7 +29,6 @@ from forge import config
 from forge.changelog_fragments import FRAGMENTS_DIR, _parse_and_validate_filename
 from forge.intake import DEFAULT_DIR as INTAKE_DEFAULT_DIR
 from forge.intake import is_record_path
-from forge.rebump import CHANGELOG_PATH, PLUGIN_PATH
 
 
 if TYPE_CHECKING:
@@ -51,7 +50,12 @@ HIGH_BLAST_RADIUS_PATHS: Final[tuple[str, ...]] = (
     "claude-hooks/",
     ".githooks/",
     "skills/",
-    ".claude-plugin/",
+    # Forge's own shipped sources live inside the package, and the
+    # repo-root `agents/`, `skills/` and `claude-hooks/` are symlinks to
+    # them — so git reports the package path, which the bare prefixes
+    # above never match. The whole directory counts: everything in it is
+    # shipped surface, so a new kind of shipped data needs no new entry.
+    "src/forge/data/",
     ".claude/",
     ".github/workflows/",
     "pyproject.toml",
@@ -135,7 +139,6 @@ HUB_PATHS: Final[tuple[str, ...]] = (
     "CHANGELOG.md",
     "REPO_STRUCTURE.md",
     "FOUNDATION.md",
-    ".claude-plugin/plugin.json",
     "src/forge/data/plugin-roster.toml",
     "docs/agent-architecture.md",
 )
@@ -219,6 +222,10 @@ RULE_SURFACE_PATHS: Final[tuple[str, ...]] = (
     "FOUNDATION.md",
     "skills/",
     "agents/",
+    # Same symlink reason as HIGH_BLAST_RADIUS_PATHS: forge's own copies
+    # are reported at their package paths, not the repo-root ones.
+    "src/forge/data/skills/",
+    "src/forge/data/agents/",
     ".claude/skills/",
     ".claude/agents/",
 )
@@ -230,21 +237,6 @@ RULE_SURFACE_PATHS: Final[tuple[str, ...]] = (
 # classifier and the gate that mandates the file can never name different
 # directories.
 FRAGMENT_PATH_PREFIX: Final[str] = f"{FRAGMENTS_DIR.as_posix()}/"
-
-
-# What `forge-changelog release-pr` writes and nothing else: the manifest's
-# version bump, the assembled CHANGELOG.md, and the consumed fragments. A
-# diff made only of these classifies for the `light-release` path, where
-# the changelog prose is the one thing left to read. Every entry is
-# imported, never re-spelled, so the classifier and the writer cannot
-# name different files. The fragments entry is a directory prefix and is
-# matched through :func:`_is_fragment_path`, never as a bare prefix — a
-# prefix alone would admit ``changelog.d/evil.py``.
-RELEASE_ASSEMBLY_PATHS: Final[tuple[str, ...]] = (
-    PLUGIN_PATH,
-    CHANGELOG_PATH,
-    FRAGMENT_PATH_PREFIX,
-)
 
 
 # Matches the reporter-agent header contract documented in
@@ -574,43 +566,6 @@ def regen_only_diff(changed_paths: list[str]) -> bool:
     if not changed_paths:
         return False
     return all(path in MANAGED_REGEN_PATHS for path in changed_paths)
-
-
-def release_assembly_diff(changed_paths: list[str]) -> bool:
-    """Return whether every changed path is a release-assembly output.
-
-    Pure path classifier, same contract shape as :func:`regen_only_diff`
-    — it decides *eligibility* for the ``light-release`` path, never the
-    escape itself. The exact entries of :data:`RELEASE_ASSEMBLY_PATHS`
-    match as whole paths; its fragments-directory entry matches only a
-    direct child whose name is fragment-shaped (:func:`_is_fragment_path`).
-
-    Matching is **exact-case, deliberately**, for the reason
-    :func:`regen_only_diff` gives: casefolding a disqualifier refuses
-    more, casefolding an exemption excuses more. ``.Claude-Plugin/…`` is
-    a different, unreviewed file to git.
-
-    Known residuals (documented, accepted): classification sees path
-    strings only. It cannot tell a deleted fragment from an added or
-    edited one, nor a version-only manifest change from one that rewires
-    hooks — :func:`forge.pr_plan.classify` checks both against the diff
-    content before granting the mode. The ``CHANGELOG.md`` prose is not
-    machine-checked at all; the docs-types-checker that still runs, and
-    the human review, are its reviewers of record.
-
-    Args:
-        changed_paths: Repo-relative paths from ``git diff --name-only``.
-
-    Returns:
-        ``True`` when the diff is non-empty and every path is a
-        release-assembly output; ``False`` otherwise.
-    """
-    if not changed_paths:
-        return False
-    # Whole-path match only against the file entries: the fragments
-    # directory itself is never a changed file, so it must not match.
-    files = tuple(p for p in RELEASE_ASSEMBLY_PATHS if p != FRAGMENT_PATH_PREFIX)
-    return all(path in files or _is_fragment_path(path) for path in changed_paths)
 
 
 def touches_source_paths(changed_paths: list[str]) -> list[str]:

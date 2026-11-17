@@ -33,7 +33,6 @@ workspace "Forge" "Python CI/CD & code-quality foundation: deterministic CLIs + 
         doc_generators -> config_shared "imports"
         doc_generators -> release_tooling "imports"
         git_hook_entrypoints -> config_shared "imports"
-        git_hook_entrypoints -> release_tooling "imports"
         installers -> config_shared "imports"
         installers -> release_tooling "imports"
         pre_commit_dispatcher -> config_shared "imports"

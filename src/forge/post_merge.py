@@ -16,20 +16,16 @@ pull`` (VS Code terminal, tmux, piped shell).
    not run this step; the installed forge-scripts version only
    changes via ``pip install``, which is most naturally chained
    off a ``git pull``. *[interactive-only]*
-3. Rolling-next tag staleness advisory via
-   :func:`forge.next_prep.tag_staleness_warning` — warns when
-   ``plugin.json``'s version is ahead of the latest ``v*`` tag
-   (a merge bumped the version but ``forge-next-prep --tag`` was
-   not yet run). *[interactive-only]*
-4. Consumer extension scripts in ``.githooks/post-merge.d/`` via
+3. Consumer extension scripts in ``.githooks/post-merge.d/`` via
    :func:`forge._hook_helpers.run_hook_extensions` — a sanctioned
    drop-in point that survives every refresh (the installer never
    touches the ``.d`` subdirectory). *[runs in any non-CI context]*
-5. ``forge-plugin-sync --quiet`` via
-   :func:`forge._hook_helpers.run_plugin_sync` — a merge that changes
-   the pinned forge release moves this checkout's Claude Code plugin
-   with it. After the extensions, so an environment refresh one of them
-   runs lands first. *[runs in any non-CI context]*
+4. ``install-forge-claude`` via
+   :func:`forge._hook_helpers.run_claude_integration` — a merge that
+   changes the shipped agents, skills or guard wiring regenerates this
+   checkout's Claude Code integration. After the extensions, so an
+   environment refresh one of them runs lands first.
+   *[runs in any non-CI context]*
 """
 
 from __future__ import annotations
@@ -39,16 +35,14 @@ import logging
 import shutil
 import subprocess
 import sys
-from pathlib import Path
 
 from forge._hook_helpers import (
+    run_claude_integration,
     run_foundation_drift_check,
     run_hook_extensions,
-    run_plugin_sync,
     run_vibe_regen,
 )
 from forge.git_utils import configure_cli_logging
-from forge.next_prep import tag_staleness_warning
 from forge.run_context import is_ci, is_non_interactive
 
 
@@ -117,13 +111,6 @@ def main(argv: list[str] | None = None) -> int:
                 start_new_session=True,
             )
 
-        # Surface a rolling-next tag the integration branch owes — a merge
-        # bumped plugin.json but `forge-next-prep --tag` was never run, so the
-        # tag silently lags. Advisory only; the user runs the tag command.
-        staleness = tag_staleness_warning(Path.cwd())
-        if staleness:
-            logger.warning("%s", staleness)
-
     # Consumer extensions are the consumer's own logic, not forge's, so they
     # must run wherever a human is present — including a local pull whose
     # stdin is not a tty (VS Code terminal, tmux, piped shell, subshell).
@@ -132,7 +119,7 @@ def main(argv: list[str] | None = None) -> int:
     # terminals (#177). Symmetric with post-checkout.
     if not is_ci():
         run_hook_extensions("post-merge")
-        run_plugin_sync("post-merge")
+        run_claude_integration("post-merge")
     return rc
 
 

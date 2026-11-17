@@ -1,0 +1,107 @@
+# The canonical hook wiring every harness converter reads.
+#
+# Harness-neutral by construction: an entry names a script in forge's
+# packaged claude-hooks/ directory, never a path. Each converter builds
+# the path its harness needs -- the Claude installer copies scripts into
+# .claude/hooks/ and registers them under ${CLAUDE_PROJECT_DIR}, the Vibe
+# generator translates events and writes its own command strings.
+#
+# Event and matcher names are Claude Code's vocabulary, which is the
+# neutral one: forge.agent_harness maps them per harness, and the Claude
+# profile's map is identity.
+
+[[PreToolUse]]
+matcher = "Bash"
+hooks = [
+  { script = "block_protected_branches.sh", timeout = 5 },
+  { script = "block_force_push.sh", timeout = 5 },
+  { script = "block_git_rebase.sh", timeout = 5 },
+  { script = "block_git_destructive.sh", timeout = 5 },
+  { script = "block_amend_pushed_commit.sh", timeout = 5 },
+  { script = "block_pr_merge.sh", timeout = 5 },
+  { script = "block_unverified_pr_create.sh", timeout = 5 },
+  { script = "block_branch_deletion.sh", timeout = 5 },
+  { script = "block_no_verify.sh", timeout = 5 },
+  { script = "block_install_deps.sh", timeout = 5 },
+  { script = "block_claude_attribution.sh", timeout = 5 },
+  { script = "block_continuation_delete.sh", timeout = 5 },
+  { script = "check_commit_format.sh", timeout = 5 },
+  { script = "warn_pr_checks.sh", timeout = 5 },
+  { script = "block_raw_ruff.sh", timeout = 5 },
+  { script = "block_raw_git.sh", timeout = 5 },
+  { script = "block_raw_wrapup_post.sh", timeout = 5 },
+  { script = "block_fixer_recon.sh", timeout = 5 },
+  { script = "block_vibe_config.sh", timeout = 5 },
+]
+
+[[PreToolUse]]
+matcher = "Edit"
+hooks = [
+  { script = "block_protected_files.sh", timeout = 5 },
+  { script = "block_forge_docs_edits.sh", timeout = 5 },
+  { script = "block_vibe_config.sh", timeout = 5 },
+]
+
+[[PreToolUse]]
+matcher = "Write"
+hooks = [
+  { script = "block_protected_files.sh", timeout = 5 },
+  { script = "block_forge_docs_edits.sh", timeout = 5 },
+  { script = "block_vibe_config.sh", timeout = 5 },
+]
+
+[[SessionStart]]
+hooks = [
+  { script = "check_foundation_sync.sh", timeout = 5 },
+  { script = "load_continuation.sh", timeout = 5 },
+  { script = "caveman_mode.sh", timeout = 5 },
+]
+
+[[PreCompact]]
+hooks = [
+  { script = "keep_continuation_state.sh", timeout = 30 },
+]
+
+[[SubagentStart]]
+hooks = [
+  { script = "log_agent_timing.sh", timeout = 5 },
+  { script = "caveman_mode.sh", timeout = 5 },
+]
+
+[[SubagentStop]]
+hooks = [
+  { script = "log_agent_timing.sh", timeout = 5 },
+  { script = "require_helpers_stopped.sh", timeout = 10 },
+]
+
+[[SubagentStop]]
+matcher = "^(forge:)?precommit-fixer$"
+hooks = [
+  { script = "require_fixer_verdict.sh", timeout = 60 },
+]
+
+[[PostToolUse]]
+hooks = [
+  { script = "log_agent_timing.sh", timeout = 5 },
+]
+
+[[PostToolUse]]
+matcher = "Write"
+hooks = [
+  { script = "check_continuation_budget.sh", timeout = 20 },
+]
+
+[[PostToolUse]]
+matcher = "Edit"
+hooks = [
+  { script = "check_continuation_budget.sh", timeout = 20 },
+]
+
+[[PostToolUse]]
+matcher = "Bash"
+hooks = [
+  { script = "check_continuation_budget.sh", timeout = 20 },
+  { script = "keep_squash_comment_last.sh", timeout = 20 },
+  { script = "warn_stale_wrapup.sh", timeout = 20 },
+  { script = "warn_merge_conflicts.sh", timeout = 20 },
+]

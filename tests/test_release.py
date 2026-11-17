@@ -4,9 +4,9 @@
 # ``_wrong_branch_error``, ``_cut_release``) exercise real git repos via
 # ``tests.conftest``'s ``init_git_repo`` / ``GIT_ENV`` rather than faking
 # ``subprocess.run`` — the guards ARE thin git wrappers, so a real repo is
-# cheaper to reason about than a mock transcript. ``_wrong_release_model_error``
-# and ``_changelog_gate_error`` need no git repo at all (they read config /
-# the working tree), so those tests operate on a bare ``tmp_path``.
+# cheaper to reason about than a mock transcript. ``_changelog_gate_error``
+# needs no git repo at all (it reads config / the working tree), so those
+# tests operate on a bare ``tmp_path``.
 # ``main()`` tests monkeypatch ``release.load_config`` to supply a
 # ``ForgeConfig`` without a real ``pyproject.toml``; ``sys.argv`` is
 # patched so argparse
@@ -148,28 +148,6 @@ def test_wrong_branch_error_reports_detached_head(tmp_path: Path) -> None:
     assert error is not None
     assert "HEAD" in error
     assert "main" in error
-
-
-# ---------------------------------------------------------------------------
-# _wrong_release_model_error
-# ---------------------------------------------------------------------------
-
-
-def test_wrong_release_model_error_none_when_no_manifest(
-    tmp_path: Path,
-) -> None:
-    """Config with no plugin manifest is a valid release model."""
-    assert release._wrong_release_model_error(tmp_path) is None
-
-
-def test_wrong_release_model_error_reports_plugin_manifest(tmp_path: Path) -> None:
-    """Config with a valid plugin manifest names ``plugin.json``."""
-    plugin_dir = tmp_path / ".claude-plugin"
-    plugin_dir.mkdir()
-    (plugin_dir / "plugin.json").write_text('{"name": "x", "version": "1.2.3"}')
-    error = release._wrong_release_model_error(tmp_path)
-    assert error is not None
-    assert "plugin.json" in error
 
 
 # ---------------------------------------------------------------------------
@@ -361,22 +339,14 @@ def test_main_collects_all_guard_failures_and_exits_one(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """SCENARIO: dirty tree + wrong branch + plugin manifest, all at once.
+    """SCENARIO: dirty tree + wrong branch, both at once.
 
     MOCK SETUP: ``load_config`` → ``ForgeConfig(base_branch="main")``. Real
-        repo checked out on ``feat/x`` with an untracked file and a
-        ``.claude-plugin/plugin.json`` manifest (wrong release model).
-    EXPECTED BEHAVIOR: returns 1; caplog error records name all three
-        failures ("dirty", the branch name, "plugin.json").
+        repo checked out on ``feat/x`` with an untracked file.
+    EXPECTED BEHAVIOR: returns 1; caplog error records name both
+        failures ("dirty", the branch name) — neither masks the other.
     """
     _init_git_repo(tmp_path)
-    plugin_dir = tmp_path / ".claude-plugin"
-    plugin_dir.mkdir()
-    (plugin_dir / "plugin.json").write_text('{"name": "x", "version": "1.2.3"}')
-    subprocess.run(["git", "add", "."], cwd=tmp_path, env=_GIT_ENV, check=True)
-    subprocess.run(
-        ["git", "commit", "-qm", "manifest"], cwd=tmp_path, env=_GIT_ENV, check=True
-    )
     subprocess.run(
         ["git", "checkout", "-q", "-b", "feat/x"],
         cwd=tmp_path,
@@ -397,7 +367,6 @@ def test_main_collects_all_guard_failures_and_exits_one(
     errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
     assert any("dirty" in m for m in errors)
     assert any("feat/x" in m for m in errors)
-    assert any("plugin.json" in m for m in errors)
 
 
 def test_main_changelog_gate_blocks_missing_entry(
@@ -1098,45 +1067,3 @@ def test_cut_release_push_timeout_with_unknown_remote_says_unknown(
     assert len(errors) == 1
     assert "whether origin has it is unknown" in errors[0].getMessage()
     assert "does not have it" not in errors[0].getMessage()
-
-
-def test_main_from_changelog_model_guard_beats_idempotency(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Wrong release model is reported even when the declared tag exists.
-
-    SCENARIO: plugin-manifest repo with a stale tag matching the CHANGELOG
-        top heading — misconfiguration must not be masked by the
-        already-released short-circuit.
-    MOCK SETUP: real repo + tag v1.0.0; a ``.claude-plugin/plugin.json``
-        manifest makes the release model wrong.
-    EXPECTED BEHAVIOR: exit 1 naming the rolling-next flow, not "already
-        released" exit 0.
-    """
-    work, _bare = _repo_with_origin(tmp_path)
-    (work / "CHANGELOG.md").write_text("## v1.0.0\n")
-    plugin_dir = work / ".claude-plugin"
-    plugin_dir.mkdir()
-    (plugin_dir / "plugin.json").write_text('{"name": "x", "version": "1.0.0"}')
-    subprocess.run(["git", "add", "."], cwd=work, env=_GIT_ENV, check=True)
-    subprocess.run(
-        ["git", "commit", "-qm", "changelog"], cwd=work, env=_GIT_ENV, check=True
-    )
-    subprocess.run(
-        ["git", "tag", "-a", "v1.0.0", "-m", "v1.0.0"],
-        cwd=work,
-        env=_GIT_ENV,
-        check=True,
-    )
-    monkeypatch.setattr(
-        release,
-        "load_config",
-        lambda _root: ForgeConfig(base_branch="main"),
-    )
-    monkeypatch.setattr("sys.argv", ["forge-release", "--from-changelog"])
-    monkeypatch.chdir(work)
-    with caplog.at_level(logging.ERROR, logger="forge.release"):
-        assert release.main() == 1
-    assert any("plugin.json" in r.getMessage() for r in caplog.records)

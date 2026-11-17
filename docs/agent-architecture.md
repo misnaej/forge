@@ -45,12 +45,12 @@ graph LR
   classDef orchestrator fill:#c7d2fe,stroke:#4338ca,color:#1e1b4b,stroke-width:2px
   classDef reporter stroke-dasharray:5 3
   classDef mutator stroke-width:3px
-  design_checker["⚖️ design-checker<br/>AI agent"]
-  docs_types_checker["⚖️ docs-types-checker<br/>AI agent"]
-  issue_triage["⚖️ issue-triage<br/>AI agent"]
-  precommit_fixer["⚖️ precommit-fixer<br/>AI agent"]
-  security_checker["⚖️ security-checker<br/>AI agent"]
-  test_advisor["⚖️ test-advisor<br/>AI agent"]
+  design_checker["⚖️ forge-design-checker<br/>AI agent"]
+  docs_types_checker["⚖️ forge-docs-types-checker<br/>AI agent"]
+  issue_triage["⚖️ forge-issue-triage<br/>AI agent"]
+  precommit_fixer["⚖️ forge-precommit-fixer<br/>AI agent"]
+  security_checker["⚖️ forge-security-checker<br/>AI agent"]
+  test_advisor["⚖️ forge-test-advisor<br/>AI agent"]
   docs_security_md(["docs/security.md<br/>[policy]"])
   _14_issue_schema(["§14 issue schema<br/>[policy]"])
   _4_pre_commit_gate(["§4 pre-commit gate<br/>[policy]"])
@@ -111,28 +111,28 @@ graph LR
   hk_block_amend_pushed_commit[/"block_amend_pushed_commit<br/>hook"/]
   hk_block_fixer_recon[/"block_fixer_recon<br/>hook"/]
   hk_require_fixer_verdict[/"require_fixer_verdict<br/>hook"/]
-  sk_commit(["/commit<br/>skill"])
-  design_checker["⚖️ design-checker<br/>AI agent"]
-  docs_types_checker["⚖️ docs-types-checker<br/>AI agent"]
-  sk_fix(["/fix<br/>skill"])
+  sk_commit(["/forge-commit<br/>skill"])
+  design_checker["⚖️ forge-design-checker<br/>AI agent"]
+  docs_types_checker["⚖️ forge-docs-types-checker<br/>AI agent"]
+  sk_fix(["/forge-fix<br/>skill"])
   cli_forge_precommit[("forge-precommit<br/>CLI")]
   cli_forge_smart_test[("forge-smart-test<br/>CLI")]
   cli_forge_commit[("forge-commit<br/>CLI")]
   cli_forge_update_branch[("forge-update-branch<br/>CLI")]
-  merge_resolver["merge-resolver<br/>AI agent"]
-  knowledge_search["knowledge-search<br/>AI agent"]
-  perf_optimizer["perf-optimizer<br/>AI agent"]
-  token_optimizer["token-optimizer<br/>AI agent"]
-  prior_art["prior-art<br/>AI agent"]
-  precommit_fixer["⚖️ precommit-fixer<br/>AI agent"]
+  merge_resolver["forge-merge-resolver<br/>AI agent"]
+  knowledge_search["forge-knowledge-search<br/>AI agent"]
+  perf_optimizer["forge-perf-optimizer<br/>AI agent"]
+  token_optimizer["forge-token-optimizer<br/>AI agent"]
+  prior_art["forge-prior-art<br/>AI agent"]
+  precommit_fixer["⚖️ forge-precommit-fixer<br/>AI agent"]
   sk_smart_test(["/smart-test<br/>skill"])
-  sk_perf(["/perf<br/>skill"])
+  sk_perf(["/forge-perf<br/>skill"])
   cli_forge_slow_tests_report[("forge-slow-tests-report<br/>CLI")]
   cli_forge_telemetry[("forge-telemetry<br/>CLI")]
   cli_forge_agent_profile[("forge-agent-profile<br/>CLI")]
-  sk_test(["/test<br/>skill"])
-  test_advisor["⚖️ test-advisor<br/>AI agent"]
-  test_writer["test-writer<br/>AI agent"]
+  sk_test(["/forge-test<br/>skill"])
+  test_advisor["⚖️ forge-test-advisor<br/>AI agent"]
+  test_writer["forge-test-writer<br/>AI agent"]
   main_agent -->|runs| sk_commit
   main_agent -->|runs| sk_fix
   main_agent -->|runs| sk_smart_test
@@ -223,21 +223,20 @@ graph LR
   human -->|drives| main_agent
   hk_block_pr_merge[/"block_pr_merge<br/>hook"/]
   hk_block_unverified_pr_create[/"block_unverified_pr_create<br/>hook"/]
-  design_checker["⚖️ design-checker<br/>AI agent"]
-  docs_types_checker["⚖️ docs-types-checker<br/>AI agent"]
+  design_checker["⚖️ forge-design-checker<br/>AI agent"]
+  docs_types_checker["⚖️ forge-docs-types-checker<br/>AI agent"]
   cli_forge_pr_plan[("forge-pr-plan<br/>CLI")]
   cli_forge_pr_squash_comment[("forge-pr-squash-comment<br/>CLI")]
   cli_forge_pr_wrapup[("forge-pr-wrapup<br/>CLI")]
-  cli_forge_rebump[("forge-rebump<br/>CLI")]
   cli_forge_emergency[("forge-emergency<br/>CLI")]
   cli_forge_changelog[("forge-changelog<br/>CLI")]
-  sk_pr(["/pr<br/>skill"])
-  prior_art["prior-art<br/>AI agent"]
-  pr_manager["pr-manager<br/>AI agent"]
-  precommit_fixer["⚖️ precommit-fixer<br/>AI agent"]
-  sk_pr_comments(["/pr-comments<br/>skill"])
-  security_checker["⚖️ security-checker<br/>AI agent"]
-  issue_triage["⚖️ issue-triage<br/>AI agent"]
+  sk_pr(["/forge-pr<br/>skill"])
+  prior_art["forge-prior-art<br/>AI agent"]
+  pr_manager["forge-pr-manager<br/>AI agent"]
+  precommit_fixer["⚖️ forge-precommit-fixer<br/>AI agent"]
+  sk_pr_comments(["/forge-pr-comments<br/>skill"])
+  security_checker["⚖️ forge-security-checker<br/>AI agent"]
+  issue_triage["⚖️ forge-issue-triage<br/>AI agent"]
   main_agent -->|runs| sk_pr
   main_agent -->|runs| sk_pr_comments
   pr_manager -->|delegates| design_checker
@@ -247,7 +246,6 @@ graph LR
   precommit_fixer -->|delegates| docs_types_checker
   precommit_fixer -->|delegates| design_checker
   sk_pr -->|invokes| cli_forge_pr_plan
-  sk_pr -->|invokes, on plugin.json+CHANGELOG conflict| cli_forge_rebump
   sk_pr -->|invokes, Step 0.9 emergency short-circuit| cli_forge_emergency
   sk_pr -->|invokes restrand, on stranded entries| cli_forge_changelog
   sk_pr -->|invokes compose + post, Steps 3.92 and 4| cli_forge_pr_wrapup
@@ -278,7 +276,6 @@ graph LR
   class cli_forge_pr_plan cli
   class cli_forge_pr_squash_comment cli
   class cli_forge_pr_wrapup cli
-  class cli_forge_rebump cli
   class cli_forge_emergency cli
   class cli_forge_changelog cli
   class sk_pr skill
@@ -311,7 +308,7 @@ graph LR
   human -->|drives| main_agent
   cli_forge_next_prep[("forge-next-prep<br/>CLI")]
   cli_forge_changelog[("forge-changelog<br/>CLI")]
-  sk_next(["/next<br/>skill"])
+  sk_next(["/forge-next<br/>skill"])
   main_agent -->|runs| sk_next
   sk_next -->|invokes| cli_forge_next_prep
   main_agent -->|invokes| cli_forge_changelog
@@ -339,14 +336,14 @@ graph LR
   main_agent{{"Main agent<br/>orchestrator"}}
   human -->|drives| main_agent
   cli_install_forge_labels[("install-forge-labels<br/>CLI")]
-  issue_triage["⚖️ issue-triage<br/>AI agent"]
+  issue_triage["⚖️ forge-issue-triage<br/>AI agent"]
   issue_triage_forge["⚖️ issue-triage-forge<br/>AI agent"]
-  sk_next(["/next<br/>skill"])
-  sk_triage(["/triage<br/>skill"])
-  sk_plan_issue(["/plan-issue<br/>skill"])
-  sk_plan_batch(["/plan-batch<br/>skill"])
-  sk_sentinel(["/sentinel<br/>skill"])
-  sk_pr(["/pr<br/>skill"])
+  sk_next(["/forge-next<br/>skill"])
+  sk_triage(["/forge-triage<br/>skill"])
+  sk_plan_issue(["/forge-plan-issue<br/>skill"])
+  sk_plan_batch(["/forge-plan-batch<br/>skill"])
+  sk_sentinel(["/forge-sentinel<br/>skill"])
+  sk_pr(["/forge-pr<br/>skill"])
   main_agent -->|runs| sk_next
   main_agent -->|runs| sk_triage
   main_agent -->|runs| sk_plan_issue
@@ -392,10 +389,10 @@ graph LR
   human(["Developer<br/>person"])
   main_agent{{"Main agent<br/>orchestrator"}}
   human -->|drives| main_agent
-  sk_c4(["/c4<br/>skill"])
+  sk_c4(["/forge-c4<br/>skill"])
   cli_forge_gen_c4[("forge-gen-c4<br/>CLI")]
-  sk_weekly(["/weekly<br/>skill"])
-  weekly_summary["weekly-summary<br/>AI agent"]
+  sk_weekly(["/forge-weekly<br/>skill"])
+  weekly_summary["forge-weekly-summary<br/>AI agent"]
   main_agent -->|runs| sk_c4
   main_agent -->|runs| sk_weekly
   sk_weekly -->|invokes| weekly_summary
@@ -425,13 +422,13 @@ graph LR
   human(["Developer<br/>person"])
   main_agent{{"Main agent<br/>orchestrator"}}
   human -->|drives| main_agent
-  sk_memory_audit(["/memory-audit<br/>skill"])
+  sk_memory_audit(["/forge-memory-audit<br/>skill"])
   main_agent -->|runs| sk_memory_audit
-  sk_report_to_forge(["/report-to-forge<br/>skill"])
+  sk_report_to_forge(["/forge-report-to-forge<br/>skill"])
   cli_forge_agent_profile[("forge-agent-profile<br/>CLI")]
-  sk_caveman(["/caveman<br/>skill"])
-  sk_ultracave(["/ultracave<br/>skill"])
-  sk_megacave(["/megacave<br/>skill"])
+  sk_caveman(["/forge-caveman<br/>skill"])
+  sk_ultracave(["/forge-ultracave<br/>skill"])
+  sk_megacave(["/forge-megacave<br/>skill"])
   main_agent -->|runs| sk_report_to_forge
   main_agent -->|runs| sk_caveman
   main_agent -->|runs| sk_ultracave

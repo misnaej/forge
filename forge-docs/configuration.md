@@ -75,7 +75,6 @@ by `forge-gen-config-doc`; the sections below explain each key.
 | `[tool.forge.doctest].blocking` | `False` |
 | `[tool.forge.typecheck].paths` | source_dirs (smart-detect) |
 | `[tool.forge.typecheck].blocking` | `False` |
-| `[tool.forge.plugin_sync].blocking` | `False` |
 | `[tool.forge.pip_audit].blocking` | `False` |
 | `[tool.forge.pip_audit].cadence` | `'branch'` |
 | `[tool.forge.pip_audit].max_age_hours` | `24.0` |
@@ -105,7 +104,7 @@ by `forge-gen-config-doc`; the sections below explain each key.
 | `[tool.forge.smart_test].lifecycle_skip_days` | `30` |
 | `[tool.forge.smart_test].full_run_max_age_hours` | `48` |
 | `[tool.forge.smart_test].cadence_mode` | `'commit'` |
-| `[tool.forge.smart_test].nonpython_ignore` | built-in list (*.md, plugin.json, stamp, .plan/*, .gitignore) |
+| `[tool.forge.smart_test].nonpython_ignore` | built-in list (*.md, stamp, .plan/*, .gitignore) |
 | `[tool.forge.smart_test].safe_fallback` | `'escalate'` |
 | `[tool.forge.continuation].judgment_max_lines` | `60` |
 | `[tool.forge.memory_audit].threshold` | `5` |
@@ -210,7 +209,7 @@ different scope. `forge-config --list` shows the resolved keys.
 
 | Key | What it does | Set it when |
 |---|---|---|
-| `docs_only_globs` | Extra globs a PR diff may consist entirely of and still take the `/pr` docs-only light path (skip design/security reporters + strict whole-tree pre-commit; run path-relevant gates only). Additive to the built-in `*.md` / `*.rst` / `*.txt` set; high-blast-radius paths (`agents/`, `skills/`, `claude-hooks/`, `.claude-plugin/`, `.claude/`, `.github/workflows/`, configs) always force the full round. | Your repo keeps prose in another doc format (e.g. `*.adoc`). |
+| `docs_only_globs` | Extra globs a PR diff may consist entirely of and still take the `/pr` docs-only light path (skip design/security reporters + strict whole-tree pre-commit; run path-relevant gates only). Additive to the built-in `*.md` / `*.rst` / `*.txt` set; high-blast-radius paths (`agents/`, `skills/`, `claude-hooks/`, `.claude/`, `.github/workflows/`, configs) always force the full round. | Your repo keeps prose in another doc format (e.g. `*.adoc`). |
 
 Glob semantics: matching is `fnmatch`, where `*` crosses `/` — so
 `*.md` already covers nested paths, but a directory glob like
@@ -639,29 +638,6 @@ export FORGE_NO_AUTO_REBUILD=1
 > argv via `shlex.split` (never `shell=True`) and never in CI, but treat it as
 > trusted-repo-only config.
 
-## `[tool.forge.plugin_sync]` — checkout plugin install gate (self-skipping)
-
-A repo that ships a Claude Code plugin (`.claude-plugin/plugin.json`) runs its
-agents and hooks from Claude Code's plugin install, not from the tree. Each
-checkout installs its own copy of the release its manifest names with
-`forge-plugin-sync`, from a per-version marketplace (`forge-vX-Y-Z`); the
-`post-merge` / `post-checkout` hooks and `install-forge-bootstrap` normally run
-it on their own. The `plugin_sync` step judges whether **this checkout has its
-own install of the release its manifest names**, and when it does not, names
-the remedy: `forge-plugin-sync`, then restart the session. It self-skips when
-the repo ships no plugin, when Claude Code is not installed, and in CI
-(FOUNDATION §15) — deliberately not any non-interactive run, since an
-agent-driven session is exactly the context that loads this install.
-
-| Key | Meaning | Set it when |
-|---|---|---|
-| `blocking` | A checkout without its own install of the release fails the commit (`true`) or renders as a WARN (`false`). | Your sessions must run the plugin the tree declares and your manifest never names an unpublished release. Forge keeps `false`: under rolling-next its release commits name a version no sync can fetch yet. |
-
-`env_sync` (above) carries two sibling checks for the other install surfaces:
-the editable install on `PATH` must be **this** clone (parallel dev clones each
-own an env), and the git-hook sidecar must not lag the installed package (the
-post-merge self-refresh failed). Both block; both name the exact command.
-
 ## `[tool.forge.docstring_coverage]`
 
 Forge-specific keys for the docstring-coverage reporter. (The coverage *gate*
@@ -991,12 +967,8 @@ auto = "merge"
   branch rulesets, so no base-branch write access is needed. Any other
   value downgrades the job to a **loud pending-fragments warning** — a
   fragments-mode repo can never accumulate unreleased merges silently.
-  Changelog assembly and manifest sync happen at `forge-changelog
-  release` PRs, which may collate several auto-cut tags.
-  **Ignored when `.claude-plugin/plugin.json` exists**: a plugin repo is
-  tagged only when its assembly PR merges, because a per-merge tag
-  would ship a manifest naming the previous release. `auto-tag` says so
-  and logs the pending count instead.
+  Changelog assembly happens at `forge-changelog release` PRs, which
+  may collate several auto-cut tags.
   **Single-track model**: tag-tree membership relies on consecutive
   tags sharing linear ancestry on the base branch — run `auto-tag`
   only from merges to that one branch (the shipped workflow does).

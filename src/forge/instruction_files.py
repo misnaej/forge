@@ -22,6 +22,10 @@ from pathlib import Path
 from typing import Final
 
 
+#: What a generated agent or skill is called, on every harness.
+AGENT_NAME_PREFIX: Final = "forge-"
+
+
 # A whole-line @-directive: optional whitespace, `@`, then a path token
 # that must look like a file reference (contains `/` or ends in `.md`) so
 # prose mentions like `@team` never match.
@@ -34,34 +38,39 @@ FOUNDATION_RESOURCE = "data/FOUNDATION.md"
 #: files inside the wheel). Consumer repos have none of the repo-root
 #: copies, so the packaged ones are what they install from.
 SHIPPED_SOURCES: Final = {
-    ".claude-plugin/plugin.json": "data/plugin.json",
     "claude-hooks": "data/claude-hooks",
     "agents": "data/agents",
     "skills": "data/skills",
 }
 
 
-def shipped_path(repo_root: Path, rel: str) -> Path:
-    """Resolve a forge-shipped source path for *repo_root*.
+def shipped_path(rel: str) -> Path:
+    """Resolve a forge-shipped source path — always from the package.
 
-    The checkout's own copy wins (forge's own repo, or a consumer that
-    vendored the files); otherwise the copy inside the installed package
-    is used. Wheels extract to real files, so the resource path is a plain
-    filesystem path.
+    **A repo's own directory of the same name is never used**, which is
+    why this takes no repo argument at all. Letting it win is unsafe
+    now that the guard scripts travel this way: a
+    repo carrying its own ``claude-hooks/block_force_push.sh`` would have
+    that copy installed and armed in place of forge's, and a consumer
+    with an ordinary ``skills/`` directory of their own would see it
+    published as forge's and pruned against forge's roster.
+
+    Nothing is lost by dropping it. Forge's own ``agents/``, ``skills/``
+    and ``claude-hooks/`` are symlinks into ``src/forge/data/``, so the
+    package path reaches the same files in this repo; a consumer who
+    wants their own agents writes them unprefixed beside forge's, which
+    the ownership rules already allow. Wheels extract to real files, so
+    the resource path is a plain filesystem path.
 
     Args:
-        repo_root: The checkout asking.
         rel: Repo-relative path; must be a key of :data:`SHIPPED_SOURCES`.
 
     Returns:
-        The local path when it exists, else the packaged path.
+        The packaged path.
 
     Raises:
         KeyError: When *rel* is not a shipped source.
     """
-    local = repo_root / rel
-    if local.exists():
-        return local
     return Path(str(resources.files("forge").joinpath(SHIPPED_SOURCES[rel])))
 
 
@@ -147,3 +156,51 @@ def flatten_agents_md(repo_root: Path) -> str | None:
         _expand_claude, claude_md_path.read_text(encoding="utf-8")
     )
     return f"{foundation.rstrip()}\n\n---\n\n{claude}"
+
+
+def generated_name(canonical: str) -> str:
+    """Return the name forge publishes a shipped agent or skill under.
+
+    Args:
+        canonical: The shipped stem, e.g. ``design-checker``.
+
+    Returns:
+        The prefixed name, e.g. ``forge-design-checker``.
+    """
+    return f"{AGENT_NAME_PREFIX}{canonical}"
+
+
+def renamed_frontmatter(text: str, canonical: str) -> str:
+    """Rewrite a definition's ``name:`` field to the published name.
+
+    The harness resolves an agent or skill by the ``name`` in its
+    frontmatter, while the file is found by its path. Publishing under a
+    prefixed file name without rewriting the field would leave the two
+    disagreeing — the file present, the name it claims unreachable — so
+    both move together or neither does.
+
+    Only the first ``name:`` line inside the opening frontmatter block is
+    touched; a later one in the body is prose.
+
+    Args:
+        text: The shipped definition, frontmatter first.
+        canonical: The shipped stem the field is expected to carry.
+
+    Returns:
+        The content with the field renamed, unchanged when it is absent
+        or does not hold *canonical* (a definition naming something else
+        is left for the doc checks to flag rather than silently edited).
+    """
+    marker = f"\nname: {canonical}\n"
+    if not text.startswith("---") or marker not in text:
+        return text
+    head, sep, tail = text.partition("\n---\n")
+    if not sep:
+        return text
+    # The separator consumes the newline that ends the last frontmatter
+    # line, so a `name:` sitting last has no trailing newline left in
+    # *head* for the marker to match. Rejoin it for the replacement:
+    # matching only mid-block would silently skip exactly that case, and
+    # publish a definition whose name disagrees with its own path.
+    renamed = (head + "\n").replace(marker, f"\nname: {generated_name(canonical)}\n", 1)
+    return renamed.removesuffix("\n") + sep + tail

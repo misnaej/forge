@@ -16,10 +16,11 @@ person at a terminal, in CI, and for an agent.
 - **A pre-commit gate.** One hook runs lint, formatting, docstring
   accuracy, test naming, structure, type and dependency checks, and
   writes each result to a log that people and agents read back.
-- **A Claude Code plugin** (optional). Agents and skills for the whole
+- **An agent integration** (optional). Agents and skills for the whole
   loop — plan an issue, write and test the change, review it, open the
   PR with a verified wrap-up — each step backed by a forge command, not
-  by the model's judgement.
+  by the model's judgement. Generated into your repo for the harness you
+  use, so there is nothing to install or keep in sync.
 - **Safety hooks.** Agents cannot force-push, rebase, merge a PR, delete
   a protected branch, bypass the pre-commit hook or install dependencies.
 - **Backlog on GitHub.** A label schema, triage, and a pipeline that
@@ -27,13 +28,13 @@ person at a terminal, in CI, and for an agent.
 - **Audits.** Dead code, duplication, dependency layering, suppressions
   and claims that no longer match the code.
 
-Everything except the plugin works without any AI tool.
+Everything except the agent integration works without any AI tool.
 
 ## Try it
 
 ```bash
 pip install "git+https://github.com/misnaej/forge.git@vX.Y.Z"   # latest release
-install-forge-bootstrap        # hooks, labels, docs, plugin, then forge-doctor
+install-forge-bootstrap        # hooks, labels, docs, agents, then forge-doctor
 git commit                     # the gate now runs on every commit
 ```
 
@@ -45,9 +46,9 @@ tracked. `install-forge-bootstrap` is safe to re-run after every upgrade.
 
 Every check is a plain command (`forge-precommit`, `forge-doctor`, the
 `verify-forge-*` and `forge-audit-*` tools), configured under
-`[tool.forge]` in `pyproject.toml`. The git hook calls those commands;
-the plugin's agents call the same commands and act on their output, and
-its hooks stop an agent before a forbidden git or GitHub operation runs.
+`[tool.forge]` in `pyproject.toml`. The pre-commit hook calls those
+commands; the agents call the same commands and act on their output, and
+the guards stop an agent before a forbidden operation runs.
 The model decides what to write; forge decides whether it passes.
 
 ## Documentation
@@ -57,7 +58,7 @@ The model decides what to write; forge decides whether it passes.
 | Adopt forge one layer at a time, upgrade it, or pin a version | [Adopting forge](docs/adopting.md) |
 | Set options and see every key | [Configuration](forge-docs/configuration.md) |
 | Run forge in CI | [CI recipe](forge-docs/ci-recipe.md) |
-| Use the agents, skills and hooks | [Claude Code plugin](docs/claude-code-plugin.md) · [Mistral Vibe](docs/vibe.md) · [Agent architecture](docs/agent-architecture.md) |
+| Use the agents, skills and hooks | [Claude Code](docs/claude-code.md) · [Mistral Vibe](docs/vibe.md) · [Agent architecture](docs/agent-architecture.md) |
 | Add my own pre-commit step | [Customising pre-commit](docs/customizing-precommit.md) |
 | Run code-health audits | [Audit pack](docs/audit-pack.md) |
 | Release my own package with forge | [Consumer releases](docs/consumer-release.md) |

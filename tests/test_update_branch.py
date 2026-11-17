@@ -3,21 +3,18 @@
 # MOCKING STRATEGY: git runs for real against a bare `origin` in tmp_path (no
 # network). Faked only where the real tool is out of scope: the generator
 # (`regenerate_artifact`, `regen_commands`) and the version-slot resolver
-# (`rebump`), each replaced at update_branch's own import name with a
 # deterministic writer. The pre-commit gate is a stub hook script that
 # records `FORGE_MERGE_SYNC`.
 
 from __future__ import annotations
 
 import subprocess
-from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
 
 from forge import update_branch
 from forge.git_utils import unmerged_paths
-from forge.rebump import RebumpOutcome
 from forge.update_branch import UpdateRefusedError
 from tests.conftest import GIT_ENV, commit_all, git_stdout, init_git_repo
 
@@ -464,41 +461,6 @@ def test_start_regenerates_a_generated_conflict(
     assert "Regenerated: gen.txt" in git_stdout(repo, "log", "-1", "--format=%B")
 
 
-def test_start_resolves_the_version_slot_through_rebump(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """SCENARIO: both sides bump the manifest version; nothing else conflicts.
-
-    MOCK SETUP: `rebump` replaced with a fake that writes the manifest and
-    stages it, returning an outcome without refusal.
-    EXPECTED BEHAVIOR: no stop; commit message names the version slot.
-    """
-    slot = update_branch.PLUGIN_PATH
-    repo, origin = _repo_with_origin(tmp_path)
-    (repo / slot).parent.mkdir(parents=True)
-    (repo / slot).write_text('{"version": "1.0.0"}\n')
-    commit_all(repo, "add manifest")
-    git_stdout(repo, "checkout", "-q", "main")
-    git_stdout(repo, "merge", "-q", "--ff-only", "feature/x")
-    git_stdout(repo, "push", "-q", "origin", "main")
-    git_stdout(repo, "checkout", "-q", "feature/x")
-    (repo / slot).write_text('{"version": "1.1.0"}\n')
-    commit_all(repo, "branch bump")
-    _advance_origin(tmp_path, origin, {slot: '{"version": "1.2.0"}\n'})
-
-    def _fake_rebump(root: Path) -> SimpleNamespace:
-        (root / slot).write_text('{"version": "1.3.0"}\n')
-        git_stdout(root, "add", slot)
-        return SimpleNamespace(refusal=None, staged=[slot])
-
-    monkeypatch.setattr(update_branch, "rebump", _fake_rebump)
-
-    assert update_branch.start(repo, None) == 0
-
-    assert '"1.3.0"' in (repo / slot).read_text()
-    assert f"Version slot: {slot}" in git_stdout(repo, "log", "-1", "--format=%B")
-
-
 def test_generated_path_waits_for_source_conflicts_then_regenerates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -545,39 +507,6 @@ def test_generated_path_waits_for_source_conflicts_then_regenerates(
     assert (repo / "gen.txt").read_text() == "generated\n"
     assert not _merge_in_progress(repo)
     assert len(_parents(repo)) == 2
-
-
-def test_start_stops_when_rebump_refuses_the_version_slot(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    """SCENARIO: both sides bump the manifest version; the resolver refuses.
-
-    MOCK SETUP: `rebump` replaced with a fake returning a real
-    `RebumpOutcome` whose `refusal` is set.
-    EXPECTED BEHAVIOR: exit 3, merge in progress, slot path still unmerged,
-    and the resolver's refusal reason is relayed so the stop says why.
-    """
-    slot = update_branch.PLUGIN_PATH
-    repo, origin = _repo_with_origin(tmp_path)
-    (repo / slot).parent.mkdir(parents=True)
-    (repo / slot).write_text('{"version": "1.0.0"}\n')
-    commit_all(repo, "add manifest")
-    git_stdout(repo, "checkout", "-q", "main")
-    git_stdout(repo, "merge", "-q", "--ff-only", "feature/x")
-    git_stdout(repo, "push", "-q", "origin", "main")
-    git_stdout(repo, "checkout", "-q", "feature/x")
-    (repo / slot).write_text('{"version": "1.1.0"}\n')
-    commit_all(repo, "branch bump")
-    _advance_origin(tmp_path, origin, {slot: '{"version": "1.2.0"}\n'})
-    refusal = RebumpOutcome("", "", "", (), refusal="no latest tag")
-    monkeypatch.setattr(update_branch, "rebump", lambda _root: refusal)
-
-    with caplog.at_level("WARNING"):
-        assert update_branch.start(repo, None) == update_branch.EXIT_STOPPED
-
-    assert _merge_in_progress(repo)
-    assert unmerged_paths(repo) == [slot]
-    assert "no latest tag" in caplog.text
 
 
 def test_resume_does_not_auto_stage_a_modify_delete_conflict(tmp_path: Path) -> None:

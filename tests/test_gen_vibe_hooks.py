@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from forge import gen_vibe_hooks
 from forge.gen_vibe_hooks import (
     generate_vibe_hooks,
     verify_existing_hooks,
@@ -167,22 +168,31 @@ def test_bash_groups_use_re_bash_process_start_matcher(plugin_repo: Path) -> Non
     assert "bash" not in matches
 
 
-def test_unmapped_matcher_raises_value_error(tmp_path: Path) -> None:
-    """Invariant 3: an unmapped non-agent matcher is an error, never a skip."""
+def test_unmapped_matcher_raises_value_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Invariant 3: an unmapped non-agent matcher is an error, never a skip.
+
+    SCENARIO: the canonical wiring carries a matcher Vibe has no mapping
+    for. Injected by replacing the renderer, which is the generator's one
+    input now that the wiring is harness-neutral packaged data.
+    EXPECTED BEHAVIOR: generation raises rather than dropping the guard.
+    """
     root = tmp_path / "proj"
-    plugin_dir = root / ".claude-plugin"
-    plugin_dir.mkdir(parents=True)
-    hooks = {
-        "PreToolUse": [
-            {
-                "matcher": "WebSearch",
-                "hooks": [{"command": f"{_HOOKS_DIR}/block_demo.sh"}],
-            }
-        ]
-    }
-    (plugin_dir / "plugin.json").write_text(
-        json.dumps({"name": "demo", "version": "0.0.0", "hooks": hooks}),
-        encoding="utf-8",
+    root.mkdir(parents=True)
+    monkeypatch.setattr(
+        gen_vibe_hooks,
+        "rendered_hooks",
+        lambda command_for: {
+            "PreToolUse": [
+                {
+                    "matcher": "WebSearch",
+                    "hooks": [
+                        {"type": "command", "command": command_for("block_demo.sh")}
+                    ],
+                }
+            ]
+        },
     )
     with pytest.raises(ValueError, match="Unmapped Claude matcher 'WebSearch'"):
         generate_vibe_hooks(root)

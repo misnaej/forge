@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 from functools import lru_cache
 from importlib import metadata
 from pathlib import Path
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from forge.text_clip import truncate
 
@@ -35,6 +35,12 @@ logger = logging.getLogger(__name__)
 # repo imports this constant. Carved out in FOUNDATION §2 as the one
 # place where the org name may appear as a literal.
 _FORGE_GITHUB_REPO = "misnaej/forge"
+
+#: Bound on a tag lookup against the remote.
+_LS_REMOTE_TIMEOUT_S = 30
+
+#: A full commit SHA, as a remote ref listing prints it.
+_TAG_COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 
 
 @lru_cache(maxsize=1)
@@ -137,8 +143,8 @@ def parse_semver(version: str) -> tuple[int, int, int] | None:
     helper instead of carrying their own copies.
 
     Args:
-        version: Version string from ``importlib.metadata.version``, a
-            git tag, or ``plugin.json``.
+        version: Version string from ``importlib.metadata.version`` or a
+            git tag.
 
     Returns:
         ``(major, minor, patch)`` tuple, or ``None`` if no leading
@@ -2418,137 +2424,9 @@ def release_tree_fingerprint(repo_root: Path, ref: str) -> str | None:
     return hashlib.sha256("\n".join(kept).encode()).hexdigest()
 
 
-def read_plugin_version_at_ref(repo_root: Path, ref: str) -> str | None:
-    """Return ``plugin.json["version"]`` at *ref*, or ``None`` when absent.
-
-    Reads the manifest out of the git object store at an arbitrary ref
-    (``origin/dev``, a tag, a SHA) without a checkout. A missing manifest
-    is common in non-plugin repos, so callers treat ``None`` as "not a
-    plugin repo / nothing to compare".
-
-    Args:
-        repo_root: Working directory for the git invocation.
-        ref: Any git refspec.
-
-    Returns:
-        Bare version string when ``.claude-plugin/plugin.json`` exists at
-        *ref* and parses, ``None`` otherwise.
-    """
-    proc = subprocess.run(
-        ["git", "show", f"{ref}:.claude-plugin/plugin.json"],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        return None
-    try:
-        return str(json.loads(proc.stdout)["version"])
-    except (json.JSONDecodeError, KeyError, TypeError):
-        return None
-
-
-def read_local_plugin_version(repo_root: Path) -> str | None:
-    """Return the working-tree ``.claude-plugin/plugin.json["version"]``.
-
-    The on-disk counterpart to :func:`read_plugin_version_at_ref`. Single
-    source for "read the local manifest version", shared by the
-    rolling-next guard and ``forge-next-prep``.
-
-    Args:
-        repo_root: Repo root.
-
-    Returns:
-        Bare semver string (e.g. ``"1.2.10"``), or ``None`` when the
-        manifest is missing, unparseable, or the version field is absent
-        / not semver-shaped.
-    """
-    plugin = repo_root / ".claude-plugin" / "plugin.json"
-    if not plugin.is_file():
-        return None
-    try:
-        data = json.loads(plugin.read_text())
-    except (json.JSONDecodeError, OSError):
-        return None
-    version = data.get("version")
-    if not isinstance(version, str) or parse_semver(version) is None:
-        return None
-    return version
-
-
 # Targeted version-field rewrite: preserves the manifest's formatting
 # byte-for-byte outside the one value (a json round-trip would reformat).
 _VERSION_FIELD_RE = re.compile(r'("version"\s*:\s*")[^"]+(")')
-
-
-def render_plugin_version(source_text: str, version: str) -> str:
-    """Return *source_text* with its ``"version"`` field rewritten to *version*.
-
-    The shared rewrite-and-validate core for every writer of the plugin
-    manifest's version slot (``forge-rebump``, ``forge-changelog
-    release``). Fail-closed output validation (CWE-116): the source may
-    be branch-authored, and a version value carrying JSON escapes
-    defeats a textual rewrite (the regex stops at the first quote,
-    leaving the payload's remainder in place) — so the rewritten text
-    must reparse as JSON whose version field is exactly the target.
-
-    Args:
-        source_text: Manifest JSON text to rewrite.
-        version: Bare semver string the version field must carry.
-
-    Returns:
-        The rewritten manifest text, formatting preserved outside the
-        version value.
-
-    Raises:
-        ValueError: When no ``"version"`` field is found, the rewrite
-            produces invalid JSON, or the reparsed version field is not
-            exactly *version*.
-    """
-    # Callable replacement, never a template string: *version* is caller
-    # input to a public helper, and a template would parse backslash
-    # escapes in it as backreferences (replacement-string injection).
-    rewritten, count = _VERSION_FIELD_RE.subn(
-        lambda m: f"{m.group(1)}{version}{m.group(2)}", source_text, count=1
-    )
-    if count != 1:
-        msg = 'plugin.json: no "version" field found to rewrite.'
-        raise ValueError(msg)
-    try:
-        reparsed = json.loads(rewritten)
-    except json.JSONDecodeError as exc:
-        msg = (
-            f"plugin.json: rewrite produced invalid JSON ({exc}) — "
-            "malformed or adversarial version field."
-        )
-        raise ValueError(msg) from exc
-    if reparsed.get("version") != version:
-        msg = f"plugin.json: rewrite did not land cleanly on version {version}."
-        raise ValueError(msg)
-    return rewritten
-
-
-def write_plugin_version(root: Path, version: str) -> None:
-    """Rewrite ``.claude-plugin/plugin.json``'s version field on disk.
-
-    Composes read → :func:`render_plugin_version` → write, so the
-    fail-closed validation runs before any byte reaches disk.
-
-    Args:
-        root: Repo root containing ``.claude-plugin/plugin.json``.
-        version: Bare semver string to write into the version field.
-
-    Raises:
-        ValueError: Propagated from :func:`render_plugin_version` when
-            the rewrite cannot be validated.
-        OSError: When the manifest cannot be read or written.
-    """
-    manifest = root / ".claude-plugin" / "plugin.json"
-    manifest.write_text(
-        render_plugin_version(manifest.read_text(encoding="utf-8"), version),
-        encoding="utf-8",
-    )
 
 
 def _filter_paths(
@@ -2962,3 +2840,56 @@ def stage_modified_paths(repo_root: Path, pathspecs: list[str]) -> list[str]:
         return []
     subprocess.run(["git", "add", "--", *files], cwd=repo_root, check=False)
     return files
+
+
+class TagLookup(NamedTuple):
+    """What the remote said about one release tag.
+
+    Attributes:
+        reached: Whether the remote answered at all.
+        commit: The commit the tag points at, or ``None`` when the remote
+            answered and holds no such tag — the window between a merge
+            and the tag being pushed for it.
+    """
+
+    reached: bool
+    commit: str | None
+
+
+def resolve_commit(version: str) -> TagLookup:
+    """Ask the remote which commit release tag ``v<version>`` points at.
+
+    Only an empty listing proves the tag absent; an answer with no
+    commit-shaped line is garbled, so it counts as unreached.
+
+    Args:
+        version: Release, ``X.Y.Z``.
+
+    Returns:
+        ``reached`` and the commit (the peeled target of an annotated
+        tag) when published; ``reached`` with no commit when the remote
+        answered and holds no such tag; neither when the remote could not
+        be reached or its answer could not be read.
+    """
+    tag = f"refs/tags/v{version}"
+    try:
+        listing = run_git(
+            "ls-remote",
+            f"https://github.com/{_FORGE_GITHUB_REPO}.git",
+            tag,
+            f"{tag}^{{}}",
+            env=network_git_env(None),
+            log_errors=False,
+            timeout=_LS_REMOTE_TIMEOUT_S,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return TagLookup(reached=False, commit=None)
+    if not listing.strip():
+        return TagLookup(reached=True, commit=None)
+    refs: dict[str, str] = {}
+    for line in listing.splitlines():
+        sha, _, ref = line.partition("\t")
+        if _TAG_COMMIT_RE.fullmatch(sha):
+            refs[ref] = sha
+    commit = refs.get(f"{tag}^{{}}") or refs.get(tag)
+    return TagLookup(reached=commit is not None, commit=commit)

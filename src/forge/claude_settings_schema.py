@@ -5,15 +5,12 @@ write:
 
 - ``install-forge-claude-md`` (:mod:`forge.install_claudemd`) **scaffolds**
   the file when it does not exist yet.
-- ``install-forge-claude-settings``
-  (:mod:`forge.install_claude_settings`) **removes** the shared ``forge``
-  marketplace and turns ``forge@forge`` off, so only the checkout's own
-  ``forge-plugin-sync`` install loads.
+- ``install-forge-claude`` (:mod:`forge.install_claude`) **registers**
+  forge's generated guard hooks and **removes** the keys that named the
+  retired plugin.
 
-The shared marketplace key and the ``forge@forge`` plugin id live here so
-every reader and writer of that block names the same keys — a rename on
-one side that skipped another would go unnoticed with no compile-time
-signal.
+The retired plugin's marketplace key and id live here so the cleanup and
+anything still reading that block name the same keys.
 """
 
 from __future__ import annotations

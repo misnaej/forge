@@ -29,6 +29,7 @@ from forge.agent_harness import (
     translate_payload_field,
     translate_tool_matcher,
 )
+from forge.instruction_files import shipped_path
 
 
 if TYPE_CHECKING:
@@ -138,18 +139,18 @@ _MAP_INPUT = (
 @pytest.mark.parametrize(
     ("harness", "expected"),
     [
-        ("claude", _MAP_INPUT),
         (
-            "vibe",
+            harness,
             (
-                "Spawn test-writer then forge:state, not forge:nonexistent-thing "
-                "or forge:<name>."
+                "Spawn forge-test-writer then forge:state, not "
+                "forge:nonexistent-thing or forge:<name>."
             ),
-        ),
+        )
+        for harness in ("claude", "vibe")
     ],
 )
 def test_map_plugin_references_parametrized(harness: str, expected: str) -> None:
-    """Claude keeps text verbatim; Vibe strips the prefix of shipped names only.
+    """Both harnesses rewrite a shipped ``forge:<name>`` to ``forge-<name>``.
 
     Hyphenated shipped names map whole; ``state``, unknown names and the
     ``forge:<name>`` placeholder survive in both harnesses.
@@ -164,8 +165,8 @@ def test_map_plugin_references_parametrized(harness: str, expected: str) -> None
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        ("forge:fix", "fix"),
-        ("forge:pr", "pr"),
+        ("forge:fix", "forge-fix"),
+        ("forge:pr", "forge-pr"),
         ("forge:fixture", "forge:fixture"),
         ("forge:precommit-managed", "forge:precommit-managed"),
         ("forge:prx", "forge:prx"),
@@ -242,20 +243,23 @@ def test_unenforced_vibe_hooks_pins_exactly_the_unenforced_hooks() -> None:
     assert "block_fixer_recon.sh" not in UNENFORCED_VIBE_HOOKS
 
 
-def test_resolve_hooks_base_layouts(tmp_path: Path) -> None:
-    """``claude-hooks/`` resolution across forge-repo vs consumer layouts."""
-    plugin_dir = tmp_path / ".claude-plugin"
-    plugin_dir.mkdir()
-    # Forge's own checkout: top-level claude-hooks/, none in the plugin dir.
+def test_resolve_hooks_base_always_uses_the_packaged_guards(tmp_path: Path) -> None:
+    """The guard directory is the packaged one, even when the repo has its own.
+
+    SCENARIO: a checkout with no ``claude-hooks/``, then one carrying its
+    own.
+    EXPECTED BEHAVIOR: the packaged copy both times. A repo's own copy
+    used to win, which meant a repo shipping its own
+    ``block_force_push.sh`` would have that script installed and armed in
+    place of forge's — so this is a guard-integrity property, not a
+    preference.
+    """
+    packaged = shipped_path("claude-hooks")
+    assert resolve_hooks_base() == packaged
+    assert resolve_hooks_base() != tmp_path / "claude-hooks"
+
     (tmp_path / "claude-hooks").mkdir()
-    assert resolve_hooks_base(tmp_path, plugin_dir) == tmp_path
-    # Consumer install: guards live under the plugin dir.
-    (tmp_path / "claude-hooks").rmdir()
-    (plugin_dir / "claude-hooks").mkdir()
-    assert resolve_hooks_base(tmp_path, plugin_dir) == plugin_dir
-    # Neither layout present: fall back to the plugin dir.
-    (plugin_dir / "claude-hooks").rmdir()
-    assert resolve_hooks_base(tmp_path, plugin_dir) == plugin_dir
+    assert resolve_hooks_base() == packaged
 
 
 def test_module_exposes_profiles_not_a_detector() -> None:

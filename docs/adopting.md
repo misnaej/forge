@@ -11,7 +11,7 @@ verification step.
 |---|---|---|---|
 | **1 — pip CLIs** | `forge-scripts` — verification/generator CLIs + the pre-commit dispatcher | no | `pip install` |
 | **2 — git hooks** | `.githooks/*` (pre-commit + post-merge/checkout) | no | `install-forge-githooks` |
-| **3 — Claude Code plugin** | agents, slash-command skills, safety hooks | yes | `/plugin install` |
+| **3 — agent integration** | agents, slash-command skills, safety guards | yes | `install-forge-claude` |
 
 ### Layer 1 is the prerequisite — and what breaks without it
 
@@ -24,17 +24,16 @@ the hook or agent runs**. Both higher layers shell out to its CLIs:
   (`forge-precommit: command not found`). *Downside:* a teammate who
   clones the repo but hasn't installed the env has a broken commit gate
   until they install layer 1.
-- **Layer 3 (plugin)** — the agents/skills orchestrate the CLIs
-  (`forge:precommit-fixer` → `forge-precommit`, `/commit` →
-  `forge-commit`, …). The plugin is **installed per checkout** (Track 3), from
-  a marketplace named after the release it pins — Claude Code registers
-  each marketplace name once per machine, so one name per release keeps
-  repos on different releases apart — and it drives CLIs that must exist
-  in **each repo's** env. *Downside:*
-  enable the plugin in a repo whose env lacks `forge-scripts`, and the
-  agents fail the moment they invoke a CLI. The
-  plugin's pure **safety hooks** (`block_*`, `check_*`) are the exception —
-  bash + jq, they need neither layer 1 nor 2.
+- **Layer 3 (agent integration)** — the agents and skills orchestrate
+  the CLIs (`forge-precommit-fixer` → `forge-precommit`,
+  `/forge-commit` → `forge-commit`, …), so they are only useful where
+  `forge-scripts` is installed. They are **generated into the repo**
+  (Track 3) from the package in its own environment, so there is nothing
+  to install per machine and no release to keep in step. *Downside:*
+  generate them in a repo whose env lacks `forge-scripts` and the agents
+  fail the moment they invoke a CLI. The **safety guards** (`block_*`,
+  `check_*`) are the exception — bash + jq, they need neither layer 1
+  nor 2.
 
 In short: **1 alone is fine; 2 and 3 are inert (or broken) without 1.**
 
@@ -42,7 +41,7 @@ In short: **1 alone is fine; 2 and 3 are inert (or broken) without 1.**
 
 ## Track 1 — the CLIs only
 
-The deterministic checks, runnable locally or in CI, no hooks, no plugin.
+The deterministic checks, runnable locally or in CI, no hooks, no agents.
 
 Add the pin to your repo's dependency table (so the version is tracked),
 then install it into your active environment with your repo's normal flow:
@@ -62,7 +61,7 @@ pip install "git+https://github.com/misnaej/forge.git@main"
 **Verify:**
 
 ```bash
-forge-doctor            # environment diagnostics: CLIs on PATH, gh, optional plugin
+forge-doctor            # environment diagnostics: CLIs on PATH, gh, optional integration
 forge-precommit         # run the check sequence once, by hand
 forge-config --list     # every [tool.forge.*] key forge reads + what to set
 ```
@@ -100,72 +99,52 @@ environment; one that fails logs a warning and is skipped.
 `install-forge-githooks --force` overwrites edited wrappers and keeps the
 old one as `.githooks/<name>.before-forge-vX.Y.Z.bak`.
 
-## Track 3 — add the Claude Code plugin (one install **per checkout**)
+## Track 3 — add the agent integration (generated, nothing installed)
 
-Agents, skills, and safety hooks, in Claude Code only. The agents shell
-out to the layer-1 CLIs, so the plugin is only useful where
-`forge-scripts` is installed — **install it per checkout, never
-globally**, so it stays inactive everywhere else.
+Agents, skills, and safety guards for Claude Code. They shell out to the
+layer-1 CLIs, so this layer is only useful where `forge-scripts` is
+installed.
 
-`install-forge-bootstrap` does it for you (its `plugin` step):
+`install-forge-bootstrap` does it for you (its `claude` step):
 
 ```bash
-forge-plugin-sync           # install this checkout's release (no-op when current)
-forge-plugin-sync --check   # report only (exit 1 when not on its release)
+install-forge-claude          # write the integration into .claude/
+install-forge-claude --check  # report drift only (exit 1 when stale)
 ```
 
-It installs, for this checkout only (`--scope local`), the release your
-`forge-scripts @ git+...@vX.Y.Z` pin names — a branch pin is refused,
-so pin a release tag — from a marketplace named after that release
-(`forge-vX-Y-Z`). The `post-merge` / `post-checkout` hooks re-run it, so
-moving the pin moves the plugin; after a change, restart the Claude Code
-session. The committed `.claude/settings.json` keeps the shared plugin
-off: `install-forge-claude-settings` (also a bootstrap step; `--check`
-verifies without writing) removes forge's `extraKnownMarketplaces` entry
-and writes `{ "enabledPlugins": { "forge@forge": false } }`, merging
-around your other keys. Details and the refusals:
-[`claude-code-plugin.md`](claude-code-plugin.md).
+It writes the agents, skills and guard scripts from the `forge-scripts`
+package already in your environment, and registers the guards in
+`.claude/settings.json` under `${CLAUDE_PROJECT_DIR}`. The version you
+have installed is the version you run — no marketplace, no per-checkout
+install, no cache that can go cold. The `post-merge` / `post-checkout`
+hooks re-run it, so moving your pin moves the integration; restart the
+session afterwards to load it.
+
+It owns only what it generates, listed in `.claude/.gitignore`. Your own
+agents, skills and hooks share those directories untouched — just don't
+prefix your own files `forge-`, which is what every generated name
+carries. `settings.json` stays tracked, because it holds your permissions
+too. Details and the guard wiring: [`claude-code.md`](claude-code.md).
 
 Using Mistral Vibe instead of (or alongside) Claude Code? Set
 `[tool.forge.vibe] enabled = true` and the bootstrap `vibe` step generates
 `.vibe/` hooks + agents, `.agents/skills/` and a flattened `AGENTS.md` —
 see [docs/vibe.md](vibe.md).
 
-> **Avoid a global `/plugin install forge@forge`.** A user-scope install
-> is active in **every** repo, its agents then error in repos that lack
-> `forge-scripts`, and beside a checkout's own copy two plugins named
-> `forge` drop hooks — so `forge-plugin-sync` refuses to run until it
-> is removed.
-
-**Verify:** `forge-doctor` reports `plugin:installed` naming this
-checkout's `forge@forge-vX-Y-Z` install, `plugin:checkout` saying it is
-the release the checkout names, and populated `agents/` / `skills/` /
-`claude-hooks/` in that install. Consumer-specific Claude Code
+**Verify:** `forge-doctor` reports `claude:integration` as current. All
 hooks live under `.claude/hooks/` with `${CLAUDE_PROJECT_DIR}`-rooted
-paths — see [`claude-code-plugin.md`](claude-code-plugin.md).
+paths, yours beside forge's.
 
 ### Repos that do NOT use forge
 
-With the per-repo model above you do **nothing** — the plugin was never
-installed globally, so it simply isn't present (no agents offered, no
-errors). The problem only arises from a **global** install. If forge was
-installed globally on your machine and you hit agent errors in a non-forge
-repo, pick one:
+Nothing to do. The integration exists only where it was generated, and
+nothing is installed machine-wide, so a repo without forge has no forge
+agents and no forge guards.
 
-- **Switch to the per-checkout model** — uninstall the global plugin
-  (`claude plugin uninstall forge@forge --scope user`); afterwards only
-  checkouts that ran `forge-plugin-sync` load it.
-- **Disable it for that one repo** — commit to its `.claude/settings.json`:
-  ```jsonc
-  { "enabledPlugins": { "forge@forge": false } }
-  ```
-  Project settings override user settings, so this wins over a global
-  enable.
-
-Even when the plugin *is* active in a forge-less repo, nothing is silently
-broken: the **agents fail loudly** with a `forge-scripts not installed`
-message (FOUNDATION §2), and the **safety hooks** (`block_*` / `check_*`)
-are pure bash + jq — they need no env and are harmless everywhere.
+Upgrading from a forge that shipped a plugin? Remove the old install
+once (`claude plugin uninstall forge@forge --scope user`, and `--scope
+local` in each checkout that had its own). `install-forge-claude` clears
+the settings keys that named it.
 
 ## All three at once
 
@@ -201,7 +180,7 @@ artifact is **drift-aware**, not blindly overwritten:
 - **`CLAUDE.md` / `FOUNDATION.md`** — managed-block markers; `install-forge-claude-md --check` (run by the post-merge/checkout hooks) reports when the shipped foundation drifts from yours.
 - **`forge-docs/`** — same check reports hand-edits to the mirrored reference pages; the next sync heals them.
 - **`.githooks/*`** — the `body-sha=` marker detects consumer edits so a refresh skips wrappers you changed; the gitignored `.forge-hook-version` sidecar records which forge version last wrote them (keeps the committed wrappers byte-stable).
-- **Upstream-version staleness** — the hooks' preamble + `SessionStart` warn when the installed forge is behind the latest tag (and the cached Claude Code plugin is behind), so you know an upgrade is available. Forge cuts a tag only when a release merges, so the latest tag is an adoptable release (see [Which tags you can adopt](#which-tags-you-can-adopt)).
+- **Upstream-version staleness** — the hooks' preamble + `SessionStart` warn when the installed forge is behind the latest tag, so you know an upgrade is available. Forge cuts a tag on every merge, so every tag is adoptable (see [Which tags you can adopt](#which-tags-you-can-adopt)).
 - **Generated docs** — `forge-gen-*` write `docs/api-digest.md` / `cli-reference.md`; a pre-commit check fails if they drift from the code.
 
 ## Upgrading
@@ -214,12 +193,21 @@ forge-upgrade --channel main          # phase 1: rewrite pin + print the install
 forge-upgrade --continue              # phase 2: install-forge-bootstrap re-sync
 ```
 
+> **Moving a pin is not atomic, and the failure mode is sharp.** Your
+> installer may remove the installed forge before the new version
+> finishes building. If that build fails you are left with **no forge** —
+> and in a repo whose commit path runs through forge's pre-commit hook,
+> the recovery cannot use the tooling. Keep the previous pin and lock
+> file to hand so you can restore them, and prefer upgrading in a branch
+> where reverting the pin is one revert. This is tracked, and is not
+> specific to any one release.
+
 After a successful upgrade, forge prints the **⚠️ Upgrade notes** for the
 new releases (the consumer-action items) — review any newer than your
 previous version, review the diff of managed files, and commit it. If
-the upgrade moved the plugin, **restart the Claude Code session**: a
-running session keeps the plugin it started with
-([plugin staleness](../forge-docs/plugin-staleness.md)). CI
+the upgrade regenerated the integration, **restart the Claude Code
+session**: a running session keeps the files it loaded at startup
+([integration staleness](../forge-docs/integration-staleness.md)). CI
 integration: [`ci-recipe.md`](../forge-docs/ci-recipe.md).
 
 A repo that pins through `requirements.txt` or a lockfile runs the
@@ -232,7 +220,7 @@ and agents never run it, because they never install packages.
 
 | Pin | When |
 |---|---|
-| `@vX.Y.Z` (a release tag) | The default, and required for the Claude Code plugin. Upgrades are explicit and comparable. |
+| `@vX.Y.Z` (a release tag) | The default. Upgrades are explicit and comparable. |
 | `@main` | Following every merge. pip caches by name and version, and a branch ref does not change the version, so a plain `pip install` silently keeps an old build; `forge-doctor` can look healthy while you are behind. Use `forge-upgrade` to refresh. |
 
 Switching from a branch pin to a tag has a trap: a refresh script that
@@ -249,37 +237,37 @@ only ever warns, and prints the upgrade command.
 
 ### Which tags you can adopt
 
-A forge release tag `vX.Y.Z` is cut when a release PR merges, on the
-commit whose `.claude-plugin/plugin.json` says `X.Y.Z` and whose
-`CHANGELOG.md` opens with `## vX.Y.Z`. That is what makes it adoptable:
-Claude Code files the plugin under the version `plugin.json` declares,
-and `forge-upgrade` prints upgrade notes from the changelog the tag
-ships.
+**Every `v*` tag is adoptable.** A tag is cut on every merge into the
+default branch, from the changelog fragments that merge brought, and the
+tag is the only place the version lives. Each one is a commit CI passed.
 
-Older tags were cut on every merge, before the release that wrote their
-version. Their own `plugin.json` names an earlier release and their
-changelog stops short of them, so `forge-upgrade` refuses them (exit
-`2`). They are never moved; pin a newer tag instead. To check a tag
-yourself:
+What a tag does **not** always carry is its own changelog entry. The
+prose is assembled afterwards, by a separate pull request, so a recent
+tag normally ships a `CHANGELOG.md` whose newest heading is the previous
+release. `forge-upgrade` says so and continues — it does not refuse:
 
-```bash
-git show vX.Y.Z:.claude-plugin/plugin.json | grep '"version"'   # must say X.Y.Z
-git show vX.Y.Z:CHANGELOG.md | grep -m1 '^## v'                 # must say vX.Y.Z
+```
+v14.0.1's own changelog entry is not assembled yet: the changelog it
+ships stops at v14.0.0, so the upgrade notes below cover up to there …
 ```
 
-### Leaving an older shared install behind
+When that appears, read the repository's `CHANGELOG.md` — or its pending
+`changelog.d/` fragments — for what changed in between. Nothing is
+hidden; it is written somewhere other than the tag you pinned.
 
-If you installed one of those older tags through the shared `forge`
-marketplace, Claude Code may have filed it under an **earlier release's
-version** and kept that release's files; `/plugin update` compares
-version names only, so it changes nothing. You do not need to repair
-that slot. Move the `forge-scripts` pin to an adoptable tag and run
-`forge-plugin-sync`: it installs that release for this checkout from a
-marketplace named after it (`forge-vX-Y-Z`), pinned to the tag's
-commit, in a slot of its own. Then restart the Claude Code session —
-`/reload-plugins` is not enough, since a running session keeps what it
-loaded at startup.
+> Tracking "the latest tag" therefore means following every merge. A
+> moving pointer at the latest release considered fit to adopt is
+> proposed but not built; until then, pin a version deliberately and
+> move it in a reviewed change.
 
-The old shared slot stays on disk, because another repo on an older
-release may still use it; nothing in forge reads it any more.
-`forge-doctor` judges this checkout only by its own install.
+### Leaving an older plugin install behind
+
+Forge used to ship as a Claude Code plugin, installed per checkout from
+a marketplace. Nothing reads those installs any more. To clean up, move
+the `forge-scripts` pin to an adoptable tag, run `install-forge-claude`,
+and uninstall the old plugin — `claude plugin uninstall forge@forge
+--scope user`, plus `--scope local` in each checkout that had its own.
+`install-forge-claude` clears the settings keys that named it.
+
+Then restart the Claude Code session: a running session keeps what it
+loaded at startup, and `/reload-plugins` is not enough.

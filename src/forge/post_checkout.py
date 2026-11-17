@@ -21,7 +21,7 @@ additionally backgrounds ``install-forge-githooks --refresh`` because
 a ``git pull`` is the common trigger for a forge-scripts upgrade. A
 branch checkout does not change the installed forge-scripts version,
 so no self-refresh is needed here. Both entrypoints end with
-``forge-plugin-sync --quiet`` (:func:`forge._hook_helpers.run_plugin_sync`),
+``install-forge-claude`` (:func:`forge._hook_helpers.run_claude_integration`),
 because a branch can pin a different forge release than the one this
 checkout's Claude Code plugin is on.
 """
@@ -33,9 +33,9 @@ import logging
 import sys
 
 from forge._hook_helpers import (
+    run_claude_integration,
     run_foundation_drift_check,
     run_hook_extensions,
-    run_plugin_sync,
     run_vibe_regen,
 )
 from forge.git_utils import configure_cli_logging
@@ -108,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     # (#177). Symmetric with post-merge.
     if not is_ci():
         run_hook_extensions("post-checkout")
-        run_plugin_sync("post-checkout")
+        run_claude_integration("post-checkout")
     return rc
 
 

@@ -17,7 +17,6 @@ keystroke (FOUNDATION §2, §6):
      the parent branch, so git cannot tell the child already holds it;
    - **generated artifacts** — regenerated from the merged tree, once
      nothing else conflicts (:func:`forge.resync.regenerate_artifact`);
-   - **the rolling-next version slot** — :func:`forge.rebump.rebump`.
 
 5. Anything left stops the run: the paths are listed, an intake lesson
    records the stop, and the next step is named — ``forge:merge-resolver``
@@ -72,7 +71,6 @@ from forge.git_utils import (
 )
 from forge.intake import configured_dir, new_entry
 from forge.pr_delta import regen_commands
-from forge.rebump import CHANGELOG_PATH, PLUGIN_PATH, rebump
 from forge.resync import regenerate_artifact
 
 
@@ -87,8 +85,6 @@ EXIT_STOPPED: Final = 3
 #: Read by ``forge-precommit``: the merge commit runs no steps. Set only by
 #: this command, and honoured only while a merge is in progress.
 MERGE_SYNC_ENV: Final = "FORGE_MERGE_SYNC"
-#: Files the version-slot resolver owns.
-_SLOT_PATHS: Final = frozenset({PLUGIN_PATH, CHANGELOG_PATH})
 _MAX_LISTED: Final = 20
 _LS_FILES_U_RE: Final = re.compile(r"^(\d+) ([0-9a-f]+) ([123])\t(.+)$")
 #: Leading fields of a raw-diff line: ``:<mode> <mode> <old blob> <new blob>``.
@@ -113,13 +109,12 @@ class Resolution:
 
     seen: list[str] = field(default_factory=list)
     generated: list[str] = field(default_factory=list)
-    slot: list[str] = field(default_factory=list)
     remaining: list[str] = field(default_factory=list)
 
     @property
     def automatic(self) -> list[str]:
         """Every path this pass resolved, in report order."""
-        return [*self.seen, *self.generated, *self.slot]
+        return [*self.seen, *self.generated]
 
 
 def _stage_blobs(root: Path, path: str) -> dict[int, str]:
@@ -232,9 +227,8 @@ def resolve(root: Path) -> Resolution:
     """Resolve every conflicted path whose answer is mechanical, and stage it.
 
     Order matters: already-seen paths first; generated artifacts only once
-    no source conflicts remain (they are regenerated from the merged
-    tree); the version slot last, because its resolver refuses while any
-    other path is unmerged.
+    no source conflicts remain, since they are regenerated from the
+    merged tree rather than merged textually.
 
     Args:
         root: Repo root, mid-merge.
@@ -243,8 +237,7 @@ def resolve(root: Path) -> Resolution:
         What was resolved, and the paths that need judgment.
 
     Raises:
-        UpdateRefusedError: When a generator fails or the slot resolver
-            refuses for a reason other than other conflicts.
+        UpdateRefusedError: When a generator fails.
     """
     done = Resolution()
     for path in unmerged_paths(root):
@@ -255,7 +248,7 @@ def resolve(root: Path) -> Resolution:
             done.seen.append(path)
     commands = regen_commands(root)
     left = unmerged_paths(root)
-    sources = [p for p in left if p not in commands and p not in _SLOT_PATHS]
+    sources = [p for p in left if p not in commands]
     if sources:
         done.remaining = left
         return done
@@ -268,13 +261,6 @@ def resolve(root: Path) -> Resolution:
             raise UpdateRefusedError(msg)
         run_git("add", "--", path, cwd=root)
         done.generated.append(path)
-    if set(unmerged_paths(root)) & _SLOT_PATHS:
-        outcome = rebump(root)
-        if outcome.refusal:
-            done.remaining = unmerged_paths(root)
-            logger.warning("forge-update-branch: version slot: %s", outcome.refusal)
-            return done
-        done.slot.extend(outcome.staged)
     done.remaining = unmerged_paths(root)
     return done
 
@@ -394,7 +380,6 @@ def _message(base_ref: str, branch: str, done: Resolution) -> str:
         if done.seen
         else "",
         f"Regenerated: {_listed(done.generated)}" if done.generated else "",
-        f"Version slot: {_listed(done.slot)}" if done.slot else "",
     ]
     body = [line for line in body if line]
     if body:

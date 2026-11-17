@@ -46,6 +46,7 @@ from forge.agent_profile import TranscriptFilter, branch_usage, default_transcri
 from forge.agent_profile_tokens import parse_ts
 from forge.git_utils import (
     PUSH_TIMEOUT_S,
+    TagLookup,
     create_annotated_tag,
     create_commit,
     delete_remote_branch,
@@ -57,9 +58,9 @@ from forge.git_utils import (
     push_tag,
     ref_exists,
     release_of,
+    resolve_commit,
     run_git,
 )
-from forge.plugin_sync import TagLookup, resolve_commit
 from forge.upgrade import git_url_for
 
 
@@ -415,7 +416,7 @@ class Marker:
     #: is recorded under it.
     forge_version: str
     #: Whether ``start`` installed that release's Claude Code plugin.
-    plugin_synced: bool
+    integration_installed: bool
 
 
 @dataclass(frozen=True)
@@ -461,7 +462,7 @@ def read_marker() -> Marker | None:
     """
     raw = _read_json(marker_path()) or {}
     text = {key: raw.get(key) for key in _MARKER_TEXT}
-    run_n, synced = raw.get("run_n"), raw.get("plugin_synced")
+    run_n, synced = raw.get("run_n"), raw.get("integration_installed")
     if not isinstance(run_n, int) or not isinstance(synced, bool):
         return None
     if not all(isinstance(v, str) for v in text.values()):
@@ -475,7 +476,7 @@ def read_marker() -> Marker | None:
         clone=str(text["clone"]),
         setup_commit=str(text["setup_commit"]),
         forge_version=str(text["forge_version"]),
-        plugin_synced=synced,
+        integration_installed=synced,
     )
 
 
@@ -781,7 +782,8 @@ def require_release(value: str, tag_lookup: Callable[[str], TagLookup]) -> str:
 def _pin_forge(clone: Path, version: str) -> str:
     """Pin forge ``v<version>`` in the clone's dev extra and commit it.
 
-    The pin is what ``forge-plugin-sync`` reads to pick the plugin release.
+    The pin is what ``install-forge-claude`` generates the integration
+    from.
 
     Args:
         clone: The sandbox clone, on the run's fresh branch.
@@ -853,39 +855,39 @@ def _ensure_env(clone: Path, version: str, runner: Runner) -> bool:
     return True
 
 
-def plugin_sync_command(clone: str | Path) -> str:
-    """The command that installs the clone's pinned plugin by hand.
+def integration_command(clone: str | Path) -> str:
+    """The command that generates the clone's Claude Code integration.
 
     Args:
         clone: The sandbox clone.
 
     Returns:
-        ``cd <clone> && <forge-plugin-sync>``.
+        ``cd <clone> && <install-forge-claude>``.
     """
-    argv = _clone_tool(Path(clone), "forge-plugin-sync")
+    argv = _clone_tool(Path(clone), "install-forge-claude")
     return f"cd {shlex.quote(str(clone))} && {shlex.join(argv)}"
 
 
-def _sync_plugin(clone: Path, runner: Runner) -> bool:
-    """Install the pinned release's Claude Code plugin for the clone.
+def _install_integration(clone: Path, runner: Runner) -> bool:
+    """Generate the pinned release's Claude Code integration in the clone.
 
-    A failure (no ``claude`` CLI, say) only warns: the run can still start
-    and the user can sync by hand.
+    A failure only warns: the run can still start and the user can
+    generate it by hand.
 
     Args:
         clone: The sandbox clone, its ``.venv`` ready.
         runner: Command runner.
 
     Returns:
-        Whether the plugin was installed.
+        Whether the integration was generated.
     """
-    argv = _clone_tool(clone, "forge-plugin-sync")
+    argv = _clone_tool(clone, "install-forge-claude")
     synced = runner(argv, cwd=clone, timeout=_SETUP_TIMEOUT_S)
     if not synced.ok:
         logger.warning(
-            "forge-metrics bench: plugin not synced (%s); run by hand: %s",
+            "forge-metrics bench: integration not generated (%s); run by hand: %s",
             _tail(synced),
-            plugin_sync_command(clone),
+            integration_command(clone),
         )
     return synced.ok
 
@@ -919,7 +921,7 @@ def _install_forge(
             "it. No run started."
         )
         raise BenchError(msg) from exc
-    return setup, _sync_plugin(clone, runner)
+    return setup, _install_integration(clone, runner)
 
 
 def start_run(
@@ -977,7 +979,7 @@ def start_run(
         str(clone),
         setup_commit=setup,
         forge_version=version,
-        plugin_synced=synced,
+        integration_installed=synced,
     )
     _write_private(marker_path(), asdict(marker))
     return marker, task_prompt(task, data, branch)
@@ -1328,12 +1330,13 @@ def finish_run(
         msg = f"forge-metrics bench: {marker.clone} is not a clone of the sandbox"
         raise BenchError(msg)
     check_access(sandbox.slug, runner, Path(marker.clone))
-    if not marker.plugin_synced:
+    if not marker.integration_installed:
         logger.warning(
-            "forge-metrics bench: start could not install the forge %s plugin; "
-            "unless you ran `%s` before the session, this run used another one",
+            "forge-metrics bench: start could not generate the forge %s "
+            "integration; unless you ran `%s` before the session, this run "
+            "measured another one",
             marker.forge_version,
-            plugin_sync_command(marker.clone),
+            integration_command(marker.clone),
         )
     outcome = BenchOutcome(
         run_id=uuid.uuid4().hex,

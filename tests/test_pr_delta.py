@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
 from forge.pr_delta import (
     DELTA_LINE_THRESHOLD,
     DOCS_ONLY_GLOBS,
-    HIGH_BLAST_RADIUS_PATHS,
     LIGHT_WRAPUP_LINE_THRESHOLD,
     MANAGED_REGEN_PATHS,
     PROVENANCE_GATE_STEPS,
@@ -25,7 +24,6 @@ from forge.pr_delta import (
     path_classifier,
     regen_commands,
     regen_only_diff,
-    release_assembly_diff,
     reviewable_adds,
     strip_fences,
     touches_high_blast_radius,
@@ -33,10 +31,6 @@ from forge.pr_delta import (
     touches_source_paths,
     unlisted_closing_refs,
 )
-
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def test_verified_at_re_captures_canonical_form() -> None:
@@ -128,9 +122,71 @@ def test_delta_decision_high_blast_radius_path_forces_full() -> None:
     assert "high-blast-radius" in reason
 
 
-def test_high_blast_radius_paths_is_non_empty() -> None:
-    """Guard against accidental empty constant (would disable the gate)."""
-    assert len(HIGH_BLAST_RADIUS_PATHS) > 0
+SHIPPED_PATHS = [
+    "src/forge/data/agents/design-checker.md",
+    "src/forge/data/skills/pr/SKILL.md",
+    "src/forge/data/claude-hooks/block_x.sh",
+    "src/forge/data/hooks.toml",
+]
+
+
+@pytest.mark.parametrize("path", SHIPPED_PATHS)
+def test_shipped_path_is_high_blast_radius_and_forces_full(path: str) -> None:
+    """Forge's shipped sources, as git reports them, are never light-path eligible.
+
+    Git reports the package path (the repo-root `agents/` etc. are
+    symlinks), so a shipped prompt must not read as docs-only nor take
+    delta mode.
+
+    Args:
+        path: A repo-relative path under the packaged shipped sources.
+    """
+    assert touches_high_blast_radius([path]) == [path]
+    assert docs_only_diff([path]) is False
+    assert delta_decision(line_count=5, changed_paths=[path])[0] is False
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "src/forge/data/agents/design-checker.md",
+        "src/forge/data/skills/pr/SKILL.md",
+    ],
+)
+def test_shipped_agent_and_skill_paths_are_rule_surface(path: str) -> None:
+    """Packaged agents and skills are rule surface; guards and wiring are not.
+
+    Args:
+        path: A repo-relative path under the packaged agents or skills.
+    """
+    assert touches_rule_surface([path]) is True
+
+
+def test_ordinary_source_is_neither_high_blast_radius_nor_rule_surface() -> None:
+    """The broad `src/forge/data/` prefix does not leak onto the rest of `src/`."""
+    assert touches_high_blast_radius(["src/forge/common.py"]) == []
+    assert touches_rule_surface(["src/forge/common.py"]) is False
+
+
+def test_shipped_source_symlinks_are_covered_by_blast_radius() -> None:
+    """Every repo-root shipped-source link targets a path the classifiers cover.
+
+    Reads the real links, so a layout change fails here instead of letting
+    the prefixes drift. Limit: covers only `agents`, `skills` and
+    `claude-hooks`; a brand-new shipped directory is covered by the broad
+    `src/forge/data/` prefix instead, which is why that prefix was chosen.
+    """
+    root = Path(__file__).resolve().parents[1]
+    for name in ("agents", "skills", "claude-hooks"):
+        assert (root / name).exists(), f"repo-root {name} link is missing"
+        probe = f"{(root / name).resolve().relative_to(root)}/probe.md"
+        assert touches_high_blast_radius([probe]) == [probe]
+        assert docs_only_diff([probe]) is False
+        if name != "claude-hooks":
+            assert touches_rule_surface([probe]) is True
+    hooks_toml = root / "src/forge/data/hooks.toml"
+    assert hooks_toml.is_file()
+    assert touches_high_blast_radius(["src/forge/data/hooks.toml"])
 
 
 @pytest.mark.parametrize(
@@ -195,14 +251,15 @@ def test_docs_only_empty_diff_is_not_docs_only() -> None:
 def test_docs_only_high_blast_radius_markdown_disqualifies() -> None:
     """Doc-shaped files under shipped-behavior paths are never docs-only.
 
-    Agent prompts, skills, hooks, and the plugin manifest are executable
-    surface — a `*.md` glob match must not exempt them from the
-    design/security round.
+    Agent prompts, skills and hooks are executable surface — a `*.md`
+    glob match must not exempt them from the design/security round. The
+    last case pairs a doc with a non-doc under a shipped-behavior path,
+    so one such file disqualifies the whole set.
     """
     assert not docs_only_diff(["agents/pr-manager.md"])
     assert not docs_only_diff(["skills/pr/SKILL.md"])
     assert not docs_only_diff(["CLAUDE.md"])
-    assert not docs_only_diff([".claude-plugin/plugin.json", "CHANGELOG.md"])
+    assert not docs_only_diff([".claude/settings.json", "CHANGELOG.md"])
 
 
 def test_docs_only_extra_globs_are_additive() -> None:
@@ -297,44 +354,6 @@ def test_regen_only_diff_case_varied_path_not_eligible() -> None:
     """
     assert not regen_only_diff(["FOUNDATION.MD"])
     assert not regen_only_diff(["Docs/Cli-Reference.md"])
-
-
-def test_release_assembly_diff_accepts_assembly_outputs() -> None:
-    """The manifest, CHANGELOG.md and fragment files together qualify."""
-    assert release_assembly_diff(
-        [
-            ".claude-plugin/plugin.json",
-            "CHANGELOG.md",
-            "changelog.d/fix-thing.fixed.md",
-            "changelog.d/new-cli.added.md",
-        ]
-    )
-    assert release_assembly_diff(["CHANGELOG.md"])
-
-
-def test_release_assembly_diff_rejects_non_fragment_under_fragments_dir() -> None:
-    """A fragments-directory path qualifies only when it is fragment-shaped."""
-    assert not release_assembly_diff(["CHANGELOG.md", "changelog.d/evil.py"])
-    assert not release_assembly_diff(["changelog.d/nested/x.fixed.md"])
-    # The directory entry itself is not a file the diff can name.
-    assert not release_assembly_diff(["changelog.d/"])
-
-
-def test_release_assembly_diff_is_exact_case() -> None:
-    """Case-varied paths are different files; casefolding would excuse them."""
-    assert not release_assembly_diff([".Claude-Plugin/plugin.json"])
-    assert not release_assembly_diff(["changelog.md"])
-    assert not release_assembly_diff(["Changelog.d/fix-thing.fix.md"])
-
-
-def test_release_assembly_diff_empty_is_false() -> None:
-    """No changed paths → nothing to classify; not eligible."""
-    assert not release_assembly_diff([])
-
-
-def test_release_assembly_diff_source_path_disqualifies() -> None:
-    """Any path outside the assembly outputs disqualifies the whole diff."""
-    assert not release_assembly_diff(["CHANGELOG.md", "src/forge/pr_delta.py"])
 
 
 def test_regen_commands_pins_literal_contents() -> None:

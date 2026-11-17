@@ -1699,7 +1699,7 @@ def test_subagent_edits_unknown_when_every_row_lacks_a_path(tmp_path: Path) -> N
 
     assert receipt.known is False
     assert receipt.pathless == len(events)
-    assert "forge-plugin-sync" in receipt.reason
+    assert "install-forge-claude" in receipt.reason
 
 
 def test_render_edit_receipt_marks_partial_attribution_incomplete() -> None:

@@ -22,7 +22,7 @@ import pytest
 
 from forge import pr_metrics, pr_metrics_bench
 from forge.agent_profile_tokens import BranchSummary, TokenUsage
-from forge.plugin_sync import TagLookup
+from forge.git_utils import TagLookup
 from forge.pr_metrics_bench import (
     BenchError,
     BenchOutcome,
@@ -65,7 +65,7 @@ def _venv_holds(clone: Path, version: str) -> None:
     site = clone / ".venv/lib/python3.12/site-packages"
     (site / f"forge_scripts-{version}.dist-info").mkdir(parents=True, exist_ok=True)
     (clone / ".venv/bin").mkdir(exist_ok=True)
-    (clone / ".venv/bin/forge-plugin-sync").touch()
+    (clone / ".venv/bin/install-forge-claude").touch()
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -385,7 +385,7 @@ def test_start_builds_the_venv_when_missing(
         [sys.executable, "-m", "venv", "--clear", str(venv)],
         [str(venv / "bin/python"), "-m", "pip", "install", "-q", "-e", ".[dev]"],
     ]
-    assert runner.ran(str(venv / "bin/forge-plugin-sync"))
+    assert runner.ran(str(venv / "bin/install-forge-claude"))
 
 
 def test_start_reuses_a_venv_holding_the_release(
@@ -463,22 +463,22 @@ def test_start_refuses_a_bad_or_untagged_version(
     assert read_marker() is None
 
 
-def test_start_warns_and_continues_when_plugin_sync_fails(
+def test_start_warns_and_continues_when_integration_generation_fails(
     seeded_origin: Path,
     data: Path,
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Behavior: plugin sync failing warns with the command to run; run starts."""
+    """Behavior: failed integration install warns with the command; run starts."""
     runner = _owned(
-        seeded_origin, (("forge-plugin-sync",), Completed(1, "", "no claude CLI"))
+        seeded_origin, (("install-forge-claude",), Completed(1, "", "no claude CLI"))
     )
     with caplog.at_level(logging.WARNING, logger=pr_metrics_bench.__name__):
         marker, _ = _start(data, runner, tmp_path / "clone")
     assert read_marker() == marker
-    assert marker.plugin_synced is False
+    assert marker.integration_installed is False
     assert "no claude CLI" in caplog.text
-    assert "forge-plugin-sync" in caplog.text
+    assert "install-forge-claude" in caplog.text
     assert f"cd {marker.clone}" in caplog.text
 
 
@@ -542,14 +542,14 @@ def test_finish_records_closes_the_pr_and_deletes_the_branch(
         assert name not in dump
 
 
-def test_finish_warns_when_start_did_not_sync_the_plugin(
+def test_finish_warns_when_start_did_not_install_the_integration(
     seeded_origin: Path,
     data: Path,
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Behavior: a run started without its plugin is flagged before recording."""
-    failing = (("forge-plugin-sync",), Completed(1, "", "no claude CLI"))
+    """Behavior: a run started without its integration is flagged before recording."""
+    failing = (("install-forge-claude",), Completed(1, "", "no claude CLI"))
     _start(data, _owned(seeded_origin, failing), tmp_path / "clone")
     recorded: list[BenchOutcome] = []
     with caplog.at_level(logging.WARNING, logger=pr_metrics_bench.__name__):
@@ -559,7 +559,7 @@ def test_finish_warns_when_start_did_not_sync_the_plugin(
             seams=Seams(_owned(seeded_origin), lambda _p: SLUG),
         )
     assert [o.version for o in recorded] == [FORGE]
-    assert f"could not install the forge {FORGE} plugin" in caplog.text
+    assert f"could not generate the forge {FORGE} integration" in caplog.text
 
 
 def test_finish_refuses_a_clone_of_another_repo(

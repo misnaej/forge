@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import functools
-import json
 import logging
 import operator
 import os
@@ -22,43 +21,12 @@ from typing import TYPE_CHECKING
 import pytest
 
 from forge import next_prep
-from forge.config import ForgeConfig
 from forge.git_utils import PushResult
 from tests.conftest import FakeProc
 
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-
-# ---------------------------------------------------------------------------
-# _is_newer
-# ---------------------------------------------------------------------------
-
-
-def test_is_newer_true_when_no_tags() -> None:
-    """First release ever — any plugin version qualifies."""
-    assert next_prep._is_newer("1.0.0", None) is True
-
-
-def test_is_newer_true_when_strictly_ahead() -> None:
-    """1.2.10 > v1.2.9."""
-    assert next_prep._is_newer("1.2.10", "v1.2.9") is True
-
-
-def test_is_newer_false_when_equal() -> None:
-    """1.2.9 vs v1.2.9 — no tag bump needed."""
-    assert next_prep._is_newer("1.2.9", "v1.2.9") is False
-
-
-def test_is_newer_false_when_behind() -> None:
-    """1.2.8 < v1.2.9 — don't auto-tag backwards."""
-    assert next_prep._is_newer("1.2.8", "v1.2.9") is False
-
-
-def test_is_newer_handles_minor_jump() -> None:
-    """1.3.0 > v1.2.99 (sort-V handles double-digit comparison)."""
-    assert next_prep._is_newer("1.3.0", "v1.2.99") is True
 
 
 # Section: ``_gone_branches`` regex coverage.
@@ -93,88 +61,8 @@ def test_gone_branch_regex_skips_branch_without_remote() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _maybe_tag_release
+# bounded network calls
 # ---------------------------------------------------------------------------
-
-
-def test_maybe_tag_release_skips_when_no_plugin_json(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """No plugin.json → no tag action, no git invocations."""
-    git_calls: list[list[str]] = []
-
-    def _fake_git(*args: str, **_kw: object) -> str:
-        git_calls.append(list(args))
-        return ""
-
-    monkeypatch.setattr(next_prep, "run_git", _fake_git)
-    decision = next_prep._maybe_tag_release(tmp_path)
-    assert decision.tag is None
-    assert "no .claude-plugin/plugin.json version" in decision.reason
-    assert git_calls == []
-
-
-def test_maybe_tag_release_skips_when_version_equals_latest_tag(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """plugin.json version equals latest tag → no tag, reason names release-pr."""
-    (tmp_path / ".claude-plugin").mkdir()
-    (tmp_path / ".claude-plugin" / "plugin.json").write_text(
-        json.dumps({"name": "x", "version": "1.0.0"})
-    )
-
-    monkeypatch.setattr(next_prep, "latest_v_tag", lambda _root: "v1.0.0")
-    monkeypatch.setattr(next_prep, "run_git", lambda *_a, **_kw: "")
-    decision = next_prep._maybe_tag_release(tmp_path)
-    assert decision.tag is None
-    assert "is already tagged as v1.0.0" in decision.reason
-    assert "forge-changelog release-pr" in decision.reason
-
-
-def test_maybe_tag_release_skips_when_version_behind_latest_tag(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """plugin.json version below the latest tag → no tag, reason says behind."""
-    (tmp_path / ".claude-plugin").mkdir()
-    (tmp_path / ".claude-plugin" / "plugin.json").write_text(
-        json.dumps({"name": "x", "version": "1.0.0"})
-    )
-
-    monkeypatch.setattr(next_prep, "latest_v_tag", lambda _root: "v1.0.1")
-    monkeypatch.setattr(next_prep, "run_git", lambda *_a, **_kw: "")
-    decision = next_prep._maybe_tag_release(tmp_path)
-    assert decision.tag is None
-    assert "is behind the latest tag" in decision.reason
-
-
-def test_maybe_tag_release_creates_and_pushes_new_tag(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """plugin.json ahead of latest tag → ``git tag`` + ``git push``."""
-    (tmp_path / ".claude-plugin").mkdir()
-    (tmp_path / ".claude-plugin" / "plugin.json").write_text(
-        json.dumps({"name": "x", "version": "1.2.10"})
-    )
-    invoked: list[list[str]] = []
-    created: list[tuple[Path, str, str, bool]] = []
-
-    def _fake_git(*args: str, **_kw: object) -> str:
-        invoked.append(list(args))
-        return ""
-
-    def _fake_create_annotated_tag(
-        repo_root: Path, tag: str, *, commit: str = "HEAD", force: bool = False
-    ) -> None:
-        created.append((repo_root, tag, commit, force))
-
-    monkeypatch.setattr(next_prep, "latest_v_tag", lambda _root: "v1.2.9")
-    monkeypatch.setattr(next_prep, "run_git", _fake_git)
-    monkeypatch.setattr(next_prep, "create_annotated_tag", _fake_create_annotated_tag)
-    result = next_prep._maybe_tag_release(tmp_path)
-    assert result.tag == "v1.2.10"
-    assert created == [(tmp_path, "v1.2.10", "HEAD", False)]
-    # Push was invoked via run_git.
-    assert any(c[:2] == ["push", "origin"] and "v1.2.10" in c for c in invoked)
 
 
 def _run_main_with_timeout_on(
@@ -182,23 +70,18 @@ def _run_main_with_timeout_on(
     tmp_path: Path,
     verb: str,
     argv: list[str],
-    *,
-    remote_has_tag: bool | None = None,
 ) -> int:
     """Run ``next_prep.main`` with the git call for *verb* timing out.
 
-    ``fetch`` and ``push`` go through ``run_git``; ``pull`` is a direct
+    ``fetch`` goes through ``run_git``; ``pull`` is a direct
     ``subprocess.run``. Either way the timed-out call must have been
     bounded by ``PUSH_TIMEOUT_S`` and barred from prompting.
 
     Args:
         monkeypatch: pytest fixture for patching.
         tmp_path: Sandbox dir treated as the repo root.
-        verb: The git verb (``"fetch"`` / ``"pull"`` / ``"push"``) whose
-            call times out.
+        verb: The git verb (``"fetch"`` / ``"pull"``) whose call times out.
         argv: argv list passed via ``sys.argv``.
-        remote_has_tag: What the remote tag probe answers after a
-            timed-out push.
 
     Returns:
         ``main``'s exit code.
@@ -228,85 +111,12 @@ def _run_main_with_timeout_on(
             _time_out(cmd, timeout, env)
         return FakeProc()
 
-    (tmp_path / ".claude-plugin").mkdir()
-    (tmp_path / ".claude-plugin" / "plugin.json").write_text(
-        json.dumps({"name": "x", "version": "1.2.10"})
-    )
     monkeypatch.setattr(next_prep, "run_git", _fake_git)
-    monkeypatch.setattr(next_prep, "tag_on_remote", lambda *_a: remote_has_tag)
-    monkeypatch.setattr(next_prep, "latest_v_tag", lambda _root: "v1.2.9")
-    monkeypatch.setattr(next_prep, "create_annotated_tag", lambda *_a, **_kw: None)
     monkeypatch.setattr(next_prep, "fetch_tags_best_effort", lambda _root: [])
     monkeypatch.setattr(next_prep.subprocess, "run", _fake_run)
     monkeypatch.setattr(next_prep.Path, "cwd", classmethod(lambda _: tmp_path))
     monkeypatch.setattr(next_prep.sys, "argv", argv)
     return next_prep.main()
-
-
-_TAG_ARGV = ["forge-next-prep", "--tag", "--no-sync", "--no-prune-branches"]
-
-
-@pytest.mark.parametrize(
-    ("remote_has_tag", "state"),
-    [(False, "origin does not have it"), (None, "whether origin has it is unknown")],
-)
-def test_main_timed_out_tag_push_exits_one_with_manual_push(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-    *,
-    remote_has_tag: bool | None,
-    state: str,
-) -> None:
-    """SCENARIO: the release-tag push stalls and origin lacks it or is mute.
-
-    MOCK SETUP: ``run_git`` raises ``TimeoutExpired`` on ``push``; the
-        remote probe answers *remote_has_tag*; tag creation is stubbed.
-    EXPECTED BEHAVIOR: exit 1, no traceback, and one error that states
-        origin's state truthfully and names the manual push — a re-run in
-        this checkout would see the local tag and not retry.
-
-    Args:
-        remote_has_tag: The probe's answer.
-        state: The phrase the error must use for that answer.
-    """
-    with caplog.at_level(logging.ERROR, logger="forge.next_prep"):
-        rc = _run_main_with_timeout_on(
-            monkeypatch, tmp_path, "push", _TAG_ARGV, remote_has_tag=remote_has_tag
-        )
-    assert rc == 1
-    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
-    assert len(errors) == 1
-    message = errors[0].getMessage()
-    assert state in message
-    assert "git push origin v1.2.10" in message
-    assert "in this checkout" in message
-    assert errors[0].exc_info is None
-
-
-def test_main_timed_out_tag_push_that_landed_succeeds(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """SCENARIO: the tag push times out but origin did receive the tag.
-
-    MOCK SETUP: ``run_git`` raises ``TimeoutExpired`` on ``push``; the
-        remote probe reports the tag present.
-    EXPECTED BEHAVIOR: exit 0 and the usual "Tagged and pushed" line,
-        noting that the timed-out push landed; no error.
-    """
-    with caplog.at_level(logging.INFO, logger="forge.next_prep"):
-        rc = _run_main_with_timeout_on(
-            monkeypatch, tmp_path, "push", _TAG_ARGV, remote_has_tag=True
-        )
-    assert rc == 0
-    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
-    assert any(
-        "Tagged and pushed v1.2.10" in r.getMessage()
-        and "timed-out push landed" in r.getMessage()
-        for r in caplog.records
-    )
 
 
 def test_main_timed_out_pull_exits_one(
@@ -461,106 +271,25 @@ def test_main_collapses_to_main_when_no_tool_forge(
     assert switches[0][-1] == "main"
 
 
-def test_tag_staleness_warning_fires_on_base_when_tag_lags(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Warn on the base_branch when plugin.json is ahead of the latest tag.
-
-    MOCK SETUP: current branch = main; config base_branch = main (default);
-    plugin.json 1.25.0 with latest tag v1.24.1 (a bump that was never
-    tagged).
-    """
-    monkeypatch.setattr(next_prep, "run_git", lambda *_a, **_k: "main")
-    monkeypatch.setattr(next_prep, "load_config", lambda _r: ForgeConfig())
-    monkeypatch.setattr(next_prep, "read_local_plugin_version", lambda _r: "1.25.0")
-    monkeypatch.setattr(next_prep, "latest_v_tag", lambda _r: "v1.24.1")
-    warning = next_prep.tag_staleness_warning(tmp_path)
-    assert warning is not None
-    assert "1.25.0" in warning
-    assert "v1.24.1" in warning
-
-
-def test_tag_staleness_warning_silent_off_base_branch(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """No warning when the current branch is not the base_branch."""
-    monkeypatch.setattr(next_prep, "run_git", lambda *_a, **_k: "feature/x")
-    monkeypatch.setattr(next_prep, "load_config", lambda _r: ForgeConfig())
-    assert next_prep.tag_staleness_warning(tmp_path) is None
-
-
-def test_tag_staleness_warning_silent_when_tag_current(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """No warning when the latest tag already matches plugin.json."""
-    monkeypatch.setattr(next_prep, "run_git", lambda *_a, **_k: "main")
-    monkeypatch.setattr(next_prep, "load_config", lambda _r: ForgeConfig())
-    monkeypatch.setattr(next_prep, "read_local_plugin_version", lambda _r: "1.24.1")
-    monkeypatch.setattr(next_prep, "latest_v_tag", lambda _r: "v1.24.1")
-    assert next_prep.tag_staleness_warning(tmp_path) is None
-
-
-def test_tag_misuse_warning_fires_without_manifest(tmp_path: Path) -> None:
-    """A repo without plugin.json → warning pointing at forge-release."""
-    warning = next_prep._tag_misuse_warning(tmp_path)
-    assert warning is not None
-    assert "forge-release" in warning
-
-
-def test_tag_misuse_warning_silent_with_manifest(tmp_path: Path) -> None:
-    """Plugin manifest present → --tag is the intended pattern, no warning."""
-    (tmp_path / ".claude-plugin").mkdir()
-    (tmp_path / ".claude-plugin" / "plugin.json").write_text(
-        json.dumps({"name": "x", "version": "1.0.0"})
-    )
-    assert next_prep._tag_misuse_warning(tmp_path) is None
-
-
 def test_tag_and_report_advises_on_pending_fragments(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Fragments mode with pending fragments → the release advisory is logged.
 
-    ``_tag_and_report`` is called directly with tagging and pruning
-    disabled, so only the advisory tail runs — no git needed.
+    ``_tag_and_report`` is called directly with pruning disabled, so only
+    the advisory tail runs — no git needed.
     """
     (tmp_path / "pyproject.toml").write_text(
         '[tool.forge.changelog]\nmode = "fragments"\n'
     )
     (tmp_path / "changelog.d").mkdir()
     (tmp_path / "changelog.d" / "a.added.md").write_text("bump: minor\n- x\n")
-    args = argparse.Namespace(tag=False, no_prune_branches=True, prune_remote=False)
+    args = argparse.Namespace(no_prune_branches=True, prune_remote=False)
     with caplog.at_level("INFO"):
         assert next_prep._tag_and_report(tmp_path, args) == 0
     assert "1 pending changelog fragment(s)" in caplog.text
     assert "forge-changelog release" in caplog.text
-
-
-def test_tag_and_report_logs_reason_when_no_tag(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """``--tag`` with no tag decided → ``No release tag: <reason>`` is logged.
-
-    SCENARIO: the tag decision carries a reason; the operator must see it.
-    MOCK SETUP: misuse check and tag decision stubbed; no git needed.
-    EXPECTED BEHAVIOR: the reason text appears in the INFO log.
-    """
-    monkeypatch.setattr(next_prep, "_tag_misuse_warning", lambda _root: None)
-    monkeypatch.setattr(
-        next_prep,
-        "_maybe_tag_release",
-        lambda _root: next_prep.TagDecision(None, "manifest is parked"),
-    )
-    args = argparse.Namespace(tag=True, no_prune_branches=True, prune_remote=False)
-    with caplog.at_level("INFO"):
-        assert next_prep._tag_and_report(tmp_path, args) == 0
-    assert "No release tag: manifest is parked" in caplog.text
 
 
 @pytest.mark.parametrize(
@@ -582,7 +311,7 @@ def test_tag_and_report_fragment_advisory_silent(
     """
     if pyproject_text:
         (tmp_path / "pyproject.toml").write_text(pyproject_text)
-    args = argparse.Namespace(tag=False, no_prune_branches=True, prune_remote=False)
+    args = argparse.Namespace(no_prune_branches=True, prune_remote=False)
     with caplog.at_level("INFO"):
         assert next_prep._tag_and_report(tmp_path, args) == 0
     assert "pending changelog fragment" not in caplog.text
@@ -591,9 +320,9 @@ def test_tag_and_report_fragment_advisory_silent(
 def test_main_no_sync_skips_checkout_and_pull(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """--no-sync tags on the current HEAD without fetch/switch/pull.
+    """--no-sync works on the current HEAD without fetch/switch/pull.
 
-    SCENARIO: CI tag job checked out the exact validated SHA; syncing to
+    SCENARIO: a CI job checked out the exact validated SHA; syncing to
     the branch tip would re-race. MOCK SETUP: run_git + subprocess.run
     recorded. EXPECTED BEHAVIOR: no "switch"/"pull" invocations; tags
     fetched; exit 0.
@@ -601,7 +330,7 @@ def test_main_no_sync_skips_checkout_and_pull(
     captured = _run_main_capturing_git(
         monkeypatch,
         tmp_path,
-        ["forge-next-prep", "--tag", "--no-sync", "--no-prune-branches"],
+        ["forge-next-prep", "--no-sync", "--no-prune-branches"],
     )
     assert not any(c[:1] == ["switch"] for c in captured)
     assert not any(c[:1] == ["pull"] for c in captured)

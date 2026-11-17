@@ -14,9 +14,10 @@ from pathlib import Path
 
 import pytest
 
+from forge import install_vibe as install_vibe_module
 from forge.audit.agents import REQUIRED_SECTIONS
 from forge.install_vibe import _generate_roster_sidecar, install_vibe
-from forge.instruction_files import shipped_path
+from forge.instruction_files import generated_name, shipped_path
 
 
 _HOOKS_DIR = "${CLAUDE_PLUGIN_ROOT}/claude-hooks"
@@ -24,39 +25,20 @@ _HOOKS_DIR = "${CLAUDE_PLUGIN_ROOT}/claude-hooks"
 
 @pytest.fixture
 def consumer_repo(tmp_path: Path) -> Path:
-    """A tmp consumer checkout shaped like a plugin install.
+    """A tmp consumer checkout with its own shipped sources.
 
-    Contains ``.claude-plugin/plugin.json`` with one Bash PreToolUse hook,
-    the plugin's ``claude-hooks/block_demo.sh``, one skill, one agent md
-    with frontmatter, and FOUNDATION.md + CLAUDE.md (the latter carrying
-    an ``@FOUNDATION.md`` include directive).
+    Carries one skill, one agent md with frontmatter, and FOUNDATION.md
+    + CLAUDE.md (the latter with an ``@FOUNDATION.md`` include). It
+    deliberately ships **no** ``claude-hooks/`` of its own, so
+    :func:`forge.instruction_files.shipped_path` falls back to the
+    packaged guards — the consumer case, where the scripts the wiring
+    names come from the installed package. Tests needing different
+    wiring inject it by replacing the renderer.
 
     Returns:
         The project root path.
     """
     root = tmp_path / "consumer"
-    plugin_dir = root / ".claude-plugin"
-    hooks_dir = plugin_dir / "claude-hooks"
-    hooks_dir.mkdir(parents=True)
-    (hooks_dir / "block_demo.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    plugin_json = {
-        "name": "demo",
-        "version": "0.0.0",
-        "hooks": {
-            "PreToolUse": [
-                {
-                    "matcher": "Bash",
-                    "hooks": [
-                        {
-                            "command": f"{_HOOKS_DIR}/block_demo.sh",
-                            "timeout": 5,
-                        }
-                    ],
-                }
-            ]
-        },
-    }
-    (plugin_dir / "plugin.json").write_text(json.dumps(plugin_json), encoding="utf-8")
     skill_dir = root / "skills" / "demo"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(
@@ -102,34 +84,47 @@ def test_roster_sidecar_shape_project_root_and_expansion(consumer_repo: Path) ->
     commands = _roster_commands(roster)
     assert commands
     for command in commands:
+        # Commands are absolute by the time they reach the sidecar, which
+        # the dispatcher runs directly, so no placeholder may survive and
+        # the named script must exist.
         assert "${CLAUDE_PLUGIN_ROOT}" not in command
-        # Consumer layout: guards expand under the plugin dir, and the
-        # expanded path really exists (the dispatcher runs it at runtime).
-        assert command.startswith(str(consumer_repo / ".claude-plugin"))
-        assert (
-            consumer_repo / command.removeprefix(str(consumer_repo) + "/")
-        ).is_file()
+        assert "${" not in command
+        assert Path(command).is_file()
 
 
 def test_roster_sidecar_merges_duplicate_matcher_hooks_and_warns(
-    consumer_repo: Path,
+    consumer_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Two groups sharing a matcher keep both hooks and warn once.
 
-    Behavior test: a roster keys hooks by matcher, so assignment used to
-    drop the earlier group silently.
+    SCENARIO: wiring that declares the same matcher twice under one
+    event, injected by replacing the renderer.
+    EXPECTED BEHAVIOR: a roster keys hooks by matcher, so assignment used
+    to drop the earlier group in silence; both survive and one warning
+    names the event and matcher.
     """
-    hooks_dir = consumer_repo / ".claude-plugin" / "claude-hooks"
-    (hooks_dir / "block_other.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    plugin_json_path = consumer_repo / ".claude-plugin" / "plugin.json"
-    plugin_json = json.loads(plugin_json_path.read_text(encoding="utf-8"))
-    plugin_json["hooks"]["PreToolUse"] = [
-        {"matcher": "Bash", "hooks": [{"command": f"{_HOOKS_DIR}/block_demo.sh"}]},
-        {"matcher": "Bash", "hooks": [{"command": f"{_HOOKS_DIR}/block_other.sh"}]},
-    ]
-    plugin_json_path.write_text(json.dumps(plugin_json), encoding="utf-8")
+    monkeypatch.setattr(
+        install_vibe_module,
+        "rendered_hooks",
+        lambda command_for: {
+            "PreToolUse": [
+                {
+                    "matcher": "Bash",
+                    "hooks": [
+                        {"type": "command", "command": command_for("block_demo.sh")}
+                    ],
+                },
+                {
+                    "matcher": "Bash",
+                    "hooks": [
+                        {"type": "command", "command": command_for("block_other.sh")}
+                    ],
+                },
+            ]
+        },
+    )
 
-    roster, warnings = _generate_roster_sidecar(plugin_json_path, consumer_repo)
+    roster, warnings = _generate_roster_sidecar(consumer_repo)
 
     commands = [
         guard["command"] for guard in roster["events"]["PreToolUse"]["matchers"]["Bash"]
@@ -141,19 +136,33 @@ def test_roster_sidecar_merges_duplicate_matcher_hooks_and_warns(
 
 
 def test_subagent_toml_schema_and_prompt_pair(consumer_repo: Path) -> None:
-    """Each agent md yields a valid subagent TOML plus its prompt file."""
+    """Each shipped agent yields a valid subagent TOML plus its prompt file.
+
+    SCENARIO: a consumer repo with no sources of its own, so the agents
+    come from the installed package — the consumer case, and now the only
+    case, since a repo's own directory of the same name is deliberately
+    ignored so a repo cannot substitute forge's definitions.
+    EXPECTED BEHAVIOR: the TOML names the published (prefixed) agent and
+    its matching prompt id, and the prompt file carries the definition.
+    """
     assert install_vibe(consumer_repo) == 0
-    toml_path = consumer_repo / ".vibe" / "agents" / "myagent.toml"
+    published = generated_name("design-checker")
+    toml_path = consumer_repo / ".vibe" / "agents" / f"{published}.toml"
     with toml_path.open("rb") as f:
         data = tomllib.load(f)
     assert data["agent_type"] == "subagent"
-    assert data["system_prompt_id"] == "myagent"
-    assert data["description"] == "Demo agent"
-    prompt = consumer_repo / ".vibe" / "prompts" / "myagent.md"
+    assert data["system_prompt_id"] == published
+    assert data["description"]
+    prompt = consumer_repo / ".vibe" / "prompts" / f"{published}.md"
     assert prompt.is_file()
-    assert prompt.read_text(encoding="utf-8") == (
-        consumer_repo / "agents" / "myagent.md"
-    ).read_text(encoding="utf-8")
+    body = prompt.read_text(encoding="utf-8")
+    # The prompt is the packaged definition with its references rewritten,
+    # so no `forge:`-marked reference survives for the harness to fail on.
+    # Its own frontmatter `name:` is deliberately NOT rewritten: Vibe
+    # resolves the agent through the TOML's `system_prompt_id` asserted
+    # above, so the prompt's own field is inert text.
+    assert "forge:precommit-fixer" not in body
+    assert "forge-precommit-fixer" in body
 
 
 def test_check_mode_writes_nothing(consumer_repo: Path) -> None:
@@ -271,18 +280,31 @@ def test_model_presets_never_clobber_user_alias(tmp_path: Path) -> None:
     assert haiku == [{"name": "my-own", "alias": "forge-haiku"}]
 
 
-def test_subagent_toml_pins_active_model_from_tier(tmp_path: Path) -> None:
-    """An agent with model: sonnet gets active_model = forge-sonnet."""
+def test_subagent_toml_pins_active_model_from_tier(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An agent with model: sonnet gets active_model = forge-sonnet.
+
+    MOCK SETUP: `install_vibe.shipped_path` is redirected to this repo's
+    own directories, so the test can supply one agent with a known tier.
+    In production that function always reads the installed package and
+    ignores a repo's directories, so a repo cannot substitute forge's
+    definitions — the controlled input is the test's, not a behaviour.
+    """
     root = tmp_path / "c"
-    (root / ".claude-plugin").mkdir(parents=True)
-    (root / ".claude-plugin" / "plugin.json").write_text('{"hooks": {}}')
+    root.mkdir(parents=True)
+    monkeypatch.setattr(
+        install_vibe_module,
+        "shipped_path",
+        lambda rel: root / rel,
+    )
     agents = root / "agents"
     agents.mkdir()
     (agents / "a.md").write_text(
         "---\nname: a\ndescription: d\nmodel: sonnet\n---\nbody\n"
     )
     assert install_vibe(root) == 0
-    toml_text = (root / ".vibe" / "agents" / "a.toml").read_text()
+    toml_text = (root / ".vibe" / "agents" / f"{generated_name('a')}.toml").read_text()
     assert 'active_model = "forge-sonnet"' in toml_text
 
 
@@ -316,7 +338,9 @@ class TestBareConsumerRepo:
         prompts = sorted((root / ".vibe" / "prompts").glob("*.md"))
         assert len(tomls) == 14
         assert len(prompts) == 14
-        assert (root / ".vibe" / "agents" / "prior-art.toml").is_file()
+        published = root / ".vibe" / "agents" / f"{generated_name('prior-art')}.toml"
+        assert published.is_file()
+        assert not (root / ".vibe" / "agents" / "prior-art.toml").exists()
         assert (root / ".vibe" / "hooks.toml").is_file()
         assert (root / ".vibe" / "forge-roster.json").is_file()
         skills = list((root / ".agents" / "skills").iterdir())
@@ -344,8 +368,8 @@ class TestBareConsumerRepo:
             encoding="utf-8",
         )
         (root / "CLAUDE.md").write_text("# Rules\n\n@FOUNDATION.md\n", encoding="utf-8")
-        agents_src = shipped_path(root, "agents")
-        skills_src = shipped_path(root, "skills")
+        agents_src = shipped_path("agents")
+        skills_src = shipped_path("skills")
         names = {p.stem for p in agents_src.glob("*.md")} | {
             p.name for p in skills_src.iterdir() if p.is_dir()
         }
@@ -376,7 +400,7 @@ class TestBareConsumerRepo:
         assert "<!-- forge:state:begin -->" in instructions
         assert "<!-- forge:state:end -->" in instructions
         assert "forge:<name>" in instructions
-        assert "Spawn design-checker." in instructions
+        assert f"Spawn {generated_name('design-checker')}." in instructions
 
     def test_subagent_description_has_no_namespaced_reference(
         self, tmp_path: Path
@@ -392,7 +416,8 @@ class TestBareConsumerRepo:
             '[project]\nname = "bare"\nversion = "0.1.0"\n', encoding="utf-8"
         )
         assert install_vibe(root) == 0
-        with (root / ".vibe" / "agents" / "test-writer.toml").open("rb") as f:
+        toml_path = root / ".vibe" / "agents" / f"{generated_name('test-writer')}.toml"
+        with toml_path.open("rb") as f:
             description = tomllib.load(f)["description"]
         assert "test-advisor" in description
         assert "forge:" not in description

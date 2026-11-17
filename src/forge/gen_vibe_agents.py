@@ -27,7 +27,12 @@ from forge.agent_harness import (
     HarnessName,
     map_plugin_references,
 )
-from forge.instruction_files import flatten_agents_md, shipped_path
+from forge.instruction_files import (
+    flatten_agents_md,
+    generated_name,
+    renamed_frontmatter,
+    shipped_path,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -111,11 +116,15 @@ def _copy_skills(src_dir: Path, dest_dir: Path) -> tuple[int, list[str]]:
         # Read original content
         content = skill_file.read_text(encoding="utf-8")
 
-        # Update references
-        updated_content = _update_skill_content(content)
+        # Update references, and rename the skill to its published name
+        # so the frontmatter matches the directory it lands in.
+        updated_content = _update_skill_content(
+            renamed_frontmatter(content, skill_dir.name)
+        )
 
-        # Create destination subdirectory
-        dest_skill_dir = dest_dir / skill_dir.name
+        # Published under the prefixed name, keeping forge's skills
+        # distinguishable from the repo's own.
+        dest_skill_dir = dest_dir / generated_name(skill_dir.name)
         dest_skill_dir.mkdir(exist_ok=True)
 
         # Write updated content
@@ -203,7 +212,7 @@ def generate_vibe_agents(
 
     # The checkout's own skills/ win (forge's repo); consumer repos use
     # the copy shipped inside the installed package.
-    src_skills = shipped_path(repo_root, "skills")
+    src_skills = shipped_path("skills")
     dest_skills = repo_root / ".agents" / "skills"
 
     if not src_skills.exists():

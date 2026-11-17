@@ -12,13 +12,10 @@ Operations (in order, each idempotent):
 1. ``git fetch --prune`` — refresh remote tracking.
 2. ``git switch <target>`` (``git checkout`` fallback for git < 2.23),
    then ``git pull --ff-only`` — sync to latest.
-3. **Optional auto-tag** (``--tag``): if ``.claude-plugin/plugin.json``
-   has a ``version`` strictly ahead of the latest ``v*`` tag, tag the
-   merge commit and push the tag — in fragments mode that is the
-   assembly merge, the only commit whose tree names the new version.
-   When it does not tag it logs why. On a repo with no plugin manifest
-   the flag warns and skips: nothing names the version to tag, and
-   ``forge-release`` cuts release tags there.
+3. **Tagging is not done here.** A release tag is cut per merge by
+   ``forge-changelog auto-tag`` in CI, from the fragments that merge
+   brought; ``forge-release`` cuts one by hand. This CLI only syncs and
+   prunes.
 4. **Prune stale branches** (``--prune-branches``, default ON): delete
    local branches whose remote shows ``[origin/...: gone]``. Uses
    ``git branch -d`` (safe) — never ``-D``.
@@ -63,15 +60,10 @@ from forge.git_utils import (
     GH_TIMEOUT_S,
     PUSH_TIMEOUT_S,
     configure_cli_logging,
-    create_annotated_tag,
     delete_remote_branch,
     fetch_tags_best_effort,
-    latest_v_tag,
     network_git_env,
-    parse_semver,
-    read_local_plugin_version,
     run_git,
-    tag_on_remote,
 )
 
 
@@ -82,201 +74,6 @@ logger = logging.getLogger(__name__)
 # Applied via fullmatch — a bare `$` would tolerate one trailing newline.
 _SEMVER_RE = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 _GONE_BRANCH_RE = re.compile(r"^\*?\s*(\S+)\s+[0-9a-f]+\s+\[origin/\S+: gone\]")
-
-
-def _is_newer(plugin_ver: str, latest_tag: str | None) -> bool:
-    """Return True when ``v<plugin_ver>`` would sort *after* ``latest_tag``.
-
-    Compares parsed semver tuples (shared parser from
-    ``forge.git_utils.parse_semver``) — no subprocess.
-
-    Args:
-        plugin_ver: Bare semver string from plugin.json.
-        latest_tag: Latest existing ``v*`` tag or ``None``.
-
-    Returns:
-        ``True`` when ``plugin_ver`` is strictly newer than ``latest_tag``
-        (or when no tags exist yet, or when ``latest_tag`` is unparseable
-        as semver).
-    """
-    if latest_tag is None:
-        return True
-    plugin_tuple = parse_semver(plugin_ver)
-    tag_tuple = parse_semver(latest_tag)
-    if plugin_tuple is None:
-        return False  # malformed plugin.json — guarded upstream, defensive here
-    if tag_tuple is None:
-        return True  # non-semver tag (e.g. "v0.1-pre") — treat plugin as newer
-    return plugin_tuple > tag_tuple
-
-
-def tag_staleness_warning(repo_root: Path) -> str | None:
-    """Return a warning when the integration branch owes a rolling-next tag.
-
-    Fires only on the configured ``base_branch`` and only when
-    ``plugin.json``'s version is strictly newer than the latest ``v*``
-    tag — i.e. a merge bumped the rolling-next version but
-    ``forge-next-prep --tag`` was never run, so the tag silently lags and
-    the pre-commit guard keeps passing without forcing the next bump. This
-    is the advisory the ``forge-post-merge`` hook surfaces on ``git pull``.
-    Detection only — it never tags or pushes (an irreversible release must
-    stay an explicit human action).
-
-    Args:
-        repo_root: Git repo root.
-
-    Returns:
-        A one-line warning string, or ``None`` when not on ``base_branch``,
-        when there is no plugin manifest, or when the tag is already
-        current.
-    """
-    current = run_git("rev-parse", "--abbrev-ref", "HEAD", cwd=repo_root, check=False)
-    if not current or current != load_config(repo_root).base_branch:
-        return None
-    plugin_ver = read_local_plugin_version(repo_root)
-    if plugin_ver is None:
-        return None
-    latest = latest_v_tag(repo_root)
-    if not _is_newer(plugin_ver, latest):
-        return None
-    return (
-        f"plugin.json {plugin_ver} is ahead of the latest tag "
-        f"{latest or '(none)'} — run `forge-next-prep --tag` to tag this release."
-    )
-
-
-def _tag_misuse_warning(repo_root: Path) -> str | None:
-    """Return a warning when ``--tag`` is used in a repo with no manifest.
-
-    ``--tag`` cuts the version ``.claude-plugin/plugin.json`` names. A
-    repo with no manifest releases via ``forge-release``
-    instead, so ``--tag`` there is almost always a command copied from
-    forge's own workflow — warn loudly rather than no-op silently.
-
-    Args:
-        repo_root: Repo root.
-
-    Returns:
-        A one-line warning when the repo has no plugin manifest;
-        ``None`` when ``--tag`` is applicable.
-    """
-    if read_local_plugin_version(repo_root) is not None:
-        return None
-    return (
-        "--tag skipped: no .claude-plugin/plugin.json, so nothing names the "
-        "version to tag. Cut release tags with `forge-release` instead "
-        "(docs/consumer-release.md)."
-    )
-
-
-class TagDecision(NamedTuple):
-    """Outcome of ``--tag``: the tag cut, or why none was.
-
-    The reason is always set, so the CI log of a merge that cut no tag
-    says which of the no-op cases applied instead of a bare "nothing to
-    do" that reads the same whether or not a release was owed.
-
-    Attributes:
-        tag: The tag created and pushed, or ``None`` when none was.
-        reason: One line explaining the decision.
-    """
-
-    tag: str | None
-    reason: str
-
-
-def _maybe_tag_release(repo_root: Path) -> TagDecision:
-    """Tag and push ``v<plugin.json.version>`` when newer than the latest tag.
-
-    Idempotent: no-op when plugin.json is missing, the version field is
-    non-semver, or the version is not strictly ahead of the latest tag.
-
-    Args:
-        repo_root: Repo root.
-
-    Returns:
-        The decision — ``tag`` set (e.g. ``"v1.2.10"``) on success,
-        ``None`` otherwise, with the reason either way.
-
-    Raises:
-        subprocess.TimeoutExpired: When the tag push exceeds
-            :data:`~forge.git_utils.PUSH_TIMEOUT_S` and origin cannot be
-            shown to hold the tag; what the operator must do next is
-            logged first. A timed-out push the remote did receive counts
-            as success.
-    """
-    plugin_ver = read_local_plugin_version(repo_root)
-    if plugin_ver is None:
-        return TagDecision(None, "no .claude-plugin/plugin.json version to tag")
-    if parse_semver(plugin_ver) is None:
-        return TagDecision(None, f"plugin.json version {plugin_ver!r} is not semver")
-    latest = latest_v_tag(repo_root)
-    if not _is_newer(plugin_ver, latest):
-        if latest is not None and parse_semver(plugin_ver) == parse_semver(latest):
-            return TagDecision(
-                None,
-                f"plugin.json {plugin_ver} is already tagged as {latest}; the "
-                "next tag is cut when a release PR (`forge-changelog "
-                "release-pr`) raising plugin.json merges",
-            )
-        return TagDecision(
-            None,
-            f"plugin.json {plugin_ver} is behind the latest tag {latest}; "
-            "nothing to tag until a release PR (`forge-changelog release-pr`) "
-            "raises plugin.json past it",
-        )
-    tag = f"v{plugin_ver}"
-    create_annotated_tag(repo_root, tag)
-    reason = f"plugin.json {plugin_ver} is ahead of {latest}"
-    try:
-        run_git(
-            "push",
-            "origin",
-            tag,
-            cwd=repo_root,
-            env=network_git_env(repo_root),
-            timeout=PUSH_TIMEOUT_S,
-        )
-    except subprocess.TimeoutExpired:
-        # A timed-out push may still have landed: the remote can accept
-        # the ref and stall before git hears back. Ask before failing.
-        on_remote = tag_on_remote(repo_root, tag)
-        if not on_remote:
-            _log_tag_push_timeout(tag, on_remote=on_remote)
-            raise
-        reason += "; the timed-out push landed"
-    return TagDecision(tag, reason)
-
-
-def _log_tag_push_timeout(tag: str, *, on_remote: bool | None) -> None:
-    """Tell the operator how to finish a tag push that timed out.
-
-    Logged without a traceback: the stack would only show forge waiting
-    on git, and reads in CI as a crash rather than an unresponsive remote.
-
-    Args:
-        tag: The tag that was created locally but whose push timed out.
-        on_remote: What the remote probe answered — ``False`` when origin
-            lacks the tag, ``None`` when it could not be asked.
-    """
-    state = (
-        "origin does not have it"
-        if on_remote is False
-        else "whether origin has it is unknown"
-    )
-    # A re-run in the same checkout would not retry: latest_v_tag now sees
-    # the local tag, so plugin.json reads as "already tagged".
-    logger.error(
-        "%s was created locally but its push timed out after %ss, and %s; "
-        "once origin responds, push it with `git push origin %s`. "
-        "Re-running forge-next-prep --tag in this checkout will not retry "
-        "(the local tag counts as already tagged); a fresh checkout "
-        "without the tag does.",
-        tag,
-        PUSH_TIMEOUT_S,
-        state,
-        tag,
-    )
 
 
 def _fetch_origin(repo_root: Path) -> bool:
@@ -752,14 +549,6 @@ def main() -> int:
         ),
     )
     parser.add_argument(
-        "--tag",
-        action="store_true",
-        help=(
-            "Tag plugin.json's version when it's ahead of the latest v* tag "
-            "and push the tag (forge's rolling-next workflow). Off by default."
-        ),
-    )
-    parser.add_argument(
         "--no-prune-branches",
         action="store_true",
         help="Skip the stale-branch prune step.",
@@ -878,34 +667,19 @@ def _pull_ff_only(repo_root: Path, target_branch: str) -> bool:
 
 
 def _tag_and_report(repo_root: Path, args: argparse.Namespace) -> int:
-    """Run the post-sync tail: optional tag, optional prunes, advisory.
+    """Run the post-sync tail: optional prunes, advisory.
 
-    Shared by the normal (synced) path and ``--no-sync``, so the tag /
-    prune / promotion-advisory behavior cannot drift between them.
+    Shared by the normal (synced) path and ``--no-sync``, so the prune and
+    advisory behavior cannot drift between them.
 
     Args:
         repo_root: Repo root.
-        args: Parsed CLI namespace (``tag``, ``no_prune_branches``,
+        args: Parsed CLI namespace (``no_prune_branches``,
             ``prune_remote``).
 
     Returns:
-        ``1`` when the tag push timed out (already logged); otherwise ``0``
-        — other failures in these steps raise.
+        ``0`` — failures in these steps raise.
     """
-    if args.tag:
-        misuse = _tag_misuse_warning(repo_root)
-        if misuse:
-            logger.warning(misuse)
-        else:
-            try:
-                decision = _maybe_tag_release(repo_root)
-            except subprocess.TimeoutExpired:
-                return 1
-            if decision.tag:
-                logger.info("Tagged and pushed %s (%s)", decision.tag, decision.reason)
-            else:
-                logger.info("No release tag: %s", decision.reason)
-
     if not args.no_prune_branches:
         _log_prune_result(repo_root)
     if args.prune_remote:

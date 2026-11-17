@@ -76,7 +76,6 @@ import logging
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 import time
@@ -145,11 +144,9 @@ from forge.text_clip import truncate
 from forge.version_surfaces import (
     DIST_NAME,
     SKEW_REMEDIATION,
-    checkout_plugin_current,
     editable_install_origin,
     hook_sidecar_version,
     pip_version,
-    target_plugin_version,
 )
 
 
@@ -426,11 +423,11 @@ def step_auto_rebuild(repo_root: Path) -> StepResult:
     rebuild warns rather than blocking — ``env_sync`` still renders the
     actionable block.
 
-    This step keeps ``is_non_interactive()`` while its siblings
-    ``env_sync`` and ``plugin_sync`` moved to ``is_ci()``, and the
-    difference is deliberate rather than an oversight: those two
-    *report*, this one *acts*. Running a configured rebuild command
-    inside an agent's commit would change the contributor's environment
+    This step keeps ``is_non_interactive()`` while its sibling
+    ``env_sync`` moved to ``is_ci()``, and the difference is deliberate
+    rather than an oversight: that one *reports*, this one *acts*.
+    Running a configured rebuild command inside an agent's commit would
+    change the contributor's environment
     without them asking — the side effect FOUNDATION §2 guards. A
     skipped report is a missed warning; a skipped action is nothing
     happening, which is the safe direction for this one.
@@ -766,105 +763,6 @@ def step_env_sync(repo_root: Path) -> StepResult:
     )
 
 
-def _plugin_sync_skip(repo_root: Path) -> StepResult | None:
-    """Return the skipped ``plugin_sync`` result when the gate does not apply.
-
-    Args:
-        repo_root: Git repo root.
-
-    Returns:
-        A skipped ``StepResult`` when the repo ships no plugin, runs in CI,
-        has an armed emergency sentinel, or lacks ``claude``; ``None`` when
-        the gate must judge the install.
-    """
-    if not (repo_root / ".claude-plugin" / "plugin.json").is_file():
-        return StepResult(
-            name="plugin_sync",
-            passed=True,
-            output="(no plugin shipped — skipped)",
-            skipped=True,
-        )
-    if is_ci():
-        return StepResult(
-            name="plugin_sync",
-            passed=True,
-            output="(CI — skipped)",
-            skipped=True,
-        )
-    armed = _emergency_skip(repo_root, "plugin_sync")
-    if armed is not None:
-        return armed
-    if shutil.which("claude") is None:
-        return StepResult(
-            name="plugin_sync",
-            passed=True,
-            output="(Claude Code not installed — skipped)",
-            skipped=True,
-        )
-    return None
-
-
-def step_plugin_sync(repo_root: Path) -> StepResult:
-    """Flag a checkout whose own forge plugin install is not its release.
-
-    A repo that ships a plugin runs its agents and hooks from the Claude
-    Code plugin install, not from the tree — so after a release merges,
-    a checkout keeps the old plugin until ``forge-plugin-sync`` installs
-    the new one, which the post-merge / post-checkout hooks and
-    ``dev/setup.sh`` normally do on their own. The read-only twin of that
-    command: both judge with
-    :func:`forge.version_surfaces.checkout_plugin_current`. Advisory by
-    default — under rolling-next the manifest names a version before it
-    is published anywhere a sync could fetch, and a blocking gate refused
-    the release commits that would publish it.
-    ``[tool.forge.plugin_sync].blocking = true`` opts back into refusing.
-    Self-skips when the repo ships no plugin, when ``claude`` is not
-    installed, in CI (FOUNDATION §15), and while an emergency sentinel is
-    armed (see :func:`_emergency_skip`).
-
-    ``is_ci()``, never ``is_non_interactive()``: the install this gate
-    guards is read by Claude Code sessions, so an agent-driven commit is
-    the case it most needs to cover. The tty-inclusive predicate is true
-    in every such session, which left the gate skipped exactly there.
-
-    Args:
-        repo_root: Git repo root.
-
-    Returns:
-        ``StepResult`` — skipped when nothing applies; failed (blocking or
-        WARN per config) when this checkout has no install of the release
-        ``.claude-plugin/plugin.json`` names.
-    """
-    skipped = _plugin_sync_skip(repo_root)
-    if skipped is not None:
-        return skipped
-    version = target_plugin_version(repo_root)
-    if version is None:
-        return StepResult(
-            name="plugin_sync",
-            passed=True,
-            output="plugin manifest version unreadable — not compared.",
-        )
-    if checkout_plugin_current(repo_root, version):
-        return StepResult(
-            name="plugin_sync",
-            passed=True,
-            output=f"forge {version} is this checkout's plugin.",
-        )
-    blocking = bool(_forge_step_config(repo_root, "plugin_sync").get("blocking", False))
-    return StepResult(
-        name="plugin_sync",
-        passed=False,
-        output=(
-            f"{'⛔' if blocking else '⚠️ '} This checkout has no install of forge "
-            f"{version}, the release its manifest names. Your session runs "
-            f"another release's agents and hooks — run "
-            f"`{SKEW_REMEDIATION['plugin']}`."
-        ),
-        non_blocking=not blocking,
-    )
-
-
 def step_ruff(repo_root: Path) -> StepResult:
     """Run ``fix-forge-ruff`` — owns the ruff phase end-to-end.
 
@@ -1048,30 +946,6 @@ def step_intake_check(repo_root: Path) -> StepResult:
         return StepResult(name="intake_check", passed=False, output=output)
     count = len(intake.discover(intake_dir))
     return StepResult(name="intake_check", passed=True, output=f"{count} entries OK")
-
-
-def step_manifest_json(repo_root: Path) -> StepResult:
-    """Run ``verify-forge-manifest`` — owns the manifest-JSON validation phase.
-
-    Thin shell-out matching the pattern of every other phase step. The
-    CLI itself decides whether to skip (no ``.claude-plugin/`` dir) and
-    writes the corresponding log entry.
-
-    Args:
-        repo_root: Git repo root.
-
-    Returns:
-        ``StepResult`` mirroring the CLI exit code.
-
-    Raises:
-        SystemExit: If ``verify-forge-manifest`` is not on PATH.
-    """
-    require_cli("verify-forge-manifest", caller="forge-precommit")
-    passed, output = _run(["verify-forge-manifest"], cwd=repo_root)
-    skipped = "skipped" in output
-    return StepResult(
-        name="manifest_json", passed=passed, output=output, skipped=skipped
-    )
 
 
 def step_commit_types_parity(repo_root: Path) -> StepResult:
@@ -1863,30 +1737,6 @@ def step_agent_doc(repo_root: Path) -> StepResult:
     require_cli("verify-forge-agent-doc", caller="forge-precommit")
     passed, output = _run(["verify-forge-agent-doc"], cwd=repo_root)
     return StepResult(name="agent_doc", passed=passed, output=output)
-
-
-def step_plugin_version(repo_root: Path) -> StepResult:
-    """Run ``verify-forge-plugin-version`` — owns the rolling-next guard.
-
-    Thin shell-out matching the pattern of every other phase step. The
-    CLI itself decides whether to skip (no plugin.json, no tags, release
-    commit) and writes the corresponding log entry.
-
-    Args:
-        repo_root: Git repo root.
-
-    Returns:
-        ``StepResult`` mirroring the CLI exit code.
-
-    Raises:
-        SystemExit: If ``verify-forge-plugin-version`` is not on PATH.
-    """
-    require_cli("verify-forge-plugin-version", caller="forge-precommit")
-    passed, output = _run(["verify-forge-plugin-version"], cwd=repo_root)
-    skipped = "skipped" in output
-    return StepResult(
-        name="plugin_version", passed=passed, output=output, skipped=skipped
-    )
 
 
 def step_smart_test(repo_root: Path) -> StepResult:
@@ -2716,16 +2566,6 @@ def _changelog_version_skip_gate(repo_root: Path) -> StepResult | None:
                 + "\n".join(errors)
             ),
         )
-    if (repo_root / ".claude-plugin" / "plugin.json").exists():
-        return StepResult(
-            name=name,
-            passed=True,
-            output=(
-                "Manifest-versioned repo — verify-forge-plugin-version owns "
-                "the declared-version invariant; skipped."
-            ),
-            skipped=True,
-        )
     return None
 
 
@@ -3298,7 +3138,6 @@ def timing_markers(text: str) -> dict[str, str]:
 _STEP_REGISTRY: tuple[StepDef, ...] = (
     StepDef("auto_rebuild", step_auto_rebuild, checks_files=False),
     StepDef("env_sync", step_env_sync, checks_files=False),
-    StepDef("plugin_sync", step_plugin_sync, checks_files=False),
     StepDef("regen_docs", step_regen_docs),
     StepDef("ruff", step_ruff),
     StepDef("docstring_verification", step_docstrings),
@@ -3306,12 +3145,10 @@ _STEP_REGISTRY: tuple[StepDef, ...] = (
     StepDef("test_naming_check", step_test_naming),
     StepDef("repo_structure_check", step_repo_structure),
     StepDef("intake_check", step_intake_check),
-    StepDef("manifest_json", step_manifest_json),
     StepDef("cli_wiring", step_cli_wiring),
     StepDef("agent_doc", step_agent_doc),
     StepDef("commit_types_parity", step_commit_types_parity),
     StepDef("config_doc_check", step_config_doc_check),
-    StepDef("plugin_version", step_plugin_version),
     StepDef("vendored_integrity", step_vendored_integrity),
     StepDef("pip_audit", step_pip_audit),
     StepDef("cve_usage", step_cve_usage),

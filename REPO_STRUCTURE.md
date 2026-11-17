@@ -10,7 +10,6 @@ Checked on every commit by `verify-forge-repo-structure`: every listed file and 
    - next_prep.py: `forge-next-prep` — refresh main, optional rolling-next tag bump, prune stale branches; used by `/next` skill
    - emergency_state.py: dependency-free reader for the `forge-emergency` sentinel (fails closed: absent, unreadable or corrupt means "not armed"), split out so pre-commit gates can check it without importing the CLI's PR-planning surface
    - emergency.py: `forge-emergency` — one-shot deferred-verification bypass (start/status/record-pr/end): ledger issue first, gitignored sentinel, `forge-pr-create` claims the single allowed `wrapup-mode: emergency` publication and spends it once the PR exists, retroactive verification closes the ledger after delivery; pre-commit and §2 hooks never relieved
-   - rebump.py: `forge-rebump` — mechanical post-merge version-slot resolver: classifies a feature branch's bump intent from its fork-point manifest delta (merge stages mid-merge, merge-base on a clean tree), takes the next open slot above the latest tag, restacks/retitles the CHANGELOG in shared-heading mode (fragments mode: no-op), stages, never commits; refuses on unrelated conflicts
    - release.py: `forge-release` — single-track release orchestrator for tag-versioned (setuptools-scm) consumer repos: guards (clean tree, on base branch, single-track model, CHANGELOG entry) → annotated tag + push (exempt in `cli_wiring_exempt.toml`)
    - update_branch.py: `forge-update-branch` — bring a branch up to date with its base: checkpoint a dirty tree, merge, resolve files the branch already holds, generated artifacts and the version slot, stop (exit 3, intake lesson) on conflicts needing judgment; `--continue` checks and commits the merge (gated only when files were hand-edited) — never pushes; publish via `forge-commit`
    - commit.py: `forge-commit` — commits exactly the named files with the caller's message, then pushes; enforces in code the guards hooks cannot see in a CLI (protected/detached branch, passing pre-commit verdict, conventional ≤50-word message without AI attribution, index and commit equal to the named files, no force, bounded retry on transient push failures); `--no-push`, `--push-only` (exempt in `cli_wiring_exempt.toml` until its callers switch over); refuses while a merge is in progress (`forge-update-branch --continue` owns merges)
@@ -55,14 +54,12 @@ Checked on every commit by `verify-forge-repo-structure`: every listed file and 
    - verify_repo_structure.py: `verify-forge-repo-structure` — repo
      structure drift check
    - verify_test_naming.py: `verify-forge-test-naming` — test naming check
-   - verify_manifest.py: `verify-forge-manifest` — `.claude-plugin/*.json` JSON validation
    - verify_cli_wiring.py: `verify-forge-cli-wiring` — checks every `[project.scripts]` CLI is reachable from a wiring source; backs the `cli_wiring` step
    - verify_doc_consistency.py: `verify-forge-doc-consistency` — checks every `[project.scripts]` CLI is documented in `docs/cli-reference.md`; backs the opt-in `doc_consistency` pre-commit step (non-blocking)
    - verify_agent_doc.py: `verify-forge-agent-doc` — keeps a hand-maintained agent-architecture doc in sync (coverage of every agent/skill + no dangling hook/CLI/skill refs; `--diff` Layer-2 helper); backs the self-skipping `agent_doc` step
    - verify_cve_usage.py: `verify-forge-cve-usage` — usage-scoped second stage on `pip_audit`; intersects live pip-audit CVE IDs with a consumer cve_usage_patterns.toml map and greps source for the patterns, reporting how many reported CVEs it checked and naming the unchecked ones (WARN); backs the opt-in `cve_usage` pre-commit step (non-blocking). `--audit-json` reuses the `pip_audit` step's scan (one pip-audit run/commit); `--list-inactive` reports dormant map entries (read-only)
    - pip_audit_json.py: shared single-invocation pip-audit JSON helper (`run_json` + `advisories` / `ids_from_data` / `has_vulns` / `render_report`) and the `code_health/pip_audit.json` sidecar reader (`read_sidecar`, `sidecar_scanned_at`, `scan_postdates_fork`); the neutral seam `precommit.step_pip_audit`, `verify_cve_usage` and `pr_create` depend on so pip-audit runs at most once per invocation and every scan-age check agrees
    - install_readme_badges.py: `install-forge-readme-badges` — write/verify a drift-aware README status-badge managed block (shields.io + local docstring-coverage SVG); opt-in via `[tool.forge.badges]`; `--check` mode
-   - verify_plugin_version.py: `verify-forge-plugin-version` — rolling-next guard (plugin.json["version"] > latest git tag)
    - gen_cli_reference.py: `forge-gen-cli-reference` — CLI reference
      doc generator
    - gen_api_digest.py: `forge-gen-api-digest` — public-symbol API
@@ -73,22 +70,22 @@ Checked on every commit by `verify-forge-repo-structure`: every listed file and 
    - gen_common.py: shared drift-check and marker-region splice helpers for the `forge-gen-*`
      doc generators
    - doctor.py: `forge-doctor` — environment diagnostics
-   - version_surfaces.py: the version surfaces of one forge install (pip package, git-hook sidecar, this checkout's own Claude Code plugin install) plus the editable-install origin, the install-record and global-install readers, and the per-surface remediation strings — read once here for `forge-doctor`, `forge-plugin-sync` and `forge-precommit`'s `env_sync` / `plugin_sync` gates
+   - version_surfaces.py: the version surfaces of one forge install (pip package, hook sidecar) plus the editable-install origin and the per-surface remediation strings — read once here for `forge-doctor` and `forge-precommit`'s `env_sync` gate
    - plugin_roster.py: the one reader of the packaged `data/plugin-roster.toml` — `roster_names(kind)` plus the agent-name and namespaced-name (agents + skills, never hooks) unions; stdlib-only leaf, every failure and unexpected shape degrades to an empty set so a commit gate, an installer and a metrics report never block on a missing or malformed data file
-   - plugin_sync.py: `forge-plugin-sync` — installs this checkout's own forge release as its Claude Code plugin from a per-version marketplace
+   - hook_registry.py: the one reader of the packaged `data/hooks.toml` — `read_wiring()`, `rendered_hooks(command_for)` and `script_names()`; unlike the roster reader it **fails loud**, because a converter handed empty wiring would write a config with no guards in it and report success
    - install_githooks.py: `install-forge-githooks` — git hook installer (managed marker carries `body-sha` only — never the forge version, so wrappers stay byte-stable across bumps; the version lives in the gitignored `.forge-hook-version` sidecar; modified wrappers survive refresh)
    - post_merge.py: `forge-post-merge` — managed post-merge git-hook entrypoint (foundation drift check + backgrounded self-refresh of hook wrappers)
    - post_checkout.py: `forge-post-checkout` — managed post-checkout git-hook entrypoint (branch-flag-guarded foundation drift check)
    - _hook_helpers.py: private shared helper used by `post_merge` and `post_checkout` (drift-check sequence)
    - install_claudemd.py: `install-forge-claude-md` — CLAUDE.md scaffolder
-   - install_claude_settings.py: `install-forge-claude-settings` — write/verify `.claude/settings.json` keeping the shared forge plugin off (removes forge's `extraKnownMarketplaces` entry, sets `enabledPlugins["forge@forge"]` to `false`); idempotent + merge-preserving; `--check` mode
-   - claude_settings_schema.py: shared `.claude/settings.json` forge-block schema (shared marketplace key, `forge@forge` id, scaffold) — single source of truth for the CLIs that write that block (install_claude_settings, install_claudemd)
+   - claude_settings_schema.py: shared `.claude/settings.json` forge-block schema — the retired plugin's marketplace key and id (for cleanup) and the empty-file scaffold
    - install_labels.py: `install-forge-labels` — GitHub label installer
    - install_bootstrap.py: `install-forge-bootstrap` — one-shot umbrella that runs every installer + generator in dependency order
    - instruction_files.py: packaged FOUNDATION.md text, recursive `@`-include resolution, AGENTS.md flatten/drift (shared by install_claudemd + install_vibe + doctor)
+   - install_claude.py: `install-forge-claude` — generates the Claude Code integration into `.claude/` (agents, skills, guard scripts, their settings registration and a `.gitignore` naming what forge owns); idempotent, `--check`/`--verify` report drift without writing, and it never touches a file it does not own
    - agent_harness.py: frozen harness profiles for agent runtime adapters (Claude Code, Mistral Vibe) mapping to the guard contract — pure data, shared by hook_dispatch and the generators
    - hook_dispatch.py: `forge-hook-dispatch` — guard dispatcher that runs ordered guard set and emits harness-native verdict JSON
-   - gen_vibe_hooks.py: `forge-gen-vibe-hooks` — generates .vibe/hooks.toml from .claude-plugin/plugin.json
+   - gen_vibe_hooks.py: `forge-gen-vibe-hooks` — translates the canonical hook wiring into the Vibe hook config
    - gen_vibe_agents.py: `forge-gen-vibe-agents` — publishes skills to .agents/skills/ for Vibe compatibility
    - install_vibe.py: `install-forge-vibe` — installs Vibe integration (hooks.toml, roster, skills, subagents, prompts, AGENTS.md)
    - vibe_metadata.py: identity of one Vibe unified session store entry (CURRENT → latest generation's runtime-state.json, meta.json fallback) — kind, parent, cwd, agent name/model from the profile frontmatter; tolerant of corrupt files
@@ -129,18 +126,20 @@ Checked on every commit by `verify-forge-repo-structure`: every listed file and 
    - mermaid.min.js: vendored Mermaid UMD bundle (MIT, pinned) — copied next to `forge-gen-c4 --format html` output so the diagram renders offline
    - mermaid-layout-elk.iife.min.js: vendored Mermaid v11 ELK layout loader, re-bundled to a classic-script IIFE (esbuild, chunks inlined) so it loads from `file://` where the upstream ESM build can't; the HTML registers it for clean cross-cluster layout with a dagre fallback (MIT, pinned)
    - vibe-extra-hooks.toml: shipped Vibe-only extra hooks (post_agent replacements) merged into .vibe/hooks.toml at generation
+   - hooks.toml: the canonical, harness-neutral hook wiring — which guard runs on which event behind which matcher, naming scripts rather than paths so each converter builds the path its harness needs; read through `hook_registry` by the Claude and Vibe installers and generators
    - plugin-roster.toml: shipped roster of forge's plugin skills, hooks and agents, read through `plugin_roster` by `verify-forge-agent-doc` (consumer agent docs can name them), the Vibe installer and generators (namespace mapping) and `forge-metrics` (shipped agent types); regenerated and drift-checked by `tests/test_verify_agent_doc.py`
    - bench/: `forge-metrics bench` data — `sample/` (the `tally` sample project; `.py` files ship as `.py.tmpl`, `dot-<name>` as `.<name>`, so forge's own tools skip them), `tasks/*.toml` (five task specs: prompt + outcome checks), `files/` (task setup files and hidden check tests), `workflow.md` (the shared workflow rules appended to every prompt)
    - docs/: symlinks to the `forge-docs/` reference pages, shipped so `install-forge-claude-md` can write them into consumer repos
    - agents/: symlink to the repo-root `agents/` — shipped so `install-forge-vibe` generates the per-agent TOMLs in consumer repos from the installed package
    - skills/: symlink to the repo-root `skills/` — shipped for the same reason (published to the Vibe skills dir at install)
    - claude-hooks/: symlink to the repo-root `claude-hooks/` — shipped so generated hooks.toml/roster resolve guard commands in consumer repos
-   - plugin.json: symlink to `.claude-plugin/plugin.json` — the manifest `install-forge-vibe`/`forge-gen-vibe-hooks` read in consumer repos
    - VENDORED.md: provenance record (URL, version, SHA-256, rebuild command) for vendored third-party assets in this folder
 
-## Agents Directory (`agents/`)
+## Agents Directory (`src/forge/data/agents/`)
 
-Foundation agents shipped via the Claude Code plugin. ``_TEMPLATE.md``
+These files live under the package data so a source distribution carries them; the repo-root `agents/`, `skills/` and `claude-hooks/` paths are symlinks here, kept because every doc and tool refers to them by those names.
+Foundation agents, generated into each harness by its converter.
+``_TEMPLATE.md``
 documents the canonical agent shape (frontmatter, length budget,
 ownership model) — see [FOUNDATION §11](FOUNDATION.md#11-agent-boundary-protocol).
 
@@ -160,8 +159,9 @@ ownership model) — see [FOUNDATION §11](FOUNDATION.md#11-agent-boundary-proto
 - token-optimizer.md: token/cost drain reporter agent — runs `forge-agent-profile --tokens`, ranks billed-equivalent drains per `forge-docs/token-optimization.md`
 - weekly-summary.md: weekly activity summary agent
 
-## Skills Directory (`skills/`)
+## Skills Directory (`src/forge/data/skills/`)
 
+These files live under the package data so a source distribution carries them; the repo-root `agents/`, `skills/` and `claude-hooks/` paths are symlinks here, kept because every doc and tool refers to them by those names.
 Slash-command skills auto-discovered by the Claude Code plugin. Each
 subdirectory holds a single SKILL.md:
 
@@ -185,10 +185,11 @@ subdirectory holds a single SKILL.md:
 - triage/: issue backlog triage
 - weekly/: weekly summary report
 
-## Claude Hooks Directory (`claude-hooks/`)
+## Claude Hooks Directory (`src/forge/data/claude-hooks/`)
 
-Shell hooks referenced by `.claude-plugin/plugin.json` for Claude Code safety
-enforcement:
+These files live under the package data so a source distribution carries them; the repo-root `agents/`, `skills/` and `claude-hooks/` paths are symlinks here, kept because every doc and tool refers to them by those names.
+Shell guards wired by `src/forge/data/hooks.toml` and generated into each
+harness's config by its converter:
 
 - block_branch_deletion.sh: block agent deletion of protected remote branches (no bypass)
 - block_claude_attribution.sh: block AI attribution in commits
@@ -229,11 +230,6 @@ enforcement:
 - warn_merge_conflicts.sh: PostToolUse — after a `git merge` that left unmerged paths, print the instruction to run `forge-update-branch --continue` (and `forge:merge-resolver` for what it cannot resolve); silent otherwise, never resolves or stages
 - wrapup_anchor.sh: sourced library, not a hook — the `wrapup_names_head` predicate, used by `warn_stale_wrapup`; `forge-pr-create` carries the Python equivalent for the publish path
 
-## Plugin Manifest (`.claude-plugin/`)
-
-- plugin.json: Claude Code plugin manifest (rolling-next version)
-- marketplace.json: marketplace listing manifest
-
 ## Git Hooks Directory (`.githooks/`)
 
 - install.sh: configure `core.hooksPath` to this directory
@@ -269,6 +265,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_hook_dispatch.py: tests for hook_dispatch (fail-closed matrix, one test per row)
    - test_instruction_files.py: tests for instruction_files (include resolution, flatten, drift)
    - test_install_vibe.py: tests for install_vibe (roster sidecar, subagent TOML+prompts, check/verify modes)
+   - test_install_claude.py: tests for install_claude (consumer files never clobbered, transitive helper copying, publish/prune idempotence, settings merge and plugin-era key cleanup, ignore-file semantics, exit codes)
    - test_gen_api_digest.py: tests for gen_api_digest
    - test_gen_c4.py: tests for gen_c4 (C4 / Structurizr DSL generator)
    - test_gen_cli_reference.py: tests for gen_cli_reference
@@ -279,7 +276,6 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_import_graph.py: tests for import_graph (shared AST import primitives)
    - test_install_bootstrap.py: tests for install_bootstrap
    - test_install_claudemd.py: tests for install_claudemd
-   - test_install_claude_settings.py: tests for install_claude_settings
    - test_claude_hooks.py: black-box tests for the `claude-hooks/*.sh` safety hooks (subprocess + JSON stdin)
    - command_positions_snapshot.json: saved output of the shared command scanner over a command corpus, pinned by `tests/test_claude_hooks.py`; regenerate with `FORGE_UPDATE_SNAPSHOT=1`
    - test_claude_settings_schema.py: tests for the shared claude_settings_schema module (scaffold copy)
@@ -290,10 +286,8 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_post_merge.py: tests for post_merge (forge-post-merge CLI)
    - test_post_checkout.py: tests for post_checkout (forge-post-checkout CLI)
    - test_install_labels.py: tests for install_labels
-   - test_manifests.py: tests for plugin manifests
    - test_next_prep.py: tests for next_prep
    - test_emergency.py: tests for emergency (forge-emergency start/status/record-pr/end, claim/commit/release lifecycle, ledger parsing, TTL clamping)
-   - test_rebump.py: tests for rebump (forge-rebump post-merge version-slot + changelog resolver)
    - test_release.py: tests for release (forge-release CLI guards + tagging)
    - test_release_e2e.py: end-to-end single-track consumer release fixture (recipes + changelog steps)
    - test_changelog.py: tests for changelog (release_headings / changelog_lacks_entry)
@@ -311,14 +305,13 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_smart_test_run_log.py: tests for smart_test.run_log (lock, incremental sink)
    - test_verify_docstrings.py: tests for verify_docstrings
    - test_verify_docstring_coverage.py: tests for verify_docstring_coverage
-   - test_verify_manifest.py: tests for verify_manifest
    - test_verify_doc_consistency.py: tests for verify_doc_consistency
    - test_verify_agent_doc.py: tests for verify_agent_doc
    - test_plugin_roster.py: tests for plugin_roster (the one roster reader: kind lookup, misshapen tables degrade to empty, wrong read signature still raises, hooks excluded from the namespaced union)
+   - test_hook_registry.py: tests for hook_registry (every malformed shape raises rather than degrading to empty, render shape and ordering, the real wiring names only scripts that ship)
    - test_verify_cve_usage.py: tests for verify_cve_usage (active/inactive CVE, usage/no-usage, comment + self exclusion, pip-audit-missing skip, checked-of-reported coverage matrix + NOT-checked exit, bad-regex tolerance, `--audit-json` sidecar reuse, `--list-inactive` reporter)
    - test_pip_audit_json.py: tests for pip_audit_json (run_json binary-missing/parse paths, advisories + ids_from_data alias collection + malformed-shape filtering, render_report primary-id-only, advisory-count invariant, scan_postdates_fork boundary)
    - test_install_readme_badges.py: tests for install_readme_badges (badge sources, drift-aware injection, opt-in gating, --check)
-   - test_verify_plugin_version.py: tests for verify_plugin_version
    - test_verify_repo_structure.py: tests for verify_repo_structure
    - test_verify_test_naming.py: tests for verify_test_naming
    - test_agent_profile.py: tests for agent_profile (where agent and subagent time goes)
@@ -358,7 +351,6 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_smart_test_superset.py: regression harness checking the union of forge-smart-test's three selection channels covers every guaranteed test-to-code link
    - test_telemetry.py: tests for telemetry (the resource-profiling wrapper)
    - test_version_surfaces.py: tests for version_surfaces (install-version, install-record and global-install readers)
-   - test_plugin_sync.py: tests for plugin_sync (forge-plugin-sync target resolution, per-version marketplace, refusals, `--check`)
    - test_ci_tree_gate.py: tests for ci_tree_gate (the tree-identity verdict against a fake GitHub and a real squash-commit repo)
 
 2. **Audit Tests (`tests/audit/`)**
@@ -395,7 +387,7 @@ repos by `install-forge-claude-md` (guarded there by a README notice + the
 - backlog-tracks.md: backlog tracks — `track:<name>` naming, the `track:` plan line, membership via `forge-plan-check track-members`, placement limits, hub-file evidence, first run vs re-align
 - precommit-fixer.md: rationale behind `forge:precommit-fixer`'s rules — the loop and its evidence, narrow re-verify vs closing run, why tests re-run after a code or test edit, test-code caution, report-only steps
 - git-safety.md: procedure behind FOUNDATION §2's git rules — gate kinds, guard bypass, destructive git forms, base sync (`forge-update-branch`, stacked branches)
-- plugin-staleness.md: how a running session ends up on an old forge plugin, how to spot it, and how to recover
+- integration-staleness.md: how a running session ends up on old generated agents, how to spot it, and how to recover
 - metrics.md: `forge-metrics` — what is recorded per merged PR, what is not stored, where the database and the repo-id map live, legacy migration
 - token-optimization.md: token/cost runbook — provider cache pricing with source URLs, cache scope and `/clear`/compaction, forge cache-hazard audit, measurement, ranked levers
 
@@ -407,7 +399,7 @@ repos by `install-forge-claude-md` (guarded there by a README notice + the
 - c4-architecture.md: design & rationale for forge-gen-c4 + the /c4 skill (the implemented C4 generator)
 - agent-architecture.md: hand-maintained agent × skill × hook × CLI interaction subviews by workflow phase + a FOUNDATION-enforcers view; gated by the `agent_doc` step, tracked for full drift-check by #163
 - ci-access.md: how a consumer's CI runner pulls forge
-- claude-code-plugin.md: optional Claude Code plugin install + extension
+- claude-code.md: optional Claude Code integration — generated into `.claude/`, what it writes, ownership rules, guard wiring, drift checking
 - vibe.md: optional Mistral Vibe integration — opt-in `[tool.forge.vibe]`, generated .vibe/ + .agents/ + flattened AGENTS.md, trust requirement, unenforced events
 - cli-reference.md: generated CLI reference (`forge-gen-cli-reference`)
 - adopting.md: modular adoption guide — three independent install tracks (CLIs / + git hooks / + plugin) + "what lands on disk" table + drift/upgrade explainer
@@ -427,6 +419,15 @@ Architecture RFCs and research reports — aspirational or advisory, not descrip
 
 - rust-core.md: RFC for splitting forge into a Rust governance-core binary + optional Python analysis pack
 - test-lifecycle.md: research report for the test-suite lifecycle policy (issue #396) — baseline profile, prior art, five proposals awaiting decision
+
+## Shipped-source symlinks (repo root)
+
+- agents: symlink to `src/forge/data/agents/` — the shipped agents,
+  skills and guards live under the package data so a source distribution
+  carries them as real files; these root paths are kept because every
+  doc, tool and convention refers to them by these names
+- skills: symlink to `src/forge/data/skills/`
+- claude-hooks: symlink to `src/forge/data/claude-hooks/`
 
 ## Configuration Files
 

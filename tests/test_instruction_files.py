@@ -84,27 +84,41 @@ def test_flatten_agents_md_returns_none_without_inputs(tmp_path: Path) -> None:
 class TestShippedPath:
     """Tests for the repo-vs-package resolver for forge-shipped sources."""
 
-    def test_local_copy_wins_when_present(self, tmp_path: Path) -> None:
-        """A checkout holding the path resolves to its own copy."""
+    def test_a_repos_own_directory_never_wins(self, tmp_path: Path) -> None:
+        """A repo's own directory of the same name is ignored.
+
+        SCENARIO: the checkout holds its own `agents/`, as a consumer
+        plausibly might, or as a hostile repo would to substitute a
+        guard script.
+        EXPECTED BEHAVIOR: the packaged copy is returned regardless. The
+        repo's directory used to win, which meant a repo carrying its own
+        `claude-hooks/block_force_push.sh` would have that copy installed
+        and armed in place of forge's.
+        """
         agents = tmp_path / "agents"
         agents.mkdir()
         (agents / "local.md").write_text("x\n")
-        assert shipped_path(tmp_path, "agents") == agents
+        resolved = shipped_path("agents")
+        assert resolved != agents
+        assert "local.md" not in {p.name for p in resolved.glob("*.md")}
 
     def test_falls_back_to_packaged_copy(self, tmp_path: Path) -> None:
         """A bare consumer repo resolves to the installed package's copy."""
-        agents = shipped_path(tmp_path, "agents")
+        agents = shipped_path("agents")
         assert agents != tmp_path / "agents"
         names = {p.name for p in agents.glob("*.md")}
         assert "prior-art.md" in names
         assert "design-checker.md" in names
 
-    def test_packaged_copies_cover_all_sources(self, tmp_path: Path) -> None:
+    def test_packaged_copies_cover_all_sources(self) -> None:
         """Every mapped source ships in the package and resolves."""
-        for rel in (".claude-plugin/plugin.json", "claude-hooks", "agents", "skills"):
-            assert shipped_path(tmp_path, rel).exists(), rel
+        for rel in ("claude-hooks", "agents", "skills"):
+            packaged = shipped_path(rel)
+            assert packaged.is_dir(), rel
+            # A directory symlink under the package data broke consumer installs.
+            assert not packaged.is_symlink(), rel
 
-    def test_unknown_rel_raises_key_error(self, tmp_path: Path) -> None:
+    def test_unknown_rel_raises_key_error(self) -> None:
         """A path outside SHIPPED_SOURCES is a programming error, not a fallback."""
         with pytest.raises(KeyError):
-            shipped_path(tmp_path, "not-a-source")
+            shipped_path("not-a-source")

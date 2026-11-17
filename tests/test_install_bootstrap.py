@@ -21,8 +21,7 @@ def test_steps_in_expected_order() -> None:
     assert slugs == [
         "githooks",
         "claude-md",
-        "claude-settings",
-        "plugin",
+        "claude",
         "labels",
         "intake",
         "readme-badges",
@@ -200,8 +199,8 @@ def test_main_continue_on_fail_runs_every_step(
     argv = ["install-forge-bootstrap", "--skip", "labels"]
     with patch.object(install_bootstrap.sys, "argv", argv):
         rc = install_bootstrap.main()
-    # Eleven non-gated steps (incl. config, plugin and intake), each fails with rc=1.
-    assert rc == 11
+    # Ten non-gated steps (incl. config, claude and intake), each fails with rc=1.
+    assert rc == 10
 
 
 def test_doctor_and_audit_deps_skip_in_ci(
@@ -229,10 +228,10 @@ def test_doctor_and_audit_deps_skip_in_ci(
     argv = ["install-forge-bootstrap", "--skip", "labels"]
     with patch.object(install_bootstrap.sys, "argv", argv):
         rc = install_bootstrap.main()
-    # Eight failing steps: githooks, claude-md, claude-settings, plugin,
-    # intake, readme-badges, api-digest, cli-reference.
+    # Seven failing steps: githooks, claude-md, claude, intake,
+    # readme-badges, api-digest, cli-reference.
     # `doctor` + `audit-deps` self-skip (CI gate).
-    assert rc == 8
+    assert rc == 7
     invoked_clis = {call[0] for call in captured.calls}
     assert "forge-doctor" not in invoked_clis
     assert "forge-audit-deps" not in invoked_clis

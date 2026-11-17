@@ -17,7 +17,7 @@ shortcut via ``--apply``.
 - **Phase 2** — ``forge-upgrade --continue``. After the printed install
   command has run, runs ``install-forge-bootstrap`` to re-sync managed
   artifacts (its ``plugin`` step runs
-  ``forge-plugin-sync``) and prints the session-restart reminder.
+  ``install-forge-claude``) and prints the session-restart reminder.
 - **One-shot** — ``forge-upgrade --apply``. For human-run setup
   scripts only: rewrites the pin, runs the force-reinstall pip
   command, then runs the bootstrap; refused in a pixi-locked repo. The
@@ -28,7 +28,7 @@ anything.
 
 Phase 2 and ``--apply`` both refuse a pin naming a release tag the
 shipped changelog doesn't document (exit ``2``) — see
-:func:`_undocumented_release_refusal`.
+:func:`_unassembled_notes_warning`.
 
 Pin detection scope: searches for a ``forge-scripts @ git+...`` line
 in, in order, the consumer's ``pyproject.toml`` (primary),
@@ -755,34 +755,41 @@ def _pending_action_count(changelog_text: str) -> int:
 _RELEASE_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
 
 
-def _undocumented_release_refusal(
+def _unassembled_notes_warning(
     target_ref: str, changelog_text: str | None
 ) -> str | None:
-    """Return why *target_ref* must not be adopted, or ``None`` to proceed.
+    """Return a warning when *target_ref*'s own notes are not written yet.
 
-    Release tags are cut at the assembly merge
-    (``docs/release-process.md`` §2), so a release tag's own changelog
-    opens with its version. A tag cut on an ordinary merge ships a
-    changelog that never mentions it — and the upgrade notes printed
-    from it stop short without saying so, which is the defect this
-    refuses. The message deliberately names no alternative tag: the
-    newest version such a changelog documents may itself be a tag cut
-    on an ordinary merge, refused here too.
+    A release tag is cut on every merge, from the changelog fragments
+    that merge brought, while ``CHANGELOG.md`` prose is assembled
+    afterwards by a separate pull request
+    (``docs/release-process.md`` §§2 and 3). So a tag normally ships a
+    changelog whose newest heading is **older than the tag itself**, and
+    the upgrade notes printed from it stop short of what is being
+    adopted.
 
-    Every unknowable input proceeds rather than blocks, per §1: a
+    **This warns rather than refuses.** It used to refuse, when a tag
+    was cut only at an assembly merge and so always documented itself;
+    under tag-per-merge that condition is the ordinary case, and
+    refusing it would reject nearly every tag and leave consumers
+    unable to upgrade at all. The protection worth keeping is telling
+    the reader the notes are incomplete — not blocking the upgrade over
+    prose that lands days later.
+
+    Every unknowable input stays silent rather than warning, per §1: a
     non-tag ref, an absent changelog (partial install), a changelog with
-    no release heading, or either side failing to parse. The gate fires
-    only on a provable mismatch between two parsed versions.
+    no release heading, or either side failing to parse. It speaks only
+    on a provable gap between two parsed versions.
 
     Args:
-        target_ref: The ref being adopted — gated only when it is a
+        target_ref: The ref being adopted — considered only when it is a
             release tag.
         changelog_text: The packaged changelog shipped *by that ref*, or
             ``None`` when it could not be read.
 
     Returns:
-        A refusal message naming both versions, or ``None`` when the
-        adoption may proceed.
+        A warning naming both versions, or ``None`` when the shipped
+        notes already cover the ref.
     """
     if not _RELEASE_TAG_RE.match(target_ref) or changelog_text is None:
         return None
@@ -793,13 +800,12 @@ def _undocumented_release_refusal(
     if wanted is None or newest is None or wanted <= newest:
         return None
     return (
-        f"{target_ref} is not documented: the changelog it ships stops at "
-        f"{documented}, so every change between them — including any action "
-        "you are expected to take — is invisible in the upgrade notes. Tags "
-        "cut on an ordinary merge never document themselves; adopt a "
-        "release tag whose own "
-        'CHANGELOG.md opens with its version (docs/adopting.md, "Which '
-        'tags you can adopt").'
+        f"{target_ref}'s own changelog entry is not assembled yet: the "
+        f"changelog it ships stops at {documented}, so the upgrade notes "
+        "below cover up to there and not the changes you are adopting. The "
+        "entries are written by a later assembly run; read the repository's "
+        "CHANGELOG.md, or its pending changelog.d/ fragments, for what "
+        f"changed between {documented} and {target_ref}."
     )
 
 
@@ -849,7 +855,7 @@ def _run_phase2(root: Path) -> int:
     silent-downgrade case — the next commit would land older content
     while the pin claims otherwise. That gate stays silent when either
     side is unknowable (no pin, or a non-git install). Second, when the
-    pin names a release tag :func:`_undocumented_release_refusal` finds
+    pin names a release tag :func:`_unassembled_notes_warning` finds
     the shipped changelog doesn't document — see that function's
     docstring for why. Wrapped in :func:`forge.run_context.progress_logger`
     so the substep boundary + total elapsed time appears in CI logs even
@@ -881,16 +887,9 @@ def _run_phase2(root: Path) -> int:
 
     pin = find_pin(root)
     if pin is not None:
-        refusal = _undocumented_release_refusal(pin.ref, _read_changelog())
-        if refusal is not None:
-            logger.error("REFUSED: %s", refusal)
-            logger.error(
-                "Managed artifacts were not re-synced. Point the pin at a "
-                "documented release and re-run, or ask for an assembly run "
-                "covering %s.",
-                pin.ref,
-            )
-            return 2
+        unassembled = _unassembled_notes_warning(pin.ref, _read_changelog())
+        if unassembled is not None:
+            logger.warning("%s", unassembled)
     with progress_logger("bootstrap") as note:
         note("install-forge-bootstrap")
         rc = _bootstrap_run()
@@ -898,8 +897,9 @@ def _run_phase2(root: Path) -> int:
     if rc == 0:
         logger.info("")
         logger.info(
-            "If you use Claude Code, finish with `forge-plugin-sync` (bootstrap "
-            "already ran it), then restart the Claude Code session."
+            "If you use Claude Code, the bootstrap already regenerated the "
+            "integration (`install-forge-claude`) — restart the session to "
+            "load it."
         )
         _print_upgrade_notes()
     return rc
@@ -984,17 +984,9 @@ def _finish_apply(target_ref: str, root: Path) -> int:
             target_ref,
         )
 
-    refusal = _undocumented_release_refusal(target_ref, _read_changelog())
-    if refusal is not None:
-        logger.error("REFUSED: %s", refusal)
-        logger.error(
-            "Managed artifacts were not re-synced, but your pin now names "
-            "%s and the matching package is installed. Point the pin at a "
-            "documented release, or ask for an assembly run covering %s.",
-            target_ref,
-            target_ref,
-        )
-        return 2
+    unassembled = _unassembled_notes_warning(target_ref, _read_changelog())
+    if unassembled is not None:
+        logger.warning("%s", unassembled)
 
     logger.info("")
     logger.info("Re-syncing managed artifacts...")

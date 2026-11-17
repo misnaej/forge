@@ -232,14 +232,6 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "error (default: non-blocking WARN).",
     ),
     ConfigKey(
-        ("tool", "forge", "plugin_sync", "blocking"),
-        default=False,
-        description="Make the plugin_sync step fail the commit when the cached "
-        "Claude Code plugin is older than .claude-plugin/plugin.json "
-        "(default: non-blocking WARN; forge keeps false — under rolling-next "
-        "its release commits name a version no sync can fetch yet).",
-    ),
-    ConfigKey(
         ("tool", "forge", "pip_audit", "blocking"),
         default=False,
         description="Make the pip_audit step fail the commit on a CVE "
@@ -273,9 +265,7 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "tag-release workflow auto-tag every fragment-carrying merge "
         "(forge-changelog auto-tag: last tag + strongest new fragment "
         "level). Any other value downgrades the job to a loud "
-        "pending-fragments warning — never silent. Ignored in a repo "
-        "with .claude-plugin/plugin.json: plugin releases are tagged at "
-        "the assembly merge only.",
+        "pending-fragments warning — never silent.",
     ),
     ConfigKey(
         ("tool", "forge", "changelog", "blocking"),
@@ -458,7 +448,7 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
     ),
     ConfigKey(
         ("tool", "forge", "smart_test", "nonpython_ignore"),
-        "built-in list (*.md, plugin.json, stamp, .plan/*, .gitignore)",
+        "built-in list (*.md, stamp, .plan/*, .gitignore)",
         "fnmatch globs for changed non-Python paths that cannot affect "
         "tests; any other non-Python change escalates the run to full "
         "(the safe-fallback guarantee).",
