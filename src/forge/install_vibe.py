@@ -3,7 +3,7 @@
 This module provides the main installer that sets up Vibe integration for
 forge, including:
 
-1. Generating .vibe/hooks.toml from .claude-plugin/plugin.json
+1. Generating .vibe/hooks.toml from forge's canonical hook wiring
 2. Generating .vibe/forge-roster.json (roster sidecar for dispatcher)
 3. Publishing skills to .agents/skills/
 4. Generating AGENTS.md (if not already generated)

@@ -50,7 +50,12 @@ HIGH_BLAST_RADIUS_PATHS: Final[tuple[str, ...]] = (
     "claude-hooks/",
     ".githooks/",
     "skills/",
-    ".claude-plugin/",
+    # Forge's own shipped sources live inside the package, and the
+    # repo-root `agents/`, `skills/` and `claude-hooks/` are symlinks to
+    # them — so git reports the package path, which the bare prefixes
+    # above never match. The whole directory counts: everything in it is
+    # shipped surface, so a new kind of shipped data needs no new entry.
+    "src/forge/data/",
     ".claude/",
     ".github/workflows/",
     "pyproject.toml",
@@ -134,7 +139,6 @@ HUB_PATHS: Final[tuple[str, ...]] = (
     "CHANGELOG.md",
     "REPO_STRUCTURE.md",
     "FOUNDATION.md",
-    ".claude-plugin/plugin.json",
     "src/forge/data/plugin-roster.toml",
     "docs/agent-architecture.md",
 )
@@ -218,6 +222,10 @@ RULE_SURFACE_PATHS: Final[tuple[str, ...]] = (
     "FOUNDATION.md",
     "skills/",
     "agents/",
+    # Same symlink reason as HIGH_BLAST_RADIUS_PATHS: forge's own copies
+    # are reported at their package paths, not the repo-root ones.
+    "src/forge/data/skills/",
+    "src/forge/data/agents/",
     ".claude/skills/",
     ".claude/agents/",
 )

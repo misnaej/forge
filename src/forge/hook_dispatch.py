@@ -21,7 +21,7 @@ Usage:
     forge-hook-dispatch --harness vibe --event pre_tool < roster.json
 
 Where roster.json contains the guard configuration (generated at install
-    time, NOT read from plugin.json at runtime).
+    time, NOT re-read from forge's own wiring at runtime).
 """
 
 from __future__ import annotations
@@ -116,7 +116,8 @@ def _get_roster_path(harness_name: str) -> Path:
 
     The roster is baked at generation time and read at runtime.
     For Vibe: .vibe/forge-roster.json
-    For Claude: not used (Claude reads plugin.json directly).
+    For Claude: not used (Claude reads its own generated settings file,
+    which registers each guard script directly).
 
     Args:
         harness_name: The harness identifier.

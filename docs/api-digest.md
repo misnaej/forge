@@ -876,7 +876,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 ## `forge.gen_vibe_hooks`
 
-> _Generate .vibe/hooks.toml from .claude-plugin/plugin.json._
+> _Generate Vibe's hook config from forge's canonical hook wiring._
 
 - `class _EventContext` _(internal)_ — Translation context shared by all matcher groups of one Claude event.
 - `_get_hook_name(command: str) -> str` _(internal)_ — Extract the hook script name from a command path.
@@ -889,7 +889,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_group_hooks_by_event_and_match(hooks: list[dict]) -> dict[str, dict[str, list[dict]]]` _(internal)_ — Group hook entries by event and match for TOML structure.
 - `_generate_hooks_toml(grouped_hooks: dict[str, dict[str, list[dict]]]) -> str` _(internal)_ — Generate the TOML content for .vibe/hooks.toml.
 - `_load_extra_vibe_hooks() -> list[dict]` _(internal)_ — Load the shipped Vibe-only extra hooks table.
-- `generate_vibe_hooks(repo_root: Path | None = None) -> tuple[str, list[str], list[str]]` — Generate .vibe/hooks.toml from .claude-plugin/plugin.json.
+- `generate_vibe_hooks(repo_root: Path | None = None) -> tuple[str, list[str], list[str]]` — Generate Vibe's hook config from forge's canonical hook wiring.
 - `write_vibe_hooks(repo_root: Path | None = None, *, check_mode: bool = False) -> int` — Generate and write .vibe/hooks.toml.
 - `verify_existing_hooks(repo_root: Path | None = None) -> int` — Verify an existing .vibe/hooks.toml has strict=true on blocking entries.
 - `main() -> int` — CLI entry point for forge-gen-vibe-hooks.

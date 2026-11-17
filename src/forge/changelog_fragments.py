@@ -1491,8 +1491,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     rel = sub.add_parser(
         "release",
-        help="assemble CHANGELOG.md under the computed next version, write "
-        "plugin.json to it (when present), stage everything — never commits",
+        help="assemble CHANGELOG.md under the computed next version and "
+        "stage everything — never commits",
     )
     rel.add_argument("--date", default="", help="heading date (default: today, UTC)")
     asm = sub.add_parser(

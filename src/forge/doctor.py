@@ -7,20 +7,17 @@ Checks:
   1. ``forge-scripts`` CLI entry points on PATH (pip package installed).
   2. ``gh`` CLI installed and authenticated (needed by
      ``install-forge-labels`` and any GitHub-aware workflow).
-  3. Claude Code plugin checks (skipped unless the harness is detected or
-     forced with ``--harness claude``/``all``) — all read this checkout's
-     own install, as Claude Code recorded it:
-     a. An install of the plugin is recorded for this checkout (for a
-        non-forge ``--plugin-name``, a user-scope install also counts).
-     b. ``plugin.json`` and ``marketplace.json`` present and well-formed.
-     c. ``agents/``, ``skills/``, ``claude-hooks/`` directories populated.
+  3. The generated harness integration (``claude:integration``, skipped
+     unless the harness is detected or forced with ``--harness
+     claude``/``all``) — compares the files under ``.claude/`` against
+     what the installed forge ships. Drift and an absent integration are
+     advisories naming ``install-forge-claude``; a *registered guard
+     whose script is missing* fails, because such a hook exits 127 and
+     so does not block (see :func:`_check_claude_integration`).
   4. Version skew across install surfaces — the pip package and the
-     git-hook sidecar should share a version, and this checkout's plugin
-     generated integration (checked separately,
-     ``claude:integration``) should be the
-     release the checkout names; a lagging surface is reported as an
-     advisory with the exact command to converge it (never fails the exit
-     code — the report line is the signal).
+     git-hook sidecar should share a version; a lagging surface is
+     reported as an advisory with the exact command to converge it
+     (never fails the exit code — the report line is the signal).
   5. Pre-commit step tools (opt-in steps only) — the tool for each enabled
      step is on PATH, and its installed version is not below this repo's
      pinned floor; both are advisories, never a failing exit code.

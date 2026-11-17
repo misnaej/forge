@@ -143,8 +143,8 @@ def parse_semver(version: str) -> tuple[int, int, int] | None:
     helper instead of carrying their own copies.
 
     Args:
-        version: Version string from ``importlib.metadata.version``, a
-            git tag, or ``plugin.json``.
+        version: Version string from ``importlib.metadata.version`` or a
+            git tag.
 
     Returns:
         ``(major, minor, patch)`` tuple, or ``None`` if no leading

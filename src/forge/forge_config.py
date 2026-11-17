@@ -265,9 +265,7 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "tag-release workflow auto-tag every fragment-carrying merge "
         "(forge-changelog auto-tag: last tag + strongest new fragment "
         "level). Any other value downgrades the job to a loud "
-        "pending-fragments warning — never silent. Ignored in a repo "
-        "with .claude-plugin/plugin.json: plugin releases are tagged at "
-        "the assembly merge only.",
+        "pending-fragments warning — never silent.",
     ),
     ConfigKey(
         ("tool", "forge", "changelog", "blocking"),
@@ -450,7 +448,7 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
     ),
     ConfigKey(
         ("tool", "forge", "smart_test", "nonpython_ignore"),
-        "built-in list (*.md, plugin.json, stamp, .plan/*, .gitignore)",
+        "built-in list (*.md, stamp, .plan/*, .gitignore)",
         "fnmatch globs for changed non-Python paths that cannot affect "
         "tests; any other non-Python change escalates the run to full "
         "(the safe-fallback guarantee).",

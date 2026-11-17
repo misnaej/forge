@@ -337,9 +337,8 @@ positional arguments:
                         tag + max level over the UNRELEASED fragments;
                         fragments already in a tag's tree assemble under that
                         tag and never bump again
-    release             assemble CHANGELOG.md under the computed next version,
-                        write plugin.json to it (when present), stage
-                        everything — never commits
+    release             assemble CHANGELOG.md under the computed next version
+                        and stage everything — never commits
     assemble            collate fragments into CHANGELOG.md under a version
     auto-tag            tag HEAD from fragments merged since the last tag
                         (tag-per-merge CI seam; pushes the tag only; never
@@ -573,7 +572,7 @@ options:
 ```text
 usage: forge-gen-vibe-hooks [-h] [--check] [--verify] [--repo-root REPO_ROOT]
 
-Generate .vibe/hooks.toml from .claude-plugin/plugin.json
+Generate Vibe's hook config from forge's canonical wiring
 
 options:
   -h, --help            show this help message and exit

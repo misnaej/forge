@@ -104,7 +104,7 @@ by `forge-gen-config-doc`; the sections below explain each key.
 | `[tool.forge.smart_test].lifecycle_skip_days` | `30` |
 | `[tool.forge.smart_test].full_run_max_age_hours` | `48` |
 | `[tool.forge.smart_test].cadence_mode` | `'commit'` |
-| `[tool.forge.smart_test].nonpython_ignore` | built-in list (*.md, plugin.json, stamp, .plan/*, .gitignore) |
+| `[tool.forge.smart_test].nonpython_ignore` | built-in list (*.md, stamp, .plan/*, .gitignore) |
 | `[tool.forge.smart_test].safe_fallback` | `'escalate'` |
 | `[tool.forge.continuation].judgment_max_lines` | `60` |
 | `[tool.forge.memory_audit].threshold` | `5` |

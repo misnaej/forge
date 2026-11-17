@@ -58,7 +58,6 @@ DEFAULT_STAMP_MAX_AGE_HOURS = 48
 # non-Python escalates the run to full (the safe-fallback guarantee).
 DEFAULT_NONPYTHON_IGNORE = (
     "*.md",
-    ".claude-plugin/plugin.json",
     str(STAMP_RELPATH),
     ".plan/*",
     ".gitignore",

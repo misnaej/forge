@@ -129,7 +129,6 @@ MUST_DOCUMENT = frozenset(
         "claude-hooks",
         "docs",
         "dev",
-        ".claude-plugin",
         ".githooks",
         ".github",
         # Files
