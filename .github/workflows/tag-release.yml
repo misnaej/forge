@@ -1,17 +1,18 @@
 name: tag-release
 
 # Tag-on-merge automation, separated from the read-only CI workflow so
-# `ci.yml` never carries write permissions. Single-track: one job —
+# `ci.yml` never carries write permissions. One job —
 #
-# - tag-main: after CI succeeds on a push to main, two steps:
-#   (1) `forge-changelog auto-tag` — never tags a plugin repo like
-#       forge (docs/release-process.md §2); logs the pending-fragment
-#       count and the release command. Manifest-less repos copying this
-#       job get tag-per-merge here.
-#   (2) `forge-next-prep --tag` — cuts forge's release tag: fires on the
-#       assembly (release PR) merge, the only commit whose plugin.json
-#       is ahead of the latest tag, and logs why on every other merge.
-#   Both idempotent; both state why when they do not tag.
+# - tag-main: after CI succeeds on a push to main, `forge-changelog
+#   auto-tag` computes the release from the fragments that merge brought
+#   (latest tag + their highest bump level) and pushes the tag. The tag
+#   is the only place a version lives, so there is nothing for it to
+#   agree with and nothing to drift. Idempotent, and it states why
+#   whenever it does not tag.
+#
+# The changelog is assembled separately, by assemble-changelog.yml — a
+# tag ships the code, an assembly PR writes the prose for the tags that
+# already shipped.
 #
 # Gating uses `workflow_run` because `needs:` cannot cross workflow
 # files: this workflow fires when CI completes, and the job checks the
@@ -61,7 +62,7 @@ jobs:
       - name: Install forge-scripts
         run: pip install -e .
 
-      - name: Auto-tag newly merged fragments (manifest-less repos only)
+      - name: Tag the release from the fragments this merge brought
         run: |
           set +e
           out=$(forge-changelog auto-tag 2>&1); rc=$?
@@ -72,6 +73,3 @@ jobs:
             rc=0
           fi
           exit $rc
-
-      - name: Tag the release when the assembly merge put plugin.json ahead
-        run: forge-next-prep --tag --no-sync --no-prune-branches

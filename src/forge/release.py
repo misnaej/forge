@@ -2,20 +2,16 @@
 
 The single-track counterpart to forge's own rolling-next flow: for a
 repo whose version is *derived from* its ``v*`` tags (setuptools-scm)
-rather than driven by a ``.claude-plugin/plugin.json`` manifest, the tag
-IS the release. This CLI owns the orchestration so consumers don't
-reimplement it: guard checks, semver bump off the latest ``v*`` tag, a
-CHANGELOG gate, then annotated tag + push.
+rather than from any manifest, the tag IS the release. This CLI owns the
+orchestration so consumers don't reimplement it: guard checks, semver
+bump off the latest ``v*`` tag, a CHANGELOG gate, then annotated tag +
+push.
 
 Guards, in order (all failures reported at once, exit ``1``):
 
 1. **Clean working tree** — a release tag must point at committed state.
 2. **On the base branch** (``[tool.forge].base_branch``, default
    ``main``) — single-track releases are cut from the trunk.
-3. **Single-track release model** — refuses when a
-   ``.claude-plugin/plugin.json`` manifest drives versioning (use
-   ``forge-next-prep --tag``). Two different version sources, two
-   different orchestrators.
 4. **CHANGELOG gate** — when ``CHANGELOG.md`` exists it must already
    carry a ``## vX.Y.Z`` heading for the tag being cut. A repo with no
    CHANGELOG gets a warning, not a failure.
@@ -67,7 +63,6 @@ from forge.git_utils import (
     network_git_env,
     next_version,
     parse_semver,
-    read_local_plugin_version,
     run_git,
     tag_on_remote,
 )
@@ -107,28 +102,6 @@ def _wrong_branch_error(repo_root: Path, base_branch: str) -> str | None:
         return (
             f"On branch {current or '(detached HEAD)'!s}, not {base_branch} — "
             f"single-track releases are tagged on {base_branch}."
-        )
-    return None
-
-
-def _wrong_release_model_error(repo_root: Path) -> str | None:
-    """Return an error when this repo's release model isn't single-track.
-
-    A plugin manifest disqualifies: the version source is
-    ``plugin.json``, owned by ``forge-next-prep --tag``, so
-    ``forge-release``'s tag computation would fight the rolling-next
-    flow.
-
-    Args:
-        repo_root: Repo root.
-
-    Returns:
-        One-line error string, or ``None`` when single-track tag-versioned.
-    """
-    if read_local_plugin_version(repo_root) is not None:
-        return (
-            ".claude-plugin/plugin.json drives this repo's versioning — "
-            "use `forge-next-prep --tag` (rolling-next flow) instead."
         )
     return None
 
@@ -335,13 +308,6 @@ def _prepare_from_changelog(
     if declared_err or tag is None:
         return None, declared_err or "No release heading found."
 
-    # Model check BEFORE the idempotency short-circuit: "wrong release
-    # model" is a configuration signal independent of tag state — a
-    # stale tag matching the declared version must not mask it.
-    model_err = _wrong_release_model_error(repo_root)
-    if model_err:
-        return None, model_err
-
     if _tag_exists(repo_root, tag):
         stranded = _stranded_entries_error(repo_root, tag)
         if stranded:
@@ -543,7 +509,6 @@ def main() -> int:
         for err in (
             _dirty_tree_error(repo_root),
             branch_guard,
-            _wrong_release_model_error(repo_root),
             _changelog_gate_error(repo_root, tag),
         )
         if err

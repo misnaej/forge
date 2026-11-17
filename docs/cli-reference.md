@@ -424,22 +424,17 @@ options:
 ## forge-doctor
 
 ```text
-usage: forge-doctor [-h] [--json] [--plugin-name PLUGIN_NAME]
-                    [--skip-plugin-checks] [--harness {auto,all,claude,vibe}]
+usage: forge-doctor [-h] [--json] [--skip-plugin-checks]
+                    [--harness {auto,all,claude,vibe}]
 
 Validate a forge install in the current environment.
 
 options:
   -h, --help            show this help message and exit
   --json                Emit JSON instead of human-readable output.
-  --plugin-name PLUGIN_NAME
-                        Claude Code plugin name to check (default: forge): its
-                        install recorded for this checkout, or for a plugin
-                        other than forge a user-scope install. Consumers who
-                        don't use Claude Code pass --skip-plugin-checks.
-  --skip-plugin-checks  Skip all Claude Code plugin checks entirely. Useful
-                        for consumers who only adopt the pip CLIs. Implies
-                        --harness vibe when no --harness is given.
+  --skip-plugin-checks  Skip the Claude Code integration check entirely.
+                        Useful for consumers who only adopt the pip CLIs.
+                        Implies --harness vibe when no --harness is given.
   --harness {auto,all,claude,vibe}
                         Which agent harness registration layer to check:
                         'claude' checks the Claude Code plugin install, 'vibe'
@@ -678,17 +673,13 @@ options:
 ## forge-next-prep
 
 ```text
-usage: forge-next-prep [-h] [--tag] [--no-prune-branches] [--prune-remote]
-                       [--no-sync]
+usage: forge-next-prep [-h] [--no-prune-branches] [--prune-remote] [--no-sync]
 
 Prepare main for the next task: fetch + pull --ff-only, optionally tag the
 rolling-next release, prune stale local branches. Used by the /next skill.
 
 options:
   -h, --help           show this help message and exit
-  --tag                Tag plugin.json's version when it's ahead of the latest
-                       v* tag and push the tag (forge's rolling-next
-                       workflow). Off by default.
   --no-prune-branches  Skip the stale-branch prune step.
   --prune-remote       Delete origin branches whose same-repo PR merged into
                        the base branch and whose tip is unchanged since
@@ -727,21 +718,6 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
-```
-
-## forge-plugin-sync
-
-```text
-usage: forge-plugin-sync [-h] [--check] [--quiet]
-
-Install this checkout's own copy of its forge release as its Claude Code
-plugin, from a per-version marketplace, so repos on different releases never
-overwrite each other.
-
-options:
-  -h, --help  show this help message and exit
-  --check     report only; exit 1 when this checkout is not on its release
-  --quiet     print only changes and failures (for git hooks)
 ```
 
 ## forge-post-checkout
@@ -948,19 +924,6 @@ options:
                         unchecked. A NOTE line names those files and the steps
                         that skipped them. Paste its output instead of
                         summarising pre-commit results.
-```
-
-## forge-rebump
-
-```text
-usage: forge-rebump [-h]
-
-Mechanically resolve the rolling-next plugin.json version slot (and, in
-shared-heading repos, the CHANGELOG stack) on a feature branch — mid-merge or
-after another PR's merge consumed the slot. Stages the result; never commits.
-
-options:
-  -h, --help  show this help message and exit
 ```
 
 ## forge-release
@@ -1188,10 +1151,24 @@ options:
   --check      Dry-run. Each step that supports --check runs in check mode;
                others just print their intent.
   --skip SLUG  Skip a step by slug. Repeatable. Known slugs: githooks, claude-
-               md, claude-settings, plugin, labels, intake, readme-badges,
-               api-digest, cli-reference, c4, vibe, audit-deps, doctor,
-               config.
+               md, claude, labels, intake, readme-badges, api-digest, cli-
+               reference, c4, vibe, audit-deps, doctor, config.
   --strict     Abort on the first failed step. Default is continue-on-fail.
+```
+
+## install-forge-claude
+
+```text
+usage: install-forge-claude [-h] [--check] [--verify]
+
+Generate forge's Claude Code integration into .claude/ — agents, skills, guard
+hooks and their settings registration. Generated files are gitignored;
+settings.json stays tracked.
+
+options:
+  -h, --help  show this help message and exit
+  --check     Report what would change without writing; exit 1 on drift.
+  --verify    Alias of --check, for symmetry with install-forge-vibe.
 ```
 
 ## install-forge-claude-md
@@ -1216,20 +1193,6 @@ options:
               layout (FOUNDATION.md + @FOUNDATION.md include).
   --force     Overwrite an existing FOUNDATION.md that lacks the forge-managed
               markers. Use sparingly.
-```
-
-## install-forge-claude-settings
-
-```text
-usage: install-forge-claude-settings [-h] [--check]
-
-Turn off the shared forge@forge plugin and marketplace in this repo's
-.claude/settings.json; each checkout installs its own release with forge-
-plugin-sync. Idempotent and merge-preserving.
-
-options:
-  -h, --help  show this help message and exit
-  --check     Verify the block is present without writing (exit 1 on drift).
 ```
 
 ## install-forge-githooks
@@ -1384,31 +1347,6 @@ options:
   --scope {all,diff}  'all' (every tracked .py file, the default) or 'diff'
                       (files modified vs main). Ignored when a target path is
                       given.
-```
-
-## verify-forge-manifest
-
-```text
-usage: verify-forge-manifest [-h]
-
-Validate that every .claude-plugin/*.json file parses as JSON, that no hook
-event in plugin.json repeats a matcher, and that plugin.json's version field,
-when present, is bare X.Y.Z semver. Writes code_health/manifest_json.log.
-
-options:
-  -h, --help  show this help message and exit
-```
-
-## verify-forge-plugin-version
-
-```text
-usage: verify-forge-plugin-version [-h]
-
-Assert .claude-plugin/plugin.json['version'] is strictly greater than the
-latest git tag. Writes code_health/plugin_version.log.
-
-options:
-  -h, --help  show this help message and exit
 ```
 
 ## verify-forge-repo-structure

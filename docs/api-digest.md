@@ -16,7 +16,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `run_foundation_drift_check(hook_name: str) -> int` — Run ``install-forge-claude-md --check --quiet``.
 - `run_vibe_regen(hook_name: str) -> None` — Regenerate the Vibe instruction surface when the repo opted in.
 - `run_hook_extensions(hook_name: str) -> None` — Run consumer extension scripts under ``.githooks/<hook_name>.d/``.
-- `run_plugin_sync(hook_name: str) -> None` — Run ``forge-plugin-sync --quiet`` so this checkout keeps its release.
+- `run_claude_integration(hook_name: str) -> None` — Regenerate the Claude Code integration for this checkout.
 
 ## `forge.agent_harness`
 
@@ -39,7 +39,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `translate_event(vibe_event: str, harness_name: str) -> str | None` — Translate a Vibe event name to the corresponding Claude event name.
 - `translate_tool_matcher(harness_matcher: str, harness_name: str) -> str | None` — Translate a harness-specific tool matcher to Claude matcher.
 - `translate_payload_field(field_name: str, harness_name: str) -> str | None` — Translate a payload field name from harness format to Claude format.
-- `resolve_hooks_base(repo_root: Path, plugin_dir: Path) -> Path` — Return the directory guard scripts live in for this checkout.
+- `resolve_hooks_base() -> Path` — Return the directory guard scripts live in for this checkout.
 - `map_plugin_references(text: str, *, harness: str, names: Iterable[str] | None = None) -> str` — Rewrite canonical agent and skill references into *harness*'s namespace.
 
 ## `forge.agent_profile`
@@ -415,8 +415,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_recognized_version(token: str) -> str | None` _(internal)_ — Return the ``vX.Y.Z`` a heading *token* names, or ``None``.
 - `top_release_heading(text: str) -> str | None` — Return the first (topmost) recognized ``vX.Y.Z`` release heading.
 - `_top_heading_span(text: str) -> tuple[int, int]` _(internal)_ — Return the ``(start, end)`` character span of the top release heading line.
-- `retitle_top_release(text: str, version: str) -> str` — Rewrite the top release heading to name *version*.
-- `restack_changelog(ours: str, theirs: str, version: str) -> str` — Stack *ours*' unreleased top section onto *theirs* under *version*.
 - `changelog_version_findings(text: str, latest_tag: str | None) -> list[str]` — Validate *text*'s release headings against each other and *latest_tag*.
 - `action_items(text: str) -> list[tuple[str, str]]` — Return ``(version, action)`` pairs for every ``**Action:**`` line.
 - `_governing_versions(text: str) -> list[str | None]` _(internal)_ — Map each line in *text* to its governing release version heading.
@@ -459,15 +457,14 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_cmd_assemble(root: Path, version: str, date: str, *, delete: bool) -> int` _(internal)_ — Collate pending fragments into ``CHANGELOG.md`` under *version*.
 - `_cmd_next_version(root: Path) -> int` _(internal)_ — Print the computed next release version, tag-aware.
 - `_describe_plan(plan: AssemblyPlan) -> str` _(internal)_ — Return the one-line ``next-version`` verdict for the assembly plan.
-- `_cmd_release(root: Path, date: str) -> int` _(internal)_ — Prepare the release commit: assemble + manifest write, all staged.
-- `_stage_release(root: Path, date: str, plan: AssemblyPlan) -> int` _(internal)_ — Assemble + manifest-write the release per *plan*, all staged.
+- `_cmd_release(root: Path, date: str) -> int` _(internal)_ — Prepare the release commit: assemble the changelog, all staged.
+- `_stage_release(root: Path, date: str, plan: AssemblyPlan) -> int` _(internal)_ — Assemble the release per *plan*, staged.
 - `fragments_new_since_tag(root: Path, tag: str | None) -> list[Path]` — Return pending fragments absent from *tag*'s tree — the newly merged.
 - `_tag_exists(root: Path, version: str) -> bool` _(internal)_ — Check if a tag exists in the local repository.
 - `_validate_auto_tag_fragments(new_paths: list[Path]) -> tuple[list[Fragment], list[str]]` _(internal)_ — Validate fragments and separate valid ones from errors.
 - `_create_and_push_tag(root: Path, version: str, level: str, n_fragments: int) -> int` _(internal)_ — Create and push an annotated tag, handling concurrent-runner races.
 - `_cmd_auto_tag(root: Path) -> int` _(internal)_ — Tag the current commit from its newly merged fragments (CI seam).
-- `_manifest_tag_policy(root: Path) -> str` _(internal)_ — Explain why a plugin-manifest repo is not tagged per merge.
-- `_assembly_pr_body(root: Path, plan: AssemblyPlan) -> str` _(internal)_ — Render the assembly PR body with the repo-correct tagging sentence.
+- `_assembly_pr_body(plan: AssemblyPlan) -> str` _(internal)_ — Render the assembly PR body.
 - `_gate_evidence(root: Path) -> tuple[bool, str]` _(internal)_ — Run the versioning gates and format PR-body evidence.
 - `_computed_next_version(root: Path, cmd: str, *, none_pending_rc: int) -> tuple[int | None, AssemblyPlan | None]` _(internal)_ — Run the shared version-computation guard for a subcommand.
 - `_gh_preflight() -> int | None` _(internal)_ — Refuse loudly up front when ``gh`` is missing or unauthenticated.
@@ -621,15 +618,9 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_expected_clis() -> list[str]` _(internal)_ — Return the console-script names shipped by ``forge-scripts``.
 - `_check_clis() -> list[CheckResult]` _(internal)_ — One result per expected CLI entry point on PATH.
 - `_check_gh() -> list[CheckResult]` _(internal)_ — Check `gh` is installed and authenticated.
-- `_validate_plugin_name(name: str) -> str` _(internal)_ — Argparse ``type`` for ``--plugin-name`` — reject a non-identifier value.
-- `_check_plugin_install(install: CheckoutInstall | None, plugin_name: str) -> CheckResult` _(internal)_ — Report the install this checkout loads, as Claude Code recorded it.
-- `_check_checkout_plugin(repo_root: Path) -> list[CheckResult]` _(internal)_ — Report whether this checkout has its own install of its forge release.
-- `_check_global_install(repo_root: Path) -> list[CheckResult]` _(internal)_ — Flag a forge installed for the whole user account beside this checkout's own.
 - `_check_hooks_path(repo_root: Path) -> list[CheckResult]` _(internal)_ — Report the hooks folder git will use here and whether it can gate a commit.
 - `_check_version_skew(repo_root: Path) -> list[CheckResult]` _(internal)_ — Compare forge's version across its install surfaces and flag drift (#184).
 - `_surface_pin_revision(root: Path) -> list[CheckResult]` _(internal)_ — Compare the pyproject pin's git ref against the installed build's.
-- `_check_plugin_manifests(install_dir: Path | None, plugin_name: str) -> list[CheckResult]` _(internal)_ — Validate plugin.json + marketplace.json in the install this checkout loads.
-- `_check_plugin_contents(install_dir: Path | None) -> list[CheckResult]` _(internal)_ — Verify the expected plugin sub-directories contain files.
 - `_declared_lower_bound(repo_root: Path, tool: str) -> str | None` _(internal)_ — Return the lower bound *tool* is pinned to in an extras group.
 - `_step_tool_drift(repo_root: Path, step: str, tool: str) -> CheckResult | None` _(internal)_ — Report an installed step tool older than the version this repo pins.
 - `_check_step_tools(repo_root: Path) -> list[CheckResult]` _(internal)_ — Verify the external tool for each enabled pre-commit step is on PATH.
@@ -643,6 +634,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_vibe_agents_md_result(repo_root: Path) -> CheckResult` _(internal)_ — Check ``AGENTS.md`` is present and in sync with its sources.
 - `_vibe_dispatcher_result() -> CheckResult` _(internal)_ — Check the ``forge-hook-dispatch`` CLI is on PATH.
 - `_vibe_trusted_folder_result(repo_root: Path) -> CheckResult` _(internal)_ — Check the checkout is in Vibe's trusted-folders database.
+- `_check_claude_integration(repo_root: Path) -> list[CheckResult]` _(internal)_ — Check forge's Claude Code integration artifacts in this checkout.
 - `_check_vibe_integration(repo_root: Path) -> list[CheckResult]` _(internal)_ — Check forge's Mistral Vibe integration artifacts in this checkout.
 - `_vibe_models_result(repo_root: Path) -> CheckResult` _(internal)_ — Check .vibe/config.toml carries the forge model presets that agent pins rely on.
 - `_read_model_entries(config_path: Path) -> dict[str, dict[str, object]]` _(internal)_ — Read a config.toml and key its model entries by alias.
@@ -887,8 +879,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 > _Generate .vibe/hooks.toml from .claude-plugin/plugin.json._
 
 - `class _EventContext` _(internal)_ — Translation context shared by all matcher groups of one Claude event.
-- `_load_plugin_json(plugin_dir: Path) -> dict` _(internal)_ — Load and parse plugin.json from the .claude-plugin directory.
-- `_get_claude_hooks(plugin_json: dict) -> dict` _(internal)_ — Extract the hooks block from plugin.json.
 - `_get_hook_name(command: str) -> str` _(internal)_ — Extract the hook script name from a command path.
 - `_is_unenforced_hook(command: str) -> bool` _(internal)_ — Check if a hook is explicitly unenforced in Vibe.
 - `_is_agent_matcher(matcher_name: str) -> bool` _(internal)_ — Check whether a Claude matcher is an agent-name regex.
@@ -1007,10 +997,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `log_freshness(log_path: Path, current_tree: str | None) -> LogFreshness` — Judge whether *log_path* was produced against *current_tree*.
 - `_release_ignored(path: str) -> bool` _(internal)_ — Return whether *path* is release-curated content (fingerprint-exempt).
 - `release_tree_fingerprint(repo_root: Path, ref: str) -> str | None` — Return a content fingerprint of *ref*'s tree, ignoring changelog paths.
-- `read_plugin_version_at_ref(repo_root: Path, ref: str) -> str | None` — Return ``plugin.json["version"]`` at *ref*, or ``None`` when absent.
-- `read_local_plugin_version(repo_root: Path) -> str | None` — Return the working-tree ``.claude-plugin/plugin.json["version"]``.
-- `render_plugin_version(source_text: str, version: str) -> str` — Return *source_text* with its ``"version"`` field rewritten to *version*.
-- `write_plugin_version(root: Path, version: str) -> None` — Rewrite ``.claude-plugin/plugin.json``'s version field on disk.
 - `_filter_paths(files: list[str], *, suffix: str, prefix: str | tuple[str, ...] | None) -> list[str]` _(internal)_ — Keep the paths ending in *suffix* and, when given, starting with *prefix*.
 - `git_z_names(cwd: Path | None, *argv: str, check: bool = False) -> list[str]` — Return the paths a NUL-separated (``-z``) git listing names, verbatim.
 - `diff_names_z(cwd: Path | None, *diff_args: str, check: bool = False) -> list[str]` — Return the paths ``git diff --name-only`` reports, named exactly.
@@ -1021,6 +1007,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `get_untracked_files(*, suffix: str = '.py', prefix: str | tuple[str, ...] | None = None, repo_root: Path | None = None) -> list[str]` — Get untracked, non-gitignored files matching the suffix/prefix filters.
 - `path_escapes_repo(repo_root: Path, path: str) -> bool` — Return True if *path* resolves outside *repo_root*.
 - `stage_modified_paths(repo_root: Path, pathspecs: list[str]) -> list[str]` — ``git add`` tracked files modified within *pathspecs*.
+- `class TagLookup` — What the remote said about one release tag.
+- `resolve_commit(version: str) -> TagLookup` — Ask the remote which commit release tag ``v<version>`` points at.
 
 ## `forge.hook_dispatch`
 
@@ -1044,6 +1032,18 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_prepare_guards(harness_name: str, event: str, payload_bytes: bytes, roster_path: Path | None, vibe_matcher: str | None = None) -> tuple[list[dict], str]` _(internal)_ — Validate the payload and resolve the guard list for an event.
 - `dispatch(harness_name: str, event: str, payload_bytes: bytes, roster_path: Path | None = None, vibe_matcher: str | None = None) -> tuple[int, str]` — Dispatch a hook event through the guard roster.
 - `main() -> int` — CLI entry point for forge-hook-dispatch.
+
+## `forge.hook_registry`
+
+> _Read the canonical hook wiring every harness converter generates from._
+
+- `class HookEntry` — One guard script to run, as a harness-neutral name plus timeout.
+- `class HookGroup` — Entries sharing one event and matcher.
+- `class HookWiringError` — The canonical wiring is missing, unparseable, or malformed.
+- `_entry(raw: object, where: str) -> HookEntry` _(internal)_ — Build one :class:`HookEntry` from a parsed table.
+- `read_wiring() -> dict[str, tuple[HookGroup, ...]]` — Return the canonical wiring, keyed by harness-neutral event name.
+- `rendered_hooks(command_for: Callable[[str], str]) -> dict[str, list[dict[str, object]]]` — Render the wiring into the event/matcher/command shape harnesses use.
+- `script_names() -> frozenset[str]` — Return every script the canonical wiring references.
 
 ## `forge.import_graph`
 
@@ -1071,13 +1071,29 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `main() -> int` — Run every install / generator step in order. Return non-zero on failure.
 - `run_in_process() -> int` — Re-enter :func:`main` with a clean one-element ``sys.argv``.
 
-## `forge.install_claude_settings`
+## `forge.install_claude`
 
-> _install-forge-claude-settings — keep the shared forge plugin off in this repo._
+> _install-forge-claude — generate forge's Claude Code integration in-repo._
 
-- `_load_settings(path: Path) -> dict[str, object] | None` _(internal)_ — Return the parsed ``.claude/settings.json``.
-- `_is_current(settings: dict[str, object]) -> bool` _(internal)_ — Return True when the shared forge marketplace and plugin are off.
-- `_merge(settings: dict[str, object]) -> dict[str, object]` _(internal)_ — Return *settings* with the shared forge marketplace and plugin turned off.
+- `hook_command(script: str) -> str` — Return the settings command string that runs *script*.
+- `is_forge_group(group: object, scripts: frozenset[str]) -> bool` — Report whether a settings hook group is one forge owns.
+- `forge_hook_groups() -> dict[str, list[dict[str, object]]]` — Build forge's hook registrations in Claude settings shape.
+- `_drop_plugin_era_keys(settings: dict[str, object]) -> None` _(internal)_ — Remove settings that named forge's retired Claude Code plugin.
+- `merge_settings(existing: dict[str, object], groups: dict[str, list[dict[str, object]]], scripts: frozenset[str]) -> dict[str, object]` — Return *existing* settings with forge's hook groups refreshed.
+- `_write_if_changed(path: Path, content: str) -> bool` _(internal)_ — Write *content* to *path* only when it differs.
+- `shipped_agent_files() -> list[Path]` — Return the agent definition files forge publishes.
+- `shipped_skill_files() -> list[Path]` — Return the skill definition files forge publishes.
+- `_for_claude(text: str) -> str` _(internal)_ — Rewrite shipped content into this harness's agent namespace.
+- `_publish_agents(repo_root: Path, *, check: bool) -> list[str]` _(internal)_ — Copy shipped agents into ``.claude/agents/``.
+- `_publish_skills(repo_root: Path, *, check: bool) -> list[str]` _(internal)_ — Copy shipped skills into ``.claude/skills/``.
+- `required_scripts(source: Path, wired: frozenset[str]) -> frozenset[str]` — Return every script needed for the wired ones to run.
+- `_publish_hooks(repo_root: Path, scripts: frozenset[str], *, check: bool) -> list[str]` _(internal)_ — Copy the guard scripts into ``.claude/hooks/``, executable.
+- `_render_ignore(scripts: frozenset[str]) -> str` _(internal)_ — Build the ``.claude/.gitignore`` that lists what forge generates.
+- `previously_generated(repo_root: Path) -> frozenset[str]` — Return every path the last run recorded as forge's own.
+- `_prune_stale(repo_root: Path, scripts: frozenset[str], owned: frozenset[str], *, check: bool) -> list[str]` _(internal)_ — Remove published files forge no longer ships.
+- `_read_settings(settings_path: Path) -> tuple[dict[str, object], str | None]` _(internal)_ — Parse the settings file, or say why it cannot be merged into.
+- `_publish_text(repo_root: Path, path: Path, text: str, *, check: bool) -> list[str]` _(internal)_ — Write *text* to *path* when it differs; under *check*, only report.
+- `install_claude(repo_root: Path, *, check: bool = False) -> tuple[list[str], str | None]` — Generate the Claude Code integration for *repo_root*.
 - `main() -> int` — CLI entry point.
 
 ## `forge.install_claudemd`
@@ -1162,7 +1178,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _install-forge-vibe — install and configure Mistral Vibe integration._
 
-- `_generate_roster_sidecar(plugin_json_path: Path, repo_root: Path) -> tuple[dict, list[str]]` _(internal)_ — Generate the roster sidecar from plugin.json.
+- `_generate_roster_sidecar(repo_root: Path) -> tuple[dict, list[str]]` _(internal)_ — Generate the roster sidecar from forge's canonical hook wiring.
 - `_write_roster_sidecar(roster: dict, repo_root: Path) -> tuple[Path, int]` _(internal)_ — Write the roster sidecar to .vibe/forge-roster.json.
 - `_extract_frontmatter_field(content: str, field: str) -> str` _(internal)_ — Extract a field from YAML frontmatter in an agent markdown file.
 - `_generate_subagent_toml(agent_file: Path) -> tuple[str, str]` _(internal)_ — Generate a Vibe subagent TOML file from an agent.md file.
@@ -1185,10 +1201,12 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _Instruction-document text: packaged foundation, ``@``-includes, AGENTS.md._
 
-- `shipped_path(repo_root: Path, rel: str) -> Path` — Resolve a forge-shipped source path for *repo_root*.
+- `shipped_path(rel: str) -> Path` — Resolve a forge-shipped source path — always from the package.
 - `foundation_text() -> str` — Return the bundled FOUNDATION.md text shipped with the pip package.
 - `resolve_includes(text: str, base_dir: Path, *, _seen: frozenset[Path] = frozenset()) -> str` — Replace whole-line ``@path`` directives with the referenced file's content.
 - `flatten_agents_md(repo_root: Path) -> str | None` — Compose the flattened AGENTS.md for a checkout.
+- `generated_name(canonical: str) -> str` — Return the name forge publishes a shipped agent or skill under.
+- `renamed_frontmatter(text: str, canonical: str) -> str` — Rewrite a definition's ``name:`` field to the published name.
 
 ## `forge.intake`
 
@@ -1269,12 +1287,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _forge-next-prep — prepare main for the next task (fetch, pull, tag, prune)._
 
-- `_is_newer(plugin_ver: str, latest_tag: str | None) -> bool` _(internal)_ — Return True when ``v<plugin_ver>`` would sort *after* ``latest_tag``.
-- `tag_staleness_warning(repo_root: Path) -> str | None` — Return a warning when the integration branch owes a rolling-next tag.
-- `_tag_misuse_warning(repo_root: Path) -> str | None` _(internal)_ — Return a warning when ``--tag`` is used in a repo with no manifest.
-- `class TagDecision` — Outcome of ``--tag``: the tag cut, or why none was.
-- `_maybe_tag_release(repo_root: Path) -> TagDecision` _(internal)_ — Tag and push ``v<plugin.json.version>`` when newer than the latest tag.
-- `_log_tag_push_timeout(tag: str, *, on_remote: bool | None) -> None` _(internal)_ — Tell the operator how to finish a tag push that timed out.
 - `_fetch_origin(repo_root: Path) -> bool` _(internal)_ — Run the bounded ``git fetch --prune`` the sync starts with.
 - `_gone_branches(repo_root: Path) -> list[str]` _(internal)_ — Return local branch names whose tracking remote is ``[origin/...: gone]``.
 - `_prune_gone_branches(repo_root: Path) -> tuple[list[str], list[str]]` _(internal)_ — ``git branch -d`` every branch whose remote is gone.
@@ -1292,7 +1304,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_log_remote_prune_result(repo_root: Path, base_branch: str, *, pr_lister: PrLister | None = None) -> None` _(internal)_ — Prune merged remote branches and log the outcome.
 - `main() -> int` — Refresh main, optionally tag the release, prune stale local branches.
 - `_pull_ff_only(repo_root: Path, target_branch: str) -> bool` _(internal)_ — Fast-forward *target_branch* from origin, bounded and prompt-free.
-- `_tag_and_report(repo_root: Path, args: argparse.Namespace) -> int` _(internal)_ — Run the post-sync tail: optional tag, optional prunes, advisory.
+- `_tag_and_report(repo_root: Path, args: argparse.Namespace) -> int` _(internal)_ — Run the post-sync tail: optional prunes, advisory.
 
 ## `forge.pip_audit_json`
 
@@ -1450,24 +1462,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `shipped_plugin_names() -> frozenset[str]` — Every name the plugin addresses under its own namespace.
 - `shipped_agent_names() -> frozenset[str]` — Agent names forge's plugin ships, without the namespace prefix.
 
-## `forge.plugin_sync`
-
-> _forge-plugin-sync — give this checkout its own install of its forge release._
-
-- `marketplace_dir(name: str) -> Path` — Return the shared directory holding marketplace *name*.
-- `marketplace_manifest(version: str, commit: str) -> dict[str, object]` — Return the ``marketplace.json`` content for forge *version*.
-- `write_marketplace(version: str, commit: str) -> Path` — Write the per-version marketplace and return its directory.
-- `class TagLookup` — What GitHub said about one release tag.
-- `resolve_commit(version: str) -> TagLookup` — Ask GitHub which commit release tag ``v<version>`` points at.
-- `_printable(text: str) -> str` _(internal)_ — Return *text* with control characters escaped, capped in length.
-- `_claude(args: list[str], cwd: Path) -> tuple[bool, str]` _(internal)_ — Run ``claude plugin <args> --json`` in *cwd*.
-- `_refusal(root: Path) -> str | None` _(internal)_ — Name a setup this command must not install alongside, if any.
-- `_run_install_steps(root: Path, directory: Path, name: str) -> bool` _(internal)_ — Register the per-version marketplace and install the plugin from it.
-- `_remove_stale_installs(root: Path, name: str) -> None` _(internal)_ — Uninstall this checkout's older local forge installs.
-- `_install(root: Path, version: str, name: str, *, quiet: bool) -> int` _(internal)_ — Write the release marketplace, install it, and verify the result.
-- `sync(root: Path, *, check: bool = False, quiet: bool = False) -> int` — Bring *root*'s own forge plugin install onto its target release.
-- `main(argv: list[str] | None = None) -> int` — Parse arguments and run :func:`sync` on the current repo.
-
 ## `forge.post_checkout`
 
 > _forge-post-checkout — runs forge's managed post-checkout git-hook logic._
@@ -1516,7 +1510,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `configured_docs_only_globs(repo_root: Path) -> tuple[str, ...]` — Return the consumer's extra docs-only globs from ``[tool.forge.pr]``.
 - `docs_only_diff(changed_paths: list[str], extra_globs: tuple[str, ...] = ()) -> bool` — Return whether a diff qualifies for the docs-only light path.
 - `regen_only_diff(changed_paths: list[str]) -> bool` — Return whether every changed path is a forge-managed regen artifact.
-- `release_assembly_diff(changed_paths: list[str]) -> bool` — Return whether every changed path is a release-assembly output.
 - `touches_source_paths(changed_paths: list[str]) -> list[str]` — Return the subset of *changed_paths* under :data:`SOURCE_PATHS`.
 - `touches_rule_surface(changed_paths: list[str]) -> bool` — Return whether any of *changed_paths* is under :data:`RULE_SURFACE_PATHS`.
 - `reviewable_adds(added_paths: list[str], *, intake_dir: str = INTAKE_DEFAULT_DIR) -> list[str]` — Return the subset of *added_paths* the prior-art gate must see.
@@ -1653,8 +1646,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `require_release(value: str, tag_lookup: Callable[[str], TagLookup]) -> str` — The forge release *value* names, checked to be tagged upstream.
 - `_pin_forge(clone: Path, version: str) -> str` _(internal)_ — Pin forge ``v<version>`` in the clone's dev extra and commit it.
 - `_ensure_env(clone: Path, version: str, runner: Runner) -> bool` _(internal)_ — Give the clone a ``.venv`` running forge *version*, reusing a matching one.
-- `plugin_sync_command(clone: str | Path) -> str` — The command that installs the clone's pinned plugin by hand.
-- `_sync_plugin(clone: Path, runner: Runner) -> bool` _(internal)_ — Install the pinned release's Claude Code plugin for the clone.
+- `integration_command(clone: str | Path) -> str` — The command that generates the clone's Claude Code integration.
+- `_install_integration(clone: Path, runner: Runner) -> bool` _(internal)_ — Generate the pinned release's Claude Code integration in the clone.
 - `_install_forge(clone: Path, branch: str, version: str, runner: Runner) -> tuple[str, bool]` _(internal)_ — Pin, install and sync forge *version* in the clone on *branch*.
 - `start_run(task: Task, request: RunRequest, *, data: Path, seams: Seams = DEFAULT_SEAMS) -> tuple[Marker, str]` — Put the sandbox clone on a fresh branch for *task* and record the marker.
 - `session_line(marker: Marker) -> str` — The command to paste to start the session.
@@ -1804,11 +1797,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_latest_verified_sha(pr_number: int) -> str | None` _(internal)_ — Return the newest ``verified-at:`` SHA among the PR's comments.
 - `wrapup_freshness(pr_number: int, *, repo: str | None = None) -> WrapupFreshness` — Compare the PR's newest ``verified-at:`` SHA and base against its current state.
 - `_try_delta(root: Path, pr_number: int | None, reasons: list[str], branch_paths: list[str]) -> bool` _(internal)_ — Evaluate delta-mode eligibility, appending the trail to *reasons*.
-- `class _RawEntry` _(internal)_ — One changed path as ``git diff --raw`` reports it.
-- `_raw_entries(root: Path, diff_range: str) -> list[_RawEntry]` _(internal)_ — Return status, path and modes per changed file across *diff_range*.
-- `_manifest_refusal(root: Path, base: str) -> str | None` _(internal)_ — Return why the manifest change is more than a version bump, or ``None``.
-- `_version_bump_refusal(old: str, new: str) -> str | None` _(internal)_ — Return why *new* is not a release version above *old*, or ``None``.
-- `_light_release_refusal(root: Path, base: str, paths: list[str]) -> str | None` _(internal)_ — Return why the diff is not a release assembly, or ``None`` when it is.
 - `classify(root: Path, base: str, pr_number: int | None) -> PrPlan` — Classify the current branch's finalization path.
 - `_write_evidence(root: Path, base: str, plan: PrPlan, pr_number: int | None) -> None` _(internal)_ — Write the review evidence pack; a failure is logged, never raised.
 - `_resolve_repo(repo_arg: str | None) -> str | None` _(internal)_ — Resolve ``owner/repo`` from *repo_arg* or the checkout's origin remote.
@@ -1960,15 +1948,12 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_env_sync_precheck(repo_root: Path) -> StepResult | None` _(internal)_ — Return the result that ends ``env_sync`` early, or ``None`` to continue.
 - `_emergency_skip(repo_root: Path, step_name: str) -> StepResult | None` _(internal)_ — Stand this step down while an emergency sentinel is armed.
 - `step_env_sync(repo_root: Path) -> StepResult` — Fail fast when the local install is stale vs the repo's declared CLIs.
-- `_plugin_sync_skip(repo_root: Path) -> StepResult | None` _(internal)_ — Return the skipped ``plugin_sync`` result when the gate does not apply.
-- `step_plugin_sync(repo_root: Path) -> StepResult` — Flag a checkout whose own forge plugin install is not its release.
 - `step_ruff(repo_root: Path) -> StepResult` — Run ``fix-forge-ruff`` — owns the ruff phase end-to-end.
 - `step_docstrings(repo_root: Path) -> StepResult` — Run ``verify-forge-docstrings`` over the resolved scope.
 - `step_docstring_coverage(repo_root: Path) -> StepResult` — Run ``verify-forge-docstring-coverage`` — full-codebase % reporter.
 - `step_test_naming(repo_root: Path) -> StepResult` — Run ``verify-forge-test-naming`` over the resolved scope.
 - `step_repo_structure(repo_root: Path) -> StepResult` — Run ``verify-forge-repo-structure``; hard-fail if missing (FOUNDATION §2).
 - `step_intake_check(repo_root: Path) -> StepResult` — Validate the intake entries — ``forge-intake check``, in process.
-- `step_manifest_json(repo_root: Path) -> StepResult` — Run ``verify-forge-manifest`` — owns the manifest-JSON validation phase.
 - `step_commit_types_parity(repo_root: Path) -> StepResult` — Run ``forge-gen-commit-types --check`` — managed-block parity guard.
 - `step_config_doc_check(repo_root: Path) -> StepResult` — Run ``forge-gen-config-doc --check`` — config-doc key-table drift guard.
 - `_run_gen_check(repo_root: Path, doc: str) -> tuple[bool, str]` _(internal)_ — Run *doc*'s generator with ``--check`` from the running forge install.
@@ -1991,7 +1976,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `step_cli_wiring(repo_root: Path) -> StepResult` — Run ``verify-forge-cli-wiring`` — assert every script has a real caller.
 - `_cli_wiring_enabled(repo_root: Path) -> bool` _(internal)_ — Return True when the repo has opted into the cli_wiring check.
 - `step_agent_doc(repo_root: Path) -> StepResult` — Run ``verify-forge-agent-doc`` — keep a hand-maintained agent doc in sync.
-- `step_plugin_version(repo_root: Path) -> StepResult` — Run ``verify-forge-plugin-version`` — owns the rolling-next guard.
 - `step_smart_test(repo_root: Path) -> StepResult` — Run smart-test depth-N selection when opted in (off by default).
 - `_cadence_note(mode: str, *, age: float | None, age_txt: str, max_age: float) -> str` _(internal)_ — Return the informational cadence line for a non-escalating mode.
 - `_cfg_str_list(cfg: dict[str, object], key: str, default: list[str]) -> list[str]` _(internal)_ — Return a ``[tool.forge.*]`` list-valued key narrowed to ``list[str]``.
@@ -2046,23 +2030,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_sync_short_circuit(root: Path) -> int | None` _(internal)_ — Return the exit code for a merge/wip sync that skips the gate.
 - `main() -> int` — CLI entry point.
 
-## `forge.rebump`
-
-> _forge-rebump — mechanical post-merge version-slot + changelog resolution._
-
-- `class _RefusalError` _(internal)_ — Internal control flow: a state this tool must not resolve.
-- `class RebumpOutcome` — Result of one rebump run.
-- `_require_latest_tag(repo_root: Path) -> str` _(internal)_ — Return the latest ``v*`` tag, refusing when none exists.
-- `_read_index_stage(repo_root: Path, stage: int, path: str) -> str | None` _(internal)_ — Return *path*'s contents at merge-index *stage*, or ``None``.
-- `_guard_entry_state(repo_root: Path, cfg: ForgeConfig, *, mid_merge: bool) -> None` _(internal)_ — Refuse states the tool must not touch.
-- `_mid_merge_versions(repo_root: Path) -> tuple[str | None, str | None]` _(internal)_ — Return the ``(fork, ours)`` manifest versions during a merge.
-- `_classify_intent(repo_root: Path, cfg: ForgeConfig, *, mid_merge: bool) -> str` _(internal)_ — Classify the branch's own semver intent from its fork-point delta.
-- `_resolve_version(repo_root: Path, latest: str, bump_class: str, *, mid_merge: bool) -> str` _(internal)_ — Return the bare version the manifest should carry after the rebump.
-- `_render_plugin_version(repo_root: Path, version: str, *, mid_merge: bool) -> str | None` _(internal)_ — Return the manifest text carrying *version*, or ``None`` when current.
-- `_render_changelog(repo_root: Path, version: str, *, mid_merge: bool) -> tuple[str, str | None]` _(internal)_ — Compute the changelog half of the rebump without touching disk.
-- `rebump(repo_root: Path) -> RebumpOutcome` — Resolve the rolling-next version slot and changelog stack, then stage.
-- `main() -> int` — Run the rebump against the current directory's repo.
-
 ## `forge.regen_docs`
 
 > _Decide when the generated docs must be regenerated at commit time._
@@ -2088,7 +2055,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 - `_dirty_tree_error(repo_root: Path) -> str | None` _(internal)_ — Return an error when the working tree has uncommitted changes.
 - `_wrong_branch_error(repo_root: Path, base_branch: str) -> str | None` _(internal)_ — Return an error when ``HEAD`` is not on *base_branch*.
-- `_wrong_release_model_error(repo_root: Path) -> str | None` _(internal)_ — Return an error when this repo's release model isn't single-track.
 - `_changelog_gate_error(repo_root: Path, tag: str) -> str | None` _(internal)_ — Return an error when ``CHANGELOG.md`` exists but lacks *tag*'s entry.
 - `_detached_head_error(repo_root: Path, base_branch: str) -> str | None` _(internal)_ — Return an error unless ``HEAD`` is the tip of ``origin/<base_branch>``.
 - `_declared_tag_or_error(repo_root: Path) -> tuple[str | None, str | None]` _(internal)_ — Resolve the tag ``--from-changelog`` should cut.
@@ -2370,7 +2336,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_installed_revision() -> str | None` _(internal)_ — Return the installed forge-scripts build's requested git revision.
 - `pin_revision_mismatch(root: Path) -> tuple[str, str] | None` — Return ``(pinned_ref, installed_ref)`` on a provable pin/install mismatch.
 - `_pending_action_count(changelog_text: str) -> int` _(internal)_ — Count ``**Action:**`` items in versions newer than the installed one.
-- `_undocumented_release_refusal(target_ref: str, changelog_text: str | None) -> str | None` _(internal)_ — Return why *target_ref* must not be adopted, or ``None`` to proceed.
+- `_unassembled_notes_warning(target_ref: str, changelog_text: str | None) -> str | None` _(internal)_ — Return a warning when *target_ref*'s own notes are not written yet.
 - `_print_upgrade_notes() -> None` _(internal)_ — Surface consumer-action upgrade notes after a successful upgrade.
 - `_run_phase2(root: Path) -> int` _(internal)_ — Phase 2 — verify the install matches the pin, then re-sync artifacts.
 - `_run_pip_install(ref: str, *, auth_mode: AuthMode, timeout_seconds: int | None) -> int` _(internal)_ — Run the force-reinstall pip command, wrapped in a progress logger.
@@ -2386,6 +2352,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_plugin_roster() -> dict[str, set[str]]` _(internal)_ — Select the plugin skill and hook names this checker enriches with.
 - `_extra_roster(root: Path) -> dict[str, set[str]]` _(internal)_ — Read the consumer escape-hatch roster additions from config.
 - `_roster(root: Path) -> dict[str, set[str]]` _(internal)_ — Discover the repo's agents, skills, hooks, and CLIs.
+- `_is_generated_copy(name: str) -> bool` _(internal)_ — Say whether *name* is forge's generated copy of a definition.
+- `_published_fleet_names(roster: dict[str, set[str]]) -> frozenset[str]` _(internal)_ — Return every agent and skill name under its published spelling.
 - `_check_doc(doc: str, roster: dict[str, set[str]]) -> list[str]` _(internal)_ — Return coverage + dangling problems for *doc* against *roster*.
 - `class Edge` — One hand-curated mermaid edge (``src --[verb]--> dst``) in the agent doc.
 - `_parse_blocks(doc: str) -> list[tuple[list[Edge], dict[str, set[str]]]]` _(internal)_ — Parse each mermaid block into its edges and node-class declarations.
@@ -2479,26 +2447,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_log_issues(errors: list[Issue], warnings: list[Issue], infos: list[Issue], repo_root: Path, *, file_count: int) -> None` _(internal)_ — Log categorized issues and print a summary line.
 - `main() -> int` — Main entry point for docstring verification.
 
-## `forge.verify_manifest`
-
-> _Validate ``.claude-plugin/*.json`` files: JSON parse + version schema._
-
-- `_parse_json_error(manifest: Path) -> str | None` _(internal)_ — Return a formatted error if *manifest* is invalid JSON, else None.
-- `_version_error(manifest: Path) -> str | None` _(internal)_ — Return an error when ``plugin.json``'s version is not strict semver.
-- `_repeated_matchers(groups: list[object]) -> list[str]` _(internal)_ — Return each matcher that repeats within one event's group list, in order.
-- `_duplicate_matcher_error(manifest: Path) -> str | None` _(internal)_ — Return an error if a hook event repeats a matcher, else None.
-- `main() -> int` — Validate every ``.claude-plugin/*.json`` file and write the log.
-
-## `forge.verify_plugin_version`
-
-> _Enforce the rolling-next and declared-version manifest invariants._
-
-- `_is_release_commit(repo_root: Path) -> bool` _(internal)_ — Return True when ``HEAD``'s release fingerprint matches ANY published ``v*`` tag.
-- `main() -> int` — Enforce the rolling-next and declared-version manifest invariants.
-- `_declared_version_documented(repo_root: Path, version: str | None) -> int` _(internal)_ — Refuse a declared plugin version that ``CHANGELOG.md`` never mentions.
-- `_not_ahead_verdict(repo_root: Path, plugin_ver: tuple[int, int, int], tag_ver: tuple[int, int, int], latest_tag: str) -> int` _(internal)_ — Resolve the verdict when ``plugin.json`` is NOT ahead of the latest tag.
-- `_fragment_parked_verdict(repo_root: Path, latest_tag: str) -> int` _(internal)_ — Gate the fragment-mode resting state: manifest at or behind the tag.
-
 ## `forge.verify_repo_structure`
 
 > _verify-forge-repo-structure — verify REPO_STRUCTURE.md matches the actual tree._
@@ -2566,20 +2514,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `read_json(path: Path) -> tuple[dict, str | None]` — Read a JSON object file. Returns (data, error_message_or_None).
 - `pip_version() -> str | None` — Version of the installed ``forge-scripts`` package, or None if absent.
 - `hook_sidecar_version(repo_root: Path) -> str | None` — Forge version recorded in the git-hook sidecar, or None when absent.
-- `install_version(install_dir: Path) -> str` — Version a plugin install directory reports.
 - `editable_install_origin() -> Path | None` — Return the checkout an editable ``forge-scripts`` install points at.
 - `_direct_url() -> dict[str, object] | None` _(internal)_ — Return the distribution's parsed ``direct_url.json``, or ``None``.
-- `_keyed_records(plugin: str, plugins_file: Path | None = None) -> list[tuple[str, dict[str, object]]]` _(internal)_ — Install records for *plugin*, each with the key it is filed under.
-- `pinned_marketplace(version: str) -> str` — Return the per-version marketplace name for forge *version*.
-- `target_plugin_version(repo_root: Path) -> str | None` — Return the forge release this checkout should run as its plugin.
-- `class CheckoutInstall` — One plugin install Claude Code recorded.
-- `_installs(plugin: str, plugins_file: Path | None) -> list[tuple[CheckoutInstall, str | None]]` _(internal)_ — Every recorded install of *plugin* whose directory still exists.
-- `checkout_installs(repo_root: Path, plugins_file: Path | None = None, *, plugin: str = _FORGE) -> list[CheckoutInstall]` — Return every install of *plugin* recorded for *repo_root* alone.
-- `user_installs(plugin: str = _FORGE, plugins_file: Path | None = None) -> list[CheckoutInstall]` — Return every user-scope install of *plugin* whose directory exists.
-- `resolve_install(repo_root: Path, plugin: str = _FORGE, plugins_file: Path | None = None) -> CheckoutInstall | None` — Return the install of *plugin* that answers for *repo_root*.
-- `checkout_plugin_current(repo_root: Path, version: str, plugins_file: Path | None = None) -> bool` — Say whether *repo_root* has its own install of forge *version*.
-- `enabled_forge_keys(*settings_paths: Path) -> list[str]` — Return every ``forge@…`` key the given settings files leave turned on.
-- `global_forge_keys(plugins_file: Path | None = None, settings_file: Path | None = None) -> list[str]` — Return every forge key installed or enabled for the whole user account.
 - `_resolved(path: Path) -> Path` _(internal)_ — Return *path* resolved, or unchanged when resolution fails.
 - `safe_text(value: object) -> str | None` — Return *value* as text if it matches :data:`_SAFE_TEXT`, else a placeholder.
 

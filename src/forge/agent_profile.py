@@ -581,7 +581,7 @@ def subagent_edits(
             reason=(
                 f"{pathless} subagent write(s) recorded without a file path — "
                 "the running hook predates path recording; run "
-                "`forge-plugin-sync`, then restart the Claude Code session"
+                "`install-forge-claude`, then restart the Claude Code session"
             ),
             pathless=pathless,
         )

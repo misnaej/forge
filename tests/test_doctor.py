@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import subprocess
@@ -18,8 +17,9 @@ from unittest.mock import patch
 import pytest
 
 from forge import doctor, git_utils, precommit, version_surfaces
+from forge.install_claude import install_claude
 from forge.install_vibe import install_vibe
-from tests.conftest import make_fake_run, manifest_repo, write_install
+from tests.conftest import make_fake_run
 
 
 if TYPE_CHECKING:
@@ -88,28 +88,6 @@ def test_check_gh_authenticated(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # --- _validate_plugin_name() (#200) -----------------------------------------
-
-
-def test_validate_plugin_name_accepts_bare_names() -> None:
-    """A bare identifier matching the safe charset passes through unchanged.
-
-    ``a..b`` is included deliberately: a ``..`` *substring* is a harmless
-    literal directory name (only an exact ``..`` component escapes, and that
-    is barred by the leading-alnum rule), so it must not be over-rejected.
-    """
-    for name in ["forge", "myrepo", "my.plugin", "a_b-c", "a..b"]:
-        assert doctor._validate_plugin_name(name) == name
-
-
-def test_validate_plugin_name_rejects_traversal_and_separators() -> None:
-    r"""Path separators, bare '..', non-alnum leads, and trailing newlines raise.
-
-    The trailing-newline case (``"forge\\n"``) locks in the ``\\Z`` anchor —
-    a bare ``$`` would admit it (Python ``$`` matches before a final newline).
-    """
-    for name in ["../../etc", "a/b", "..", ".hidden", "-x", "", "foo/..", "forge\n"]:
-        with pytest.raises(argparse.ArgumentTypeError):
-            doctor._validate_plugin_name(name)
 
 
 def test_doctor_cli_rejects_unsafe_plugin_name() -> None:
@@ -304,8 +282,10 @@ def test_version_skew_aligned_normalizes_dev_suffix(
     assert results[0].passed
     assert not results[0].info
     assert "aligned at v2.23.1" in results[0].detail
-    assert "plugin not compared" in results[0].detail
-    assert "plugin:checkout" in results[0].detail
+    # The two comparable surfaces are named; the generated integration is
+    # not one, because it carries no version of its own to compare.
+    assert "git hooks" in results[0].detail
+    assert "pip package" in results[0].detail
 
 
 def test_version_skew_flags_lagging_surface_as_advisory(
@@ -403,300 +383,6 @@ def _populate_install(install_dir: Path, *, name: str = "forge") -> None:
     for area in doctor.EXPECTED_PLUGIN_DIRS:
         (install_dir / area).mkdir(exist_ok=True)
         (install_dir / area / "entry").write_text("x", encoding="utf-8")
-
-
-def _plugin_results(repo: Path, plugin_name: str = "forge") -> list[doctor.CheckResult]:
-    """Run the install-reading plugin checks the way ``main()`` wires them.
-
-    Args:
-        repo: Checkout root.
-        plugin_name: The ``--plugin-name`` value.
-
-    Returns:
-        The ``plugin:installed``, manifest and content results, in order.
-    """
-    install = version_surfaces.resolve_install(repo, plugin_name)
-    install_dir = install.install_dir if install is not None else None
-    return [
-        doctor._check_plugin_install(install, plugin_name),
-        *doctor._check_plugin_manifests(install_dir, plugin_name),
-        *doctor._check_plugin_contents(install_dir),
-    ]
-
-
-def test_plugin_checks_read_this_checkouts_own_install(
-    tmp_path: Path, claude_home: Path
-) -> None:
-    """Every plugin line describes the install recorded for this checkout.
-
-    SCENARIO: the machine holds only a per-release install for this
-    checkout — no shared slot — which once failed ``plugin:installed``.
-    EXPECTED BEHAVIOR: every line passes and names that install.
-    """
-    repo = manifest_repo(tmp_path, "1.2.3")
-    install_dir = write_install(claude_home, repo, "1.2.3")
-    _populate_install(install_dir)
-
-    results = _plugin_results(repo)
-
-    assert all(r.passed for r in results)
-    installed = results[0]
-    assert installed.name == "plugin:installed"
-    assert "forge@forge-v1-2-3 1.2.3" in installed.detail
-    assert str(install_dir) in installed.detail
-    assert results[1].detail == "name=forge, version=1.2.3"
-
-
-def test_plugin_installed_fails_naming_sync_without_an_install(
-    tmp_path: Path, claude_home: Path
-) -> None:
-    """No install for this checkout is a blocking failure with the fix named.
-
-    SCENARIO: another checkout and the user account each hold a forge;
-    neither is this checkout's.
-    """
-    repo = manifest_repo(tmp_path, "1.2.3")
-    write_install(claude_home, tmp_path / "other", "1.2.3")
-    write_install(claude_home, None, "1.2.3", key="forge@forge", scope="user")
-
-    results = _plugin_results(repo)
-
-    assert not any(r.passed for r in results)
-    assert not any(r.info for r in results)
-    assert "forge-plugin-sync" in results[0].detail
-    assert results[1].detail == "plugin not installed"
-
-
-def test_plugin_installed_for_another_plugin_falls_back_to_user_scope(
-    tmp_path: Path, claude_home: Path
-) -> None:
-    """``--plugin-name`` for a non-forge plugin accepts its user-wide install."""
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    install_dir = write_install(
-        claude_home, None, "0.4.0", key="other@market", scope="user"
-    )
-    _populate_install(install_dir, name="other")
-
-    results = _plugin_results(repo, "other")
-
-    assert all(r.passed for r in results)
-    assert "other@market 0.4.0 (user scope)" in results[0].detail
-
-
-def test_plugin_installed_for_another_plugin_without_any_install(
-    tmp_path: Path,
-) -> None:
-    """A non-forge plugin with no install is a failure that names both scopes."""
-    result = doctor._check_plugin_install(None, "other")
-
-    assert not result.passed
-    assert "this checkout or for your user account" in result.detail
-
-
-def test_plugin_manifests_do_not_echo_crafted_names(tmp_path: Path) -> None:
-    """A cached manifest's name with shell characters is not printed raw.
-
-    Args:
-        tmp_path: Pytest temp directory standing in for the cache slot.
-    """
-    manifest_dir = tmp_path / "9.1.1" / ".claude-plugin"
-    manifest_dir.mkdir(parents=True)
-    (manifest_dir / "plugin.json").write_text(
-        json.dumps({"name": "forge\n$(id)", "version": "9.1.1"}), encoding="utf-8"
-    )
-    (manifest_dir / "marketplace.json").write_text(
-        json.dumps({"name": "forge; rm -rf ~"}), encoding="utf-8"
-    )
-
-    plugin_json, market_json = doctor._check_plugin_manifests(
-        tmp_path / "9.1.1", "forge"
-    )
-
-    assert plugin_json.detail == "name=<unprintable>, version=9.1.1"
-    assert market_json.detail == "name=<unprintable>"
-    assert not plugin_json.passed
-
-
-# --- _check_global_install() ---------------------------------------------
-
-
-def _write_settings(path: Path, *, enabled: bool) -> None:
-    """Write a Claude Code settings file setting forge's enablement.
-
-    Args:
-        path: Settings file to write (parents created).
-        enabled: Value for ``enabledPlugins["forge@forge"]``.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps({"enabledPlugins": {"forge@forge": enabled}}), encoding="utf-8"
-    )
-
-
-@pytest.mark.parametrize(
-    "case",
-    [
-        {
-            "user_enabled": True,
-            "user_record": False,
-            "local_disabled": False,
-            "expected": True,
-        },
-        {
-            "user_enabled": False,
-            "user_record": True,
-            "local_disabled": False,
-            "expected": True,
-        },
-        {
-            "user_enabled": False,
-            "user_record": False,
-            "local_disabled": False,
-            "expected": False,
-        },
-        {
-            "user_enabled": True,
-            "user_record": False,
-            "local_disabled": True,
-            "expected": False,
-        },
-    ],
-    ids=["user-settings", "user-record", "no-global", "repo-opted-out"],
-)
-def test_global_install_advisory(
-    tmp_path: Path,
-    claude_home: Path,
-    case: dict[str, bool],
-) -> None:
-    """A user-wide forge beside this repo's enabled one is reported, not judged.
-
-    Args:
-        tmp_path: Pytest temp directory.
-        claude_home: Fake ``~/.claude``.
-        case: Test case with user_enabled, user_record, local_disabled, expected.
-    """
-    repo = tmp_path / "repo"
-    _write_settings(repo / ".claude" / "settings.json", enabled=True)
-    if case["local_disabled"]:
-        _write_settings(repo / ".claude" / "settings.local.json", enabled=False)
-    if case["user_enabled"]:
-        _write_settings(claude_home / "settings.json", enabled=True)
-    if case["user_record"]:
-        write_install(claude_home, None, "3.30.0", key="forge@forge", scope="user")
-
-    results = doctor._check_global_install(repo)
-
-    if not case["expected"]:
-        assert results == []
-        return
-    assert [r.name for r in results] == ["plugin:global_install"]
-    detail = results[0].detail
-    assert results[0].info
-    assert "`claude plugin uninstall forge@forge --scope user`" in detail
-    assert "enabledPlugins false is no fix" in detail
-
-
-def test_global_install_advisory_names_a_per_release_user_install(
-    tmp_path: Path, claude_home: Path
-) -> None:
-    """A user-scope ``forge@forge-v…`` record shadows this checkout's own install.
-
-    SCENARIO: the checkout has its own per-release install (no settings
-    file enables anything — the record alone is its copy), and a release
-    marketplace was also installed for the whole user account.
-    EXPECTED BEHAVIOR: the advisory fires and its fix names that key.
-    """
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    write_install(claude_home, repo, "1.2.3")
-    write_install(claude_home, None, "1.2.0", scope="user")
-
-    results = doctor._check_global_install(repo)
-
-    assert [r.name for r in results] == ["plugin:global_install"]
-    assert "forge@forge-v1-2-0" in results[0].detail
-    assert (
-        "`claude plugin uninstall forge@forge-v1-2-0 --scope user`" in results[0].detail
-    )
-
-
-def test_global_install_advisory_silent_without_files(tmp_path: Path) -> None:
-    """No settings and no records anywhere is a no-op, never an error.
-
-    Args:
-        tmp_path: Pytest temp directory (a repo with no ``.claude/``).
-    """
-    assert doctor._check_global_install(tmp_path) == []
-
-
-@pytest.mark.parametrize("malformed", ["repo", "user"])
-def test_global_install_advisory_survives_list_typed_settings(
-    tmp_path: Path, claude_home: Path, malformed: str
-) -> None:
-    """A settings file holding a JSON list neither crashes nor fires.
-
-    Args:
-        tmp_path: Pytest temp directory.
-        claude_home: Fake ``~/.claude``.
-        malformed: Which settings file holds the list — the repo's (so the
-            repo does not enable forge) or the user's (so nothing global).
-    """
-    repo_settings = tmp_path / ".claude" / "settings.json"
-    user_settings = claude_home / "settings.json"
-    _write_settings(repo_settings, enabled=True)
-    _write_settings(user_settings, enabled=True)
-    target = repo_settings if malformed == "repo" else user_settings
-    target.write_text('["forge@forge"]', encoding="utf-8")
-
-    assert doctor._check_global_install(tmp_path) == []
-
-
-def test_global_install_advisory_leaves_exit_code_unchanged(
-    tmp_path: Path,
-    claude_home: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The global-install advisory never fails ``forge-doctor``.
-
-    MOCK SETUP: every other check stubbed to nothing; forge enabled both
-    in the repo and in user settings; cwd is the repo.
-    EXPECTED BEHAVIOR: exit 0 with the advisory present in the JSON.
-    """
-    _write_settings(tmp_path / ".claude" / "settings.json", enabled=True)
-    _write_settings(claude_home / "settings.json", enabled=True)
-    monkeypatch.chdir(tmp_path)
-    for name in (
-        "_check_clis",
-        "_check_gh",
-        "_check_step_tools",
-        "_check_version_skew",
-        "_check_hooks_path",
-        "_surface_pin_revision",
-        "_check_under_used_capabilities",
-        "_check_plugin_manifests",
-        "_check_plugin_contents",
-        "_check_checkout_plugin",
-        "_check_vibe_integration",
-    ):
-        monkeypatch.setattr(doctor, name, lambda *_a: [])
-    monkeypatch.setattr(
-        doctor,
-        "_check_plugin_install",
-        lambda *_a: doctor.CheckResult("plugin:installed", passed=True, detail=""),
-    )
-    monkeypatch.setattr(doctor.sys, "argv", ["forge-doctor", "--json"])
-    emitted: list[str] = []
-    monkeypatch.setattr(doctor, "emit", emitted.append)
-
-    assert doctor.main() == 0
-    names = [r["name"] for r in json.loads(emitted[0])]
-    assert names == ["plugin:installed", "plugin:global_install"]
-
-
-# --- _check_hooks_path() ----------------------------------------------------
-# Real git in a scratch repo (the one exception to the module's mocking
-# strategy): what is under test is how git resolves the folder.
 
 
 @pytest.fixture
@@ -881,40 +567,6 @@ def test_surface_pin_revision_empty_when_no_mismatch(
     monkeypatch.setattr(doctor, "pin_revision_mismatch", lambda _root: None)
 
     assert doctor._surface_pin_revision(tmp_path) == []
-
-
-def test_check_checkout_plugin_passes_when_installed(
-    tmp_path: Path, claude_home: Path
-) -> None:
-    """A recorded install of the pinned release for this checkout is a pass."""
-    repo = manifest_repo(tmp_path, "1.2.3")
-    write_install(claude_home, repo, "1.2.3")
-
-    results = doctor._check_checkout_plugin(repo)
-
-    assert [(r.name, r.passed) for r in results] == [("plugin:checkout", True)]
-
-
-def test_check_checkout_plugin_advises_forge_plugin_sync_when_missing(
-    tmp_path: Path,
-) -> None:
-    """No install for the checkout is an advisory (not a failure) naming the fix."""
-    repo = manifest_repo(tmp_path, "1.2.3")
-
-    results = doctor._check_checkout_plugin(repo)
-
-    assert len(results) == 1
-    assert results[0].name == "plugin:checkout"
-    assert results[0].passed is False
-    assert results[0].info is True
-    assert "forge-plugin-sync" in results[0].detail
-
-
-def test_check_checkout_plugin_is_silent_without_a_pinned_release(
-    tmp_path: Path,
-) -> None:
-    """No manifest version and no tag pin: nothing to judge, nothing reported."""
-    assert doctor._check_checkout_plugin(tmp_path) == []
 
 
 @pytest.fixture
@@ -1187,3 +839,65 @@ def test_vibe_models_passes_with_whole_model_presets(tmp_path: Path) -> None:
     result = doctor._vibe_models_result(repo)
     assert result.passed is True
     assert "presets present" in result.detail
+
+
+def test_claude_integration_not_generated_is_advisory(tmp_path: Path) -> None:
+    """A repo with no .claude/ is advised, never failed.
+
+    SCENARIO: the integration has not been generated yet.
+    EXPECTED BEHAVIOR: one passing informational result naming the
+    installer, so a consumer who has not opted in is not told something
+    is broken.
+    """
+    results = doctor._check_claude_integration(tmp_path)
+    assert len(results) == 1
+    assert results[0].name == "claude:not-generated"
+    assert results[0].passed
+    assert results[0].info
+    assert "install-forge-claude" in results[0].detail
+
+
+def test_claude_integration_reports_drift_without_repairing(tmp_path: Path) -> None:
+    """Drift is reported, advisory, and the files are left as they are.
+
+    SCENARIO: the integration is generated, then one published guard is
+    edited by hand.
+    EXPECTED BEHAVIOR: the check fails as info (regenerating is one
+    command and never destructive), names the repair command, and the
+    edit survives — the check must not quietly fix what it reports.
+    """
+    (tmp_path / "pyproject.toml").write_text("[tool.forge]\n", encoding="utf-8")
+    assert install_claude(tmp_path)[1] is None
+    assert doctor._check_claude_integration(tmp_path)[0].passed
+
+    edited = next((tmp_path / ".claude" / "hooks").glob("*.sh"))
+    edited.write_text("#!/bin/sh\n# hand-edited\n", encoding="utf-8")
+
+    results = doctor._check_claude_integration(tmp_path)
+    assert len(results) == 1
+    assert results[0].name == "claude:integration"
+    assert not results[0].passed
+    assert results[0].info
+    assert "install-forge-claude" in results[0].detail
+    assert "hand-edited" in edited.read_text(encoding="utf-8")
+
+
+def test_claude_integration_surfaces_an_unreadable_settings_file(
+    tmp_path: Path,
+) -> None:
+    """Unparseable settings are reported as a blocking finding, not a pass.
+
+    SCENARIO: `.claude/settings.json` holds invalid JSON.
+    EXPECTED BEHAVIOR: the check fails and says so, rather than reading
+    as "current" because nothing could be compared (FOUNDATION §13: what
+    cannot be read counts as unknown, never as passed).
+    """
+    (tmp_path / "pyproject.toml").write_text("[tool.forge]\n", encoding="utf-8")
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    (claude / "settings.json").write_text("{not json", encoding="utf-8")
+
+    results = doctor._check_claude_integration(tmp_path)
+    assert len(results) == 1
+    assert not results[0].passed
+    assert "settings.json" in results[0].detail

@@ -38,7 +38,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from forge import version_surfaces
 from forge.git_utils import CODE_HEALTH_ENV, PushResult
 
 
@@ -231,27 +230,17 @@ def claude_home(
 ) -> Path:
     """Point every Claude Code file forge reads at an empty fake home.
 
-    Two kinds of reader need covering. Module constants resolved from the
-    real home at import time — ``version_surfaces.INSTALLED_PLUGINS`` and
-    ``USER_SETTINGS`` — are monkeypatched to the fake ``.claude``
-    directory. Readers that call ``Path.home()`` when they run follow
-    ``HOME``, which is set to the fake home. Without this a plugin verdict
-    would depend on whatever the machine has installed. Nothing is
-    created: an absent file is the default case, and a test that needs a
-    record writes it under the returned directory.
+    Readers call ``Path.home()`` when they run, so setting ``HOME`` is
+    enough: without it a verdict would depend on whatever the machine
+    happens to hold. Nothing is created — an absent file is the default
+    case, and a test needing one writes it under the returned directory.
 
     Returns:
         The fake ``.claude`` directory (not yet created on disk).
     """
     home = tmp_path_factory.mktemp("home")
     monkeypatch.setenv("HOME", str(home))
-    claude_dir = home / ".claude"
-    plugins = claude_dir / "plugins"
-    monkeypatch.setattr(
-        version_surfaces, "INSTALLED_PLUGINS", plugins / "installed_plugins.json"
-    )
-    monkeypatch.setattr(version_surfaces, "USER_SETTINGS", claude_dir / "settings.json")
-    return claude_dir
+    return home / ".claude"
 
 
 # Printed by the stub ``claude`` every test finds first on PATH.

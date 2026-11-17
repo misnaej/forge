@@ -743,20 +743,16 @@ def _init_tagged_repo(repo: Path, tag: str = "v1.0.0") -> None:
 
 
 def _init_all_tagged_repo(repo: Path) -> None:
-    """Init a plugin repo where the only pending fragment already ships under a tag.
+    """Init a repo where the only pending fragment already ships under a tag.
 
-    The fragment is tagged ``v1.0.0``. Manifest parked at ``1.0.0``, fragment A
-    (minor) committed together with the tag — the tag-aware "nothing to mint"
-    fixture shared by the `release` and `next-version` CLI tests.
+    The fragment is tagged ``v1.0.0``: fragment A (minor) committed
+    together with the tag — the tag-aware "nothing to mint" fixture shared
+    by the `release` and `next-version` CLI tests.
 
     Args:
         repo: Directory to initialize.
     """
     init_git_repo(repo)
-    (repo / ".claude-plugin").mkdir()
-    (repo / ".claude-plugin" / "plugin.json").write_text(
-        '{\n  "name": "x",\n  "version": "1.0.0"\n}\n'
-    )
     (repo / "CHANGELOG.md").write_text("# Changelog\n")
     _write_fragment(repo / "changelog.d", "a.added.md", "bump: minor\n- a thing\n")
     commit_all(repo, "seed")
@@ -764,22 +760,17 @@ def _init_all_tagged_repo(repo: Path) -> None:
 
 
 def _init_mixed_repo(repo: Path) -> None:
-    """Init a plugin repo with fragments under tags and still pending fragments.
+    """Init a repo with fragments under tags and still pending fragments.
 
-    Fragment A is tagged ``v1.0.0``, fragment B still pending. Manifest parked
-    at ``1.0.0``; B (minor) is committed in a later, untagged commit, so it
-    drives a mint above the backfilled ``v1.0.0`` heading — the tag-aware
-    "mixed" fixture shared by the
-    `release` and `next-version` CLI tests.
+    Fragment A is tagged ``v1.0.0``, fragment B still pending. B (minor) is
+    committed in a later, untagged commit, so it drives a mint above the
+    backfilled ``v1.0.0`` heading — the tag-aware "mixed" fixture shared by
+    the `release` and `next-version` CLI tests.
 
     Args:
         repo: Directory to initialize.
     """
     init_git_repo(repo)
-    (repo / ".claude-plugin").mkdir()
-    (repo / ".claude-plugin" / "plugin.json").write_text(
-        '{\n  "name": "x",\n  "version": "1.0.0"\n}\n'
-    )
     (repo / "CHANGELOG.md").write_text("# Changelog\n")
     _write_fragment(repo / "changelog.d", "a.added.md", "bump: minor\n- a thing\n")
     commit_all(repo, "seed")
@@ -875,26 +866,23 @@ def test_main_next_version_reports_backfill_alongside_mint(
 # ---------------------------------------------------------------------------
 
 
-def test_main_release_with_manifest_stages_everything_commits_nothing(
+def test_main_release_stages_everything_commits_nothing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """`release` assembles, rewrites the manifest, stages all — never commits.
+    """`release` assembles and stages the changelog and deletions — never commits.
 
-    SCENARIO: a plugin repo at tag ``v1.0.0`` (manifest parked at
-    ``1.0.0``) with a minor and a patch fragment pending.
+    SCENARIO: a repo at tag ``v1.0.0`` with a minor and a patch fragment
+    pending.
     EXPECTED BEHAVIOR: CHANGELOG.md gains ``## v1.1.0`` with both
-    entries; both fragments are deleted and their deletions staged; the
-    manifest reads ``1.1.0`` and is staged; the version is printed
-    prominently; ``HEAD`` still points at the seed commit (no commit
-    made).
+    entries; both fragments are deleted and their deletions staged;
+    nothing else is staged or written (the version lives in the tags,
+    so no manifest is created); the version is printed prominently;
+    ``HEAD`` still points at the seed commit (no commit made).
     """
     init_git_repo(tmp_path)
-    (tmp_path / ".claude-plugin").mkdir()
-    (tmp_path / ".claude-plugin" / "plugin.json").write_text(
-        '{\n  "name": "x",\n  "version": "1.0.0"\n}\n'
-    )
+    (tmp_path / "seed.txt").write_text("seed\n")
     commit_all(tmp_path, "seed")
     subprocess.run(["git", "tag", "v1.0.0"], cwd=tmp_path, env=GIT_ENV, check=True)
     (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
@@ -917,10 +905,7 @@ def test_main_release_with_manifest_stages_everything_commits_nothing(
     assert "## v1.1.0" in changelog_text
     assert "- new" in changelog_text
     assert "- fix" in changelog_text
-    manifest_text = (tmp_path / ".claude-plugin" / "plugin.json").read_text(
-        encoding="utf-8"
-    )
-    assert manifest_text == '{\n  "name": "x",\n  "version": "1.1.0"\n}\n'
+    assert not (tmp_path / ".claude-plugin").exists()
     status = subprocess.run(
         ["git", "diff", "--cached", "--name-status"],
         cwd=tmp_path,
@@ -929,10 +914,11 @@ def test_main_release_with_manifest_stages_everything_commits_nothing(
         text=True,
         check=True,
     ).stdout
-    assert "M\tCHANGELOG.md" in status
-    assert "D\tchangelog.d/a.added.md" in status
-    assert "D\tchangelog.d/b.fixed.md" in status
-    assert "M\t.claude-plugin/plugin.json" in status
+    assert sorted(status.splitlines()) == [
+        "D\tchangelog.d/a.added.md",
+        "D\tchangelog.d/b.fixed.md",
+        "M\tCHANGELOG.md",
+    ]
     head_after = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         cwd=tmp_path,
@@ -942,10 +928,10 @@ def test_main_release_with_manifest_stages_everything_commits_nothing(
         check=True,
     ).stdout
     assert head_after == head_before
-    assert "Release v1.1.0 prepared" in capsys.readouterr().out
+    assert "Assembly for v1.1.0 prepared" in capsys.readouterr().out
 
 
-def test_main_release_without_manifest_prints_version_for_tag_flow(
+def test_main_release_prints_the_version_it_assembled(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -961,34 +947,7 @@ def test_main_release_without_manifest_prints_version_for_tag_flow(
 
     assert not (tmp_path / ".claude-plugin").exists()
     assert "## v1.0.1" in (tmp_path / "CHANGELOG.md").read_text(encoding="utf-8")
-    assert "Release v1.0.1 prepared" in capsys.readouterr().out
-
-
-def test_main_release_manifest_refusal_leaves_tree_untouched(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """A manifest render refusal fires before ANY write — no half-release.
-
-    Compute-then-write pin (mirrors rebump's invariant): a manifest with
-    no ``"version"`` field refuses at render time, so the changelog is
-    not assembled, no fragment is deleted, and nothing is staged.
-    """
-    _init_tagged_repo(tmp_path)
-    original = "# Changelog\n"
-    (tmp_path / "CHANGELOG.md").write_text(original)
-    _write_fragment(tmp_path / "changelog.d", "ok.added.md", "bump: minor\n- x\n")
-    plugin_dir = tmp_path / ".claude-plugin"
-    plugin_dir.mkdir(exist_ok=True)
-    (plugin_dir / "plugin.json").write_text('{"name": "forge"}\n')
-    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
-
-    assert main(["release"]) == 2
-
-    assert 'no "version" field' in capsys.readouterr().out
-    assert (tmp_path / "CHANGELOG.md").read_text(encoding="utf-8") == original
-    assert (tmp_path / "changelog.d" / "ok.added.md").exists()
+    assert "Assembly for v1.0.1 prepared" in capsys.readouterr().out
 
 
 def test_main_release_exit_two_on_invalid_fragment_touches_nothing(
@@ -1019,21 +978,20 @@ def test_main_release_exit_two_without_fragments(
     assert "no pending fragments" in capsys.readouterr().out
 
 
-def test_main_release_backfills_tag_headings_and_syncs_manifest(
+def test_main_release_backfills_tag_headings(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """`release` with every fragment already tagged only backfills + syncs.
+    """`release` with every fragment already tagged only backfills headings.
 
-    SCENARIO: a plugin repo where fragment A already sits inside tag
+    SCENARIO: a repo where fragment A already sits inside tag
     ``v1.0.0``'s tree (tag-per-merge shipped it already) and no
     fragment sits outside any tag.
     EXPECTED BEHAVIOR: CHANGELOG.md gains the ``## v1.0.0`` heading
     dated by the tag's own commit (never today's date), the fragment
-    is deleted and its deletion staged, the manifest stays at
-    ``1.0.0`` and is staged, and the CLI reports the backfill-only
-    outcome — nothing to tag.
+    is deleted and its deletion staged, and the CLI reports the
+    backfill-only outcome — nothing to tag.
     """
     _init_all_tagged_repo(tmp_path)
     monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
@@ -1044,10 +1002,7 @@ def test_main_release_backfills_tag_headings_and_syncs_manifest(
     changelog_text = (tmp_path / "CHANGELOG.md").read_text(encoding="utf-8")
     assert f"## v1.0.0 — {expected_date}" in changelog_text
     assert "- a thing" in changelog_text
-    manifest_text = (tmp_path / ".claude-plugin" / "plugin.json").read_text(
-        encoding="utf-8"
-    )
-    assert manifest_text == '{\n  "name": "x",\n  "version": "1.0.0"\n}\n'
+    assert not (tmp_path / ".claude-plugin").exists()
     status = subprocess.run(
         ["git", "diff", "--cached", "--name-status"],
         cwd=tmp_path,
@@ -1058,12 +1013,8 @@ def test_main_release_backfills_tag_headings_and_syncs_manifest(
     ).stdout
     assert "D\tchangelog.d/a.added.md" in status
     out = capsys.readouterr().out
-    # The manifest is already at 1.0.0 (parked, unchanged), so `git add`
-    # produces no diff to show in `--cached --name-status` — the
-    # staging call itself is only observable via its own emit line.
-    assert "Staged .claude-plugin/plugin.json at 1.0.0." in out
     assert "Assembly under existing tags prepared" in out
-    assert "nothing to tag" in out
+    assert "the tags already exist" in out
 
 
 def test_main_release_mixed_tagged_and_minted_orders_newest_on_top(
@@ -1078,8 +1029,7 @@ def test_main_release_mixed_tagged_and_minted_orders_newest_on_top(
     mint.
     EXPECTED BEHAVIOR: CHANGELOG.md carries the minted ``## v1.1.0``
     heading above the backfilled ``## v1.0.0`` heading (dated by the
-    tag's own commit), the manifest reads ``1.1.0``, and the CLI
-    reports the minted release.
+    tag's own commit), and the CLI reports the minted release.
     """
     _init_mixed_repo(tmp_path)
     monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
@@ -1091,11 +1041,7 @@ def test_main_release_mixed_tagged_and_minted_orders_newest_on_top(
     v11_pos = changelog_text.index("## v1.1.0")
     v10_pos = changelog_text.index(f"## v1.0.0 — {expected_date}")
     assert v11_pos < v10_pos
-    manifest_text = (tmp_path / ".claude-plugin" / "plugin.json").read_text(
-        encoding="utf-8"
-    )
-    assert manifest_text == '{\n  "name": "x",\n  "version": "1.1.0"\n}\n'
-    assert "Release v1.1.0 prepared" in capsys.readouterr().out
+    assert "Assembly for v1.1.0 prepared" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
@@ -1322,44 +1268,6 @@ def test_main_auto_tag_cuts_and_pushes_tag_from_merged_fragment(
 
     assert "cut v0.1.0 (minor)" in capsys.readouterr().out
     assert remote_tags(origin) == ["v0.1.0"]
-
-
-@pytest.mark.parametrize("auto", ["merge", None])
-def test_main_auto_tag_never_tags_a_plugin_manifest_repo(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    auto: str | None,
-) -> None:
-    """A repo with a plugin manifest is tagged only at assembly, never here.
-
-    Args:
-        auto: Either "merge" (ignored with explanation) or None (unset).
-
-    SCENARIO: fragments-mode repo with ``.claude-plugin/plugin.json`` and a
-    pending fragment; ``auto`` is ``"merge"`` (ignored, and says so) or unset.
-    EXPECTED BEHAVIOR: exit 0, no tag on origin, output points at
-    ``forge-changelog release-pr``.
-    """
-    origin = tmp_path / "origin.git"
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    init_autotag_repo(repo, origin, auto=auto)
-    (repo / ".claude-plugin").mkdir()
-    (repo / ".claude-plugin" / "plugin.json").write_text(
-        '{"name": "x", "version": "0.0.1"}\n'
-    )
-    commit_all(repo, "add manifest")
-    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: repo)
-
-    assert main(["auto-tag"]) == 0
-
-    out = capsys.readouterr().out
-    assert "plugin manifest present" in out
-    assert "1 pending fragment(s)" in out
-    assert "forge-changelog release-pr" in out
-    assert ("is ignored in a repo with a plugin manifest" in out) is (auto == "merge")
-    assert remote_tags(origin) == []
 
 
 def test_main_auto_tag_no_new_fragments_is_a_visible_noop(
@@ -1614,55 +1522,29 @@ def test_main_auto_tag_push_failure_without_winner_reports_failure(
 # ---------------------------------------------------------------------------
 
 
-def test_assembly_pr_body_manifest_less_names_post_merge_tagging(
-    tmp_path: Path,
-) -> None:
-    """A repo without a plugin manifest gets the post-merge tagging sentence.
+def test_assembly_pr_body_says_no_tag_is_cut_by_it(tmp_path: Path) -> None:
+    """The body states plainly that merging it cuts no tag.
 
-    The body must not claim the tag-release workflow tags the merge
-    (`forge-next-prep --tag`) when there is no manifest for
-    `plugin_version` to race ahead of.
+    SCENARIO: an assembly plan with fragments no tag has reached yet.
+    EXPECTED BEHAVIOR: the body says no tag is cut here, because a tag is
+    cut on every merge from the fragments that merge brought — so the
+    tags these entries describe already exist. It must not tell the
+    merger to cut one afterwards, which is what it used to do when
+    assembly was the release act.
     """
     plan = AssemblyPlan(
         tagged=[], untagged=[_make_fragment(slug="x")], version="1.1.0", level="minor"
     )
 
-    body = changelog_fragments._assembly_pr_body(tmp_path, plan)
+    body = changelog_fragments._assembly_pr_body(plan)
 
-    assert "forge-release --from-changelog" in body
+    assert "No tag is cut by this PR" in body
     assert "forge-next-prep --tag" not in body
-
-
-def test_assembly_pr_body_does_not_claim_a_scheduled_run(tmp_path: Path) -> None:
-    """Releases are opened by hand via `forge-changelog release-pr`, never scheduled."""
-    plan = AssemblyPlan(
-        tagged=[], untagged=[_make_fragment(slug="x")], version="1.1.0", level="minor"
-    )
-
-    body = changelog_fragments._assembly_pr_body(tmp_path, plan)
-
-    assert "Scheduled" not in body
-
-
-def test_assembly_pr_body_with_manifest_says_workflow_tags_merge(
-    tmp_path: Path,
-) -> None:
-    """A repo with a plugin manifest gets the auto-tag-on-merge sentence."""
-    plugin_dir = tmp_path / ".claude-plugin"
-    plugin_dir.mkdir()
-    (plugin_dir / "plugin.json").write_text('{"name": "forge"}\n')
-    plan = AssemblyPlan(
-        tagged=[], untagged=[_make_fragment(slug="x")], version="1.1.0", level="minor"
-    )
-
-    body = changelog_fragments._assembly_pr_body(tmp_path, plan)
-
-    assert "forge-next-prep --tag" in body
     assert "forge-release --from-changelog" not in body
 
 
-def test_assembly_pr_body_all_tagged_says_nothing_to_tag(tmp_path: Path) -> None:
-    """An all-tagged plan says the assembly only backfills — nothing to tag."""
+def test_assembly_pr_body_all_tagged_names_their_tags(tmp_path: Path) -> None:
+    """An all-tagged plan files each entry under the tag that shipped it."""
     plan = AssemblyPlan(
         tagged=[("v1.0.0", [_make_fragment(slug="a")])],
         untagged=[],
@@ -1670,12 +1552,11 @@ def test_assembly_pr_body_all_tagged_says_nothing_to_tag(tmp_path: Path) -> None
         level=None,
     )
 
-    body = changelog_fragments._assembly_pr_body(tmp_path, plan)
+    body = changelog_fragments._assembly_pr_body(plan)
 
     assert "under their release tags (v1.0.0)" in body
-    assert "Nothing to tag" in body
+    assert "No tag is cut by this PR" in body
     assert "forge-next-prep --tag" not in body
-    assert "forge-release --from-changelog" not in body
 
 
 def test_assembly_pr_body_mixed_mentions_backfilled_tags(tmp_path: Path) -> None:
@@ -1687,7 +1568,7 @@ def test_assembly_pr_body_mixed_mentions_backfilled_tags(tmp_path: Path) -> None
         level="minor",
     )
 
-    body = changelog_fragments._assembly_pr_body(tmp_path, plan)
+    body = changelog_fragments._assembly_pr_body(plan)
 
     assert "under **v1.1.0**" in body
     assert "plus backfilled headings for v1.0.0" in body
@@ -1954,11 +1835,10 @@ def test_main_release_pr_happy_path_opens_pr_with_assembled_commit(
     assert "--base" in create_argv
     assert create_argv[create_argv.index("--base") + 1] == "main"
     # No plugin.json in this fixture repo (bare pyproject setup) — the real
-    # publish path must emit the manifest-less tagging sentence, not the
-    # auto-tag-on-merge one.
-    assert (
-        "forge-release --from-changelog" in create_argv[create_argv.index("--body") + 1]
-    )
+    # The published body must state that merging it cuts no tag: the tags
+    # its entries describe were cut on the merges that brought the
+    # fragments, so telling the merger to cut one would be false.
+    assert "No tag is cut by this PR" in create_argv[create_argv.index("--body") + 1]
 
     remote_branches = subprocess.run(
         ["git", "ls-remote", "--heads", str(origin), "chore/assemble-v1.1.0"],
@@ -2078,9 +1958,7 @@ def test_gate_evidence_invokes_precommit_with_exact_argv_and_cwd(
 
     changelog_fragments._gate_evidence(tmp_path)
 
-    assert calls == [
-        (["forge-precommit", "--only", "changelog_version,plugin_version"], tmp_path)
-    ]
+    assert calls == [(["forge-precommit", "--only", "changelog_version"], tmp_path)]
 
 
 # ---------------------------------------------------------------------------

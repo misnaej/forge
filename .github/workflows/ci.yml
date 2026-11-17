@@ -39,11 +39,11 @@ concurrency:
 
 jobs:
   ci:
-    # Dependabot PRs bump workflow SHAs but cannot author the rolling-next
-    # plugin.json bump the plugin_version gate demands, so the full
-    # sequence can never pass for them. A skipped job satisfies required
-    # status checks; the human reviewing the deps PR is the gate.
-    # Draft PRs (the /pr skill's early-visibility escape hatch) skip too:
+    # Dependabot PRs bump workflow SHAs and carry no changelog fragment,
+    # which the changelog gate demands, so the full sequence can never
+    # pass for them. A skipped job satisfies required status checks; the
+    # human reviewing the deps PR is the gate.
+    # Draft PRs (the /forge-pr skill's early-visibility escape hatch) skip too:
     # verification-first finalization runs the checks locally before
     # publishing, so CI on an unfinished draft is pure waste — the
     # ready_for_review trigger runs it when the draft goes live.
@@ -145,3 +145,85 @@ jobs:
       # shipped by the installed forge-scripts.
       - name: install-forge-claude-md --check (CLAUDE.md sync)
         run: install-forge-claude-md --check
+
+  # Builds the distributions the way a consumer's installer does, and
+  # installs them into a clean environment. Separate from `ci` because it
+  # must not share that job's editable install: an in-place build resolves
+  # paths the packaged artifact may not carry, which is exactly how a
+  # packaging defect reached a consumer once — every check forge ran was
+  # an in-place build, the one mode that cannot fail that way. The sdist
+  # leg matters on its own: an installer may materialise a source
+  # distribution and build the wheel from that, so both legs run.
+  packaging:
+    if: >-
+      github.event_name != 'pull_request' ||
+      (github.event.pull_request.draft == false &&
+       github.event.pull_request.user.login != 'dependabot[bot]')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for setuptools-scm)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: '3.13'
+
+      - name: Build sdist and wheel (isolated, as an installer does)
+        run: |
+          python -m pip install --quiet build
+          python -m build --outdir dist/
+
+      - name: Refuse a symlink in the distributions
+        # A tracked directory symlink under the package is recorded in the
+        # generated source manifest as a file to ship, and the build then
+        # aborts trying to copy a directory. Catch it in the artifact
+        # rather than in a consumer's half-finished upgrade.
+        run: |
+          set -euo pipefail
+          if tar -tvzf dist/*.tar.gz | grep '^l'; then
+            echo "::error::the source distribution contains a symlink"
+            exit 1
+          fi
+          echo "no symlinks in the source distribution"
+
+      - name: Build a wheel from the sdist (the chain an installer takes)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/sdist" && tar -xzf dist/*.tar.gz -C "$RUNNER_TEMP/sdist"
+          cd "$RUNNER_TEMP/sdist"/*/
+          python -m pip wheel . --no-deps -w "$RUNNER_TEMP/fromsdist"
+
+      - name: Install the wheel into a clean environment
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/python" -m pip install --quiet dist/*.whl
+
+      - name: The shipped sources are present and the CLIs run
+        # Asserts what the generated integration reads. A wheel that
+        # imports but ships no agents would install cleanly and then fail
+        # at `install-forge-claude` in the consumer's repo.
+        run: |
+          set -euo pipefail
+          V="$RUNNER_TEMP/venv/bin"
+          "$V/python" - <<'PY'
+          from importlib import resources
+          root = resources.files("forge")
+          for rel, suffix, least in (
+              ("data/agents", ".md", 10),
+              ("data/skills", "", 10),
+              ("data/claude-hooks", ".sh", 20),
+          ):
+              entries = list(root.joinpath(rel).iterdir())
+              kept = [e for e in entries if not suffix or e.name.endswith(suffix)]
+              assert len(kept) >= least, f"{rel}: only {len(kept)} entries shipped"
+              print(f"{rel}: {len(kept)} entries")
+          assert root.joinpath("data/hooks.toml").is_file(), "hooks.toml not shipped"
+          print("hooks.toml shipped")
+          PY
+          "$V/forge-doctor" --help > /dev/null
+          "$V/install-forge-claude" --help > /dev/null
+          echo "CLIs runnable from the installed wheel"

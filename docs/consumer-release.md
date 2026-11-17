@@ -1,12 +1,11 @@
 # Cutting releases in a consumer repo (single-track, tag-versioned)
 
 How a consumer repo whose version is **derived from `v*` git tags**
-(setuptools-scm — no manual `version =` in `pyproject.toml`, no
-`.claude-plugin/plugin.json`) cuts `vX.Y.Z` releases with forge instead
-of hand-rolling the flow.
+(setuptools-scm — no manual `version =` in `pyproject.toml`) cuts
+`vX.Y.Z` releases with forge instead of hand-rolling the flow.
 
-This is the tag-versioned counterpart to forge's own manifest-versioned
-release process ([`release-process.md`](release-process.md), forge-only):
+Forge's own release process is the same shape
+([`release-process.md`](release-process.md), forge-only):
 one trunk (`base_branch`, default `main`), and the tag **is** the
 release.
 
@@ -21,9 +20,7 @@ enforces, in order — all failures reported at once, exit `1`:
 
 1. **Clean working tree.**
 2. **On `base_branch`** (`[tool.forge].base_branch`, default `main`).
-3. **Single-track release model** — refuses on a manifest-versioned repo
-   (`.claude-plugin/plugin.json` present → use `forge-next-prep --tag`).
-4. **CHANGELOG gate** — when `CHANGELOG.md` exists, it must already
+3. **CHANGELOG gate** — when `CHANGELOG.md` exists, it must already
    carry a `## vX.Y.Z` heading for the tag being cut. A repo with no
    CHANGELOG gets a warning and proceeds.
 
@@ -59,9 +56,7 @@ in spirit; the deliberate divergences are listed at the end.
   assembles its own groups from the fragment types instead.)
 - **No `## Unreleased` section.** The top heading always names the
   version **about to be released** — the CHANGELOG *declares* the next
-  version, and the tag `forge-release` cuts *confirms* it. This is the
-  tag-versioned analogue of forge's own rolling-next invariant
-  ([`release-process.md`](release-process.md), forge-only). Right after
+  version, and the tag `forge-release` cuts *confirms* it. Right after
   a release is cut, top heading and latest tag are **equal** — that
   window is valid; the **first PR after a tag opens the next
   `## vX.Y.Z` heading** (and carries its own entries under it).
@@ -254,7 +249,7 @@ heading, dated when the tag was cut; only fragments no tag holds mint a
 new version, `latest v* tag + max(bump level over the unreleased
 fragments)`. No PR ever carries a version number. When every pending
 fragment is already tagged, nothing is minted — the assembly backfills
-the per-tag headings and syncs the manifest to the latest tag.
+the per-tag headings.
 
 - `forge-changelog next-version` prints the computed next version and
   its level (`v1.3.0 (minor)`, with ` + N fragment(s) already under M
@@ -267,13 +262,11 @@ the per-tag headings and syncs the manifest to the latest tag.
   the assembly before it becomes a commit.
 - `forge-changelog release` computes the plan, assembles `CHANGELOG.md`
   (one heading per already-cut tag, then the minted heading on top), and
-  stages the result (fragment deletions included). Plugin repos: it also
-  rewrites `.claude-plugin/plugin.json` to the plan's version and stages
-  it — the manifest's single writer.
-  Tag-versioned (manifest-less) repos: no manifest write; use the
-  printed version for the tag (`git tag vX.Y.Z && git push origin
-  vX.Y.Z`, or `forge-release`). It never commits — branch, run it,
-  open an ordinary PR, merge, tag.
+  stages the result (fragment deletions included). Prose only — the
+  version lives in the tags, so there is nothing else to write. It never
+  commits: branch, run it, open an ordinary PR, merge. The tags its
+  entries describe were already cut by the merges that brought the
+  fragments, so no tag follows from that merge.
 - `forge-changelog release-pr` automates the whole assembly PR: guard
   (nothing pending or an assembly PR already open → quiet exit 0),
   branch `chore/assemble-vX.Y.Z`, stage via the same single-writer path
@@ -286,7 +279,7 @@ the per-tag headings and syncs the manifest to the latest tag.
   --from-changelog` on pushes to the base branch picks the release up
   on merge with **no further change** — do not build a separate
   fragments-aware tagger.
-- **Tag-per-merge is automatic** in manifest-less repos with
+- **Tag-per-merge is automatic** with
   `[tool.forge.release].auto = "merge"`: the tag job runs
   `forge-changelog auto-tag` on every push to the base branch — last
   tag + strongest level among the fragments merged since it → annotated
@@ -294,13 +287,6 @@ the per-tag headings and syncs the manifest to the latest tag.
   pending-fragments warning instead (it is never silent). Changelog
   assembly happens at the next `forge-changelog release` PR, which may
   collate several tags.
-- **Plugin repos are never tagged per merge**, whatever `auto` says: a
-  per-merge tag would ship a `plugin.json` naming the previous release,
-  so users pinned to it get the plugin filed under an older version.
-  `auto-tag` logs the pending count and `forge-changelog release-pr`
-  instead, and the release tag is cut when the assembly PR merges
-  (`forge-next-prep --tag` — the manifest is then ahead of the latest
-  tag).
   If you mitigated the pre-fragments gap by guarding your tagger to
   **fail while fragments are pending**, remove that guard when adopting
   fragments — released fragments legitimately persist until assembly.

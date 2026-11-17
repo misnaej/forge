@@ -265,7 +265,7 @@ FORGE_DOCS_PAGES = (
     "backlog-tracks.md",
     "precommit-fixer.md",
     "git-safety.md",
-    "plugin-staleness.md",
+    "integration-staleness.md",
     "metrics.md",
     "token-optimization.md",
 )
@@ -840,7 +840,8 @@ def check_upstream(
     cadence trade-off so consumers can pick the channel that fits.
 
     Only the pip package is compared. The Claude Code plugin is not: each
-    checkout installs the release its own pin names (``forge-plugin-sync``),
+    checkout generates the integration from its own installed release
+    (``install-forge-claude``),
     so a plugin behind upstream is a pin behind upstream, which this
     warning already reports; ``forge-doctor``'s ``plugin:checkout`` line
     says whether the install matches the pin.

@@ -64,6 +64,7 @@ from forge.config import (
     read_tool_forge_section,
 )
 from forge.git_utils import capturing_to_step_log, configure_cli_logging, repo_root
+from forge.instruction_files import AGENT_NAME_PREFIX, generated_name
 from forge.plugin_roster import roster_names
 
 
@@ -193,12 +194,13 @@ def _roster(root: Path) -> dict[str, set[str]]:
         p.stem
         for d in AGENT_DEFINITION_DIRS
         for p in (root / d).glob("*.md")
-        if is_agent_definition(p)
+        if is_agent_definition(p) and not _is_generated_copy(p.stem)
     }
     skills = {
         p.parent.name
         for d in SKILL_DEFINITION_DIRS
         for p in (root / d).glob("*/SKILL.md")
+        if not _is_generated_copy(p.parent.name)
     }
     hooks = {p.stem for d in HOOK_DEFINITION_DIRS for p in (root / d).glob("*.sh")}
     clis: set[str] = set()
@@ -220,6 +222,48 @@ def _roster(root: Path) -> dict[str, set[str]]:
     }
 
 
+def _is_generated_copy(name: str) -> bool:
+    """Say whether *name* is forge's generated copy of a definition.
+
+    The definition directories span both a repo's own sources and the
+    generated integration (``skills/`` and ``.claude/skills/``), so that
+    a repo's own skills are discovered. In forge's own checkout both now
+    hold the same fleet: the source under its canonical name, and the
+    generated copy under its published, prefixed one. Counting both makes
+    every wired delegation appear twice under two different node ids, and
+    no architecture doc can satisfy both at once.
+
+    A generated copy is not an independent definition, so it is skipped
+    and the canonical source speaks for it.
+
+    Args:
+        name: An agent stem or skill directory name.
+
+    Returns:
+        Whether the name carries the published prefix.
+    """
+    return name.startswith(AGENT_NAME_PREFIX)
+
+
+def _published_fleet_names(roster: dict[str, set[str]]) -> frozenset[str]:
+    """Return every agent and skill name under its published spelling.
+
+    The generated integrations publish each agent and skill prefixed, and
+    that prefixed form is what a reader types and what the doc therefore
+    names. It collides with the shape of forge's CLI names, so the
+    dangling-CLI check needs this set to tell the two apart.
+
+    Args:
+        roster: The repo roster from :func:`_roster`.
+
+    Returns:
+        The published names of every agent and skill.
+    """
+    return frozenset(
+        generated_name(name) for kind in ("agents", "skills") for name in roster[kind]
+    )
+
+
 def _check_doc(doc: str, roster: dict[str, set[str]]) -> list[str]:
     """Return coverage + dangling problems for *doc* against *roster*.
 
@@ -236,11 +280,20 @@ def _check_doc(doc: str, roster: dict[str, set[str]]) -> list[str]:
     # graph; only the few guarding an agent action appear, so requiring all of
     # them would force noise. A missing hook that *should* be shown is Layer 2's
     # (the diff-scoped agent verify) call, not a deterministic gate.
+    # An agent or skill may be named either way: the roster holds the
+    # canonical stem (`design-checker`), while a generated integration —
+    # and so anything a reader types — carries the published prefix
+    # (`forge-design-checker`). Both denote the one agent, so either
+    # mention counts; requiring the canonical form alone would force the
+    # doc to name agents nobody can invoke.
     problems.extend(
         f"coverage: {kind[:-1]} '{name}' is not mentioned"
         for kind in ("agents", "skills")
         for name in sorted(roster[kind])
-        if not re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", doc)
+        if not any(
+            re.search(rf"(?<![\w-]){re.escape(form)}(?![\w-])", doc)
+            for form in (name, generated_name(name))
+        )
     )
     # No-dangling — every distinctly-shaped reference resolves to a real name.
     problems.extend(
@@ -252,11 +305,20 @@ def _check_doc(doc: str, roster: dict[str, set[str]]) -> list[str]:
         f"dangling: CLI '{match}' does not exist"
         for match in sorted(set(_CLI_RE.findall(doc)))
         if match not in roster["clis_known"]
+        # A published agent or skill name is shaped exactly like a forge
+        # CLI name — `forge-design-checker` reads as one to the pattern
+        # above — so the two namespaces overlap by construction. The name
+        # denotes the agent, not a missing CLI.
+        and match not in _published_fleet_names(roster)
     )
     problems.extend(
         f"dangling: skill '/{match}' does not exist"
         for match in sorted(set(_SKILL_RE.findall(doc)))
         if match not in roster["skills_known"]
+        # A slash command names the published skill (`/forge-pr`), while
+        # the roster holds the canonical stem it is generated from. Both
+        # denote one skill.
+        and match.removeprefix(AGENT_NAME_PREFIX) not in roster["skills_known"]
     )
     return problems
 
@@ -346,6 +408,7 @@ def _discover_invokes(root: Path) -> set[tuple[str, str]]:
         (path.parent.name, agent)
         for d in SKILL_DEFINITION_DIRS
         for path in (root / d).glob("*/SKILL.md")
+        if not _is_generated_copy(path.parent.name)
         for agent in _DELEGATE_RE.findall(path.read_text(encoding="utf-8"))
     }
 

@@ -10,7 +10,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from forge import gen_vibe_agents as gen_vibe_agents_module
 from forge.gen_vibe_agents import generate_vibe_agents, publish_skills
+from forge.instruction_files import generated_name, renamed_frontmatter
 
 
 if TYPE_CHECKING:
@@ -18,8 +20,15 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture
-def skills_repo(tmp_path: Path) -> Path:
+def skills_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A tmp repo with two skills, one carrying CLAUDE.md/forge: references.
+
+    MOCK SETUP: `gen_vibe_agents.shipped_path` is redirected to this
+    repo's own directories. In production that function deliberately
+    ignores a repo's directories and always reads the installed package,
+    so a repo cannot substitute forge's definitions; these tests need
+    controlled inputs, so they inject the source rather than rely on a
+    precedence the product does not have.
 
     Returns:
         The project root path.
@@ -30,44 +39,57 @@ def skills_repo(tmp_path: Path) -> Path:
     alpha.mkdir(parents=True)
     beta.mkdir(parents=True)
     (alpha / "SKILL.md").write_text(
-        "---\nname: alpha\n---\n\nRun forge:test-writer; see CLAUDE.md for rules.\n",
+        "---\nname: alpha\ndescription: x\n---\n\n"
+        "Run forge:test-writer; see CLAUDE.md for rules.\n",
         encoding="utf-8",
     )
+    monkeypatch.setattr(
+        gen_vibe_agents_module,
+        "shipped_path",
+        lambda rel: root / rel,
+    )
     (beta / "SKILL.md").write_text(
-        "---\nname: beta\n---\n\nPlain skill body, no references.\n",
+        "---\nname: beta\ndescription: x\n---\n\nPlain skill body, no references.\n",
         encoding="utf-8",
     )
     return root
 
 
 def test_publish_copies_every_skill_to_agents_skills(skills_repo: Path) -> None:
-    """Each skills/<name>/SKILL.md lands at .agents/skills/<name>/SKILL.md."""
+    """Each skills/<name>/SKILL.md lands at .agents/skills/forge-<name>/SKILL.md.
+
+    The frontmatter ``name:`` is rewritten to agree with the directory.
+    """
     count, _warnings, _references = generate_vibe_agents(skills_repo)
     assert count == 2
     published = skills_repo / ".agents" / "skills"
-    assert (published / "alpha" / "SKILL.md").is_file()
-    assert (published / "beta" / "SKILL.md").is_file()
+    for name in ("alpha", "beta"):
+        skill = published / generated_name(name) / "SKILL.md"
+        assert skill.is_file()
+        assert f"name: {generated_name(name)}\n" in skill.read_text(encoding="utf-8")
+        assert not (published / name).exists()
 
 
 def test_claude_md_references_rewritten_to_agents_md(skills_repo: Path) -> None:
     """Published bodies reference AGENTS.md (Vibe's instruction file), not CLAUDE.md."""
     _count, warnings, _references = generate_vibe_agents(skills_repo)
-    published = (skills_repo / ".agents" / "skills" / "alpha" / "SKILL.md").read_text(
-        encoding="utf-8"
-    )
+    published_dir = skills_repo / ".agents" / "skills"
+    published = (published_dir / "forge-alpha" / "SKILL.md").read_text(encoding="utf-8")
     assert "AGENTS.md" in published
     assert "CLAUDE.md" not in published
-    # Vibe has no plugin namespace: the spawn form must be the bare name.
-    assert "Run test-writer;" in published
+    # The spawn form is the prefixed name, same as on the Claude harness.
+    assert "Run forge-test-writer;" in published
     assert "forge:test-writer" not in published
-    # The untouched skill produces no drift warning; alpha does.
-    assert warnings == ["Updated references in alpha/SKILL.md"]
-    # Beta's body is byte-identical to its source.
+    # Both skills are renamed on publish, so both are reported as changed.
+    assert warnings == [
+        "Updated references in alpha/SKILL.md",
+        "Updated references in beta/SKILL.md",
+    ]
+    # Beta carries no references: its body is its source, only the name differs.
     source = (skills_repo / "skills" / "beta" / "SKILL.md").read_text(encoding="utf-8")
-    beta_out = (skills_repo / ".agents" / "skills" / "beta" / "SKILL.md").read_text(
-        encoding="utf-8"
-    )
-    assert beta_out == source
+    beta_out = (published_dir / "forge-beta" / "SKILL.md").read_text(encoding="utf-8")
+    assert beta_out == renamed_frontmatter(source, "beta")
+    assert beta_out.replace("name: forge-beta", "name: beta") == source
 
 
 def test_check_mode_writes_nothing_but_reports_references(skills_repo: Path) -> None:

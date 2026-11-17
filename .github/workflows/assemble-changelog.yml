@@ -1,0 +1,67 @@
+name: assemble-changelog
+
+# Writes the changelog prose for releases that have already shipped.
+#
+# A tag is cut on every merge (tag-release.yml) from the fragments that
+# merge brought, so the version exists the moment the code does. The
+# prose follows: this job opens a PR that collates the pending
+# `changelog.d/` fragments into CHANGELOG.md, filing each under the tag
+# that shipped it and minting a heading only for anything not yet
+# tagged. Nothing here commits to the default branch — the PR is
+# reviewed and merged like any other.
+#
+# Weekly, plus on demand. Running it more often costs a PR per run with
+# nothing new to say; running it less leaves tags without entries for
+# longer. `forge-changelog release-pr` is dedup-guarded: with an
+# assembly PR already open it reports that PR instead of opening a
+# second, so an extra run is harmless.
+#
+# Compaction — summarising old entries down to the essential — is
+# deliberately NOT done here. It is a judgment call about what still
+# matters to a reader, so it is run by hand when someone decides the
+# changelog has grown unwieldy, and lands as its own reviewed PR.
+
+on:
+  schedule:
+    # Mondays, 05:00 UTC — early enough to be waiting at the start of
+    # the week, late enough that a Friday merge is included.
+    - cron: '0 5 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: assemble-changelog
+  cancel-in-progress: false
+
+jobs:
+  assemble:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout the default branch (full history + tags)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      - name: Install forge-scripts
+        run: pip install -e .
+
+      - name: Open the assembly PR when fragments are pending
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          out=$(forge-changelog release-pr 2>&1); rc=$?
+          echo "$out"
+          echo "$out" >> "$GITHUB_STEP_SUMMARY"
+          exit $rc

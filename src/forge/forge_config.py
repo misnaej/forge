@@ -232,14 +232,6 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "error (default: non-blocking WARN).",
     ),
     ConfigKey(
-        ("tool", "forge", "plugin_sync", "blocking"),
-        default=False,
-        description="Make the plugin_sync step fail the commit when the cached "
-        "Claude Code plugin is older than .claude-plugin/plugin.json "
-        "(default: non-blocking WARN; forge keeps false — under rolling-next "
-        "its release commits name a version no sync can fetch yet).",
-    ),
-    ConfigKey(
         ("tool", "forge", "pip_audit", "blocking"),
         default=False,
         description="Make the pip_audit step fail the commit on a CVE "

@@ -511,23 +511,6 @@ verifies it is the tip of `origin/<base_branch>` instead of requiring a
 branch checkout. Only the `push` trigger is safe here — never run a
 `contents: write` job from `pull_request_target`.
 
-### Dual-track plugin repos (manifest-declared version)
-
-Same idea, tagging with the version from `.claude-plugin/plugin.json`
-— in fragments mode that version changes only in the assembly PR, so
-the release tag is cut when that PR merges (`forge-next-prep --tag`),
-never per merge (`forge-changelog auto-tag` refuses to tag a repo with
-a plugin manifest). **The reference implementation is forge's
-own `.github/workflows/tag-release.yml`** — a workflow separate from
-the read-only CI one, gated via `workflow_run` (single-track: one
-tag-on-merge job).
-
-One `workflow_run` gotcha: GitHub evaluates the trigger from the
-workflow definition on the repo's **default branch** — a
-`workflow_run`-based tag workflow starts firing only once the file
-itself has landed there. Until then the manual tagging path (or an
-inline `needs:` job, which has no such lag) keeps working.
-
 ### Safety details (both flavors)
 
 - **Keep the write surface separate.** A dedicated tag workflow (or at

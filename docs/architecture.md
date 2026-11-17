@@ -40,7 +40,6 @@ graph LR
     doc_generators -->|"imports"| config_shared
     doc_generators -->|"imports"| release_tooling
     git_hook_entrypoints -->|"imports"| config_shared
-    git_hook_entrypoints -->|"imports"| release_tooling
     installers -->|"imports"| config_shared
     installers -->|"imports"| release_tooling
     pre_commit_dispatcher -->|"imports"| config_shared

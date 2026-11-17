@@ -77,7 +77,7 @@ Cache hits need a byte-identical prefix, so the static files are managed
 for stability, not just correctness:
 
 - **Shipped once, never hand-edited.** The plugin surface (`agents/`,
-  `skills/`, `claude-hooks/`, `plugin.json`) ships inside the pip package
+  `skills/`, `claude-hooks/`) ships inside the pip package
   under `src/forge/data/` (`SHIPPED_SOURCES`, `instruction_files.py`).
   Consumers get a generated wrapper only: `CLAUDE.md` with an
   `@FOUNDATION.md` include (Claude resolves it natively), or a flattened

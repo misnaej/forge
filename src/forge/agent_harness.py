@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Final
 
+from forge.instruction_files import AGENT_NAME_PREFIX, shipped_path
 from forge.plugin_roster import shipped_plugin_names
 
 
@@ -230,8 +231,12 @@ CLAUDE_PROFILE = HarnessProfile(
             "PostToolUse",
         }
     ),
-    # The canonical content is already written in this namespace.
-    agent_namespace=CANONICAL_AGENT_NAMESPACE,
+    # Generated agents share a directory with the repo's own, so forge's
+    # carry a prefix: it keeps the two sets apart on sight and removes the
+    # name collision by construction rather than by convention. The
+    # prefix is part of the file name, so a reference and the file it
+    # names stay in step.
+    agent_namespace=AGENT_NAME_PREFIX,
 )
 
 # Vibe profile: maps Vibe concepts to Claude Code equivalents
@@ -280,9 +285,11 @@ VIBE_PROFILE = HarnessProfile(
     # post_agent cannot block in Vibe (deny only injects a retry message,
     # and strict is forbidden on it).
     blocking_events=frozenset({"pre_tool", "post_tool"}),
-    # Vibe discovers subagents from the generated config, so they are
-    # addressed by bare name; the plugin prefix resolves to nothing there.
-    agent_namespace="",
+    # The same prefix as Claude's, though Vibe's generated directory is
+    # forge's alone: one name per agent across every harness means a doc
+    # read directly, rather than generated, can name it without knowing
+    # which harness the reader is on.
+    agent_namespace=AGENT_NAME_PREFIX,
 )
 
 # Registry of all known harness profiles
@@ -477,26 +484,17 @@ UNENFORCED_VIBE_HOOKS: Mapping[str, str] = {
 }
 
 
-def resolve_hooks_base(repo_root: Path, plugin_dir: Path) -> Path:
+def resolve_hooks_base() -> Path:
     """Return the directory guard scripts live in for this checkout.
 
-    In forge's own repo, ``claude-hooks/`` sits at the repo root rather than
-    inside ``.claude-plugin/``; consumer installs carry it under the plugin
-    directory. Shared by the hooks.toml generator and the roster sidecar
-    generator so both resolve ``${CLAUDE_PLUGIN_ROOT}`` identically.
-
-    Args:
-        repo_root: Repository root.
-        plugin_dir: The ``.claude-plugin`` directory.
+    In forge's own repo ``claude-hooks/`` sits at the repo root; a consumer
+    gets it from the installed package. Shared by every converter so each
+    resolves a script to the same file.
 
     Returns:
-        ``repo_root`` when it has a top-level ``claude-hooks/`` and the
-        plugin dir does not, else ``plugin_dir``.
+        The packaged guard directory.
     """
-    local = repo_root / "claude-hooks"
-    if local.exists() and not (plugin_dir / "claude-hooks").exists():
-        return repo_root
-    return plugin_dir
+    return shipped_path("claude-hooks")
 
 
 def map_plugin_references(

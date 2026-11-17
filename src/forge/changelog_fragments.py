@@ -40,8 +40,7 @@ Usage:
   race-tolerant; merging stays human.
 - ``forge-changelog release`` — plan the assembly (tag-aware), assemble
   ``CHANGELOG.md`` with a heading per already-tagged group plus any
-  minted heading, write ``.claude-plugin/plugin.json`` to the plan's
-  version (when a manifest exists — the manifest's single writer), and
+  minted heading, and
   stage everything (never commits). Merge the resulting PR; the tag job
   cuts the tag at that merge when the plan minted one.
 - ``forge-changelog next-version`` — read-only print of the computed
@@ -84,8 +83,6 @@ from forge.git_utils import (
     next_version,
     push_branch,
     push_tag,
-    read_local_plugin_version,
-    render_plugin_version,
     repo_root,
     require_cli,
     resolve_pr_base_ref,
@@ -860,17 +857,17 @@ def _describe_plan(plan: AssemblyPlan) -> str:
 
 
 def _cmd_release(root: Path, date: str) -> int:
-    """Prepare the release commit: assemble + manifest write, all staged.
+    """Prepare the release commit: assemble the changelog, all staged.
 
-    Computes the plan once (:func:`plan_assembly`), assembles
-    ``CHANGELOG.md`` — one heading per already-cut tag, plus the minted
-    heading for unreleased fragments — with fragment deletions staged,
-    and — when the repo ships a plugin manifest — writes
-    ``.claude-plugin/plugin.json`` to the plan's version and stages
-    it. Never commits: the caller branches, commits, and opens the
-    release PR; tag-on-merge cuts the tag. Manifest-less (tag-versioned)
-    repos skip the manifest write and use the printed version for their
-    own tag flow.
+    Computes the plan once (:func:`plan_assembly`) and assembles
+    ``CHANGELOG.md`` — one heading per already-cut tag, plus a minted
+    heading for fragments no tag has reached yet — with the fragment
+    deletions staged. Prose only: the version lives in the tags, so
+    there is nothing else to write and nothing to keep in step.
+
+    Never commits: the caller branches, commits and opens the assembly
+    PR. The tags these entries describe were cut on the merges that
+    brought the fragments, so no tag follows from this.
 
     Args:
         root: Repository root directory.
@@ -878,8 +875,7 @@ def _cmd_release(root: Path, date: str) -> int:
 
     Returns:
         ``0`` on success; ``2`` when there is no ``v*`` tag, no pending
-        fragment, an invalid fragment, or the assembly/manifest write
-        fails.
+        fragment, an invalid fragment, or the assembly fails.
     """
     rc, plan = _computed_next_version(root, "release", none_pending_rc=2)
     if plan is None:
@@ -889,23 +885,29 @@ def _cmd_release(root: Path, date: str) -> int:
         return outcome
     if plan.level is None:
         emit(
-            f"Assembly under existing tags prepared (manifest synced to "
-            f"v{plan.version}) — commit, PR, merge; nothing to tag."
+            "Assembly under existing tags prepared — commit, PR, merge; "
+            "the tags already exist."
         )
     else:
         emit(
-            f"Release v{plan.version} prepared — commit, PR, merge; "
-            "tag-on-merge cuts the tag."
+            f"Assembly for v{plan.version} prepared — commit, PR, merge; "
+            "the tag for it is cut on that merge."
         )
     return 0
 
 
 def _stage_release(root: Path, date: str, plan: AssemblyPlan) -> int:
-    """Assemble + manifest-write the release per *plan*, all staged.
+    """Assemble the release per *plan*, staged.
 
     The shared body of ``release`` and ``release-pr``: the caller has
     already computed (and thereby validated) the plan via
     :func:`plan_assembly`; this stages the outcome and never commits.
+
+    Assembly writes prose only. The version itself lives in the ``v*``
+    tags and nowhere else, so there is no second copy for this to keep
+    in step — a tag is cut per merge from the fragments that merge
+    brought, and the assembly files each fragment under the tag that
+    already shipped it.
 
     Args:
         root: Repository root directory.
@@ -913,34 +915,15 @@ def _stage_release(root: Path, date: str, plan: AssemblyPlan) -> int:
         plan: The assembly plan.
 
     Returns:
-        ``0`` on success; ``2`` when the manifest render or assembly
-        fails (tree left untouched on a manifest refusal).
+        ``0`` on success; ``2`` when the assembly fails, leaving the tree
+        untouched.
     """
-    # Compute-then-write (rebump's invariant, mirrored): render the
-    # manifest FIRST — it is pure and carries the fail-closed
-    # validation — so a manifest refusal leaves the tree untouched
-    # instead of stranding a half-release (heading written, fragments
-    # already deleted, manifest stale).
-    manifest = root / ".claude-plugin" / "plugin.json"
-    manifest_text: str | None = None
-    if manifest.is_file():
-        try:
-            manifest_text = render_plugin_version(
-                manifest.read_text(encoding="utf-8"), plan.version
-            )
-        except ValueError as exc:
-            emit(f"release: {exc}")
-            return 2
     try:
         updated = _render_assembly(root, _read_changelog(root), plan, date)
     except ValueError as exc:
         emit(f"changelog.d: {exc}")
         return 2
     _write_assembly(root, updated, plan.fragments, delete=True)
-    if manifest_text is not None:
-        manifest.write_text(manifest_text, encoding="utf-8")
-        run_git("add", ".claude-plugin/plugin.json", cwd=root)
-        emit(f"Staged .claude-plugin/plugin.json at {plan.version}.")
     return 0
 
 
@@ -1074,13 +1057,6 @@ def _cmd_auto_tag(root: Path) -> int:
     changelog. Never silent: every path emits what happened or why
     nothing did.
 
-    A repo with a plugin manifest is never tagged here, whatever
-    ``[tool.forge.release].auto`` says: the tag would land on a tree
-    whose ``plugin.json`` still names the previous release, and Claude
-    Code files a plugin under that declared version — consumers pinned
-    to the tag would get an older release's cache slot. Its release is
-    tagged at the assembly merge instead, where the manifest is ahead.
-
     Args:
         root: Repository root directory.
 
@@ -1089,14 +1065,10 @@ def _cmd_auto_tag(root: Path) -> int:
         new to tag; ``2`` on invalid fragments or a push failure that no
         concurrent winner explains; ``3`` when ``[tool.forge.release]``
         does not opt in (``auto = "merge"``) but new fragments are
-        pending in a manifest-less repo — the caller surfaces this as a
-        loud warning.
+        pending — the caller surfaces this as a loud warning.
     """
     if not is_fragments_mode(root):
         emit("auto-tag: not a fragments-mode repo — nothing to do.")
-        return 0
-    if read_local_plugin_version(root) is not None:
-        emit(_manifest_tag_policy(root))
         return 0
     latest = latest_v_tag(root)
     new_paths = fragments_new_since_tag(root, latest)
@@ -1123,76 +1095,27 @@ def _cmd_auto_tag(root: Path) -> int:
     return _create_and_push_tag(root, version, level, len(fragments))
 
 
-def _manifest_tag_policy(root: Path) -> str:
-    """Explain why a plugin-manifest repo is not tagged per merge.
-
-    Args:
-        root: Repository root directory.
-
-    Returns:
-        One line naming the pending-fragment count and the release
-        command, plus a note when ``auto = "merge"`` is being ignored.
-    """
-    pending = len(discover_fragments(root))
-    line = (
-        "auto-tag: plugin manifest present — releases are tagged when the "
-        "release (assembly) PR merges, never per merge: a per-merge tag "
-        "would ship a plugin.json naming an older version. "
-        f"{pending} pending fragment(s); cut a release with "
-        "`forge-changelog release-pr`."
-    )
-    if read_tool_forge_section(root, "release").get("auto") == "merge":
-        line += (
-            ' [tool.forge.release].auto = "merge" is ignored in a repo '
-            "with a plugin manifest."
-        )
-    return line
-
-
 ASSEMBLY_BRANCH_PREFIX = "chore/assemble-"
 
 # The PR body carries what the merger must know about the release it
 # cuts — whoever opened it, the body is the record that outlives the run.
 _ASSEMBLY_PR_BODY = """\
 Changelog assembly ({version}): collates the pending
-`changelog.d/` fragments into `CHANGELOG.md` {headings} and
-syncs `.claude-plugin/plugin.json` (when present).
+`changelog.d/` fragments into `CHANGELOG.md` {headings}.
 
-**Merging this PR is the release act for the changelog**: the fragments
-are consumed. {tagging} Merge stays a human decision.
+**No tag is cut by this PR.** A release tag is cut on every merge, from
+the fragments that merge brought, so the tags these entries describe
+already exist — this writes the prose for them. Merging consumes the
+fragments, and stays a human decision.
 
 Opened by `forge-changelog release-pr`.
 """
 
-# The tagging sentence must match the repo's version source: a manifest
-# repo's tag-release workflow tags the merge (`forge-next-prep --tag`
-# sees the manifest ahead); a manifest-less repo has nothing ahead and
-# `auto-tag` no-ops on the merge (the fragments were just deleted), so
-# the tag is a post-merge step the body must name — not claim happened.
-_TAGGING_WITH_MANIFEST = (
-    "`forge-next-prep --tag` in the tag-release workflow tags the merge "
-    "(the manifest is ahead)."
-)
-_TAGGING_MANIFEST_LESS = (
-    "No plugin manifest: cut the release tag after merging — "
-    "`forge-release --from-changelog` reads the heading this PR writes "
-    "(auto-tag cannot cover it; the fragments are deleted by this very "
-    "assembly)."
-)
-# Every fragment already shipped under its own tag: the assembly only
-# backfills headings (and syncs the manifest) — there is nothing to tag.
-_TAGGING_ALL_RELEASED = (
-    "Nothing to tag: every fragment already shipped under its own tag — "
-    "this assembly backfills their headings and syncs the manifest to "
-    "{version}."
-)
 
-
-def _assembly_pr_body(root: Path, plan: AssemblyPlan) -> str:
-    """Render the assembly PR body with the repo-correct tagging sentence.
+def _assembly_pr_body(plan: AssemblyPlan) -> str:
+    """Render the assembly PR body.
 
     Args:
-        root: Repository root directory.
         plan: The assembly plan.
 
     Returns:
@@ -1202,14 +1125,11 @@ def _assembly_pr_body(root: Path, plan: AssemblyPlan) -> str:
     tags = ", ".join(tag for tag, _group in plan.tagged)
     if plan.level is None:
         headings = f"under their release tags ({tags})"
-        tagging = _TAGGING_ALL_RELEASED.format(version=version)
     else:
         headings = f"under **{version}**"
         if tags:
             headings += f" (plus backfilled headings for {tags})"
-        manifest = (root / ".claude-plugin" / "plugin.json").is_file()
-        tagging = _TAGGING_WITH_MANIFEST if manifest else _TAGGING_MANIFEST_LESS
-    return _ASSEMBLY_PR_BODY.format(version=version, headings=headings, tagging=tagging)
+    return _ASSEMBLY_PR_BODY.format(version=version, headings=headings)
 
 
 def _gate_evidence(root: Path) -> tuple[bool, str]:
@@ -1227,7 +1147,7 @@ def _gate_evidence(root: Path) -> tuple[bool, str]:
     Returns:
         ``(passed, evidence_block)`` per ``run_gate_evidence``.
     """
-    gates = "changelog_version,plugin_version"
+    gates = "changelog_version"
     return run_gate_evidence(
         root,
         gates,
@@ -1427,7 +1347,7 @@ def _push_and_open_pr(
             "--title",
             f"chore(release): assemble v{plan.version}",
             "--body",
-            _assembly_pr_body(root, plan) + "\n" + evidence,
+            _assembly_pr_body(plan) + "\n" + evidence,
         ],
         capture_output=True,
         text=True,

@@ -10,8 +10,8 @@
 #     (#177 — extensions must run on a non-tty local checkout, only CI
 #     suppresses them; is_ci and is_non_interactive are mocked independently
 #     since the two now gate different behavior).
-#   - run_plugin_sync: a no-op for every test (autouse), since the real CLI
-#     would install a plugin into the checkout the suite runs in.
+#   - run_claude_integration: a no-op for every test (autouse), since the real
+#     CLI would regenerate the integration in the checkout the suite runs in.
 
 from __future__ import annotations
 
@@ -22,17 +22,17 @@ from tests.conftest import CapturedCalls, make_fake_run
 
 
 @pytest.fixture(autouse=True)
-def _no_plugin_sync(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep every test away from the real ``forge-plugin-sync``.
+def _no_claude_integration(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep every test away from the real ``install-forge-claude``.
 
     ``main()`` runs it outside CI, and the real CLI acts on the working
     directory's checkout — the repository under test — so a test that
-    reaches it rewrites that checkout's Claude Code settings. Its own
+    reaches it rewrites that checkout's ``.claude/`` files. Its own
     behavior is covered in ``test_hook_helpers.py``; a test that asserts
     the hook's argv restores the real helper over a faked
     ``subprocess.run``.
     """
-    monkeypatch.setattr(post_checkout, "run_plugin_sync", lambda _hook: None)
+    monkeypatch.setattr(post_checkout, "run_claude_integration", lambda _hook: None)
 
 
 def test_no_op_when_branch_flag_is_zero(
@@ -93,11 +93,13 @@ def test_runs_hook_extensions_on_non_tty_local_checkout(
     monkeypatch.setattr(_hook_helpers.shutil, "which", lambda _n: "/fake/bin")
     # The real helper, over the faked subprocess.run above, so the argv
     # the hook would run is observable without running it.
-    monkeypatch.setattr(post_checkout, "run_plugin_sync", _hook_helpers.run_plugin_sync)
+    monkeypatch.setattr(
+        post_checkout, "run_claude_integration", _hook_helpers.run_claude_integration
+    )
     calls: list[str] = []
     monkeypatch.setattr(post_checkout, "run_hook_extensions", calls.append)
     assert post_checkout.main(["prev", "new", "1"]) == 0
-    assert captured.calls == [["forge-plugin-sync", "--quiet"]]
+    assert captured.calls == [["install-forge-claude"]]
     assert calls == ["post-checkout"]
 
 

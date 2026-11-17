@@ -150,16 +150,12 @@ def _gate_vibe(root: Path) -> str | None:
 STEPS: tuple[Step, ...] = (
     Step(slug="githooks", cli="install-forge-githooks", argv=("--refresh",)),
     Step(slug="claude-md", cli="install-forge-claude-md", supports_check=True),
-    Step(
-        slug="claude-settings",
-        cli="install-forge-claude-settings",
-        supports_check=True,
-    ),
-    # After claude-settings: that step turns the shared forge@forge plugin
-    # off, which must happen before this checkout gets its own install.
-    # Ungated: the CLI skips itself in CI and when `claude` is absent, and
-    # an agent session (no tty) is exactly where it must still run.
-    Step(slug="plugin", cli="forge-plugin-sync", supports_check=True),
+    # Generates the Claude Code integration into .claude/ — agents,
+    # skills, guard hooks and their settings registration. Nothing to
+    # install or sync: the files are written from packaged data, so a
+    # checkout runs the version it has rather than one a marketplace
+    # happens to hold.
+    Step(slug="claude", cli="install-forge-claude", supports_check=True),
     Step(slug="labels", cli="install-forge-labels", gate=_gate_labels),
     Step(slug="intake", cli="forge-intake", argv=("init",)),
     Step(

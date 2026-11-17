@@ -119,7 +119,7 @@ every PR, so a branch's commit shape never reaches the base branch anyway —
 
 ## Destructive git forms
 
-Authority: `claude-hooks/block_git_destructive.sh` (shipped in the forge plugin)
+Authority: `block_git_destructive.sh` (generated into `.claude/hooks/`)
 (header comment + code). Summary below; hook wins on any disagreement.
 Enforced with **no bypass**; human runs blocked form via `! git ...`.
 
@@ -261,8 +261,7 @@ pass — it never becomes a hidden default.
      this branch's own history, so the base brings nothing new and the
      branch side wins;
    - **generated artifacts** — regenerated from the merged tree once no
-     source conflicts remain, never textually merged;
-   - **the version slot** — `forge-rebump`'s resolution.
+     source conflicts remain, never textually merged.
 4. All resolved → commits the merge (no local gate, like a merge git
    completes itself: CI and the next commit check it). The branch is not
    pushed; `forge-commit --push-only` publishes it through the verdict

@@ -1,26 +1,38 @@
-"""Enforcing test for the release-tag invariant of ``docs/release-process.md`` §4.
+"""Enforcing tests for the release invariants of ``docs/release-process.md``.
 
-The invariant: every release tag ``vX``'s own tree has ``plugin.json ==
-X`` and a ``CHANGELOG.md`` whose top heading is ``vX``. The scenario
-drives a fragments-mode plugin repo through merges (``auto-tag``), the
-assembly commit, and the tagger, then checks every tag's own tree.
+Two invariants, both of which forge used to violate by design:
+
+- §1, §3 — **no tracked file declares a release version.** The version
+  lives in the ``v*`` tag alone, so nothing can disagree with it. Forge
+  previously kept a copy in a plugin manifest, and both drift directions
+  broke a release: the copy ran ahead and the tagging job never fired, or
+  a recomputation put it behind and a lower version passed every check.
+- §2 — **a tag is cut on every merge**, its increment taken from the
+  fragments that merge brought, with an already-tagged fragment never
+  counted twice.
 """
 
 from __future__ import annotations
 
-import json
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from forge import changelog_fragments, next_prep, upgrade
-from forge.changelog import top_release_heading
+from forge import changelog_fragments
 from forge.changelog_fragments import main
 from tests.conftest import commit_all, git_stdout, init_git_repo
 
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     import pytest
+
+
+# Where a release version used to be declared, and must not reappear.
+# Re-adding any of these reintroduces the two-sources-of-truth defect
+# §1 describes, so the test names them rather than scanning loosely.
+_VERSION_DECLARING_PATHS = (
+    ".claude-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
+)
 
 
 def _merge_fragment(repo: Path, name: str, bump: str) -> None:
@@ -36,15 +48,14 @@ def _merge_fragment(repo: Path, name: str, bump: str) -> None:
     git_stdout(repo, "push", "-q", "origin", "main")
 
 
-def test_every_tag_matches_manifest_and_changelog(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Every tag's own tree carries the manifest version and changelog heading it names.
+def _fragments_repo(tmp_path: Path) -> Path:
+    """Build a pushable fragments-mode repo tagged ``v1.0.0``.
 
-    SCENARIO: plugin repo with ``auto = "merge"`` (which the manifest must
-    override); two fragment merges, then the assembly commit, then the tagger.
-    EXPECTED BEHAVIOR: only ``v1.0.0`` and ``v1.1.0`` exist, and each one's
-    tree agrees with itself and passes the upgrade documentation check.
+    Args:
+        tmp_path: Pytest temporary directory.
+
+    Returns:
+        The working repository, with an ``origin`` bare remote.
     """
     origin = tmp_path / "origin.git"
     repo = tmp_path / "repo"
@@ -57,10 +68,6 @@ def test_every_tag_matches_manifest_and_changelog(
         '[tool.forge.changelog]\nmode = "fragments"\n\n'
         '[tool.forge.release]\nauto = "merge"\n'
     )
-    (repo / ".claude-plugin").mkdir()
-    (repo / ".claude-plugin" / "plugin.json").write_text(
-        json.dumps({"name": "x", "version": "1.0.0"}, indent=2) + "\n"
-    )
     (repo / "changelog.d").mkdir()
     (repo / "changelog.d" / ".gitkeep").write_text("")
     (repo / "CHANGELOG.md").write_text(
@@ -69,28 +76,80 @@ def test_every_tag_matches_manifest_and_changelog(
     commit_all(repo, "seed")
     git_stdout(repo, "tag", "-a", "-m", "v1.0.0", "v1.0.0")
     git_stdout(repo, "push", "-q", "origin", "main", "v1.0.0")
+    return repo
+
+
+def test_no_tracked_file_declares_a_release_version() -> None:
+    """Forge's own tree declares its version nowhere — the tag carries it.
+
+    SCENARIO: forge's repository as committed.
+    EXPECTED BEHAVIOR: none of the paths that used to hold a version
+    exist, and ``pyproject.toml`` declares no static ``version``, so the
+    latest tag is the only source setuptools-scm can derive from.
+    """
+    repo = Path(__file__).resolve().parent.parent
+    for rel in _VERSION_DECLARING_PATHS:
+        assert not (repo / rel).exists(), (
+            f"{rel} is back: a second version source reintroduces the drift "
+            "docs/release-process.md §1 exists to remove"
+        )
+    pyproject = (repo / "pyproject.toml").read_text(encoding="utf-8")
+    assert "\nversion = " not in pyproject, (
+        "pyproject.toml declares a static version; setuptools-scm must "
+        "derive it from the latest tag instead"
+    )
+
+
+def test_a_tag_is_cut_per_merge_from_that_merge_s_fragments(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each merge tags, taking its level from the fragments it brought.
+
+    SCENARIO: two successive merges, one minor then one patch, each
+    followed by the per-merge tagger.
+    EXPECTED BEHAVIOR: ``v1.1.0`` then ``v1.1.1`` — the second merge
+    bumps from the first merge's tag, and the minor fragment already
+    inside ``v1.1.0`` does not bump again.
+    """
+    repo = _fragments_repo(tmp_path)
     monkeypatch.setattr(changelog_fragments, "repo_root", lambda: repo)
 
     _merge_fragment(repo, "a.added.md", "minor")
     assert main(["auto-tag"]) == 0
+    assert "v1.1.0" in git_stdout(repo, "tag", "--points-at", "HEAD").split()
+
     _merge_fragment(repo, "b.fixed.md", "patch")
+    assert main(["auto-tag"]) == 0
+    assert "v1.1.1" in git_stdout(repo, "tag", "--points-at", "HEAD").split()
+
+    assert sorted(git_stdout(repo, "tag", "--list").split()) == [
+        "v1.0.0",
+        "v1.1.0",
+        "v1.1.1",
+    ]
+
+
+def test_assembly_writes_prose_and_declares_no_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Assembly collates fragments and introduces no version declaration.
+
+    SCENARIO: one merge is tagged, then the staging half of the assembly
+    runs over the fragment that tag already shipped.
+    EXPECTED BEHAVIOR: the fragment is consumed into ``CHANGELOG.md``
+    under the tag that shipped it, and no manifest appears.
+    """
+    repo = _fragments_repo(tmp_path)
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: repo)
+
+    _merge_fragment(repo, "a.added.md", "minor")
     assert main(["auto-tag"]) == 0
 
     assert main(["release", "--date", "2026-02-01"]) == 0
-    commit_all(repo, "chore(release): assemble v1.1.0")
-    git_stdout(repo, "push", "-q", "origin", "main")
 
-    decision = next_prep._maybe_tag_release(repo)
-    assert decision.tag == "v1.1.0"
-    assert "v1.1.0" in git_stdout(repo, "tag", "--points-at", "HEAD").split()
-
-    tags = sorted(git_stdout(repo, "tag", "--list").split())
-    assert tags == ["v1.0.0", "v1.1.0"]
-    for tag in tags:
-        manifest = json.loads(
-            git_stdout(repo, "show", f"{tag}:.claude-plugin/plugin.json")
-        )
-        changelog = git_stdout(repo, "show", f"{tag}:CHANGELOG.md")
-        assert manifest["version"] == tag.removeprefix("v")
-        assert top_release_heading(changelog) == tag
-        assert upgrade._undocumented_release_refusal(tag, changelog) is None
+    changelog = (repo / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "## v1.1.0" in changelog
+    assert "a.added.md" in changelog
+    assert not (repo / "changelog.d" / "a.added.md").exists()
+    for rel in _VERSION_DECLARING_PATHS:
+        assert not (repo / rel).exists()

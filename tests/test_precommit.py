@@ -52,7 +52,6 @@ from tests.conftest import (
     init_single_track_repo,
     log_body,
     timing_log,
-    write_install,
 )
 
 
@@ -445,80 +444,6 @@ def test_step_commit_types_parity_hard_fails_when_cli_missing(
     assert exc_info.value.code == 2
 
 
-def test_step_manifest_json_shells_out_to_verify_forge_manifest(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """step_manifest_json always shells out; the CLI owns the skip decision."""
-    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/verify-forge-manifest")
-    calls: list[list[str]] = []
-
-    def _fake_run(cmd: list[str], **_kwargs: object) -> tuple[bool, str]:
-        calls.append(cmd)
-        return True, "OK"
-
-    monkeypatch.setattr(precommit, "_run", _fake_run)
-    result = precommit.step_manifest_json(tmp_path)
-    assert result.passed
-    assert calls
-    assert calls[0] == ["verify-forge-manifest"]
-
-
-def test_step_manifest_json_marks_skipped_from_cli_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """When the CLI reports it skipped, the StepResult mirrors that."""
-    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/verify-forge-manifest")
-    monkeypatch.setattr(
-        precommit,
-        "_run",
-        lambda *_a, **_kw: (True, "(no .claude-plugin/ dir — skipped)\n"),
-    )
-    result = precommit.step_manifest_json(tmp_path)
-    assert result.passed
-    assert result.skipped
-
-
-def test_step_plugin_version_shells_out_to_verify_cli(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """step_plugin_version always shells out; the CLI owns the skip decision."""
-    monkeypatch.setattr(
-        shutil,
-        "which",
-        lambda _name: "/usr/bin/verify-forge-plugin-version",
-    )
-    calls: list[list[str]] = []
-
-    def _fake_run(cmd: list[str], **_kwargs: object) -> tuple[bool, str]:
-        calls.append(cmd)
-        return True, "ok"
-
-    monkeypatch.setattr(precommit, "_run", _fake_run)
-    result = precommit.step_plugin_version(tmp_path)
-    assert result.passed
-    assert calls
-    assert calls[0] == ["verify-forge-plugin-version"]
-
-
-def test_step_plugin_version_marks_skipped_from_cli_output(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """When the CLI reports it skipped, the StepResult mirrors that."""
-    monkeypatch.setattr(
-        shutil,
-        "which",
-        lambda _name: "/usr/bin/verify-forge-plugin-version",
-    )
-    monkeypatch.setattr(
-        precommit,
-        "_run",
-        lambda *_a, **_kw: (True, "(no git tags yet — skipped)\n"),
-    )
-    result = precommit.step_plugin_version(tmp_path)
-    assert result.passed
-    assert result.skipped
-
-
 def _stub_docstrings_passing(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stub ``step_docstrings`` to skip ``verify-forge-docstrings`` check."""
 
@@ -614,9 +539,9 @@ def test_run_all_writes_code_health_logs(
     must persist each step's output to its own log file.
     MOCK SETUP: swaps step_env_sync, step_docstrings, step_test_naming,
     step_repo_structure, step_pip_audit, and step_docstring_coverage
-    with `_stub_*` helpers so no real CLI / network call fires; ruff,
-    manifest_json, and plugin_version run their real shell-out path
-    against the empty tmp_path repo (which short-circuits to skip).
+    with `_stub_*` helpers so no real CLI / network call fires; ruff
+    runs its real shell-out path against the empty tmp_path repo
+    (which short-circuits to skip).
     The three new default-on steps self-skip in tmp_path (auto_rebuild:
     no rebuild_command configured; regen_docs: no docs dir present;
     vendored_integrity: no data dir with *.js + VENDORED.md) but still
@@ -643,8 +568,6 @@ def test_run_all_writes_code_health_logs(
         "test_naming_check.log",
         "repo_structure_check.log",
         "intake_check.log",
-        "manifest_json.log",
-        "plugin_version.log",
         "vendored_integrity.log",
         "pip_audit.log",
         "cve_usage.log",
@@ -715,8 +638,6 @@ def test_main_emits_json(
         "docstring_verification",
         "test_naming_check",
         "repo_structure_check",
-        "manifest_json",
-        "plugin_version",
         "vendored_integrity",
         "pip_audit",
     }
@@ -2427,9 +2348,9 @@ def test_cfg_str_list_falls_back_on_missing_or_scalar() -> None:
 
 
 def test_step_registry_checks_files_false_only_for_environment_steps() -> None:
-    """Exactly `auto_rebuild`, `env_sync`, `plugin_sync` opt out of `checks_files`.
+    """Exactly `auto_rebuild` and `env_sync` opt out of `checks_files`.
 
-    These three steps judge the installed environment rather than the
+    These two steps judge the installed environment rather than the
     tracked tree, so a tree-freshness verdict is meaningless for them (see
     the `--freshness` `n/a` tests below). Every other registry entry keeps
     the `checks_files=True` default — pinning the exact opt-out set here
@@ -2439,7 +2360,7 @@ def test_step_registry_checks_files_false_only_for_environment_steps() -> None:
     opted_out = {
         step.name for step in precommit._STEP_REGISTRY if not step.checks_files
     }
-    assert opted_out == {"auto_rebuild", "env_sync", "plugin_sync"}
+    assert opted_out == {"auto_rebuild", "env_sync"}
 
 
 def test_validate_step_names_accepts_known() -> None:
@@ -3863,17 +3784,15 @@ def test_step_env_sync_missing_script_beats_pin_drift(
 
 
 def test_step_auto_rebuild_precedes_env_sync_in_registry(tmp_path: Path) -> None:
-    """auto_rebuild, env_sync, plugin_sync run first in that order by default.
+    """auto_rebuild, env_sync run first in that order by default.
 
     auto_rebuild heals a stale editable install before env_sync can block on
-    it, and plugin_sync (a sibling install-surface gate) follows immediately
-    after — the ordering is the design contract, not an implementation detail.
+    it — the ordering is the design contract, not an implementation detail.
     """
     resolved = precommit.resolve_steps(tmp_path)
     names = [d.name for d in resolved]
     assert names[0] == "auto_rebuild"
     assert names[1] == "env_sync"
-    assert names[2] == "plugin_sync"
 
 
 # ---------------------------------------------------------------------------
@@ -4079,179 +3998,7 @@ def test_step_env_sync_returns_precheck_block_without_reading_declared_scripts(
 
 
 # ---------------------------------------------------------------------------
-# step_plugin_sync
-# ---------------------------------------------------------------------------
-
-
-def _write_plugin_manifest(
-    repo_root: Path,
-    version: str,
-    *,
-    name: str = "forge",
-) -> None:
-    """Write a ``.claude-plugin/plugin.json`` manifest for step_plugin_sync tests.
-
-    Args:
-        repo_root: Directory to place ``.claude-plugin/`` under.
-        version: Value for the manifest's ``version`` field.
-        name: Value for the manifest's ``name`` field.
-    """
-    manifest_dir = repo_root / ".claude-plugin"
-    manifest_dir.mkdir(parents=True, exist_ok=True)
-    (manifest_dir / "plugin.json").write_text(
-        json.dumps({"name": name, "version": version}), encoding="utf-8"
-    )
-
-
-def test_step_plugin_sync_skips_when_no_manifest(tmp_path: Path) -> None:
-    """A repo that ships no plugin has nothing for plugin_sync to check."""
-    result = precommit.step_plugin_sync(tmp_path)
-    assert result.passed
-    assert result.skipped
-    assert "no plugin shipped" in result.output
-
-
-def test_step_plugin_sync_skips_non_interactive(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """CI contexts self-skip (FOUNDATION §15)."""
-    _write_plugin_manifest(tmp_path, "2.9.0")
-    monkeypatch.setattr(precommit, "is_ci", lambda: True)
-    result = precommit.step_plugin_sync(tmp_path)
-    assert result.passed
-    assert result.skipped
-    assert "CI" in result.output
-
-
-def test_step_plugin_sync_does_not_skip_when_non_interactive_but_not_ci(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """An agent session (non-interactive, not CI) is not the CI self-skip.
-
-    Sibling of the same-named ``step_env_sync`` test: the CI-vs-non-
-    interactive distinction applies here too. A Claude Code agent
-    session has no controlling terminal, so ``is_non_interactive()``
-    reads True unconditionally there even though it is not CI — the
-    case the install-currency check most needs to run in, since the
-    install it guards is what the agent session itself reads.
-
-    SCENARIO: is_non_interactive→True (simulating an agent session's
-    absent tty) but is_ci→False, with ``claude`` installed and no install
-    recorded for the checkout — the precheck must not treat this as CI.
-    MOCK SETUP: is_ci stubbed to False; is_non_interactive stubbed to
-    True; ``claude`` found on PATH; a plugin manifest is written so the
-    "no plugin shipped" skip doesn't fire first.
-    EXPECTED BEHAVIOR: the step proceeds past the CI precheck and reaches
-    its verdict — a non-blocking WARN, not the "(CI — skipped)" text.
-    """
-    _write_plugin_manifest(tmp_path, "2.9.0")
-    monkeypatch.setattr(precommit, "is_ci", lambda: False)
-    monkeypatch.setattr(precommit, "is_non_interactive", lambda: True)
-    monkeypatch.setattr(precommit.shutil, "which", lambda _n: "/bin/claude")
-    result = precommit.step_plugin_sync(tmp_path)
-    assert not result.skipped
-    assert not result.passed
-    assert result.non_blocking
-    assert "(CI — skipped)" not in result.output
-
-
-def test_step_plugin_sync_skips_when_claude_not_installed(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Without Claude Code there is no plugin to be current or stale."""
-    _write_plugin_manifest(tmp_path, "2.9.0")
-    monkeypatch.setattr(precommit, "is_ci", lambda: False)
-    monkeypatch.setattr(precommit.shutil, "which", lambda _n: None)
-    result = precommit.step_plugin_sync(tmp_path)
-    assert result.passed
-    assert result.skipped
-    assert "not installed" in result.output
-
-
-def test_step_plugin_sync_passes_when_checkout_has_its_own_install(
-    tmp_path: Path,
-    claude_home: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A recorded install of the manifest's release for this checkout passes."""
-    repo = tmp_path / "repo"
-    _write_plugin_manifest(repo, "2.9.0")
-    write_install(claude_home, repo, "2.9.0")
-    monkeypatch.setattr(precommit, "is_ci", lambda: False)
-    monkeypatch.setattr(precommit.shutil, "which", lambda _n: "/bin/claude")
-    result = precommit.step_plugin_sync(repo)
-    assert result.passed
-    assert not result.skipped
-    assert "2.9.0" in result.output
-
-
-def test_step_plugin_sync_names_an_unparsed_verdict_truthfully(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A manifest version that is no release passes but is never called a match.
-
-    MOCK SETUP: manifest version ``banana``; ``claude`` on PATH.
-    EXPECTED BEHAVIOR: passes (nothing can be compared), and the line says
-    the version was not compared instead of claiming a plugin match.
-    """
-    _write_plugin_manifest(tmp_path, "banana")
-    monkeypatch.setattr(precommit, "is_ci", lambda: False)
-    monkeypatch.setattr(precommit.shutil, "which", lambda _n: "/bin/claude")
-    result = precommit.step_plugin_sync(tmp_path)
-    assert result.passed
-    assert "not compared" in result.output
-    assert "is this checkout's plugin" not in result.output
-
-
-@pytest.mark.parametrize(
-    "other_repo_has_install", [False, True], ids=["no-record", "only-another-repos"]
-)
-def test_step_plugin_sync_warns_when_checkout_has_no_install(
-    tmp_path: Path,
-    claude_home: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    other_repo_has_install: bool,
-) -> None:
-    """No install for this checkout is WARN, however many other repos have one.
-
-    Args:
-        other_repo_has_install: Whether another repo has an install record.
-    """
-    repo = tmp_path / "repo"
-    _write_plugin_manifest(repo, "2.9.0")
-    if other_repo_has_install:
-        write_install(claude_home, tmp_path / "other", "2.9.0")
-    monkeypatch.setattr(precommit, "is_ci", lambda: False)
-    monkeypatch.setattr(precommit.shutil, "which", lambda _n: "/bin/claude")
-    result = precommit.step_plugin_sync(repo)
-    assert not result.passed
-    assert result.non_blocking
-    assert "⚠️" in result.output
-    assert "forge-plugin-sync" in result.output
-
-
-def test_step_plugin_sync_blocks_when_behind_and_configured_blocking(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A ``[tool.forge.plugin_sync].blocking = true`` config escalates to a block."""
-    _write_plugin_manifest(tmp_path, "2.9.0")
-    _write_pyproject(tmp_path, "[tool.forge.plugin_sync]\nblocking = true\n")
-    monkeypatch.setattr(precommit, "is_ci", lambda: False)
-    monkeypatch.setattr(precommit.shutil, "which", lambda _n: "/bin/claude")
-    result = precommit.step_plugin_sync(tmp_path)
-    assert not result.passed
-    assert not result.non_blocking
-    assert "⛔" in result.output
-
-
-# ---------------------------------------------------------------------------
-# _emergency_skip — env_sync / plugin_sync stand down while a sentinel is armed
+# _emergency_skip — env_sync stands down while a sentinel is armed
 # ---------------------------------------------------------------------------
 
 
@@ -4315,62 +4062,35 @@ def test_step_env_sync_skips_when_emergency_armed(
     assert "#99" in result.output
 
 
-def test_step_plugin_sync_skips_when_emergency_armed(
+def test_step_env_sync_skips_when_emergency_spent_but_unexpired(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An armed emergency sentinel skips plugin_sync where it would otherwise block.
+    """A spent-but-unexpired sentinel still stands env_sync down.
 
-    SCENARIO: the same missing-install-plus-blocking setup as
-    ``test_step_plugin_sync_blocks_when_behind_and_configured_blocking``,
-    plus a freshly armed sentinel — proving the skip fires on the gate
-    that would otherwise hard-fail, not one that already passes.
-    MOCK SETUP: is_ci→False; ``claude`` on PATH; manifest at 2.9.0;
-    [tool.forge.plugin_sync] blocking=true; no install recorded for the
-    checkout; a real armed sentinel written via ``emergency.write_state``.
-    EXPECTED BEHAVIOR: passed True, skipped True, ledger number in output.
-    """
-    _write_plugin_manifest(tmp_path, "2.9.0")
-    _write_pyproject(tmp_path, "[tool.forge.plugin_sync]\nblocking = true\n")
-    monkeypatch.setattr(precommit, "is_ci", lambda: False)
-    monkeypatch.setattr(precommit.shutil, "which", lambda _n: "/bin/claude")
-    _write_emergency_sentinel(tmp_path, hours=1)
-
-    result = precommit.step_plugin_sync(tmp_path)
-
-    assert result.passed
-    assert result.skipped
-    assert "#99" in result.output
-
-
-def test_step_plugin_sync_skips_when_emergency_spent_but_unexpired(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A spent-but-unexpired sentinel still stands plugin_sync down.
-
-    SCENARIO: the same missing-install-plus-blocking setup as
-    ``test_step_plugin_sync_skips_when_emergency_armed``, but the
+    SCENARIO: the same missing-script setup as
+    ``test_step_env_sync_skips_when_emergency_armed``, but the
     sentinel's one allowed publication has already been consumed
     (``spent=True``) while it is still unexpired — the exact shape a
     real emergency PR is in the moment after ``gh pr create`` runs.
-    Pins the ``armed_state``→``active_state`` split this PR makes:
-    before it, a spent sentinel read as "not armed" and this fixture
-    would fail closed with ⛔, defeating the emergency for the
-    conflicts and follow-up commits that arrive after publication.
-    MOCK SETUP: is_ci→False; ``claude`` on PATH; manifest at 2.9.0;
-    [tool.forge.plugin_sync] blocking=true; no install recorded for the
-    checkout; a real spent-but-unexpired sentinel written via
-    ``emergency.write_state``.
+    Pins the ``armed_state``→``active_state`` split: a spent sentinel
+    read as "not armed" would fail closed with ⛔, defeating the
+    emergency for the conflicts and follow-up commits that arrive after
+    publication.
+    MOCK SETUP: is_ci→False; pyproject declares {mycli, new-cli};
+    distribution→FakeDist with only mycli installed; a real
+    spent-but-unexpired sentinel written via ``emergency.write_state``.
     EXPECTED BEHAVIOR: passed True, skipped True, ledger number in output.
     """
-    _write_plugin_manifest(tmp_path, "2.9.0")
-    _write_pyproject(tmp_path, "[tool.forge.plugin_sync]\nblocking = true\n")
     monkeypatch.setattr(precommit, "is_ci", lambda: False)
-    monkeypatch.setattr(precommit.shutil, "which", lambda _n: "/bin/claude")
+    _write_project_scripts_pyproject(tmp_path, "mypkg", {"mycli": "", "new-cli": ""})
+    eps = [FakeEP("mycli", "console_scripts")]
+    monkeypatch.setattr(
+        precommit.importlib.metadata, "distribution", lambda _n: FakeDist(eps)
+    )
     _write_emergency_sentinel(tmp_path, hours=1, spent=True)
 
-    result = precommit.step_plugin_sync(tmp_path)
+    result = precommit.step_env_sync(tmp_path)
 
     assert result.passed
     assert result.skipped
@@ -4382,10 +4102,9 @@ def test_emergency_skip_returns_none_when_sentinel_expired(tmp_path: Path) -> No
 
     Pins the discipline `forge-emergency` is built on: a bypass that
     could be revived by a stale sentinel would not be one-shot. Exercises
-    the shared ``_emergency_skip`` helper directly since both
-    ``step_env_sync`` and ``step_plugin_sync`` delegate to it
-    unconditionally — the positive (armed) path is already pinned per
-    step above, so this covers the negative path once rather than twice.
+    the shared ``_emergency_skip`` helper directly — the positive (armed)
+    path is already pinned on ``step_env_sync`` above, so this covers the
+    negative path once rather than twice.
     """
     _write_emergency_sentinel(tmp_path, hours=-1)
 
@@ -6821,15 +6540,6 @@ def test_step_changelog_version_skips_without_changelog(tmp_path: Path) -> None:
     assert result.skipped
 
 
-def test_step_changelog_version_skips_manifest_repo(tmp_path: Path) -> None:
-    """Plugin-manifest repo → verify-forge-plugin-version owns it; skip."""
-    (tmp_path / "CHANGELOG.md").write_text("## v1.0.0\n")
-    (tmp_path / ".claude-plugin").mkdir()
-    (tmp_path / ".claude-plugin" / "plugin.json").write_text("{}")
-    result = precommit.step_changelog_version(tmp_path)
-    assert result.skipped
-
-
 def test_step_changelog_version_fails_on_invalid_heading(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -8040,30 +7750,6 @@ def test_step_changelog_version_fragments_mode_invalid_pending_fails(
     result = precommit.step_changelog_version(tmp_path)
     assert not result.passed
     assert not result.non_blocking
-    assert "unknown type 'bogus'" in result.output
-
-
-def test_step_changelog_version_manifest_and_fragments_invalid_fragment_fails(
-    tmp_path: Path,
-) -> None:
-    """A manifest repo in fragments mode still fails on an invalid fragment.
-
-    The fragments-mode gate must be judged BEFORE the
-    ``.claude-plugin/plugin.json`` short-circuit: a repo carrying both a
-    manifest and fragments needs the fragment gate's per-branch checks
-    (PR hygiene) to run regardless of who owns the declared-version
-    invariant. Before the fix, the manifest short-circuit fired first and
-    this repo passed+skipped with the "Manifest-versioned repo" message
-    instead of failing on the invalid fragment.
-    """
-    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
-    _write_fragments_pyproject(tmp_path)
-    (tmp_path / ".claude-plugin").mkdir()
-    (tmp_path / ".claude-plugin" / "plugin.json").write_text("{}")
-    _write_pending_fragment(tmp_path, "a.bogus.md", "bump: minor\n- x\n")
-    result = precommit.step_changelog_version(tmp_path)
-    assert not result.passed
-    assert not result.skipped
     assert "unknown type 'bogus'" in result.output
 
 

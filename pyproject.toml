@@ -39,8 +39,6 @@ dependencies = [
 fix-forge-ruff = "forge.fix_ruff:main"
 verify-forge-docstrings = "forge.verify_docstrings:main"
 verify-forge-docstring-coverage = "forge.verify_docstring_coverage:main"
-verify-forge-manifest = "forge.verify_manifest:main"
-verify-forge-plugin-version = "forge.verify_plugin_version:main"
 verify-forge-repo-structure = "forge.verify_repo_structure:main"
 install-forge-labels = "forge.install_labels:main"
 verify-forge-test-naming = "forge.verify_test_naming:main"
@@ -60,17 +58,15 @@ forge-continuation = "forge.continuation:main"
 forge-doctor = "forge.doctor:main"
 forge-next-prep = "forge.next_prep:main"
 forge-emergency = "forge.emergency:main"
-forge-rebump = "forge.rebump:main"
 forge-release = "forge.release:main"
 forge-changelog = "forge.changelog_fragments:main"
 forge-smart-test = "forge.smart_test.cli:main"
 forge-precommit = "forge.precommit:main"
-forge-plugin-sync = "forge.plugin_sync:main"
 forge-post-merge = "forge.post_merge:main"
 forge-post-checkout = "forge.post_checkout:main"
 install-forge-githooks = "forge.install_githooks:main"
 install-forge-claude-md = "forge.install_claudemd:main"
-install-forge-claude-settings = "forge.install_claude_settings:main"
+install-forge-claude = "forge.install_claude:main"
 install-forge-readme-badges = "forge.install_readme_badges:main"
 install-forge-bootstrap = "forge.install_bootstrap:main"
 forge-upgrade = "forge.upgrade:main"
@@ -207,6 +203,12 @@ mode = "fragments"
 # Recording and retiring intake sightings is bookkeeping, never a release note.
 exempt_paths = ["docs/intake/"]
 
+[tool.forge.release]
+# Tag on every merge, from the fragments that merge brought. The tag is
+# the only place a version lives, so nothing can disagree with it.
+# CHANGELOG.md prose follows separately (assemble-changelog.yml).
+auto = "merge"
+
 [tool.forge.smart_test]
 # Dogfood the depth model: commits run depth-2 selection; the
 # tracked .forge-full-run stamp escalates to a truly-all run every 48h
@@ -222,16 +224,6 @@ precommit_depth = "2"
 # ONLY sanctioned install command, per CLAUDE.md — never a bare pip install).
 # Self-skips in CI / non-interactive and when FORGE_NO_AUTO_REBUILD is set.
 rebuild_command = "./dev/setup.sh"
-
-[tool.forge.plugin_sync]
-# Advisory here, despite forge shipping the plugin it runs. The step
-# checks this checkout's install against `plugin.json`, and a release
-# PR's whole job is to bump that field — so every release commit looked
-# stale and was refused, with a remedy (`forge-plugin-sync`) that cannot
-# fetch a release not yet tagged and so can never converge. The gate blocked the only
-# commit that could satisfy it. A warning still names a genuinely cold
-# cache; blocking made the release unlandable.
-blocking = false
 
 [tool.forge.typecheck]
 # Forge runs pyrefly as a BLOCKING gate: type errors are forge's own code,
@@ -292,14 +284,20 @@ forge = [
     "data/*.js",
     "data/*.toml",
     "data/docs/*.md",
+    # Every pattern below matches FILES only. A `**/*` pattern also
+    # matches the directories on the way down, and setuptools then tries
+    # to copy a directory as a file: `can't copy '<dir>': doesn't exist
+    # or not a regular file`, which aborts the build. A consumer hit
+    # exactly that on an upgrade and was left with no forge at all,
+    # because the old version is removed before the new one is built.
     # `forge-metrics bench`: sample project, task specs, check files.
-    "data/bench/**/*",
-    # Shipped plugin sources (symlinks into the repo root), so consumer
-    # repos get agents/skills/hooks from the installed package alone.
-    "data/plugin.json",
-    "data/claude-hooks/**/*",
+    "data/bench/*/*",
+    "data/bench/*/*/*",
+    # Shipped agent, skill and guard sources, so a consumer repo
+    # generates its integration from the installed package alone.
+    "data/claude-hooks/*.sh",
     "data/agents/*.md",
-    "data/skills/**/*",
+    "data/skills/*/SKILL.md",
 ]
 
 [tool.setuptools_scm]

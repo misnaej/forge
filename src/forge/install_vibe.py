@@ -46,7 +46,8 @@ from forge.agent_harness import (
 from forge.gen_vibe_agents import flatten_vibe_instructions, generate_vibe_agents
 from forge.gen_vibe_hooks import verify_existing_hooks, write_vibe_hooks
 from forge.git_utils import configure_cli_logging
-from forge.instruction_files import shipped_path
+from forge.hook_registry import rendered_hooks
+from forge.instruction_files import generated_name, shipped_path
 
 
 configure_cli_logging()
@@ -65,16 +66,13 @@ TRUST_REQUIREMENT = (
 )
 
 
-def _generate_roster_sidecar(
-    plugin_json_path: Path, repo_root: Path
-) -> tuple[dict, list[str]]:
-    """Generate the roster sidecar from plugin.json.
+def _generate_roster_sidecar(repo_root: Path) -> tuple[dict, list[str]]:
+    """Generate the roster sidecar from forge's canonical hook wiring.
 
-    The roster sidecar is used by the dispatcher at runtime to avoid
-    reading plugin.json (which has ${CLAUDE_PLUGIN_ROOT} placeholders).
+    The dispatcher reads this sidecar at runtime, so every command in it
+    is already an absolute path to the script this checkout runs.
 
     Args:
-        plugin_json_path: Path to .claude-plugin/plugin.json.
         repo_root: Repository root directory.
 
     Returns:
@@ -83,15 +81,8 @@ def _generate_roster_sidecar(
     """
     warnings: list[str] = []
 
-    with plugin_json_path.open("rb") as f:
-        plugin_json = json.load(f)
-
-    hooks = plugin_json.get("hooks", {})
-    plugin_root = plugin_json_path.parent
-
-    # In the forge repo itself, claude-hooks are at repo root, not in .claude-plugin
-    # Check if this is a forge development checkout
-    hooks_base = resolve_hooks_base(repo_root, plugin_root)
+    hooks_base = resolve_hooks_base()
+    hooks = rendered_hooks(lambda script: str(hooks_base / script))
 
     # Build roster structure: {events: {claude_event: {matchers: {matcher: [hooks]}}}}
     roster: dict = {
@@ -106,18 +97,14 @@ def _generate_roster_sidecar(
             if not isinstance(matcher_config, dict):
                 continue
 
-            # Expand hooks with ${CLAUDE_PLUGIN_ROOT} placeholders
-            expanded_hooks = []
-            for hook in matcher_config.get("hooks", []):
-                if not isinstance(hook, dict):
-                    continue
-                expanded_hook = dict(hook)
-                if "command" in expanded_hook:
-                    cmd = expanded_hook["command"]
-                    # Replace ${CLAUDE_PLUGIN_ROOT} with the appropriate base
-                    expanded_cmd = cmd.replace("${CLAUDE_PLUGIN_ROOT}", str(hooks_base))
-                    expanded_hook["command"] = expanded_cmd
-                expanded_hooks.append(expanded_hook)
+            # Commands arrive absolute from the renderer, so the sidecar
+            # carries them as-is.
+            raw_hooks = matcher_config.get("hooks", [])
+            expanded_hooks = [
+                dict(hook)
+                for hook in (raw_hooks if isinstance(raw_hooks, list) else [])
+                if isinstance(hook, dict)
+            ]
 
             # No matcher specified - applies to all
             matcher = matcher_config.get("matcher", "")
@@ -130,7 +117,7 @@ def _generate_roster_sidecar(
             if matcher in matchers:
                 warnings.append(
                     f"{event}: matcher {matcher or '(none)'} appears in more "
-                    "than one group; merged their hooks (fix plugin.json)"
+                    "than one group; merged their hooks (fix data/hooks.toml)"
                 )
                 matchers[matcher].extend(expanded_hooks)
             else:
@@ -199,7 +186,9 @@ def _generate_subagent_toml(agent_file: Path) -> tuple[str, str]:
         Tuple of (toml_content, prompt_id).
     """
     content = agent_file.read_text(encoding="utf-8")
-    agent_name = agent_file.stem
+    # The published name, prefixed, so one reference names this agent on
+    # every harness.
+    agent_name = generated_name(agent_file.stem)
     description = _extract_frontmatter_field(content, "description") or (
         f"Forge {agent_name} agent"
     )
@@ -287,8 +276,9 @@ def _publish_subagents(
         # Generate TOML
         toml_content, prompt_id = _generate_subagent_toml(agent_file)
 
-        # Write TOML to .vibe/agents/NAME.toml (Vibe discovery location)
-        agent_name = agent_file.stem
+        # Written under the published (prefixed) name, matching the
+        # system_prompt_id the TOML declares.
+        agent_name = generated_name(agent_file.stem)
         toml_path = agents_toml_dir / f"{agent_name}.toml"
         if not check_mode:
             toml_path.write_text(toml_content, encoding="utf-8")
@@ -542,16 +532,6 @@ def install_vibe(
     if verify_mode:
         return _verify_vibe_installation(repo_root)
 
-    # The checkout's own plugin manifest wins (forge's repo); consumer
-    # repos fall back to the copy shipped inside the installed package.
-    plugin_json_path = shipped_path(repo_root, ".claude-plugin/plugin.json")
-    if not plugin_json_path.exists():
-        logger.error(
-            "plugin.json not found in %s or in the installed forge package",
-            repo_root / ".claude-plugin",
-        )
-        return 1
-
     before = _artifact_snapshot(repo_root)
 
     # Step 1: Generate .vibe/hooks.toml
@@ -559,7 +539,7 @@ def install_vibe(
         return 1
 
     # Step 2: Generate roster sidecar
-    roster, roster_warnings = _generate_roster_sidecar(plugin_json_path, repo_root)
+    roster, roster_warnings = _generate_roster_sidecar(repo_root)
     if not check_mode:
         _write_roster_sidecar(roster, repo_root)
     _warn(roster_warnings)
@@ -572,7 +552,7 @@ def install_vibe(
 
     # Step 4: Generate subagent TOMLs and prompts — from the checkout's
     # agents/ in forge's repo, else from the package's shipped copy.
-    agents_dir = shipped_path(repo_root, "agents")
+    agents_dir = shipped_path("agents")
     if agents_dir.exists():
         _subagent_count, subagent_warnings = _publish_subagents(
             agents_dir, repo_root, check_mode=check_mode

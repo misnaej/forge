@@ -16,7 +16,8 @@ Checks:
      c. ``agents/``, ``skills/``, ``claude-hooks/`` directories populated.
   4. Version skew across install surfaces — the pip package and the
      git-hook sidecar should share a version, and this checkout's plugin
-     install (checked separately, ``plugin:checkout``) should be the
+     generated integration (checked separately,
+     ``claude:integration``) should be the
      release the checkout names; a lagging surface is reported as an
      advisory with the exact command to converge it (never fails the exit
      code — the report line is the signal).
@@ -44,7 +45,6 @@ Checks:
 Usage:
     forge-doctor                              # human-readable, auto-detected harnesses
     forge-doctor --json                       # machine-readable
-    forge-doctor --plugin-name myrepo         # check a non-forge plugin
     forge-doctor --harness vibe               # only Vibe registration checks
     forge-doctor --harness claude             # only Claude Code plugin checks
     forge-doctor --harness all                # both, even if not detected
@@ -75,22 +75,12 @@ from forge.git_utils import (
     parse_semver,
     run_git,
 )
+from forge.install_claude import CLAUDE_DIR, HOOKS_SUBDIR, install_claude
 from forge.upgrade import pin_revision_mismatch, pip_command
 from forge.version_surfaces import (
     SKEW_REMEDIATION,
-    UNPRINTABLE,
-    CheckoutInstall,
-    checkout_installs,
-    checkout_plugin_current,
-    enabled_forge_keys,
-    global_forge_keys,
     hook_sidecar_version,
-    pinned_marketplace,
     pip_version,
-    read_json,
-    resolve_install,
-    safe_text,
-    target_plugin_version,
 )
 
 
@@ -189,161 +179,6 @@ def _check_gh() -> list[CheckResult]:
 # and, by requiring a leading alphanumeric, a bare ``..``; a ``..``
 # *substring* like ``a..b`` is a harmless literal and is allowed. ``\Z``
 # (not ``$``) also rejects a trailing newline, which ``$`` would admit.
-_SAFE_PLUGIN_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")
-
-
-def _validate_plugin_name(name: str) -> str:
-    """Argparse ``type`` for ``--plugin-name`` — reject a non-identifier value.
-
-    A value carrying a path separator, an ``@`` or a bare ``..`` is not a
-    plugin name, and matching install records against it would either
-    find nothing or the wrong plugin. Fail loudly at parse time rather
-    than report on something the user did not ask about.
-
-    Args:
-        name: The raw ``--plugin-name`` argument.
-
-    Returns:
-        *name* unchanged when it is a safe bare plugin identifier.
-
-    Raises:
-        argparse.ArgumentTypeError: When *name* is empty, does not start with
-            an alphanumeric, or contains a path separator.
-    """
-    if not _SAFE_PLUGIN_NAME_RE.match(name):
-        msg = (
-            f"invalid --plugin-name {name!r}: expected a bare plugin name "
-            "(starts alphanumeric; letters, digits, '.', '_', '-'; no path "
-            "separators)"
-        )
-        raise argparse.ArgumentTypeError(msg)
-    return name
-
-
-def _check_plugin_install(
-    install: CheckoutInstall | None, plugin_name: str
-) -> CheckResult:
-    """Report the install this checkout loads, as Claude Code recorded it.
-
-    Args:
-        install: The install :func:`forge.version_surfaces.resolve_install`
-            chose for this checkout, or ``None`` when there is none.
-        plugin_name: Plugin identifier (e.g. ``"forge"``).
-
-    Returns:
-        A blocking ``CheckResult``: passed with the record's key, version
-        and directory, failed naming the command that installs one.
-    """
-    if install is None:
-        if plugin_name == "forge":
-            detail = (
-                "no forge install is recorded for this checkout — run "
-                f"`{SKEW_REMEDIATION['plugin']}`"
-            )
-        else:
-            detail = (
-                f"no {plugin_name} install is recorded for this checkout or "
-                "for your user account"
-            )
-        return CheckResult(name="plugin:installed", passed=False, detail=detail)
-    return CheckResult(
-        name="plugin:installed",
-        passed=True,
-        detail=(
-            f"{safe_text(install.key)} {safe_text(install.version)} "
-            f"({install.scope or 'unknown'} scope) at {install.install_dir}"
-        ),
-    )
-
-
-def _check_checkout_plugin(repo_root: Path) -> list[CheckResult]:
-    """Report whether this checkout has its own install of its forge release.
-
-    The same judgment ``forge-plugin-sync`` acts on
-    (:func:`forge.version_surfaces.checkout_plugin_current`). Always one
-    line when a release is pinned, so the ``version_skew`` line can point
-    here without pointing at nothing.
-
-    Args:
-        repo_root: Checkout root.
-
-    Returns:
-        One result — passed when current, an advisory naming
-        ``forge-plugin-sync`` otherwise — or none when the checkout pins
-        no release (no manifest version, no ``forge-scripts`` tag pin).
-    """
-    version = target_plugin_version(repo_root)
-    if version is None:
-        return []
-    key = f"forge@{pinned_marketplace(version)}"
-    if checkout_plugin_current(repo_root, version):
-        return [
-            CheckResult(
-                name="plugin:checkout",
-                passed=True,
-                detail=f"{key} {version} installed for this checkout",
-            )
-        ]
-    return [
-        CheckResult(
-            name="plugin:checkout",
-            passed=False,
-            info=True,
-            detail=(
-                f"this checkout has no install of forge {version} ({key}) — "
-                f"run `{SKEW_REMEDIATION['plugin']}`"
-            ),
-        )
-    ]
-
-
-def _check_global_install(repo_root: Path) -> list[CheckResult]:
-    """Flag a forge installed for the whole user account beside this checkout's own.
-
-    A user-scope plugin loads in every repo, and Claude Code offers no way
-    to keep it out of one that has its own copy, so the global copy can
-    shadow the checkout's: the checkout then runs another forge while every
-    update reports it current. Which copy wins is Claude Code's decision
-    and not observable here, so the finding is that both are present —
-    never a claim about which loads. The judgment of "global" is
-    :func:`forge.version_surfaces.global_forge_keys`, the same one
-    ``forge-plugin-sync`` refuses to install beside.
-
-    Args:
-        repo_root: Checkout whose own install records and
-            ``.claude/settings(.local).json`` say whether it has a forge.
-
-    Returns:
-        One advisory result when forge is installed or enabled at user
-        scope and this checkout has its own forge too; otherwise an empty
-        list.
-    """
-    claude_dir = repo_root / ".claude"
-    own = checkout_installs(repo_root) or enabled_forge_keys(
-        claude_dir / "settings.json", claude_dir / "settings.local.json"
-    )
-    keys = [safe_text(key) or UNPRINTABLE for key in global_forge_keys()]
-    if not own or not keys:
-        return []
-    commands = "; ".join(
-        f"`claude plugin uninstall {key} --scope user`" for key in keys
-    )
-    return [
-        CheckResult(
-            name="plugin:global_install",
-            passed=False,
-            info=True,
-            detail=(
-                f"forge is installed or enabled for your whole user account "
-                f"({', '.join(keys)}) and this checkout has its own copy too — "
-                "the global copy can shadow this checkout's, so it may run "
-                "another forge while every update reports it current. Fix: "
-                f"{commands}, and keep forge installed per checkout "
-                "(`forge-plugin-sync`). A per-repo enabledPlugins false is no "
-                "fix: it turns forge off in that repo entirely."
-            ),
-        )
-    ]
 
 
 def _check_hooks_path(repo_root: Path) -> list[CheckResult]:
@@ -449,10 +284,7 @@ def _check_version_skew(repo_root: Path) -> list[CheckResult]:
             CheckResult(
                 name="version_skew",
                 passed=True,
-                detail=(
-                    f"aligned at v{cur} across {aligned} — "
-                    "plugin not compared, see plugin:checkout"
-                ),
+                detail=f"aligned at v{cur} across {aligned}",
             )
         ]
 
@@ -504,90 +336,10 @@ def _surface_pin_revision(root: Path) -> list[CheckResult]:
     ]
 
 
-def _check_plugin_manifests(
-    install_dir: Path | None,
-    plugin_name: str,
-) -> list[CheckResult]:
-    """Validate plugin.json + marketplace.json in the install this checkout loads.
-
-    Args:
-        install_dir: The install's directory, or None when none is recorded.
-        plugin_name: Expected plugin name to match against ``plugin.json`` /
-            ``marketplace.json``.
-
-    Returns:
-        List of check results for plugin.json and marketplace.json validation.
-    """
-    if install_dir is None:
-        return [
-            CheckResult(
-                name="plugin.json", passed=False, detail="plugin not installed"
-            ),
-            CheckResult(
-                name="marketplace.json", passed=False, detail="plugin not installed"
-            ),
-        ]
-
-    manifest_dir = install_dir / ".claude-plugin"
-    plugin_data, plugin_err = read_json(manifest_dir / "plugin.json")
-    market_data, market_err = read_json(manifest_dir / "marketplace.json")
-
-    plugin_ok = plugin_err is None and plugin_data.get("name") == plugin_name
-    market_ok = market_err is None and market_data.get("name") == plugin_name
-
-    # The manifests sit in a user-writable cache; their values and the
-    # read errors (which embed paths and exception text) are echoed only
-    # in a form that cannot carry control characters into the report.
-    plugin_detail = (
-        f"name={safe_text(plugin_data.get('name'))}, "
-        f"version={safe_text(plugin_data.get('version'))}"
-    )
-    return [
-        CheckResult(
-            name="plugin.json",
-            passed=plugin_ok,
-            detail=repr(plugin_err) if plugin_err else plugin_detail,
-        ),
-        CheckResult(
-            name="marketplace.json",
-            passed=market_ok,
-            detail=(
-                repr(market_err)
-                if market_err
-                else f"name={safe_text(market_data.get('name'))}"
-            ),
-        ),
-    ]
-
-
-def _check_plugin_contents(install_dir: Path | None) -> list[CheckResult]:
-    """Verify the expected plugin sub-directories contain files.
-
-    Args:
-        install_dir: The install's directory, or None when none is recorded.
-
-    Returns:
-        List of check results for each expected plugin directory.
-    """
-    if install_dir is None:
-        return [
-            CheckResult(name=f"plugin/{d}", passed=False, detail="plugin not installed")
-            for d in EXPECTED_PLUGIN_DIRS
-        ]
-
-    results = []
-    for d in EXPECTED_PLUGIN_DIRS:
-        sub = install_dir / d
-        present = sub.is_dir() and any(sub.iterdir())
-        count = sum(1 for _ in sub.iterdir()) if sub.is_dir() else 0
-        results.append(
-            CheckResult(
-                name=f"plugin/{d}",
-                passed=present,
-                detail=f"{count} entries" if present else "missing or empty",
-            )
-        )
-    return results
+_STEP_TOOLS: dict[str, str] = {
+    "typecheck": "pyrefly",
+    "doctest": "pytest",
+}
 
 
 # Under-used capability map: each forge CLI maps to the artifact whose
@@ -603,16 +355,6 @@ _UNDERUSED_ARTIFACTS: tuple[tuple[str, str, str], ...] = (
     ("forge-gen-cli-reference", "docs/cli-reference.md", "install-forge-bootstrap"),
     ("forge-audit-deps", "code_health/audit_deps_tree.log", "install-forge-bootstrap"),
 )
-
-
-# External tool each opt-in pre-commit step shells out to. Mirrors the
-# steps in forge.precommit; a drift test
-# (test_doctor.py::test_step_tools_keys_are_opt_in_steps) asserts every key
-# is a real opt-in step so this map can't silently fall out of sync.
-_STEP_TOOLS: dict[str, str] = {
-    "typecheck": "pyrefly",
-    "doctest": "pytest",
-}
 
 
 def _declared_lower_bound(repo_root: Path, tool: str) -> str | None:
@@ -1033,6 +775,110 @@ def _vibe_trusted_folder_result(repo_root: Path) -> CheckResult:
     )
 
 
+def _check_claude_integration(repo_root: Path) -> list[CheckResult]:
+    """Check forge's Claude Code integration artifacts in this checkout.
+
+    The integration is generated, not installed, so the only question is
+    whether what is on disk still matches what forge ships — the same
+    judgment ``install-forge-claude --check`` makes, asked here so one
+    command reports it beside every other surface. Drift is advisory
+    rather than blocking: regenerating is one command and never
+    destructive, and a stale agent definition degrades a session rather
+    than disarming a guard.
+
+    A missing ``.claude/`` reads as not generated yet, pointing at the
+    installer, for the same reason the Vibe equivalent does.
+
+    Args:
+        repo_root: Checkout to inspect.
+
+    Returns:
+        One result: generated and current, drifted, or not generated.
+    """
+    if not (repo_root / ".claude").is_dir():
+        return [
+            CheckResult(
+                name="claude:not-generated",
+                passed=True,
+                info=True,
+                detail=(
+                    "no .claude/ — Claude Code integration not generated; "
+                    "run `install-forge-claude` to enable it"
+                ),
+            )
+        ]
+    try:
+        drift, error = install_claude(repo_root, check=True)
+    except OSError as exc:
+        return [
+            CheckResult(
+                name="claude:integration",
+                passed=False,
+                info=True,
+                detail=f"integration could not be compared ({exc})",
+            )
+        ]
+    if error:
+        # forge's own sentence, naming a path from this checkout — not a
+        # value read out of another tool's file, so `safe_text` would
+        # only reduce it to "<unprintable>" and lose the diagnostic.
+        return [CheckResult(name="claude:integration", passed=False, detail=error)]
+    if drift:
+        named_limit = 3
+        shown = ", ".join(drift[:named_limit]) + (
+            " …" if len(drift) > named_limit else ""
+        )
+        # A *missing* guard script is not ordinary drift. Its registration
+        # in settings.json is tracked while the script itself is ignored,
+        # so a fresh clone has the registration and not the file — and a
+        # hook whose command is absent exits 127, which Claude Code does
+        # not treat as a block. The guard then silently does not run,
+        # where the retired plugin was all-or-nothing. That one is
+        # blocking; everything else stays advisory, since regenerating is
+        # one command and a stale agent definition degrades a session
+        # rather than disarming a guard.
+        missing = [
+            path
+            for path in drift
+            if path.startswith(f"{CLAUDE_DIR}/{HOOKS_SUBDIR}/")
+            and not (repo_root / path).exists()
+        ]
+        if missing:
+            named = ", ".join(missing[:named_limit]) + (
+                " …" if len(missing) > named_limit else ""
+            )
+            return [
+                CheckResult(
+                    name="claude:integration",
+                    passed=False,
+                    detail=(
+                        f"{len(missing)} registered guard script(s) are missing "
+                        f"from this checkout ({named}) — the registration runs a "
+                        "command that is not there, which does not block, so the "
+                        "guard does not run. Fix with `install-forge-claude`"
+                    ),
+                )
+            ]
+        return [
+            CheckResult(
+                name="claude:integration",
+                passed=False,
+                info=True,
+                detail=(
+                    f"{len(drift)} generated file(s) differ from what forge "
+                    f"ships ({shown}) — run `install-forge-claude`"
+                ),
+            )
+        ]
+    return [
+        CheckResult(
+            name="claude:integration",
+            passed=True,
+            detail="generated agents, skills, hooks and settings are current",
+        )
+    ]
+
+
 def _check_vibe_integration(repo_root: Path) -> list[CheckResult]:
     """Check forge's Mistral Vibe integration artifacts in this checkout.
 
@@ -1249,21 +1095,10 @@ def main() -> int:
         help="Emit JSON instead of human-readable output.",
     )
     parser.add_argument(
-        "--plugin-name",
-        default="forge",
-        type=_validate_plugin_name,
-        help=(
-            "Claude Code plugin name to check (default: forge): its install "
-            "recorded for this checkout, or for a plugin other than forge a "
-            "user-scope install. Consumers who don't use Claude Code pass "
-            "--skip-plugin-checks."
-        ),
-    )
-    parser.add_argument(
         "--skip-plugin-checks",
         action="store_true",
         help=(
-            "Skip all Claude Code plugin checks entirely. Useful for "
+            "Skip the Claude Code integration check entirely. Useful for "
             "consumers who only adopt the pip CLIs. Implies --harness vibe "
             "when no --harness is given."
         ),
@@ -1298,11 +1133,7 @@ def main() -> int:
             or (Path.cwd() / ".vibe").is_dir()
         ):
             detected.add("vibe")
-        if (
-            resolve_install(Path.cwd(), args.plugin_name) is not None
-            or (Path.cwd() / ".claude-plugin").is_dir()
-            or (Path.home() / ".claude").is_dir()
-        ):
+        if (Path.cwd() / ".claude").is_dir() or (Path.home() / ".claude").is_dir():
             detected.add("claude")
         check_claude = "claude" in detected
         check_vibe = "vibe" in detected
@@ -1316,16 +1147,9 @@ def main() -> int:
     results.extend(_check_step_tools(Path.cwd()))
 
     if check_claude:
-        install = resolve_install(Path.cwd(), args.plugin_name)
-        install_dir = install.install_dir if install is not None else None
-        results.append(_check_plugin_install(install, args.plugin_name))
-        results.extend(_check_plugin_manifests(install_dir, args.plugin_name))
-        results.extend(_check_plugin_contents(install_dir))
+        results.extend(_check_claude_integration(Path.cwd()))
 
     results.extend(_check_version_skew(Path.cwd()))
-    if check_claude:
-        results.extend(_check_checkout_plugin(Path.cwd()))
-        results.extend(_check_global_install(Path.cwd()))
     results.extend(_surface_pin_revision(Path.cwd()))
     results.extend(_check_hooks_path(Path.cwd()))
     if check_vibe:
