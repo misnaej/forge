@@ -500,7 +500,7 @@ to Step 5:
 Agent(subagent_type="forge:issue-triage", prompt="Run placement mode for PR #<number> (forge-plan-check tracks --from-pr <number>).")
 ```
 
-Placement writes only on the issues — labels and `[issue-triage]`
+Placement writes only on the issues — labels and `[forge-issue-triage]`
 comments — **never on the PR**, so the squash comment stays newest
 without a re-post. Conflicting decisions come back to the user as
 questions; the mode's limits are in

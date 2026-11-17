@@ -51,7 +51,7 @@ from typing import TYPE_CHECKING, Final
 
 from forge.git_utils import fetch_quietly, merge_tree_clean
 from forge.plan_staleness import (
-    PLAN_MARKER,
+    PLAN_MARKERS,
     PLAN_READY,
     REGENERATED_WORD,
     WEAK_PREFIX,
@@ -607,7 +607,7 @@ def _names_track_in_text(issue: Issue, track: str) -> bool:
         Whether a candidate comment carries the line.
     """
     return any(
-        comment.body.lstrip().startswith(PLAN_MARKER)
+        comment.body.lstrip().startswith(PLAN_MARKERS)
         and track in plan_track_names(comment.body)
         for comment in issue.comments
     )
