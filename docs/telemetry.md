@@ -103,7 +103,7 @@ levers:
 |---|---|
 | High peak RSS, work arrives in one big load | **Batch/chunk size**: process in smaller batches or stream instead of materializing everything — peak RSS should track the batch size, not the dataset size. If halving the batch halves the peak, the knob works; tune it to the target environment's memory ceiling. |
 | RSS grows across batches that should be independent | Results (or caches) accumulating across iterations — write out / release per batch instead of collecting, or cap the cache. |
-| CPU pinned high, wall-clock dominated by one phase | Compute bound: algorithmic work first (profile the hot path — `forge:perf-optimizer`'s benchmark loop), vectorization/library offload second, parallelism last. |
+| CPU pinned high, wall-clock dominated by one phase | Compute bound: algorithmic work first (profile the hot path — `forge-perf-optimizer`'s benchmark loop), vectorization/library offload second, parallelism last. |
 | CPU low, RSS flat, wall-clock long | Waiting, not working: batch the I/O (fewer, larger reads/writes), overlap it with compute, or raise worker concurrency — more CPU won't help. |
 | CPU high AND RSS high together | The batch size is serving two masters — bigger batches amortize per-item overhead (CPU win) but raise the memory floor. Tune it against the chart: grow the batch until the RSS line approaches the environment's ceiling, not past it. |
 | Short spiky CPU with idle gaps | Per-item startup overhead (process spawn, connection setup, import cost) — reuse workers/connections across items rather than paying setup per item. |
@@ -157,19 +157,19 @@ table (timestamp, label, exit code, wall time, peak RSS — newest last),
 so "is this suite getting slower / hungrier" no longer means eyeballing
 raw `key=value` lines. It reads a text file only: no wrapped command,
 no `psutil` required. Mean CPU is not part of the ledger format and is
-therefore absent from the table. The `/perf` skill runs this reader
+therefore absent from the table. The `/forge-perf` skill runs this reader
 (plus `forge-slow-tests-report --baseline`) as its analyze mode.
 
 ## Agent timing — where the agents' time goes
 
 Resource telemetry measures a wrapped command; `forge-agent-profile`
 measures the agents. The `log_agent_timing` Claude Code hook (shipped
-with the plugin, registered on `SubagentStart`, `SubagentStop`, and
+with forge, registered on `SubagentStart`, `SubagentStop`, and
 every `PostToolUse`) appends one JSON line per event to
 `code_health/agent_timing.jsonl` — agent id and type on the subagent
 events, tool name and `duration_ms` on the tool events. A second writer,
 the `block_fixer_recon` hook, appends one `precommit_full_run` line per
-full `forge-precommit` it lets `forge:precommit-fixer` run — the
+full `forge-precommit` it lets `forge-precommit-fixer` run — the
 three-run cap made mechanical, and the profiler's primary source for
 cap breaches. A third, `require_fixer_verdict`, appends one
 `verdict_block` line when it refuses a precommit-fixer hand-back whose
@@ -184,7 +184,7 @@ being the floor.
 
 ```bash
 forge-agent-profile                                   # this workspace's ledger
-forge-agent-profile --agent-type forge:precommit-fixer --last 20
+forge-agent-profile --agent-type forge-precommit-fixer --last 20
 forge-agent-profile --transcripts ~/.claude/projects/<encoded-cwd>   # runs the ledger never named
 forge-agent-profile --json                            # runs + per-type + per-tool rows
 forge-agent-profile --tokens                          # where the tokens go, with waste flags
@@ -197,7 +197,7 @@ The report answers four questions:
 | Which agent types dominate wall time? | Per-type table — runs, mean, p50, max, wall, active |
 | Was the time work or waiting? | `active` clips every gap over 300 s (a sleeping PR monitor, a closed laptop, an agent resumed hours later); wall keeps it |
 | Which runs and which tools were slowest? | Slowest-runs list (turns, tool calls, slowest tool) and the per-tool table from `PostToolUse` durations |
-| Is anything stuck? | **Loop suspects** — one identical tool call (name + input) repeated four or more times inside a single prompt — and **`forge:precommit-fixer` runs past its three-run cap** |
+| Is anything stuck? | **Loop suspects** — one identical tool call (name + input) repeated four or more times inside a single prompt — and **`forge-precommit-fixer` runs past its three-run cap** |
 
 Turn counts, repeated-call detection and precommit-run counts come from
 each agent's own subagent transcript
@@ -244,7 +244,7 @@ active time) and when. A live transcript always wins — a resumed
 agent's keeps growing — and the digest stands in only once it is gone.
 A run found in neither still reports no turn count rather than a
 borrowed one. The digest is complete only for runs a report saw while
-their transcript existed, so run `forge-agent-profile` — every `/next`
+their transcript existed, so run `forge-agent-profile` — every `/forge-next`
 does — at least once a month.
 
 A user who wants the raw transcripts kept longer can raise
@@ -257,8 +257,8 @@ file path — after the transcript itself is deleted.
 Each report appends one `key=value` line (runs, types, wall, active,
 loop suspects, cap breaches) to `code_health/agent_profile_history.log`;
 `--history` renders it and `--no-history` skips both that append and
-the digest refresh. `/perf
-analyze` runs the reporter as its fifth surface, and `/report-to-forge`
+the digest refresh. `/forge-perf
+analyze` runs the reporter as its fifth surface, and `/forge-report-to-forge`
 quotes its summary as evidence when a shipped agent misbehaves — the
 summary only, since the raw ledger carries absolute paths and the
 transcripts carry every tool input.

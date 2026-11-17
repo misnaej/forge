@@ -46,7 +46,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    # ready_for_review added to the default set so a draft PR (the /pr
+    # ready_for_review added to the default set so a draft PR (the /forge-pr
     # skill's early-visibility escape hatch) gets its first CI run the
     # moment it is marked ready.
     types: [opened, synchronize, reopened, ready_for_review]
@@ -64,7 +64,7 @@ permissions:
 
 jobs:
   test:
-    # Draft PRs skip CI: /pr's verification-first flow runs the same checks
+    # Draft PRs skip CI: /forge-pr's verification-first flow runs the same checks
     # locally before publishing, so CI on an unfinished draft is waste. A
     # skipped job satisfies required status checks.
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
@@ -528,7 +528,7 @@ branch checkout. Only the `push` trigger is safe here — never run a
   `--no-sync` so the CLI stays on that pinned commit.
 - **SHA-pin actions** in any write-capable workflow.
 
-With either job in place, `/next`'s tag step becomes a no-op fallback
+With either job in place, `/forge-next`'s tag step becomes a no-op fallback
 (both CLIs are idempotent), and the manual `forge-release` recipe in
 [`consumer-release.md`](../docs/consumer-release.md) remains available for
 repos without the workflow.

@@ -69,7 +69,7 @@ CLAUDE_TO_VIBE_EVENT: Mapping[str, str | None] = {
 # - Bash -> "re:bash|process_start"
 # - Edit -> "edit"
 # - Write -> "write_file"
-# Regex agent matchers (like "^(forge:)?precommit-fixer$") don't map to
+# Regex agent matchers (like "^forge-precommit-fixer$") don't map to
 # Vibe tool matchers and stay unenforced. Vibe's post_agent DOES take an
 # agent matcher (e.g. the reserved "main"), which the shipped Vibe-only
 # extra hooks use.

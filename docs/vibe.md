@@ -7,7 +7,7 @@ Opt in per repo with `[tool.forge.vibe] enabled = true`, then run
 In a consumer repo the agent/skill/hook sources come from the installed forge
 package (shipped under `src/forge/data/`), so no forge checkout is needed —
 `install-forge-vibe` generates `.vibe/agents/*.toml` from them, and the agents
-spawn by bare name (see below).
+spawn by their `forge-` prefixed name (see below).
 
 ## What lands on disk (all generated, all gitignored)
 
@@ -16,25 +16,23 @@ spawn by bare name (see below).
 | `.vibe/hooks.toml` | `forge-gen-vibe-hooks` | One entry per blocking event/matcher, every one `strict = true`, commands route through `forge-hook-dispatch --harness vibe --roster <abs path>`; the two Vibe-only `post_agent` extras (from `src/forge/data/vibe-extra-hooks.toml`) run directly with no `strict` (Vibe forbids strict on post_agent) |
 | `.vibe/forge-roster.json` | `install-forge-vibe` | Guard roster baked at generation time; dispatcher contains commands to the repo root and denies a roster claiming `project_root` outside its own location |
 | `.vibe/agents/*.toml` + `.vibe/prompts/*.md` | `install-forge-vibe` | The forge subagents in Vibe's schema (`agent_type = "subagent"`, `system_prompt_id`); pinned via `active_model = "forge-<tier>"` using the preset aliases written to `.vibe/config.toml` (an unknown alias would reject the whole agent file, so forge ships the aliases itself) |
-| `.agents/skills/*/SKILL.md` | `forge-gen-vibe-agents` | The 19 skills (incl. vendored `/caveman` levels), `CLAUDE.md` references rewritten to `AGENTS.md` |
+| `.agents/skills/*/SKILL.md` | `forge-gen-vibe-agents` | The 19 skills (incl. vendored `/forge-caveman` levels), `CLAUDE.md` references rewritten to `AGENTS.md` |
 | `AGENTS.md` | `install-forge-vibe` | Flattened from `FOUNDATION.md` + `CLAUDE.md`; see below |
 | `.gitignore` entries | `install-forge-vibe` | Ensures `.vibe/`, `.agents/`, `AGENTS.md` stay untracked |
 | `.vibe/config.toml` | `install-forge-vibe` | Appends forge-owned `[[models]]` presets (`forge-haiku`/`forge-sonnet`/`forge-opus`) when absent — never clobbers user models |
 
 ### Spawning the forge agents
 
-Under Mistral Vibe, spawn forge agents by their bare name:
+Under Mistral Vibe, spawn forge agents by their `forge-` prefixed name, the same name every harness uses:
 
 ```python
-agents.spawn(config_name="prior-art")
+agents.spawn(config_name="forge-prior-art")
 ```
 
-The `forge:<name>` form is the Claude Code plugin namespace and is **not** a valid subagent type under Vibe.
-
-The canonical agent and skill sources are authored in that namespace, so the
-generators map it: every shipped agent and skill name is rewritten to its bare
-form in the generated prompts, skills and instruction file. Only names forge
-ships are mapped — a literal `forge:<name>` placeholder, and the continuation
+The canonical agent and skill sources carry a `forge:<name>` marker; the
+generators rewrite every shipped name to its `forge-<name>` form in the
+generated prompts, skills and instruction file. Only names forge
+ships are rewritten — a literal `forge:<name>` placeholder, and the continuation
 note's `forge:state` markers, are left as written. The mapping lives in
 `forge.agent_harness.map_plugin_references`, keyed off each harness profile's
 `agent_namespace`, so a future target declares its namespace rather than adding
@@ -108,10 +106,10 @@ always-on terse-output block, because Vibe has no blocking SessionStart/Subagent
 hook to enforce a voice on subagents and skills don't inherit into spawned
 subagents — the style rule lives in the prompt itself. On top of that:
 
-The `/caveman`, `/ultracave` and `/megacave` voice skills are vendored into
+The `/forge-caveman`, `/forge-ultracave` and `/forge-megacave` voice skills are vendored into
 `skills/` (Apache-2.0, attribution in `src/forge/data/VENDORED.md`) and
 published to `.agents/skills/`. Vibe's `session_start` extra only prints the
-plugin version, so there is no auto-activation — invoke `/caveman` manually per session.
+plugin version, so there is no auto-activation — invoke `/forge-caveman` manually per session.
 
 ## Checking the install
 

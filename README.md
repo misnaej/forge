@@ -70,7 +70,7 @@ The model decides what to write; forge decides whether it passes.
 
 Forge is open source and maintained around its owner's own work. It is
 being consolidated until early 2027 and takes no new directions before
-then. Reports go through forge itself, with `/report-to-forge`; see
+then. Reports go through forge itself, with `/forge-report-to-forge`; see
 [CONTRIBUTING](CONTRIBUTING.md).
 
 ## License

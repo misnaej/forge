@@ -43,15 +43,16 @@ COMMAND=$(jq -r '.tool_input.command // empty' <<< "$INPUT")
 # Scoped: only the one agent named by the wiring is restricted. The name
 # arrives in FORGE_HOOK_AGENT, resolved at generation from the canonical
 # stem in data/hooks.toml, so this guard spells no agent name of its own
-# and a rename cannot leave it matching nothing. An unset value is a
-# generation fault, not "some other agent": this guard restricts, so it
-# blocks rather than standing aside.
+# and a rename cannot leave it matching nothing.
+#
 # Unset means the integration predates the agent-scope wiring or was
-# generated wrong. This guard runs on *every* Bash call, so blocking here
-# takes the whole session down over a config fault — which is strictly
-# worse than the narrow restriction it enforces being absent. Report it
-# loudly on every call and stand aside: visibly degraded, not silently,
-# which is the failure this replaces.
+# generated wrong. This guard stands aside rather than blocking, because
+# it runs on *every* Bash call: failing closed here takes the whole
+# session down over a config fault, which is worse than this one narrow
+# restriction being absent. Note what that costs — Claude Code does not
+# surface hook stderr on exit 0, so the message below usually reaches
+# nobody. The detection that matters is `forge-doctor`'s integration
+# check, which reports the drift that causes this.
 if [ -z "${FORGE_HOOK_AGENT:-}" ]; then
     echo "[forge] block_fixer_recon: FORGE_HOOK_AGENT unset — the fixer's Bash restriction is NOT being applied. Run install-forge-claude and restart the session." >&2
     exit 0

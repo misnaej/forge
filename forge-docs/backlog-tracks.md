@@ -11,13 +11,13 @@ holds the working details every skill and agent points to.
 
 ## The life of a track
 
-1. **Group** — `/plan-batch` proposes tracks from the overlap evidence
+1. **Group** — `/forge-plan-batch` proposes tracks from the overlap evidence
    below and puts the grouping decisions to the user one at a time.
 2. **Plan** — one plan is drafted per confirmed track and validated by
    the user like any other plan.
 3. **Record** — `issue-triage` records the same plan on every member
    issue (see "What a member's plan carries").
-4. **Execute** — `/sentinel` runs the whole track as one branch and one
+4. **Execute** — `/forge-sentinel` runs the whole track as one branch and one
    PR, never one member of it alone.
 5. **Place** — the issues a finished PR files as follow-ups are placed
    into tracks by `issue-triage`'s `placement` mode, and re-checked after
@@ -115,21 +115,21 @@ code has already fixed — flagged to the user, never closed.
 A track with a validated plan is never extended silently: adding an
 issue to it changes what was validated, so the user is asked and the
 track's members swap `plan-ready` for `needs-recheck` and go back
-through `/plan-issue` — without `plan-ready` no sentinel picks them up.
+through `/forge-plan-issue` — without `plan-ready` no sentinel picks them up.
 
 Drift and overlap sort each changed file before anything is flagged:
 regenerated artifacts (`pr_delta.GENERATED_PATHS`) never count; shared
 files (`pr_delta.HUB_PATHS` plus `[tool.forge.plan_check].hub_paths`)
 are listed as `weak:` / `note:` lines and never flag; any other file the
 plan names does. A flagged plan keeps `plan-ready` and gains
-`needs-recheck`; `/sentinel` reads the diff at pickup and either clears
+`needs-recheck`; `/forge-sentinel` reads the diff at pickup and either clears
 it (`[sentinel] recheck cleared:`, which restarts the drift window) or
 returns the issue for re-planning.
 
 ## Placement after a PR
 
 The issues a PR's findings were deferred to are named on its posted
-wrap-up's `Follow-ups:` line. `/pr` hands them to placement in the
+wrap-up's `Follow-ups:` line. `/forge-pr` hands them to placement in the
 background as soon as the wrap-up posts, while the context that filed
 them is still fresh. Placement is deliberately narrow, because it acts
 unattended on text anyone could have written:
@@ -156,5 +156,5 @@ Once several track PRs are open, `forge-plan-check merge-order [<PR> …]`
 probes them against the base and against each other without checking
 anything out, and prints one `order:` line per PR — the least entangled
 first, each noting which earlier PRs it must be refreshed after — plus
-any `conflict:` lines. What happens between merges is `/plan-batch`'s
+any `conflict:` lines. What happens between merges is `/forge-plan-batch`'s
 last step; merging stays the user's.

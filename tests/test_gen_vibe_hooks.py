@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import json
-import re
 import tomllib
 from typing import TYPE_CHECKING
 
@@ -208,7 +207,7 @@ def test_unenforced_hooks_reported_never_silently_dropped(plugin_repo: Path) -> 
     # The matcher is derived from the wiring's canonical agent stem, so the
     # expectation is derived too — spelling it here is how the retired
     # `^(forge:)?precommit-fixer$` pattern survived a rename unnoticed.
-    scoped = f"^{re.escape(generated_name('precommit-fixer'))}$"
+    scoped = f"^{generated_name('precommit-fixer')}$"
     assert f"SubagentStop[{scoped}]: require_fixer_verdict.sh" in unenforced
     assert any("Unenforced hooks" in w for w in warnings)
     # SubagentStop hooks are unenforced, but the shipped Vibe-only extra

@@ -31,6 +31,12 @@ if TYPE_CHECKING:
 
 HOOKS_RESOURCE: Final = "data/hooks.toml"
 
+#: A generated agent name safe to interpolate into a harness matcher
+#: without escaping. Deliberately narrow: anything outside this set is
+#: refused rather than escaped, because an escape a harness will not
+#: compile yields a matcher that matches nothing, in silence.
+_PLAIN_NAME: Final = re.compile(r"[a-z0-9-]+")
+
 # The directory forge's packaged guard scripts live in, under the package
 # data root. A converter joins this with an entry's script name.
 HOOKS_DIR: Final = "claude-hooks"
@@ -237,7 +243,23 @@ def _resolved_agent(stem: str | None, event: str) -> str | None:
             f"forge does not ship. Shipped: {', '.join(sorted(shipped))}."
         )
         raise HookWiringError(msg)
-    return generated_name(stem)
+    name = generated_name(stem)
+    # The name goes into a harness matcher as a regex. Validate it holds
+    # nothing a regex could read specially and interpolate it raw, rather
+    # than escaping: `re.escape` would emit `\-`, which is valid in
+    # Python and in a plain JavaScript regex but a syntax error under its
+    # unicode flag — and a matcher the harness refuses to compile matches
+    # *nothing*, which is the silent failure this whole change exists to
+    # remove. Fail here instead, where it is visible.
+    if not _PLAIN_NAME.fullmatch(name):
+        msg = (
+            f"{HOOKS_RESOURCE}: {event} is scoped to agent {stem!r}, whose "
+            f"generated name {name!r} is not plain enough to put in a "
+            "harness matcher (expected lowercase letters, digits and "
+            "hyphens)."
+        )
+        raise HookWiringError(msg)
+    return name
 
 
 def rendered_hooks(
@@ -258,7 +280,10 @@ def rendered_hooks(
     Returns:
         Event name to its groups, each with ``matcher`` when the event
         has one and a ``hooks`` list of ``type``/``command``/``timeout``
-        entries, matching declaration order.
+        entries, matching declaration order. A group scoped to
+        an agent also carries ``agent``, the resolved generated name, and
+        a matcher derived from it when the wiring declares none; each
+        converter delivers that name to its guards.
 
     Raises:
         HookWiringError: Propagated from :func:`read_wiring`.
@@ -273,7 +298,7 @@ def rendered_hooks(
                 # Only an agent-selecting event (SubagentStop) derives its
                 # matcher from the scope. A tool-selecting matcher stays
                 # as declared; there the scope only reaches the script.
-                matcher = f"^{re.escape(agent_name)}$"
+                matcher = f"^{agent_name}$"
             hooks: list[dict[str, object]] = []
             for entry in group.entries:
                 hook: dict[str, object] = {

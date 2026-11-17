@@ -150,7 +150,7 @@ on high-parallelism repos means resolving changelog conflicts mid-PR.
 Deferred mode moves the write to the end of the PR; the guarantee chain
 becomes: (1) during development, local commits — human or agent —
 self-skip the gate while CI's changelog check stays red, clearly
-messaged as *expected until wrap-up*; (2) at PR wrap-up, the `/pr`
+messaged as *expected until wrap-up*; (2) at PR wrap-up, the `/forge-pr`
 flow's `pr-manager` **authors** the missing bullet (mandatory, not
 skip-when-absent); (3) the merge gate: CI's `changelog_updated` must be
 green before merge, so a skipped wrap-up is impossible to miss.

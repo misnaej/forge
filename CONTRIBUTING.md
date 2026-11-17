@@ -13,12 +13,12 @@ instead; this page is for changing forge itself.
 
 1. **Contributing means using forge.** Report a problem from a repository
    that runs forge: record it in your intake with `forge-intake new`, then
-   file it with `/report-to-forge`, which captures versions and evidence,
+   file it with `/forge-report-to-forge`, which captures versions and evidence,
    checks the record for private details and asks you to confirm, and
    searches for a duplicate first.
 2. **Issues filed any other way are triaged, not lost.** An issue from
    someone who is not a maintainer that did not come through
-   `/report-to-forge` is labelled `needs-forge-report`, and a maintainer
+   `/forge-report-to-forge` is labelled `needs-forge-report`, and a maintainer
    replies: we will fix it, we invite you to fix it, or we do not plan
    to and say why — you are welcome to argue the case.
 3. **Outside pull requests are by invitation.** If you are not a
@@ -26,7 +26,7 @@ instead; this page is for changing forge itself.
    to work on, from your fork. Other PRs are closed with a pointer here.
    Contributors whose work lands are credited in [Contributors](#contributors).
 4. **Nothing changes existing behaviour without the owner's approval.**
-   Approval is a plan the owner validated with `/plan-issue` before work
+   Approval is a plan the owner validated with `/forge-plan-issue` before work
    started. A PR that changes how an existing feature behaves without
    one is flagged in review. Fixes and additions must not break current
    users.
@@ -61,7 +61,7 @@ forge plugin:
   (`changelog.d/<slug>.<type>.md`, first line `bump: patch|minor|major`,
   then `- ` bullets).
   Never edit `CHANGELOG.md` or the plugin version.
-- `git commit` runs the full pre-commit battery; `/pr` runs the reviews
+- `git commit` runs the full pre-commit battery; `/forge-pr` runs the reviews
   and posts the wrap-up and squash message. The owner merges.
 - Releases are cut by the owner with `forge-changelog release-pr`.
 

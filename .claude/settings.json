@@ -297,7 +297,7 @@
         ]
       },
       {
-        "matcher": "^forge\\-precommit\\-fixer$",
+        "matcher": "^forge-precommit-fixer$",
         "hooks": [
           {
             "type": "command",

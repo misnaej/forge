@@ -19,7 +19,7 @@ keystroke (FOUNDATION §2, §6):
      nothing else conflicts (:func:`forge.resync.regenerate_artifact`);
 
 5. Anything left stops the run: the paths are listed, an intake lesson
-   records the stop, and the next step is named — ``forge:merge-resolver``
+   records the stop, and the next step is named — ``forge-merge-resolver``
    edits the files, then ``forge-update-branch --continue``.
 6. Commit the merge. A merge only this command resolved commits
    without the local gate, like a merge git completes itself; CI and the
