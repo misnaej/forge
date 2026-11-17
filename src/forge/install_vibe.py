@@ -46,7 +46,11 @@ from forge.agent_harness import (
 from forge.gen_vibe_agents import flatten_vibe_instructions, generate_vibe_agents
 from forge.gen_vibe_hooks import verify_existing_hooks, write_vibe_hooks
 from forge.git_utils import configure_cli_logging
-from forge.hook_registry import rendered_hooks
+from forge.hook_registry import (
+    HookWiringError,
+    rendered_hooks,
+    validate_shipped_scripts,
+)
 from forge.instruction_files import generated_name, shipped_path
 
 
@@ -533,6 +537,16 @@ def install_vibe(
         return _verify_vibe_installation(repo_root)
 
     before = _artifact_snapshot(repo_root)
+
+    # Fail closed before writing anything: the roster names absolute
+    # script paths, so a wired guard that does not ship would be
+    # registered and then silently disarmed at runtime — a hook whose
+    # command is missing exits 127, which does not block the tool call.
+    try:
+        validate_shipped_scripts()
+    except HookWiringError as exc:
+        sys.stderr.write(f"install-forge-vibe: {exc}\n")
+        return 2
 
     # Step 1: Generate .vibe/hooks.toml
     if write_vibe_hooks(repo_root, check_mode=check_mode) != 0:

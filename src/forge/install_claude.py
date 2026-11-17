@@ -62,7 +62,12 @@ from typing import Final
 from forge.agent_harness import HarnessName, map_plugin_references
 from forge.claude_settings_schema import MARKETPLACE_KEY, PLUGIN_KEY
 from forge.git_utils import configure_cli_logging
-from forge.hook_registry import HookWiringError, rendered_hooks, script_names
+from forge.hook_registry import (
+    HookWiringError,
+    rendered_hooks,
+    required_scripts,
+    script_names,
+)
 from forge.instruction_files import (
     generated_name,
     renamed_frontmatter,
@@ -314,46 +319,6 @@ def _publish_skills(repo_root: Path, *, check: bool) -> list[str]:
         elif _write_if_changed(dest, content):
             written.append(str(dest.relative_to(repo_root)))
     return written
-
-
-def required_scripts(source: Path, wired: frozenset[str]) -> frozenset[str]:
-    """Return every script needed for the wired ones to run.
-
-    A wired guard may ``source`` a shipped helper — the git-command
-    anchor, the once-marker, the wrap-up anchor — which the wiring never
-    names because nothing fires it directly. Copying only the wired set
-    leaves those helpers behind, and a guard that cannot source its
-    helper refuses the call it was protecting: the guards fail closed, so
-    the omission disarms nothing but blocks everything.
-
-    Dependencies are read from the scripts themselves rather than listed
-    here, so a helper added later needs no change in this module.
-
-    Args:
-        source: Directory holding the shipped guard scripts. Passed in
-            rather than resolved here so the traversal can be exercised
-            on a synthetic chain, and so the one place that decides where
-            shipped sources come from stays
-            :func:`forge.instruction_files.shipped_path`.
-        wired: Script names the canonical wiring references.
-
-    Returns:
-        The wired scripts plus every shipped script they reference,
-        transitively.
-    """
-    shipped = {p.name for p in source.glob("*.sh")}
-    needed = set(wired)
-    pending = list(wired)
-    while pending:
-        path = source / pending.pop()
-        if not path.is_file():
-            continue
-        text = path.read_text(encoding="utf-8")
-        for candidate in shipped - needed:
-            if candidate in text:
-                needed.add(candidate)
-                pending.append(candidate)
-    return frozenset(needed)
 
 
 def _publish_hooks(

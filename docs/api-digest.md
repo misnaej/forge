@@ -1044,6 +1044,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `read_wiring() -> dict[str, tuple[HookGroup, ...]]` — Return the canonical wiring, keyed by harness-neutral event name.
 - `rendered_hooks(command_for: Callable[[str], str]) -> dict[str, list[dict[str, object]]]` — Render the wiring into the event/matcher/command shape harnesses use.
 - `script_names() -> frozenset[str]` — Return every script the canonical wiring references.
+- `required_scripts(source: Path, wired: frozenset[str]) -> frozenset[str]` — Return every script needed for the wired ones to run.
+- `validate_shipped_scripts(source: Path | None = None) -> frozenset[str]` — Return the full guard script set, failing closed if any is missing.
 
 ## `forge.import_graph`
 
@@ -1086,7 +1088,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_for_claude(text: str) -> str` _(internal)_ — Rewrite shipped content into this harness's agent namespace.
 - `_publish_agents(repo_root: Path, *, check: bool) -> list[str]` _(internal)_ — Copy shipped agents into ``.claude/agents/``.
 - `_publish_skills(repo_root: Path, *, check: bool) -> list[str]` _(internal)_ — Copy shipped skills into ``.claude/skills/``.
-- `required_scripts(source: Path, wired: frozenset[str]) -> frozenset[str]` — Return every script needed for the wired ones to run.
 - `_publish_hooks(repo_root: Path, scripts: frozenset[str], *, check: bool) -> list[str]` _(internal)_ — Copy the guard scripts into ``.claude/hooks/``, executable.
 - `_render_ignore(scripts: frozenset[str]) -> str` _(internal)_ — Build the ``.claude/.gitignore`` that lists what forge generates.
 - `previously_generated(repo_root: Path) -> frozenset[str]` — Return every path the last run recorded as forge's own.

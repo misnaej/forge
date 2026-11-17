@@ -21,9 +21,12 @@ import tomllib
 from importlib import resources
 from typing import TYPE_CHECKING, Final, NamedTuple
 
+from forge.instruction_files import shipped_path
+
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
 
 HOOKS_RESOURCE: Final = "data/hooks.toml"
@@ -226,3 +229,78 @@ def script_names() -> frozenset[str]:
         for group in groups
         for entry in group.entries
     )
+
+
+def required_scripts(source: Path, wired: frozenset[str]) -> frozenset[str]:
+    """Return every script needed for the wired ones to run.
+
+    A wired guard may ``source`` a shipped helper — the git-command
+    anchor, the once-marker, the wrap-up anchor — which the wiring never
+    names because nothing fires it directly. Copying only the wired set
+    leaves those helpers behind, and a guard that cannot source its
+    helper refuses the call it was protecting: the guards fail closed, so
+    the omission disarms nothing but blocks everything.
+
+    Dependencies are read from the scripts themselves rather than listed
+    here, so a helper added later needs no change in this module.
+
+    Args:
+        source: Directory holding the shipped guard scripts. Passed in
+            rather than resolved here so the traversal can be exercised
+            on a synthetic chain, and so the one place that decides where
+            shipped sources come from stays
+            :func:`forge.instruction_files.shipped_path`.
+        wired: Script names the canonical wiring references.
+
+    Returns:
+        The wired scripts plus every shipped script they reference,
+        transitively.
+    """
+    shipped = {p.name for p in source.glob("*.sh")}
+    needed = set(wired)
+    pending = list(wired)
+    while pending:
+        path = source / pending.pop()
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for candidate in shipped - needed:
+            if candidate in text:
+                needed.add(candidate)
+                pending.append(candidate)
+    return frozenset(needed)
+
+
+def validate_shipped_scripts(source: Path | None = None) -> frozenset[str]:
+    """Return the full guard script set, failing closed if any is missing.
+
+    The Vibe installer never copies guard scripts — it writes absolute
+    paths into the roster sidecar — so unlike the Claude installer there
+    is no copy step that would notice a missing file. This check is what
+    stands between a wiring entry and a silently disarmed guard: a hook
+    whose command does not exist exits 127, and 127 does not block the
+    tool call.
+
+    Args:
+        source: Directory holding the shipped guard scripts; defaults to
+            the packaged :data:`HOOKS_DIR`. Passed in so tests can
+            exercise a synthetic tree.
+
+    Returns:
+        The wired scripts plus every shipped script they source,
+        transitively — all verified present on disk.
+
+    Raises:
+        HookWiringError: When any required script does not ship.
+    """
+    if source is None:
+        source = shipped_path(HOOKS_DIR)
+    needed = required_scripts(source, script_names())
+    for name in sorted(needed):
+        if not (source / name).is_file():
+            msg = (
+                f"wiring references {name}, which forge does not ship at "
+                f"{source}. Reinstall forge-scripts."
+            )
+            raise HookWiringError(msg)
+    return needed
