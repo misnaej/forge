@@ -7,7 +7,7 @@ user-invocable: true
 # Sentinel — execute validated plans
 
 Executes only what a human already validated: open issues labelled
-`plan-ready` whose plan lives in an `[forge-issue-triage] plan-validated:`
+`plan-ready` whose plan lives in a `[forge-issue-triage] plan-validated:`
 comment. A payload posted before that marker was renamed opens with the
 unprefixed `[issue-triage] plan-validated:` instead — still valid, still
 executed; forge's own reader accepts both. Write only the prefixed form.
@@ -214,6 +214,6 @@ the watch loop.
 - Never merge, force-push, or rebase; never touch protected branches.
 - One issue or track in execution at a time — parallelism lives in
   the background monitors, not in concurrent builds.
-- Every skip or deferral leaves an `[forge-issue-triage]` comment trail.
+- Every skip or deferral leaves a `[forge-issue-triage]` comment trail.
 - A plan that stops matching reality goes back through `/plan-issue`;
   sentinel never improvises past its spec.

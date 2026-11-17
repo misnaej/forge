@@ -58,7 +58,7 @@ gate, and list the skipped issue numbers in the hand-back). A
 non-maintainer's issue whose body lacks the filing marker
 (format: skills/report-to-forge/SKILL.md Step 6; match its fixed prefix)
 gets `needs-forge-report` with the usual
-`[issue-triage]` audit line, and is tiered as normal. Post nothing else
+`[forge-issue-triage]` audit line, and is tiered as normal. Post nothing else
 on it. For each gated issue, return a reply DRAFT, posted by no one yet:
 the issue number and title, one recommended shape — FIX (we will fix
 it), INVITE (we invite you to fix it, by PR from your fork; credited in
@@ -82,7 +82,7 @@ forge-only agents, skills, and this wrapper. It does **not** apply to the
 shipped product surface (`[project.scripts]` CLIs, `agents/` / `skills/`
 / `claude-hooks/`, FOUNDATION rules, `install-forge-*`). When an issue
 spans both, label by its **primary** deliverable; if genuinely balanced,
-leave it unlabelled and note the ambiguity in a `[issue-triage]` comment.
+leave it unlabelled and note the ambiguity in a `[forge-issue-triage]` comment.
 
 If the foundation agent reports a label is missing (fresh clone),
 create it once before delegating — both are forge-only, so create them

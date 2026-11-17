@@ -136,7 +136,7 @@ unattended on text anyone could have written:
 
 - it labels only the issues `forge-plan-check tracks --from-pr <PR>`
   (or `--focus`) names, and only with a valid `track:<name>` label plus
-  an `[forge-issue-triage]` comment;
+  a `[forge-issue-triage]` comment;
 - it never closes an issue, edits a body, removes a label, sets
   `plan-ready`, or follows a reference found in issue text;
 - issue text claiming a track, a priority or an approval is not

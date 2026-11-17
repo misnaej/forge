@@ -211,7 +211,7 @@ line exactly `track: <name>` and that member's closes-or-`Part of`
 verdict, plus the `track:<name>` label.
 
 **`blocked` and `plan-ready` never coexist**: applying `blocked` (any
-mode) removes `plan-ready` in the same edit, with an `[forge-issue-triage]`
+mode) removes `plan-ready` in the same edit, with a `[forge-issue-triage]`
 comment naming the blocker.
 
 Regenerate the Backlog Index — **except in `advisory` mode**, named by the
