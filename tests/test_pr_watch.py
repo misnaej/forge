@@ -267,6 +267,43 @@ def test_stop_keeps_record_it_could_not_signal(
     assert "kept (could not signal)" in caplog.text
 
 
+def test_stop_mixed_outcome_fails_when_one_cannot_be_signalled(
+    watch_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """One target stopping must not mask another that could not be signalled.
+
+    BEHAVIOR: the all-kept case (test above) cannot reach this branch. Only
+    a mixed run detects an exit code computed from "something stopped"
+    returning OK while the message says "1 kept": a script reading only the
+    exit code was told every monitor stopped.
+    """
+    reg_path = watch_repo / ".plan" / "pr_monitors.json"
+    Registry(
+        monitors=[
+            MonitorRecord(pid=999991, pr=991, repo="o/r", started_at="2026-01-01"),
+            MonitorRecord(pid=999992, pr=992, repo="o/r", started_at="2026-01-01"),
+        ]
+    ).save(reg_path)
+    monkeypatch.setattr(
+        pr_watch,
+        "_pid_cmdline",
+        lambda _pid: "python -m forge.pr_watch _monitor --pr 991",
+    )
+
+    def kill_first_only(pid: int, _sig: int) -> None:
+        if pid == 999992:
+            raise PermissionError
+
+    monkeypatch.setattr(pr_watch.os, "kill", kill_first_only)
+    with caplog.at_level(logging.INFO, logger=pr_watch.logger.name):
+        code = pr_watch.cmd_stop(argparse.Namespace(pr=None, all=True))
+    assert code == pr_watch.EXIT_REFUSED
+    assert [m.pid for m in Registry.load(reg_path).monitors] == [999992]
+    assert "1 monitor(s) stopped, 0 stale record(s) removed, 1 kept" in caplog.text
+
+
 @pytest.mark.parametrize(
     ("cmdline", "expected"),
     [

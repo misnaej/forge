@@ -12,7 +12,8 @@ session improvises a detached process whose only record is a pid:
 - ``list`` reads the registry and reports each monitor's state.
 - ``stop`` kills a monitor by PR identity, verifying the process's
   command line matches before signalling; a stale record is removed
-  without signalling, never killed by pid alone.
+  without signalling, never killed by pid alone. A live monitor that
+  refuses the signal stays registered and is reported as kept.
 
 The command self-skips under :func:`forge.run_context.is_ci` — CI has
 no human to receive alerts.
@@ -721,6 +722,8 @@ def cmd_stop(args: argparse.Namespace) -> int:
 
     A record whose pid is gone or is not a monitor is pruned without a
     signal, and counts as success: after a merge that is the usual case.
+    A monitor that is alive but refuses the signal keeps its record —
+    dropping it would leave a running process nothing tracks.
 
     Args:
         args: Parsed CLI arguments.
@@ -728,7 +731,9 @@ def cmd_stop(args: argparse.Namespace) -> int:
     Returns:
         ``EXIT_OK`` when a monitor was stopped, a stale record was removed,
         or none was registered; ``EXIT_REFUSED`` when no monitor matches
-        ``--pr`` or none of the targets could be stopped or pruned.
+        ``--pr``, when none of the targets could be stopped or pruned, or
+        when any target could not be signalled — even alongside one that
+        stopped, since the caller asked for all of them.
     """
     root = repo_root()
     reg = Registry.load(_registry_path(root))
@@ -777,6 +782,11 @@ def cmd_stop(args: argparse.Namespace) -> int:
         pruned,
         tail,
     )
+    # A monitor we could not signal fails the command even when another
+    # target succeeded: the caller asked for them all to stop, and a script
+    # reading only the exit code must not be told that happened.
+    if kept:
+        return EXIT_REFUSED
     return EXIT_OK if stopped or pruned or not targets else EXIT_REFUSED
 
 

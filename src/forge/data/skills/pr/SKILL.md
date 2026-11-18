@@ -531,8 +531,8 @@ Skip when `forge.run_context.is_ci()` — nobody is there to answer them
     Call-site delta: new review comments route to `/pr-comments`. The
     monitor runs detached, so its alerts reach nobody directly — they go
     to `code_health/pr_watch_<pr>.log`, which `start` names (`list` points
-    at it for a monitor that never polled). Read that file when you want to know what it saw; nothing
-    reads it for you.
+    at it for a monitor that never polled). Read that file when you want
+    to know what it saw; nothing reads it for you.
 
 ## Rules
 

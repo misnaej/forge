@@ -3700,7 +3700,8 @@ def freshness_verdicts(root: Path) -> dict[str, str]:
     ``n/a`` — its stamp says nothing about its result. A log nothing forge
     runs still writes reports ``orphaned``: a fresh stamp on it would read
     as current evidence for a check that no longer exists. Append-only
-    history logs are left out: they describe no single tree.
+    history logs and runtime logs (``_RUNTIME_LOG_PREFIXES``) are left
+    out: they describe no single tree.
 
     Args:
         root: Repo root.
