@@ -897,6 +897,37 @@ def test_unfilled_slots_parses_a_hinted_marker_to_a_clean_name() -> None:
     assert not any("(" in name for name in parsed)
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        "<!-- forge:fill a (b) (c) -->",
+        "<!-- forge:fill a(b) -->",
+        "<!-- forge:fill a (b -->",
+        "<!-- forge:fill a --> <!-- forge:fill b (c -->",
+    ],
+)
+def test_unfilled_slots_reports_a_malformed_marker_rather_than_dropping_it(
+    line: str,
+) -> None:
+    """Behavior test: a marker the pattern cannot parse is still an unfilled slot.
+
+    The caller refuses a wrap-up only when this list is non-empty, and a
+    marker is an invisible HTML comment once rendered, so a dropped
+    marker would post unnoticed. A line reports the whole line when any
+    of its markers fails to parse, including when others parse. A line
+    without the prefix stays out; a line of well-formed markers parses
+    to each of their names.
+
+    Args:
+        line: A text line carrying a fill marker the pattern cannot parse.
+    """
+    found = unfilled_slots(line)
+    assert len(found) == 1
+    assert FILL_PREFIX in found[0]
+    assert unfilled_slots("plain line, no marker") == []
+    assert unfilled_slots("<!-- forge:fill a --> <!-- forge:fill b -->") == ["a", "b"]
+
+
 def test_unfilled_slots_empty_when_none_present() -> None:
     """A fully-authored text (no slot markers) yields an empty list."""
     assert unfilled_slots("nothing to fill here\n") == []

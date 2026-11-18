@@ -489,14 +489,15 @@ def _warn_if_long(head: list[str], sections: list[tuple[str, list[str]]]) -> Non
     if words > ceiling(budget):
         logger.warning(
             "wrap-up is %d words, over the %d-word target (%d + %d x %d "
-            "findings) — posting anyway. Cut this one before you post it: "
+            "findings) — nothing refuses it. Cut it in the file and re-run: "
             "process state and bookkeeping first, then compress each "
-            "disposition to its slot's allowance. Drop no disposition.",
+            "findings section to about %d words. Drop no disposition.",
             words,
             budget,
             WORD_BUDGET,
             FINDING_ALLOWANCE,
             findings,
+            FINDING_ALLOWANCE,
         )
 
 
@@ -1199,7 +1200,7 @@ def _cmd_compose(args: argparse.Namespace) -> int:
         f"{len(slots)} slot(s) to fill: {', '.join(slots)} — "
         f"{WORD_BUDGET + FINDING_ALLOWANCE * findings} words for the lot "
         f"({WORD_BUDGET} + {FINDING_ALLOWANCE} per findings slot); each "
-        "marker states its own share"
+        "findings marker states its own share"
         if slots
         else "no slots to fill"
     )

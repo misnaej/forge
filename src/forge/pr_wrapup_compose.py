@@ -83,11 +83,9 @@ class ComposeError(ValueError):
 def slot(name: str, hint: str = "") -> str:
     """Return the fill-in marker line for slot *name*.
 
-    The marker carries its own allowance, because the file being filled is
-    the one place the author is certainly looking. A budget that reaches
-    the author only afterwards, as a warning on text already written,
-    cannot shorten that text — it can only ask for the next one to be
-    different, which is how a 240-word target produced 1000-word wrap-ups.
+    The marker carries its allowance because the file being filled is the
+    one place the author is certainly looking; a warning after the text is
+    written cannot shorten it.
 
     The hint is rendered from the budget constants rather than written out,
     so there is one definition and no copy to drift (§12).
@@ -643,18 +641,30 @@ def unfilled_slots(text: str) -> list[str]:
     Scans the raw text — fenced blocks included — so a slot can never
     hide inside a fence.
 
+    A line carrying more marker prefixes than :data:`_SLOT_RE` can parse
+    counts as one unfilled slot named by the line itself — including when
+    some of its markers parse and others do not. Reporting only the
+    parseable ones is the one unsafe answer: the caller refuses a wrap-up
+    with unfilled slots, and a marker is an HTML comment, so a slot this
+    function drops posts invisibly.
+
     Args:
         text: Wrap-up markdown.
 
     Returns:
-        Slot names in document order.
+        Slot names in document order, with the whole line in place of any
+        line holding a marker that did not parse.
     """
-    return [
-        match.group("name")
-        for line in text.splitlines()
-        if FILL_PREFIX in line
-        for match in _SLOT_RE.finditer(line)
-    ]
+    names: list[str] = []
+    for line in text.splitlines():
+        if (prefixes := line.count(FILL_PREFIX)) == 0:
+            continue
+        matches = _SLOT_RE.findall(line)
+        if len(matches) < prefixes:
+            names.append(line.strip())
+        else:
+            names += [name for name, _hint in matches]
+    return names
 
 
 def evidence_fence(block: str) -> str:
