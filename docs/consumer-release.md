@@ -193,7 +193,9 @@ changelog.d/<slug>.<type>.md     # type: upgrade|added|changed|fixed|removed|doc
 whose first line is `bump: patch|minor|major` — the semver LEVEL only.
 A concrete version number anywhere in a fragment (filename or body) is
 invalid and gate-rejected: versions are written exactly once, by the
-assembler. The rest of the file is the entry: `- ` bullets (or indented
+assembler. That includes a *past* release named in prose (any `X.Y.Z` or
+`vX.Y.Z`, dependency pins too): write "when agents were renamed", not the
+release that did it. The rest of the file is the entry: `- ` bullets (or indented
 continuations), copied verbatim.
 
 Consequences, by design:

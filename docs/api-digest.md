@@ -434,8 +434,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `class AssemblyPlan` — What one assembly run writes: per-tag backfill plus an optional mint.
   - `fragments(self) -> list[Fragment]` — Every fragment the assembly consumes, tagged groups first.
 - `_parse_and_validate_filename(name: str) -> tuple[str, str, list[str]]` _(internal)_ — Validate filename and extract slug and type.
-- `_parse_bump_line_and_body(path: Path, lines: list[str]) -> tuple[str, str, list[str]]` _(internal)_ — Validate bump line and extract level and body.
-- `_check_no_versions_or_headings(name: str, body: str) -> list[str]` _(internal)_ — Check for version-shaped strings and embedded headings.
+- `_parse_bump_line_and_body(path: Path, lines: list[str]) -> tuple[str, str, int, list[str]]` _(internal)_ — Validate bump line and extract level, body and the body's file line.
+- `_check_no_versions_or_headings(name: str, body: str, body_line: int) -> list[str]` _(internal)_ — Check for version-shaped strings and embedded headings.
 - `_check_bullets(name: str, body: str) -> list[str]` _(internal)_ — Check the body starts with a ``- `` bullet and every line continues one.
 - `validate_fragment(path: Path) -> tuple[Fragment | None, list[str]]` — Parse *path* into a :class:`Fragment`, collecting every violation.
 - `_validate_fragment_text(path: Path, text: str) -> tuple[Fragment | None, list[str]]` _(internal)_ — Apply :func:`validate_fragment`'s contract to *text* as *path*'s content.
