@@ -265,6 +265,18 @@ def test_validate_wrapup_rejects_an_embedded_squash_marker_line(
     assert any("squash-merge section" in p for p in problems)
 
 
+def test_validate_wrapup_refuses_a_malformed_fill_marker(
+    clean_wrapup_body: str,
+) -> None:
+    """Behavior test: an unparseable fill marker still blocks posting.
+
+    Args:
+        clean_wrapup_body: A body that otherwise validates.
+    """
+    problems = mod.validate_wrapup(clean_wrapup_body + "<!-- forge:fill a (b -->\n")
+    assert any("unfilled slot" in p for p in problems)
+
+
 def test_validate_wrapup_accepts_an_inline_mention_of_the_squash_marker() -> None:
     """A sentence that merely mentions the marker mid-line is not a squash section."""
     body = _body(
@@ -1683,6 +1695,7 @@ def test_main_compose_writes_the_wrapup_file_and_prints_the_slot_count(
     assert rc == 0
     out = capsys.readouterr().out
     assert "1 slot(s) to fill: summary" in out
+    assert str(mod.WORD_BUDGET) in out
     written = (code_health_dir(tmp_path) / "pr_wrapup.md").read_text(encoding="utf-8")
     assert "wrapup-mode: light" in written
     # The reasons go to stdout, not into the (word-budgeted) wrap-up.

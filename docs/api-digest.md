@@ -1933,7 +1933,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 > _pr_wrapup_compose — render a PR wrap-up's mechanical parts, with slots for judgment._
 
 - `class ComposeError` — Raised when the inputs cannot yield an honest wrap-up (evidence missing).
-- `slot(name: str) -> str` — Return the fill-in marker line for slot *name*.
+- `slot(name: str, hint: str = '') -> str` — Return the fill-in marker line for slot *name*.
 - `class ComposeInputs` — Everything a wrap-up is rendered from, gathered by the caller.
 - `_report_line(report_text: str, head_sha: str) -> str | None` _(internal)_ — Return a clean report's PASS line, or ``None`` when it has findings.
 - `_reporter_body(reporter: str, inputs: ComposeInputs) -> list[str]` _(internal)_ — Render one reporter section's body lines.

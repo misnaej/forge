@@ -57,7 +57,20 @@ _PYTEST_SUMMARY_RE: Final[re.Pattern[str]] = re.compile(
 _FAILURE_COUNT_RE: Final[re.Pattern[str]] = re.compile(
     r"\b0*[1-9]\d* (?:failed|errors?)\b"
 )
-_SLOT_RE: Final[re.Pattern[str]] = re.compile(r"<!-- forge:fill (?P<name>.*?) -->")
+# The name stays its own group so a slot's allowance can ride the marker
+# without becoming part of the name every consumer matches on.
+_SLOT_RE: Final[re.Pattern[str]] = re.compile(
+    r"<!-- forge:fill (?P<name>[^()]*?)(?: \((?P<hint>[^)]*)\))? -->"
+)
+
+# Report by exception, made numeric: an all-clean wrap-up is header + one
+# summary line + one line per section — 120 words is generous for that;
+# every findings section (a reporter that did not simply PASS) earns 40
+# more for what/where/disposition prose. Here rather than in
+# `forge.pr_wrapup` because the slot markers render the allowance from
+# them, and that module imports this one.
+WORD_BUDGET: Final[int] = 120
+FINDING_ALLOWANCE: Final[int] = 40
 _BACKTICK_RUN_RE: Final[re.Pattern[str]] = re.compile(r"`+")
 _NAME_MAX: Final[int] = 60
 _NAMES_SHOWN: Final[int] = 5
@@ -67,16 +80,26 @@ class ComposeError(ValueError):
     """Raised when the inputs cannot yield an honest wrap-up (evidence missing)."""
 
 
-def slot(name: str) -> str:
+def slot(name: str, hint: str = "") -> str:
     """Return the fill-in marker line for slot *name*.
+
+    The marker carries its allowance because the file being filled is the
+    one place the author is certainly looking; a warning after the text is
+    written cannot shorten it.
+
+    The hint is rendered from the budget constants rather than written out,
+    so there is one definition and no copy to drift (§12).
 
     Args:
         name: What the author writes there (e.g. ``summary``).
+        hint: Allowance for this slot, in parentheses after the name;
+            omitted when empty. Never part of the name
+            :data:`_SLOT_RE` captures.
 
     Returns:
-        The ``<!-- forge:fill <name> -->`` line.
+        The ``<!-- forge:fill <name> (<hint>) -->`` line.
     """
-    return f"{FILL_PREFIX} {name} -->"
+    return f"{FILL_PREFIX} {name}{f' ({hint})' if hint else ''} -->"
 
 
 @dataclass(frozen=True)
@@ -179,7 +202,9 @@ def _reporter_body(reporter: str, inputs: ComposeInputs) -> list[str]:
             body += ["", inputs.light_regen_evidence.rstrip("\n")]
         return body
     line = _report_line(inputs.reports[reporter], inputs.head_sha)
-    return [line] if line is not None else [slot(f"findings: {reporter}")]
+    if line is not None:
+        return [line]
+    return [slot(f"findings: {reporter}", f"~{FINDING_ALLOWANCE} words")]
 
 
 def _recommendation(inputs: ComposeInputs) -> str:
@@ -201,7 +226,7 @@ def _recommendation(inputs: ComposeInputs) -> str:
         # The classifier's full reasons are printed by `compose` instead:
         # here they would spend most of the wrap-up's word budget.
         return LIGHT_CODE_RECOMMENDATION
-    return slot("recommendation")
+    return slot("recommendation", "one line")
 
 
 def _check_evidence(inputs: ComposeInputs) -> None:
@@ -266,7 +291,7 @@ def render_wrapup(inputs: ComposeInputs) -> str:
             msg = "the prior-art report has no `prior-art-searched:` line"
             raise ComposeError(msg)
         out.append(prior)
-    out += ["", slot("summary"), ""]
+    out += ["", slot("summary", "one line"), ""]
     for title, reporter in REPORTER_SECTIONS:
         out += [f"## {title}", "", *_reporter_body(reporter, inputs), ""]
     out += ["## Issue Management", "", inputs.issue_management, ""]
@@ -616,18 +641,30 @@ def unfilled_slots(text: str) -> list[str]:
     Scans the raw text — fenced blocks included — so a slot can never
     hide inside a fence.
 
+    A line carrying more marker prefixes than :data:`_SLOT_RE` can parse
+    counts as one unfilled slot named by the line itself — including when
+    some of its markers parse and others do not. Reporting only the
+    parseable ones is the one unsafe answer: the caller refuses a wrap-up
+    with unfilled slots, and a marker is an HTML comment, so a slot this
+    function drops posts invisibly.
+
     Args:
         text: Wrap-up markdown.
 
     Returns:
-        Slot names in document order.
+        Slot names in document order, with the whole line in place of any
+        line holding a marker that did not parse.
     """
-    return [
-        match.group("name")
-        for line in text.splitlines()
-        if FILL_PREFIX in line
-        for match in _SLOT_RE.finditer(line)
-    ]
+    names: list[str] = []
+    for line in text.splitlines():
+        if (prefixes := line.count(FILL_PREFIX)) == 0:
+            continue
+        matches = _SLOT_RE.findall(line)
+        if len(matches) < prefixes:
+            names.append(line.strip())
+        else:
+            names += [name for name, _hint in matches]
+    return names
 
 
 def evidence_fence(block: str) -> str:

@@ -15,6 +15,7 @@ from forge.pr_delta import extract_verified_shas
 from forge.pr_wrapup import validate_wrapup
 from forge.pr_wrapup_compose import (
     FILL_PREFIX,
+    FINDING_ALLOWANCE,
     LIGHT_CODE_RECOMMENDATION,
     REPORTER_SECTIONS,
     ComposeError,
@@ -139,8 +140,35 @@ def test_render_wrapup_full_mode_with_one_finding_uses_a_findings_slot() -> None
         }
     )
     text = render_wrapup(inputs)
-    assert slot("findings: design-checker") in text
+    assert "findings: design-checker" in unfilled_slots(text)
     assert validate_wrapup(_fill(text)) == []
+
+
+def test_render_wrapup_markers_state_their_allowance() -> None:
+    """Behavior test: the findings marker carries its allowance, others none.
+
+    Findings slots have a per-slot allowance; summary and recommendation
+    share the fixed overhead, so a number there would be false.
+    """
+    inputs = _inputs(
+        reports={
+            "design-checker": _findings_report(),
+            "security-checker": _pass_report(),
+            "docs-types-checker": _pass_report(),
+        }
+    )
+    text = render_wrapup(inputs)
+    markers = dict(
+        zip(
+            unfilled_slots(text),
+            (ln for ln in text.split("\n") if ln.startswith(FILL_PREFIX)),
+            strict=True,
+        )
+    )
+    assert set(markers) == {"summary", "findings: design-checker", "recommendation"}
+    assert f"~{FINDING_ALLOWANCE} words" in markers["findings: design-checker"]
+    assert not any(ch.isdigit() for ch in markers["summary"])
+    assert not any(ch.isdigit() for ch in markers["recommendation"])
 
 
 def test_render_wrapup_light_code_mode_token_and_mechanical_recommendation() -> None:
@@ -187,7 +215,10 @@ def test_render_wrapup_light_code_with_long_reasons_and_long_summary_fits_budget
     # The fixed sections and headings cost about 32 of the 120 words, so
     # 85 leaves a little headroom while still being a long summary.
     summary = " ".join(["word"] * 85)
-    filled = text.replace(slot("summary"), summary)
+    assert unfilled_slots(text) == ["summary"]
+    filled = "\n".join(
+        summary if line.startswith(FILL_PREFIX) else line for line in text.split("\n")
+    )
     assert summary in filled
     assert validate_wrapup(filled) == []
 
@@ -851,6 +882,50 @@ def test_unfilled_slots_returns_names_in_document_order() -> None:
     """Slot names are returned in the order they appear in the text."""
     text = f"{slot('summary')}\nsome text\n{slot('findings: design-checker')}\n"
     assert unfilled_slots(text) == ["summary", "findings: design-checker"]
+
+
+def test_unfilled_slots_parses_a_hinted_marker_to_a_clean_name() -> None:
+    """Behavior test: a hint never leaks into the name or breaks the match."""
+    pairs = [
+        ("summary", "one line"),
+        ("findings: design-checker", "~40 words"),
+        ("recommendation", ""),
+    ]
+    text = "\n".join(slot(name, hint) for name, hint in pairs)
+    parsed = unfilled_slots(text)
+    assert parsed == [name for name, _hint in pairs]
+    assert not any("(" in name for name in parsed)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "<!-- forge:fill a (b) (c) -->",
+        "<!-- forge:fill a(b) -->",
+        "<!-- forge:fill a (b -->",
+        "<!-- forge:fill a --> <!-- forge:fill b (c -->",
+    ],
+)
+def test_unfilled_slots_reports_a_malformed_marker_rather_than_dropping_it(
+    line: str,
+) -> None:
+    """Behavior test: a marker the pattern cannot parse is still an unfilled slot.
+
+    The caller refuses a wrap-up only when this list is non-empty, and a
+    marker is an invisible HTML comment once rendered, so a dropped
+    marker would post unnoticed. A line reports the whole line when any
+    of its markers fails to parse, including when others parse. A line
+    without the prefix stays out; a line of well-formed markers parses
+    to each of their names.
+
+    Args:
+        line: A text line carrying a fill marker the pattern cannot parse.
+    """
+    found = unfilled_slots(line)
+    assert len(found) == 1
+    assert FILL_PREFIX in found[0]
+    assert unfilled_slots("plain line, no marker") == []
+    assert unfilled_slots("<!-- forge:fill a --> <!-- forge:fill b -->") == ["a", "b"]
 
 
 def test_unfilled_slots_empty_when_none_present() -> None:
