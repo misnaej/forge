@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import logging
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -28,6 +29,7 @@ from forge.agent_harness import (
     map_plugin_references,
 )
 from forge.instruction_files import (
+    AGENT_NAME_PREFIX,
     flatten_agents_md,
     generated_name,
     renamed_frontmatter,
@@ -86,6 +88,42 @@ def _update_skill_content(content: str) -> str:
     """
     mapped = map_plugin_references(content, harness=HarnessName.VIBE.value)
     return CLAUDE_MD_PATTERN.sub(AGENTS_MD_REFERENCE, mapped)
+
+
+def prune_stale_generated(
+    dir_path: Path, *, prefix: str = AGENT_NAME_PREFIX, dry_run: bool = False
+) -> list[str]:
+    """Remove entries in a forge-generated directory whose name lacks *prefix*.
+
+    The generated Vibe surface (``.agents/skills/``, ``.vibe/agents/``,
+    ``.vibe/prompts/``) is forge-owned and guard-blocked against hand edits,
+    and the generators only ever write prefixed names. An entry without the
+    prefix is therefore a stale leftover — e.g. from before the ``forge:``
+    marker became the ``forge-`` prefix — and Vibe resolves both names, so
+    the stale copy shadows the current one with outdated content.
+
+    Args:
+        dir_path: The generated directory to prune.
+        prefix: The published-name prefix; entries without it are stale.
+        dry_run: When True, report the stale names without removing them.
+
+    Returns:
+        Sorted names of the stale entries found (removed unless *dry_run*).
+    """
+    if not dir_path.is_dir():
+        return []
+    stale = sorted(
+        entry.name for entry in dir_path.iterdir() if not entry.name.startswith(prefix)
+    )
+    if dry_run or not stale:
+        return stale
+    for name in stale:
+        entry = dir_path / name
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+    return stale
 
 
 def _copy_skills(src_dir: Path, dest_dir: Path) -> tuple[int, list[str]]:
@@ -223,10 +261,25 @@ def generate_vibe_agents(
     references = _check_agent_references(src_skills.parent)
 
     if check_mode:
-        return 0, [], references
+        stale = prune_stale_generated(dest_skills, dry_run=True)
+        if stale:
+            warnings = [
+                (
+                    "stale generated entries would be pruned from "
+                    f"{dest_skills}: {', '.join(stale)}"
+                )
+            ]
+        else:
+            warnings = []
+        return 0, warnings, references
 
     # Copy and update skills
     count, warnings = _copy_skills(src_skills, dest_skills)
+    stale = prune_stale_generated(dest_skills)
+    if stale:
+        warnings.append(
+            f"pruned stale generated entries from {dest_skills}: {', '.join(stale)}"
+        )
 
     return count, warnings, references
 

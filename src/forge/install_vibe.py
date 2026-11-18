@@ -43,7 +43,11 @@ from forge.agent_harness import (
     map_plugin_references,
     resolve_hooks_base,
 )
-from forge.gen_vibe_agents import flatten_vibe_instructions, generate_vibe_agents
+from forge.gen_vibe_agents import (
+    flatten_vibe_instructions,
+    generate_vibe_agents,
+    prune_stale_generated,
+)
 from forge.gen_vibe_hooks import verify_existing_hooks, write_vibe_hooks
 from forge.git_utils import configure_cli_logging
 from forge.hook_registry import (
@@ -309,6 +313,14 @@ def _publish_subagents(
             prompt_path.write_text(prompt_content, encoding="utf-8")
 
         count += 1
+
+    for target in (prompts_dir, agents_toml_dir):
+        stale = prune_stale_generated(target, dry_run=check_mode)
+        if stale:
+            action = "would be pruned" if check_mode else "pruned"
+            warnings.append(
+                f"stale generated entries {action} from {target}: {', '.join(stale)}"
+            )
 
     return count, warnings
 

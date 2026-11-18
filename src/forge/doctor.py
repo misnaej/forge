@@ -73,6 +73,7 @@ from forge.git_utils import (
     run_git,
 )
 from forge.install_claude import CLAUDE_DIR, HOOKS_SUBDIR, install_claude
+from forge.instruction_files import AGENT_NAME_PREFIX, shipped_path
 from forge.upgrade import pin_revision_mismatch, pip_command
 from forge.version_surfaces import (
     SKEW_REMEDIATION,
@@ -641,8 +642,14 @@ def _vibe_agents_result(vibe_dir: Path) -> CheckResult:
             passed=False,
             detail=f"no subagent TOMLs in {agents_dir} — run `install-forge-vibe`",
         )
-    bad: list[str] = []
+    bad: list[str] = [
+        f"{p.stem} (stale unprefixed)"
+        for p in tomls
+        if not p.stem.startswith(AGENT_NAME_PREFIX)
+    ]
     for toml_path in tomls:
+        if not toml_path.stem.startswith(AGENT_NAME_PREFIX):
+            continue
         try:
             data = tomllib.loads(toml_path.read_text(encoding="utf-8"))
         except (tomllib.TOMLDecodeError, OSError):
@@ -673,15 +680,35 @@ def _vibe_skills_result(repo_root: Path) -> CheckResult:
         The check result for the published skills.
     """
     skills_dir = repo_root / ".agents" / "skills"
-    n_skills = len(list(skills_dir.iterdir())) if skills_dir.is_dir() else 0
+    entries = sorted(skills_dir.iterdir()) if skills_dir.is_dir() else []
+    n_skills = len(entries)
+    stale = [e.name for e in entries if not e.name.startswith(AGENT_NAME_PREFIX)]
+    shipped_src = shipped_path("skills")
+    n_shipped = (
+        len([d for d in shipped_src.iterdir() if d.is_dir()])
+        if shipped_src.is_dir()
+        else 0
+    )
+    if not n_skills:
+        return CheckResult(
+            name="vibe:skills",
+            passed=False,
+            detail=f"missing or empty {skills_dir} — run `install-forge-vibe`",
+        )
+    if stale:
+        return CheckResult(
+            name="vibe:skills",
+            passed=False,
+            detail=(
+                f"{len(stale)} stale unprefixed entries in {skills_dir}: "
+                f"{', '.join(stale[:5])} — run `install-forge-vibe` to prune them"
+            ),
+        )
+    shipped_note = f" (shipped: {n_shipped})" if n_shipped else ""
     return CheckResult(
         name="vibe:skills",
-        passed=n_skills > 0,
-        detail=(
-            f"{n_skills} skills in .agents/skills/"
-            if n_skills
-            else f"missing or empty {skills_dir} — run `install-forge-vibe`"
-        ),
+        passed=True,
+        detail=f"{n_skills} skills in .agents/skills/{shipped_note}",
     )
 
 

@@ -11,7 +11,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 from forge import gen_vibe_agents as gen_vibe_agents_module
-from forge.gen_vibe_agents import generate_vibe_agents, publish_skills
+from forge.gen_vibe_agents import (
+    generate_vibe_agents,
+    prune_stale_generated,
+    publish_skills,
+)
 from forge.instruction_files import generated_name, renamed_frontmatter
 
 
@@ -119,3 +123,82 @@ def test_missing_local_skills_dir_falls_back_to_packaged_skills(
     # The packaged agents/ sits next to the packaged skills/, so the
     # reference check still sees the shipped agent docs.
     assert references
+
+
+# ---------------------------------------------------------------------------
+# prune_stale_generated — stale non-prefixed entries in generated dirs (#1044)
+# ---------------------------------------------------------------------------
+
+
+def test_prune_stale_generated_removes_unprefixed_keeps_prefixed(
+    tmp_path: Path,
+) -> None:
+    """SCENARIO: a generated dir holds a prefixed entry, a stale dir and a stale file.
+
+    EXPECTED BEHAVIOR: only the non-prefixed entries are removed; the prefixed
+    entry survives; the removed names are returned.
+    """
+    gen = tmp_path / "gen"
+    (gen / "forge-current").mkdir(parents=True)
+    stale_dir = gen / "oldskill"
+    stale_dir.mkdir()
+    (stale_dir / "SKILL.md").write_text("x", encoding="utf-8")
+    stale_file = gen / "oldagent.md"
+    stale_file.write_text("x", encoding="utf-8")
+
+    stale = prune_stale_generated(gen)
+
+    assert stale == ["oldagent.md", "oldskill"]
+    assert not stale_dir.exists()
+    assert not stale_file.exists()
+    assert (gen / "forge-current").is_dir()
+
+
+def test_prune_stale_generated_dry_run_reports_without_deleting(tmp_path: Path) -> None:
+    """check_mode path: stale names are reported, nothing is removed."""
+    gen = tmp_path / "gen"
+    (gen / "stale").mkdir(parents=True)
+    (gen / "forge-current").mkdir()
+
+    stale = prune_stale_generated(gen, dry_run=True)
+
+    assert stale == ["stale"]
+    assert (gen / "stale").is_dir()
+
+
+def test_generate_vibe_agents_prunes_stale_skill_dirs(
+    skills_repo: Path,
+) -> None:
+    """SCENARIO: the skills output dir holds a pre-rename unprefixed leftover.
+
+    MOCK SETUP: skills_repo fixture; a stale `alpha/` dir planted next to
+    where the generator writes `forge-alpha/`.
+    EXPECTED BEHAVIOR: the leftover is pruned, the prefixed copy exists, and
+    the warning names the pruned entry.
+    """
+    dest = skills_repo / ".agents" / "skills"
+    stale = dest / "alpha"
+    stale.mkdir(parents=True)
+    (stale / "SKILL.md").write_text("---\nname: alpha\n---\n", encoding="utf-8")
+
+    _count, warnings, _refs = generate_vibe_agents(skills_repo)
+
+    assert not stale.exists()
+    assert (dest / "forge-alpha").is_dir()
+    assert (dest / "forge-beta").is_dir()
+    assert any("pruned stale" in w and "alpha" in w for w in warnings)
+
+
+def test_generate_vibe_agents_check_mode_reports_stale_without_deleting(
+    skills_repo: Path,
+) -> None:
+    """check_mode: the stale dir is reported in warnings and left in place."""
+    dest = skills_repo / ".agents" / "skills"
+    stale = dest / "alpha"
+    stale.mkdir(parents=True)
+
+    _count, warnings, _refs = generate_vibe_agents(skills_repo, check_mode=True)
+
+    assert stale.is_dir()
+    assert (dest / "forge-alpha").exists() is False
+    assert any("would be pruned" in w and "alpha" in w for w in warnings)

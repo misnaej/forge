@@ -619,14 +619,20 @@ def _vibe_repo(tmp_path: Path) -> Path:
         ),
         encoding="utf-8",
     )
-    (vibe_dir / "agents" / "agent1.toml").write_text(
-        'agent_type = "subagent"\ndescription = "d"\nsystem_prompt_id = "agent1"\n',
+    (vibe_dir / "agents" / "forge-agent1.toml").write_text(
+        'agent_type = "subagent"\n'
+        'description = "d"\n'
+        'system_prompt_id = "forge-agent1"\n',
         encoding="utf-8",
     )
-    (vibe_dir / "prompts" / "agent1.md").write_text("# Agent 1\n", encoding="utf-8")
-    skill_dir = repo / ".agents" / "skills" / "skill1"
+    (vibe_dir / "prompts" / "forge-agent1.md").write_text(
+        "# Agent 1\n", encoding="utf-8"
+    )
+    skill_dir = repo / ".agents" / "skills" / "forge-skill1"
     skill_dir.mkdir(parents=True)
-    (skill_dir / "SKILL.md").write_text("---\nname: skill1\n---\n", encoding="utf-8")
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: forge-skill1\n---\n", encoding="utf-8"
+    )
     (repo / "AGENTS.md").write_text("# Agents\n", encoding="utf-8")
     return repo
 
@@ -753,8 +759,8 @@ def test_vibe_agents_toml_without_prompt_fails(
     vibe_dir = tmp_path / ".vibe"
     (vibe_dir / "agents").mkdir(parents=True)
     (vibe_dir / "prompts").mkdir()
-    (vibe_dir / "agents" / "agent1.toml").write_text(
-        'agent_type = "subagent"\nsystem_prompt_id = "agent1"\n', encoding="utf-8"
+    (vibe_dir / "agents" / "forge-agent1.toml").write_text(
+        'agent_type = "subagent"\nsystem_prompt_id = "forge-agent1"\n', encoding="utf-8"
     )
     result = doctor._vibe_agents_result(vibe_dir)
     assert result.passed is False
@@ -901,3 +907,63 @@ def test_claude_integration_surfaces_an_unreadable_settings_file(
     assert len(results) == 1
     assert not results[0].passed
     assert "settings.json" in results[0].detail
+
+
+# ---------------------------------------------------------------------------
+# stale unprefixed generated entries fail the vibe checks (#1044)
+# ---------------------------------------------------------------------------
+
+
+def test_vibe_skills_stale_unprefixed_entry_fails(
+    tmp_path: Path, fake_vibe_home: Path
+) -> None:
+    """SCENARIO: the skills output dir holds a forge-* skill plus a pre-rename leftover.
+
+    EXPECTED BEHAVIOR: the check fails and names the stale entry.
+    """
+    repo = tmp_path / "repo"
+    skills = repo / ".agents" / "skills"
+    (skills / "forge-current").mkdir(parents=True)
+    (skills / "oldskill").mkdir()
+
+    result = doctor._vibe_skills_result(repo)
+
+    assert result.passed is False
+    assert "stale unprefixed" in result.detail
+    assert "oldskill" in result.detail
+
+
+def test_vibe_agents_stale_unprefixed_toml_fails(
+    tmp_path: Path, fake_vibe_home: Path
+) -> None:
+    """SCENARIO: the agents dir holds a valid forge-* TOML plus a stale one.
+
+    EXPECTED BEHAVIOR: the check fails and names the stale TOML.
+    """
+    vibe_dir = tmp_path / ".vibe"
+    (vibe_dir / "agents").mkdir(parents=True)
+    (vibe_dir / "prompts").mkdir()
+    (vibe_dir / "agents" / "forge-a.toml").write_text(
+        'agent_type = "subagent"\nsystem_prompt_id = "forge-a"\n', encoding="utf-8"
+    )
+    (vibe_dir / "prompts" / "forge-a.md").write_text("# A\n", encoding="utf-8")
+    (vibe_dir / "agents" / "oldagent.toml").write_text("x", encoding="utf-8")
+
+    result = doctor._vibe_agents_result(vibe_dir)
+
+    assert result.passed is False
+    assert "oldagent" in result.detail
+    assert "stale unprefixed" in result.detail
+
+
+def test_vibe_skills_clean_prefixed_only_passes(
+    tmp_path: Path, fake_vibe_home: Path
+) -> None:
+    """Only prefixed entries: the check passes and reports the count."""
+    repo = tmp_path / "repo"
+    (repo / ".agents" / "skills" / "forge-a").mkdir(parents=True)
+
+    result = doctor._vibe_skills_result(repo)
+
+    assert result.passed is True
+    assert "1 skills" in result.detail
