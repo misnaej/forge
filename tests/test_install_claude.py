@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from forge import install_claude as ic
-from forge.agent_harness import PLUGIN_REFERENCE_RE
+from forge.agent_harness import PLUGIN_REFERENCE_RE, match_is_marker
 from forge.hook_registry import required_scripts, script_names
 from forge.install_claude import (
     hook_command,
@@ -334,7 +334,7 @@ def test_no_unresolvable_forge_reference_survives(installed_repo: Path) -> None:
             m.group(1)
             for p in paths
             for m in PLUGIN_REFERENCE_RE.finditer(p.read_text(encoding="utf-8"))
-            if m.group(1) in shipped
+            if m.group(1) in shipped and not match_is_marker(m)
         ]
 
     agents_src = [

@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import json
-import re
 import tomllib
 from pathlib import Path
 
@@ -16,6 +15,7 @@ import pytest
 
 from forge import hook_registry
 from forge import install_vibe as install_vibe_module
+from forge.agent_harness import PLUGIN_REFERENCE_RE, match_is_marker
 from forge.audit.agents import REQUIRED_SECTIONS
 from forge.install_vibe import _generate_roster_sidecar, install_vibe
 from forge.instruction_files import generated_name, shipped_path
@@ -374,10 +374,14 @@ class TestBareConsumerRepo:
         names = {p.stem for p in agents_src.glob("*.md")} | {
             p.name for p in skills_src.iterdir() if p.is_dir()
         }
-        reference = re.compile(r"forge:([\w-]+)")
 
         def shipped_refs(text: str) -> list[str]:
-            return [m for m in reference.findall(text) if m in names]
+            # A block marker (`forge:c4:start`) is not a reference.
+            return [
+                m.group(1)
+                for m in PLUGIN_REFERENCE_RE.finditer(text)
+                if m.group(1) in names and not match_is_marker(m)
+            ]
 
         sources = [*agents_src.glob("*.md"), *skills_src.glob("*/SKILL.md")]
         # B: precondition — the oracle is non-empty and the sources really

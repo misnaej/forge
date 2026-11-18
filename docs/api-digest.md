@@ -24,6 +24,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 - `class HarnessName` — Enumeration of supported agent harnesses.
 - `class VerdictEmitter` — Pure function emitter for harness-specific verdicts.
+- `match_is_marker(match: re.Match[str]) -> bool` — Return whether a :data:`PLUGIN_REFERENCE_RE` match is a block marker.
 - `class HarnessProfile` — Frozen profile for a single agent harness.
 - `_emit_claude_deny(_reason: str) -> tuple[int, str]` _(internal)_ — Emit a Claude Code deny verdict.
 - `_emit_claude_pass() -> tuple[int, str]` _(internal)_ — Emit a Claude Code pass verdict.

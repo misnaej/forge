@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from forge import agent_harness, plugin_roster
+from forge import agent_harness
 from forge.agent_harness import (
     CLAUDE_PROFILE,
     UNENFORCED_VIBE_HOOKS,
@@ -33,6 +33,7 @@ from forge.instruction_files import shipped_path
 
 
 if TYPE_CHECKING:
+    import re
     from pathlib import Path
 
 
@@ -131,8 +132,8 @@ def test_translate_event_claude_is_identity() -> None:
 
 
 _MAP_INPUT = (
-    "Spawn forge:test-writer then forge:state, not forge:nonexistent-thing "
-    "or forge:<name>."
+    "Spawn forge:test-writer then forge:c4, keep <!-- forge:c4:start -->, "
+    "not forge:nonexistent-thing or forge:<name>."
 )
 
 
@@ -142,7 +143,8 @@ _MAP_INPUT = (
         (
             harness,
             (
-                "Spawn forge-test-writer then forge:state, not "
+                "Spawn forge-test-writer then forge-c4, keep "
+                "<!-- forge:c4:start -->, not "
                 "forge:nonexistent-thing or forge:<name>."
             ),
         )
@@ -152,8 +154,10 @@ _MAP_INPUT = (
 def test_map_plugin_references_parametrized(harness: str, expected: str) -> None:
     """Both harnesses rewrite a shipped ``forge:<name>`` to ``forge-<name>``.
 
-    Hyphenated shipped names map whole; ``state``, unknown names and the
-    ``forge:<name>`` placeholder survive in both harnesses.
+    Hyphenated shipped names map whole, and a bare ``forge:c4`` reference
+    maps while the ``<!-- forge:c4:start -->`` marker with the same token
+    survives. Unknown names and the ``forge:<name>`` placeholder survive
+    in both harnesses.
 
     Args:
         harness: Harness profile name passed to the mapper ("claude" or "vibe").
@@ -188,19 +192,49 @@ def test_map_plugin_references_matches_whole_token_not_prefix(
     assert agent_harness.map_plugin_references(text, harness="vibe") == expected
 
 
-def test_state_is_not_a_shipped_plugin_name() -> None:
-    """``state`` is reserved: it is the handoff note's panel marker token.
+@pytest.mark.parametrize("harness", ["claude", "vibe"])
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "<!-- forge:c4:start -->",
+        "<!-- forge:c4:end -->",
+        "<!-- forge:state:begin -->",
+        "<!-- forge:state:end -->",
+        "<!-- forge:config:start -->",
+        "<!-- forge:config:end -->",
+        "<!-- forge:badges:start -->",
+        "<!-- forge:badges:end -->",
+    ],
+)
+def test_map_plugin_references_leaves_block_markers_alone(
+    marker: str, harness: str
+) -> None:
+    """A managed-block marker passes through unchanged in both harnesses.
 
-    The note's panel is delimited by ``<!-- forge:state:begin -->`` and
-    ``<!-- forge:state:end -->``. A shipped agent or skill named ``state``
-    would make the Vibe mapper rewrite those markers, corrupting the
-    handoff note. The roster drift test does not catch that collision.
+    ``c4`` is a shipped skill name, so without the marker exclusion a
+    marker carrying that token is rewritten into a form the tool that
+    reads it rejects. Parametrized over every marker family, not just
+    ``c4``, so the guarantee never depends on which tokens happen to be
+    shipped names.
+
+    Args:
+        marker: Marker comment that must survive the mapper byte for byte.
+        harness: Harness profile name passed to the mapper.
     """
-    assert "state" not in plugin_roster.shipped_plugin_names(), (
-        "a shipped agent/skill named 'state' collides with the "
-        "'<!-- forge:state:begin/end -->' handoff-note markers: the Vibe "
-        "mapper would rewrite them and break the panel; rename it"
-    )
+    assert agent_harness.map_plugin_references(marker, harness=harness) == marker
+
+
+def test_match_is_marker_distinguishes_marker_from_reference() -> None:
+    """A trailing colon marks a marker; a reference, even at end of text, is not."""
+
+    def first_match(text: str) -> re.Match[str]:
+        match = agent_harness.PLUGIN_REFERENCE_RE.search(text)
+        assert match is not None
+        return match
+
+    assert agent_harness.match_is_marker(first_match("<!-- forge:c4:start -->"))
+    assert not agent_harness.match_is_marker(first_match("Spawn forge:test-writer now"))
+    assert not agent_harness.match_is_marker(first_match("Spawn forge:test-writer"))
 
 
 def test_translate_tool_matcher_vibe() -> None:
