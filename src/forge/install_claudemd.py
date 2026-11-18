@@ -53,11 +53,11 @@ from forge.git_utils import (
     configure_cli_logging,
     forge_cache_dir,
     gh_api,
-    parse_semver,
     repo_root,
 )
 from forge.instruction_files import foundation_text as _foundation_text
 from forge.run_context import is_non_interactive
+from forge.version_surfaces import release_order_key
 
 
 if TYPE_CHECKING:
@@ -729,13 +729,17 @@ def _is_behind(installed: str | None, latest: str | None) -> bool:
         latest: Latest upstream tag, or ``None`` (treated as
             unresolved → never warns).
 
+    Ordered by :func:`~forge.version_surfaces.release_order_key`, the one
+    definition of which forge build is newer, so a build one commit
+    before *latest* counts as behind it rather than level with it.
+
     Returns:
         ``True`` iff both are parseable semver and installed < latest.
     """
     if not installed or not latest:
         return False
-    installed_parsed = parse_semver(installed)
-    latest_parsed = parse_semver(latest)
+    installed_parsed = release_order_key(installed)
+    latest_parsed = release_order_key(latest)
     if installed_parsed is None or latest_parsed is None:
         return False
     return installed_parsed < latest_parsed

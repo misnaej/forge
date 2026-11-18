@@ -25,6 +25,7 @@ from tests.conftest import (
 )
 from tests.conftest import (
     PRODUCED_AT_RE,
+    CapturedCalls,
     _detach_head,
     commit_all,
     make_fake_run,
@@ -698,6 +699,55 @@ def test_v_tags_empty_when_no_tags(
     """No ``v*`` tags → an empty list, never ``None``."""
     monkeypatch.setattr(git_utils.subprocess, "run", make_fake_run(stdout=""))
     assert git_utils.v_tags(tmp_path) == []
+
+
+def test_v_tags_defaults_run_unfiltered_listing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Defaults list every ``v*`` tag globally, unfiltered; release paths rely on it."""
+    captured = CapturedCalls()
+    monkeypatch.setattr(
+        git_utils.subprocess,
+        "run",
+        make_fake_run(stdout="vfoo\nv14.4.0-rc1\nv14.4.0\n", captured=captured),
+    )
+
+    assert git_utils.v_tags(tmp_path) == ["vfoo", "v14.4.0-rc1", "v14.4.0"]
+    assert captured.calls == [["git", "tag", "--list", "v*", "--sort=-v:refname"]]
+
+
+def test_v_tags_reachable_from_excludes_unreachable_tags(tmp_path: Path) -> None:
+    """Only tags merged into the given revision come back, highest first."""
+    _init_git_repo(tmp_path)
+    _git(tmp_path, "tag", "v1.0.0")
+    _git(tmp_path, "checkout", "-q", "-b", "side")
+    (tmp_path / "s.txt").write_text("s\n", encoding="utf-8")
+    commit_all(tmp_path, "side")
+    _git(tmp_path, "tag", "v9.0.0")
+    _git(tmp_path, "checkout", "-q", "main")
+    (tmp_path / "m.txt").write_text("m\n", encoding="utf-8")
+    commit_all(tmp_path, "main work")
+    _git(tmp_path, "tag", "v1.1.0")
+
+    assert git_utils.v_tags(tmp_path) == ["v9.0.0", "v1.1.0", "v1.0.0"]
+    assert git_utils.v_tags(tmp_path, reachable_from="HEAD") == ["v1.1.0", "v1.0.0"]
+    assert git_utils.v_tags(tmp_path, reachable_from="HEAD", release_shape=True) == [
+        "v1.1.0",
+        "v1.0.0",
+    ]
+
+
+def test_v_tags_release_shape_keeps_only_exact_releases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pre-release, suffixed and non-semver names are not releases."""
+    monkeypatch.setattr(
+        git_utils.subprocess,
+        "run",
+        make_fake_run(stdout="v14.4.0\nvfoo\nv14.4.0-rc1\nv14.3.9\nv14.4.0+meta\n"),
+    )
+
+    assert git_utils.v_tags(tmp_path, release_shape=True) == ["v14.4.0", "v14.3.9"]
 
 
 def test_tag_commit_date_returns_committer_date(tmp_path: Path) -> None:

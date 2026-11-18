@@ -631,7 +631,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_check_clis() -> list[CheckResult]` _(internal)_ — One result per expected CLI entry point on PATH.
 - `_check_gh() -> list[CheckResult]` _(internal)_ — Check `gh` is installed and authenticated.
 - `_check_hooks_path(repo_root: Path) -> list[CheckResult]` _(internal)_ — Report the hooks folder git will use here and whether it can gate a commit.
-- `_check_version_skew(repo_root: Path) -> list[CheckResult]` _(internal)_ — Compare forge's version across its install surfaces and flag drift (#184).
+- `_check_version_currency(repo_root: Path) -> list[CheckResult]` _(internal)_ — Report when forge's install is behind the release its checkout is on.
+- `_check_version_skew(repo_root: Path) -> list[CheckResult]` _(internal)_ — Compare forge's version across its install surfaces and flag drift.
 - `_surface_pin_revision(root: Path) -> list[CheckResult]` _(internal)_ — Compare the pyproject pin's git ref against the installed build's.
 - `_declared_lower_bound(repo_root: Path, tool: str) -> str | None` _(internal)_ — Return the lower bound *tool* is pinned to in an extras group.
 - `_step_tool_drift(repo_root: Path, step: str, tool: str) -> CheckResult | None` _(internal)_ — Report an installed step tool older than the version this repo pins.
@@ -943,7 +944,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `next_version(latest_tag: str | None, bump: str) -> str` — Return the ``vX.Y.Z`` tag that follows *latest_tag* for a semver *bump*.
 - `classify_bump(old: tuple[int, int, int] | None, new: tuple[int, int, int] | None) -> str | None` — Classify the semver increment from *old* to *new*.
 - `latest_v_tag(root: Path) -> str | None` — Return the highest ``v*`` git tag by semver sort, or ``None`` if none.
-- `v_tags(root: Path) -> list[str]` — Return every ``v*`` git tag, highest semver first.
+- `v_tags(root: Path, *, reachable_from: str | None = None, release_shape: bool = False) -> list[str]` — Return every ``v*`` git tag, highest semver first.
 - `tag_commit_date(root: Path, tag: str) -> str` — Return the ``YYYY-MM-DD`` committer date of the commit *tag* points at.
 - `fetch_tags_best_effort(repo_root: Path, *, timeout: int = 10) -> list[str]` — Refresh local tags from ``origin``, reporting degradations as notes.
 - `forge_install_command(extra: str | None = None) -> str` — Format the consumer-valid install command for forge-scripts.
@@ -2537,6 +2538,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 - `read_json(path: Path) -> tuple[dict, str | None]` — Read a JSON object file. Returns (data, error_message_or_None).
 - `pip_version() -> str | None` — Version of the installed ``forge-scripts`` package, or None if absent.
+- `release_order_key(version: str) -> tuple[int, int, int, int] | None` — Return a sort key for *version* that places a dev build below its triple.
+- `installed_behind_checkout(repo_root: Path) -> tuple[str, str] | None` — Return the installed and tagged versions when the install is behind.
 - `hook_sidecar_version(repo_root: Path) -> str | None` — Forge version recorded in the git-hook sidecar, or None when absent.
 - `editable_install_origin() -> Path | None` — Return the checkout an editable ``forge-scripts`` install points at.
 - `_direct_url() -> dict[str, object] | None` _(internal)_ — Return the distribution's parsed ``direct_url.json``, or ``None``.

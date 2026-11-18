@@ -97,6 +97,10 @@ def emit(msg: str) -> None:
 
 
 _SEMVER_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)")
+# A released tag, whole and nothing else: `_SEMVER_RE` is deliberately
+# prefix-matching (a `.devN+gSHA` build has to parse), so it also accepts
+# a pre-release tag as the release of the same triple.
+_RELEASE_TAG_RE = re.compile(r"v\d+\.\d+\.\d+")
 
 # Unresolved-conflict hunk opener: seven ``<`` at line start, then a
 # space or end-of-line (git always appends the ref label after a space).
@@ -255,27 +259,53 @@ def latest_v_tag(root: Path) -> str | None:
     return tags[0] if tags else None
 
 
-def v_tags(root: Path) -> list[str]:
+def v_tags(
+    root: Path, *, reachable_from: str | None = None, release_shape: bool = False
+) -> list[str]:
     """Return every ``v*`` git tag, highest semver first.
 
     The listing behind :func:`latest_v_tag`, exposed for callers that
     walk releases (the tag-aware changelog assembler partitions pending
     fragments by the earliest tag whose tree holds them).
 
+    *reachable_from* answers a different question from the default, and
+    the two must not be confused: unfiltered, this resolves releases
+    **globally**, which is what the release paths need (see
+    :func:`latest_v_tag`). Scoped, it answers "which releases is this
+    commit built on top of" — the question a version derived from
+    ``git describe`` is answering, so it is the one to ask when comparing
+    against an installed build. A branch cut before a release does not
+    contain that tag, and no reinstall would change that.
+
+    *release_shape* keeps only exactly ``vX.Y.Z``. The default ``v*``
+    glob also admits ``vfoo`` and pre-releases like ``v14.4.0-rc1``,
+    which :func:`parse_semver` reads as the final release of the same
+    triple — fine for ranking, wrong for "is this version released yet".
+
     Args:
         root: Repo root (cwd for the git invocation).
+        reachable_from: Limit to tags merged into this revision; ``None``
+            lists every tag in the repo.
+        release_shape: Keep only tags matching exactly ``vX.Y.Z``.
 
     Returns:
-        Tag names sorted by ``--sort=-v:refname``; empty when none exist.
+        Tag names sorted by ``--sort=-v:refname``; empty when none exist,
+        or when git fails.
     """
+    argv = ["git", "tag", "--list", "v*", "--sort=-v:refname"]
+    if reachable_from is not None:
+        argv += ["--merged", reachable_from]
     proc = subprocess.run(
-        ["git", "tag", "--list", "v*", "--sort=-v:refname"],
+        argv,
         cwd=root,
         capture_output=True,
         text=True,
         check=False,
     )
-    return [line for line in proc.stdout.splitlines() if line.strip()]
+    tags = [line for line in proc.stdout.splitlines() if line.strip()]
+    if release_shape:
+        tags = [t for t in tags if _RELEASE_TAG_RE.fullmatch(t)]
+    return tags
 
 
 def tag_commit_date(root: Path, tag: str) -> str:

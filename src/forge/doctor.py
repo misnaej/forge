@@ -78,7 +78,9 @@ from forge.upgrade import pin_revision_mismatch, pip_command
 from forge.version_surfaces import (
     SKEW_REMEDIATION,
     hook_sidecar_version,
+    installed_behind_checkout,
     pip_version,
+    release_order_key,
 )
 
 
@@ -223,15 +225,64 @@ def _check_hooks_path(repo_root: Path) -> list[CheckResult]:
     ]
 
 
+def _check_version_currency(repo_root: Path) -> list[CheckResult]:
+    """Report when forge's install is behind the release its checkout is on.
+
+    The companion to :func:`_check_version_skew`, which compares the
+    install surfaces to each other and so reports alignment whenever they
+    are *equally* stale — true about skew, and silent about currency. A
+    separate check rather than another branch of that one: it is a
+    different question, and the skew path returns early when fewer than
+    two surfaces exist, which would hide this from anyone running without
+    git hooks.
+
+    Scoped to forge's own editable checkout by
+    :func:`~forge.version_surfaces.installed_behind_checkout`, which is
+    also why the remediation can name forge's bootstrap outright.
+
+    Advisory (``info``), so it never sways the exit code — same posture as
+    the skew rows and for the same reason (FOUNDATION §15): an install
+    predating a tag is a normal state in some environments, and the
+    remediation line is the actionable signal.
+
+    Args:
+        repo_root: Repo whose reachable release tags are read.
+
+    Returns:
+        One advisory when the install is behind, else nothing. Silence
+        here is not a pass: a consumer repo and a non-editable install
+        both produce it, which is why no "current" row is emitted.
+    """
+    behind = installed_behind_checkout(repo_root)
+    if behind is None:
+        return []
+    installed, tag = behind
+    return [
+        CheckResult(
+            name="version_currency",
+            passed=True,
+            info=True,
+            detail=(
+                f"installed forge-scripts is {installed}, behind this "
+                f"checkout's {tag} — the version is derived when the package "
+                "is built, so a release cut after your last install is not "
+                "picked up. Run `./dev/setup.sh`"
+            ),
+        )
+    ]
+
+
 def _check_version_skew(repo_root: Path) -> list[CheckResult]:
-    """Compare forge's version across its install surfaces and flag drift (#184).
+    """Compare forge's version across its install surfaces and flag drift.
 
     Reads the two pip and git-hook surfaces a single forge install presents —
-    the pip ``forge-scripts`` package and the git-hook sidecar — normalizes
-    each with :func:`parse_semver` (so a ``.devN+g<sha>`` editable version
-    compares cleanly), and reports the ones lagging the highest (current) line
-    with the exact command to converge them. Absent surfaces (no hooks — e.g. a
-    pip-only consumer) are skipped, not failed.
+    the pip ``forge-scripts`` package and the git-hook sidecar — orders them
+    by :func:`~forge.version_surfaces.release_order_key`, and reports the
+    ones lagging the highest line with the exact command to converge them.
+    A lagging row names the versions the surfaces report rather than their
+    triples, because a build one commit before a release shares that
+    release's triple. Absent surfaces (no hooks — e.g. a pip-only consumer)
+    are skipped, not failed.
 
     Posture: a lagging surface is reported as an **advisory** (``info``), never
     a failure — it carries the remediation but never sways ``forge-doctor``'s
@@ -241,12 +292,9 @@ def _check_version_skew(repo_root: Path) -> list[CheckResult]:
     legitimately predates an install — FOUNDATION §15); the remediation line in
     the report is the actionable signal, not the exit code.
 
-    The plugin is judged in :func:`_check_checkout_plugin`, not here — pip and
-    git hooks are one line (both derive from installed forge-scripts), while
-    the plugin's version is the release the checkout names (which fragments
-    mode parks at the latest tag by design). Comparing them made a warning that
-    named a command, and the command answered that nothing was out of date:
-    both true, and never convergent.
+    Both surfaces derive from the one installed ``forge-scripts``, so they
+    are a single line to converge. Whether that line is the current one is
+    :func:`_check_version_currency`'s question, not this one's.
 
     Args:
         repo_root: Repo whose ``.githooks/`` sidecar is read.
@@ -260,7 +308,11 @@ def _check_version_skew(repo_root: Path) -> list[CheckResult]:
         "pip package": pip_version(),
         "git hooks": hook_sidecar_version(repo_root),
     }
-    parsed = {name: parse_semver(v) for name, v in raw.items() if v is not None}
+    # Ordered by `release_order_key`, the shared definition, so a surface
+    # built one commit past a tag is not read as level with that tag's
+    # release. Displayed as the triple: the fourth element orders, it does
+    # not name a version.
+    parsed = {name: release_order_key(v) for name, v in raw.items() if v is not None}
     comparable = {name: t for name, t in parsed.items() if t is not None}
     if len(comparable) < _MIN_SURFACES_TO_COMPARE:
         only = next(iter(comparable), "no")
@@ -275,7 +327,7 @@ def _check_version_skew(repo_root: Path) -> list[CheckResult]:
 
     current = max(comparable.values())
     behind = {name: t for name, t in comparable.items() if t < current}
-    cur = ".".join(str(n) for n in current)
+    cur = ".".join(str(n) for n in current[:3])
     if not behind:
         aligned = ", ".join(sorted(comparable))
         return [
@@ -286,17 +338,21 @@ def _check_version_skew(repo_root: Path) -> list[CheckResult]:
             )
         ]
 
+    # Name the versions the surfaces actually report, not their triples: a
+    # build one commit before a release shares that release's triple, so a
+    # triple-only message reads "at vX, behind current vX".
+    ahead = next(name for name, key in comparable.items() if key == current)
     return [
         CheckResult(
             name=f"version_skew:{name.replace(' ', '_')}",
             passed=False,
             info=True,
             detail=(
-                f"{name} at v{'.'.join(str(n) for n in triple)}, behind current "
-                f"v{cur} — run `{SKEW_REMEDIATION[name]}`"
+                f"{name} at {raw[name]}, behind {ahead} at {raw[ahead]} "
+                f"— run `{SKEW_REMEDIATION[name]}`"
             ),
         )
-        for name, triple in sorted(behind.items())
+        for name in sorted(behind)
     ]
 
 
@@ -1174,6 +1230,7 @@ def main() -> int:
         results.extend(_check_claude_integration(Path.cwd()))
 
     results.extend(_check_version_skew(Path.cwd()))
+    results.extend(_check_version_currency(Path.cwd()))
     results.extend(_surface_pin_revision(Path.cwd()))
     results.extend(_check_hooks_path(Path.cwd()))
     if check_vibe:

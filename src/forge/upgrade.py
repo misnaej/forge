@@ -68,6 +68,7 @@ from forge.run_context import (
     is_non_interactive,
     progress_logger,
 )
+from forge.version_surfaces import release_order_key
 
 
 configure_cli_logging()
@@ -737,14 +738,14 @@ def _pending_action_count(changelog_text: str) -> int:
         Number of pending action items.
     """
     try:
-        installed = parse_semver(metadata.version("forge-scripts"))
+        installed = release_order_key(metadata.version("forge-scripts"))
     except metadata.PackageNotFoundError:
         return 0
     if installed is None:
         return 0
     count = 0
     for version, _action in action_items(changelog_text):
-        parsed = parse_semver(version)
+        parsed = release_order_key(version)
         if parsed is not None and parsed > installed:
             count += 1
     return count

@@ -24,8 +24,9 @@ from importlib import metadata
 from pathlib import Path
 from typing import Final
 
-from forge.git_utils import FORGE_DIST_NAME
+from forge.git_utils import FORGE_DIST_NAME, parse_semver, v_tags
 from forge.install_githooks import SIDECAR_NAME as HOOK_VERSION_SIDECAR
+from forge.regen_docs import is_forge_repo
 
 
 DIST_NAME: Final[str] = FORGE_DIST_NAME
@@ -96,6 +97,76 @@ def pip_version() -> str | None:
         return metadata.version(DIST_NAME)
     except metadata.PackageNotFoundError:
         return None
+
+
+def release_order_key(version: str) -> tuple[int, int, int, int] | None:
+    """Return a sort key for *version* that places a dev build below its triple.
+
+    The one definition of "which forge build is newer", for every caller
+    that orders two of them: the skew check across install surfaces, the
+    pre-commit git-hook sidecar gate, and the currency check against the
+    checkout's own tag.
+
+    :func:`~forge.git_utils.parse_semver` stops at the triple, so a
+    setuptools-scm build and the release it anticipates normalize to the
+    same value — and ``14.3.2.dev1`` is what one commit past ``v14.3.1``
+    is called, so it precedes ``14.3.2`` rather than matching it. On a
+    bare triple, being exactly one patch behind reads as level, and that
+    is the state every checkout is in right after a merge.
+
+    Args:
+        version: A version string or tag name.
+
+    Returns:
+        ``(major, minor, patch, released)`` where *released* is ``0`` for
+        a development build and ``1`` for a release, or ``None`` when no
+        triple parses.
+    """
+    triple = parse_semver(version)
+    if triple is None:
+        return None
+    return (*triple, 0 if ".dev" in version else 1)
+
+
+def installed_behind_checkout(repo_root: Path) -> tuple[str, str] | None:
+    """Return the installed and tagged versions when the install is behind.
+
+    Answers the question :func:`forge.doctor._check_version_skew` does
+    not: every install surface can agree and still be stale, because
+    skew is measured between surfaces and never against the checkout.
+    The release each surface should be at is the newest release this
+    commit is built on — the same thing setuptools-scm derived the
+    installed version from.
+
+    Only forge's own editable checkout can be judged this way, and both
+    halves of that are load-bearing. In a consumer repo the newest tag
+    is *their* product's version, unrelated to forge's. In forge's own
+    repo installed from an index or a wheel, the installed version is a
+    release that was never derived from this tree. Either way the
+    comparison would be meaningless, so it is not made.
+
+    Args:
+        repo_root: Repo to read tags from, and to compare the editable
+            install's recorded origin against.
+
+    Returns:
+        ``(installed, tag)`` when the installed build precedes the
+        newest release reachable from ``HEAD``; ``None`` when it is
+        current, when either version cannot be parsed, when the repo has
+        no release tag, or when this is not forge's own editable
+        checkout.
+    """
+    root = repo_root.resolve()
+    if not is_forge_repo(root) or editable_install_origin() != root:
+        return None
+    installed = pip_version()
+    tags = v_tags(root, reachable_from="HEAD", release_shape=True)
+    if installed is None or not tags:
+        return None
+    have, want = release_order_key(installed), release_order_key(tags[0])
+    if have is None or want is None or have >= want:
+        return None
+    return installed, tags[0]
 
 
 def hook_sidecar_version(repo_root: Path) -> str | None:
