@@ -414,6 +414,7 @@ Pin change (floor, cap, new pin — advisory or not) never rides a feature/fix P
 Mechanics (modes, commands, templates): the `/forge-pr` skill. Rules:
 
 - **Verification precedes publication.** Finalization reviews (design / security / docs reporters + strict pre-commit) run on local tree about to be pushed → findings fixed in PR's own commits, changelog heading settles pre-publish. Order: verify → fix → commit → **compose and fill the wrap-up, author the squash message** → push → open PR → post.
+  - The push itself is gated, not only PR creation: `forge-commit` commits locally by default and refuses `--push` / `--push-only` unless a wrap-up names `HEAD`, an open PR already exists for the branch (review-fix pushes), or an armed `forge-emergency` excuses it — so no commit reaches the remote before verification evidence exists. Raw `git push` is already refused by `block_raw_git`; `FORGE_SKIP_WRAPUP_GATE=1` is the recorded user bypass.
   - `forge-pr-create` and `forge-pr-wrapup post` refuse a branch behind or conflicting with base; post also an unreadable PR or wrap-up not naming head.
   - `block_unverified_pr_create` hook refuses raw create, names `forge-pr-create`. Runs in checkout it publishes; refuses unless its wrap-up names `HEAD`. `wrapup-mode: light` / `wrapup-mode: light-release` re-earned by fail-closed `forge-pr-plan` re-run (must agree light-code / light-release). `FORGE_SKIP_WRAPUP_GATE=1` on explicit user request only.
   - **Draft PR** = escape hatch for early visibility.

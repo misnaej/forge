@@ -157,6 +157,40 @@ SUPERSEDED_SUMMARY: Final[str] = (
 
 WRAPUP_NAME: Final[str] = "pr_wrapup.md"
 
+# How many leading lines of a wrap-up count as its own header. Scoped on
+# purpose: a wrap-up legitimately quotes older reporter stamps below its
+# own, each carrying a ``verified-at:`` line that may name an earlier
+# commit — a reporter that ran before a later fixup. Scanning the whole
+# file would let any of those stand in for the file's own claim, so a
+# wrap-up authored for one commit would verify a different one. Worse,
+# ``code_health/`` is gitignored, so a wrap-up survives a branch switch:
+# an unscoped match would let a leftover file from another branch satisfy
+# the check.
+HEADER_LINES: Final[int] = 5
+
+
+def wrapup_names_head(wrapup_text: str, head_sha: str) -> bool:
+    """Whether the wrap-up's OWN header names *head_sha*.
+
+    Shared by every consumer of the wrap-up as publication evidence
+    (``forge-pr-create``, the push gate in ``forge-commit``).
+
+    Args:
+        wrapup_text: Full wrap-up contents.
+        head_sha: The commit to match.
+
+    Returns:
+        ``True`` when a header ``verified-at:`` and *head_sha* share a
+        prefix in either direction — the header records a short SHA while
+        ``rev-parse`` yields a full one.
+    """
+    header = "\n".join(wrapup_text.splitlines()[:HEADER_LINES])
+    return any(
+        head_sha.startswith(sha) or sha.startswith(head_sha)
+        for sha in extract_verified_shas(header)
+    )
+
+
 # Where a refused compose parks the previous wrap-up, with a refusal
 # header — preserved as evidence, but no longer postable as-is.
 STALE_WRAPUP_NAME: Final[str] = "pr_wrapup.stale.md"

@@ -47,6 +47,7 @@ def _fake_evidence(monkeypatch: pytest.MonkeyPatch) -> None:
     """Passing verdict, no emergency, inert edit-ledger."""
     monkeypatch.setattr(commit, "verdict", lambda _root: (True, []))
     monkeypatch.setattr(commit, "active_state", lambda _root: None)
+    monkeypatch.setattr(commit, "check_publication_evidence", lambda *_a, **_k: None)
     monkeypatch.setattr(commit, "subagent_edits", lambda *_a, **_k: [])
     monkeypatch.setattr(commit, "render_edit_receipt", lambda _edits: "receipt")
 
@@ -615,7 +616,7 @@ def test_main_guard_refusal_exits_1(main_env: Path) -> None:
 def test_main_success_exits_0(main_env: Path) -> None:
     """A clean commit from main exits zero."""
     (main_env / "a.txt").write_text("changed\n", encoding="utf-8")
-    assert commit.main(["-m", "fix: a", "--no-push", "a.txt"]) == commit.EXIT_OK
+    assert commit.main(["-m", "fix: a", "a.txt"]) == commit.EXIT_OK
 
 
 @pytest.mark.usefixtures("_fake_evidence")
@@ -634,7 +635,7 @@ def test_main_ignores_inherited_git_index_file(
     monkeypatch.setenv("GIT_INDEX_FILE", foreign_index)
     (main_env / "a.txt").write_text("changed\n", encoding="utf-8")
 
-    assert commit.main(["-m", "fix: x", "--no-push", "a.txt"]) == commit.EXIT_OK
+    assert commit.main(["-m", "fix: x", "a.txt"]) == commit.EXIT_OK
 
     committed = git_stdout(main_env, "show", "--name-only", "--format=", "HEAD").split()
     assert committed == ["a.txt"]
@@ -650,7 +651,7 @@ def test_main_push_failure_exits_2(
         commit, "push_branch", make_fake_push_branch(ok=False, stderr="rejected")
     )
     (main_env / "a.txt").write_text("changed\n", encoding="utf-8")
-    assert commit.main(["-m", "fix: a", "a.txt"]) == commit.EXIT_PUSH_FAILED == 2
+    assert commit.main(["-m", "fix: a", "--push", "a.txt"]) == commit.EXIT_PUSH_FAILED
 
 
 @pytest.mark.usefixtures("_fake_evidence")
@@ -765,7 +766,7 @@ def test_wip_sync_commits_whole_dirty_tree(main_env: Path) -> None:
     (main_env / "a.txt").write_text("changed\n", encoding="utf-8")
     (main_env / "new.txt").write_text("new\n", encoding="utf-8")
 
-    code = commit.main(["--wip-sync", "-m", "wip-sync: before merge", "--no-push"])
+    code = commit.main(["--wip-sync", "-m", "wip-sync: before merge"])
 
     assert code == commit.EXIT_OK
     assert git_stdout(main_env, "log", "-1", "--format=%s").strip() == (
@@ -793,7 +794,7 @@ def test_wip_sync_defers_gate_without_leaking_env(
     hook.chmod(0o755)
     (main_env / "a.txt").write_text("changed\n", encoding="utf-8")
 
-    assert commit.main(["--wip-sync", "-m", "wip-sync: x", "--no-push"]) == 0
+    assert commit.main(["--wip-sync", "-m", "wip-sync: x"]) == 0
     assert "FORGE_WIP_SYNC" not in os.environ
 
     (main_env / "b.txt").write_text("changed\n", encoding="utf-8")
@@ -805,23 +806,23 @@ def test_wip_sync_defers_gate_without_leaking_env(
     ("argv", "dirty", "reason"),
     [
         (
-            ["--wip-sync", "-m", "fix: not a checkpoint", "--no-push"],
+            ["--wip-sync", "-m", "fix: not a checkpoint"],
             True,
             "must start with 'wip-sync:'",
         ),
         (
-            ["--wip-sync", "-m", "wip-sync: x", "--no-push", "a.txt"],
+            ["--wip-sync", "-m", "wip-sync: x", "a.txt"],
             True,
             "--wip-sync takes no files",
         ),
         (
-            ["--wip-sync", "-m", "wip-sync: x", "--no-push"],
+            ["--wip-sync", "-m", "wip-sync: x"],
             False,
             "working tree is clean",
         ),
         (["--wip-sync", "--push-only"], True, "--push-only takes no files"),
         (
-            ["--wip-sync", "-m", "wip-sync: x\n\nCo-Authored-By: x <x@y>", "--no-push"],
+            ["--wip-sync", "-m", "wip-sync: x\n\nCo-Authored-By: x <x@y>"],
             True,
             "AI attribution pattern detected",
         ),
@@ -860,7 +861,7 @@ def test_wip_sync_on_protected_branch_refused(main_env: Path) -> None:
     git_stdout(main_env, "checkout", "-q", "main")
     (main_env / "a.txt").write_text("changed\n", encoding="utf-8")
 
-    assert commit.main(["--wip-sync", "-m", "wip-sync: x", "--no-push"]) == 1
+    assert commit.main(["--wip-sync", "-m", "wip-sync: x"]) == 1
     assert git_stdout(main_env, "log", "-1", "--format=%s").strip() == "chore: seed"
 
 
@@ -881,7 +882,7 @@ def test_dispatch_refuses_base_with_push_only(tmp_path: Path) -> None:
         message=None,
         wip_sync=False,
         base="some-ref",
-        no_push=False,
+        push=False,
     )
     with pytest.raises(
         CommitRefusedError,
@@ -902,7 +903,7 @@ def test_dispatch_refuses_base_with_wip_sync(tmp_path: Path) -> None:
         message="wip",
         wip_sync=True,
         base="some-ref",
-        no_push=False,
+        push=False,
     )
     with pytest.raises(
         CommitRefusedError,
@@ -923,7 +924,7 @@ def test_dispatch_refuses_unresolvable_base(tmp_path: Path) -> None:
         message="fix: x",
         wip_sync=False,
         base="nonexistent-branch",
-        no_push=False,
+        push=False,
     )
     with pytest.raises(
         CommitRefusedError, match="--base 'nonexistent-branch' is not a resolvable ref"
@@ -970,7 +971,7 @@ def test_dispatch_with_valid_base_creates_request_with_base(
         message="fix: x",
         wip_sync=False,
         base="feature-base",
-        no_push=False,
+        push=False,
     )
     commit._dispatch(args, tmp_path)
 
@@ -1013,10 +1014,222 @@ def test_dispatch_without_base_creates_request_without_base(
         message="fix: x",
         wip_sync=False,
         base=None,
-        no_push=False,
+        push=False,
     )
     commit._dispatch(args, tmp_path)
 
     assert len(calls) == 1
     _, _, env = calls[0]
     assert env is None
+
+
+# ---------------------------------------------------------------------------
+# Publication-evidence gate on the push seam (issue #1026)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _gate_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Passing verdict, no emergency, controllable PR lookup, no wrap-up."""
+    monkeypatch.delenv("FORGE_CODE_HEALTH_DIR", raising=False)
+    monkeypatch.setattr(commit, "verdict", lambda _root: (True, []))
+    monkeypatch.setattr(commit, "active_state", lambda _root: None)
+    monkeypatch.setattr(commit, "find_open_pr_by_head", lambda _r, _b: None)
+    monkeypatch.setattr(commit, "subagent_edits", lambda *_a, **_k: [])
+    monkeypatch.setattr(commit, "render_edit_receipt", lambda _edits: "receipt")
+
+
+@pytest.mark.usefixtures("_gate_env")
+def test_default_commit_does_not_push(
+    main_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: plain ``forge-commit -m <msg> <files>`` — the new default.
+
+    MOCK SETUP: ``push_branch`` records calls.
+    EXPECTED BEHAVIOR: exit 0, the commit exists, zero push calls.
+    """
+    calls: list[tuple[object, object, dict[str, object]]] = []
+    monkeypatch.setattr(commit, "push_branch", make_fake_push_branch(calls=calls))
+    (main_env / "a.txt").write_text("changed\n", encoding="utf-8")
+
+    assert commit.main(["-m", "fix: a", "a.txt"]) == commit.EXIT_OK
+
+    assert calls == []
+    assert git_stdout(main_env, "log", "-1", "--format=%s").strip() == "fix: a"
+
+
+def test_no_push_flag_is_removed(main_env: Path) -> None:
+    """``--no-push`` no longer parses — the flip is a clean break, no shim."""
+    with pytest.raises(SystemExit) as excinfo:
+        commit.main(["-m", "fix: a", "--no-push", "a.txt"])
+    assert excinfo.value.code == 2
+
+
+@pytest.mark.usefixtures("_gate_env")
+def test_push_without_evidence_is_refused_commit_stays_local(
+    main_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: ``--push`` with no wrap-up, no open PR, no emergency.
+
+    MOCK SETUP: ``push_branch`` records calls; PR lookup returns none.
+    EXPECTED BEHAVIOR: exit 1 (refused), nothing pushed, commit stays local.
+    """
+    calls: list[tuple[object, object, dict[str, object]]] = []
+    monkeypatch.setattr(commit, "push_branch", make_fake_push_branch(calls=calls))
+    (main_env / "a.txt").write_text("changed\n", encoding="utf-8")
+
+    assert commit.main(["-m", "fix: a", "--push", "a.txt"]) == commit.EXIT_REFUSED
+
+    assert calls == []
+    assert git_stdout(main_env, "log", "-1", "--format=%s").strip() == "fix: a"
+
+
+@pytest.mark.usefixtures("_gate_env")
+def test_push_only_is_gated_too(
+    main_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: ``--push-only`` with no publication evidence.
+
+    MOCK SETUP: ``push_branch`` records calls.
+    EXPECTED BEHAVIOR: exit 1, nothing pushed — the gate covers every
+    publication path, not just forge-commit's own commits.
+    """
+    calls: list[tuple[object, object, dict[str, object]]] = []
+    monkeypatch.setattr(commit, "push_branch", make_fake_push_branch(calls=calls))
+
+    assert commit.main(["--push-only"]) == commit.EXIT_REFUSED
+    assert calls == []
+
+
+@pytest.mark.usefixtures("_gate_env")
+def test_push_and_push_only_conflict(main_env: Path) -> None:
+    """``--push`` with ``--push-only`` is a redundant combination, refused."""
+    assert commit.main(["--push-only", "--push"]) == commit.EXIT_REFUSED
+
+
+@pytest.mark.usefixtures("_gate_env")
+def test_push_allowed_when_wrapup_names_head(
+    feature_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: ``code_health/pr_wrapup.md`` names the current HEAD.
+
+    MOCK SETUP: wrap-up file with a ``verified-at:`` header naming HEAD;
+    ``push_branch`` records calls.
+    EXPECTED BEHAVIOR: push proceeds, one push call.
+    """
+    calls: list[tuple[object, object, dict[str, object]]] = []
+    monkeypatch.setattr(commit, "push_branch", make_fake_push_branch(calls=calls))
+    head = git_stdout(feature_repo, "rev-parse", "HEAD").strip()
+    health = feature_repo / "code_health"
+    health.mkdir(exist_ok=True)
+    (health / "pr_wrapup.md").write_text(
+        f"verified-at: {head[:7]}\n\nbody\n", encoding="utf-8"
+    )
+
+    assert commit.push(feature_repo, "feat/x") == commit.EXIT_OK
+    assert len(calls) == 1
+
+
+@pytest.mark.usefixtures("_gate_env")
+def test_push_refused_when_wrapup_names_another_head(
+    feature_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: a stale wrap-up names a different commit, no open PR.
+
+    MOCK SETUP: wrap-up header names ``deadbee``; PR lookup returns none;
+    ``push_branch`` must not run.
+    EXPECTED BEHAVIOR: CommitRefusedError naming the /pr Step 3.92 remedy.
+    """
+    calls: list[tuple[object, object, dict[str, object]]] = []
+    monkeypatch.setattr(commit, "push_branch", make_fake_push_branch(calls=calls))
+    health = feature_repo / "code_health"
+    health.mkdir(exist_ok=True)
+    (health / "pr_wrapup.md").write_text(
+        "verified-at: deadbee\n\nbody\n", encoding="utf-8"
+    )
+
+    with pytest.raises(CommitRefusedError, match=r"Step 3\.92"):
+        commit.push(feature_repo, "feat/x")
+    assert calls == []
+
+
+@pytest.mark.usefixtures("_gate_env")
+def test_push_allowed_by_open_pr(
+    feature_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: an open PR already exists for the branch (review-fix push).
+
+    MOCK SETUP: PR lookup returns a URL; ``push_branch`` records calls.
+    EXPECTED BEHAVIOR: push proceeds without a wrap-up.
+    """
+    calls: list[tuple[object, object, dict[str, object]]] = []
+    monkeypatch.setattr(commit, "push_branch", make_fake_push_branch(calls=calls))
+    monkeypatch.setattr(
+        commit, "find_open_pr_by_head", lambda _r, _b: "https://example/pr/1"
+    )
+
+    assert commit.push(feature_repo, "feat/x") == commit.EXIT_OK
+    assert len(calls) == 1
+
+
+@pytest.mark.usefixtures("_gate_env")
+def test_push_fails_closed_when_gh_lookup_fails(
+    feature_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: ``gh`` cannot say whether a PR is open.
+
+    MOCK SETUP: PR lookup raises GhLookupError; ``push_branch`` must not run.
+    EXPECTED BEHAVIOR: CommitRefusedError naming the cause — an unreadable
+    listing is not evidence of no PR.
+    """
+    calls: list[tuple[object, object, dict[str, object]]] = []
+    monkeypatch.setattr(commit, "push_branch", make_fake_push_branch(calls=calls))
+
+    def _boom(_root: Path, _branch: str) -> str:
+        error_msg = "gh timed out"
+        raise commit.GhLookupError(error_msg)
+
+    monkeypatch.setattr(commit, "find_open_pr_by_head", _boom)
+
+    with pytest.raises(
+        CommitRefusedError, match="could not determine whether an open PR"
+    ):
+        commit.push(feature_repo, "feat/x")
+    assert calls == []
+
+
+def test_push_allowed_under_armed_emergency(
+    feature_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: a forge-emergency is armed; no other evidence exists.
+
+    MOCK SETUP: verdict passes, ``active_state`` returns a state.
+    EXPECTED BEHAVIOR: push proceeds — the emergency excuses the gate, as it
+    excuses the verdict gate.
+    """
+    monkeypatch.setattr(commit, "verdict", lambda _r: (True, []))
+    monkeypatch.setattr(commit, "active_state", lambda _r: object())
+    calls: list[tuple[object, object, dict[str, object]]] = []
+    monkeypatch.setattr(commit, "push_branch", make_fake_push_branch(calls=calls))
+
+    assert commit.push(feature_repo, "feat/x") == commit.EXIT_OK
+    assert len(calls) == 1
+
+
+@pytest.mark.usefixtures("_gate_env")
+def test_push_allowed_with_skip_wrapup_gate_env(
+    feature_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: ``FORGE_SKIP_WRAPUP_GATE=1`` prefixes the command.
+
+    The recorded user bypass, honoured with parity to
+    ``block_unverified_pr_create``.
+    MOCK SETUP: env var set; no other evidence; ``push_branch`` records.
+    EXPECTED BEHAVIOR: push proceeds with a warning.
+    """
+    monkeypatch.setenv("FORGE_SKIP_WRAPUP_GATE", "1")
+    calls: list[tuple[object, object, dict[str, object]]] = []
+    monkeypatch.setattr(commit, "push_branch", make_fake_push_branch(calls=calls))
+
+    assert commit.push(feature_repo, "feat/x") == commit.EXIT_OK
+    assert len(calls) == 1
