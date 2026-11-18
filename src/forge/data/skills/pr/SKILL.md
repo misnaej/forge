@@ -385,8 +385,9 @@ Verification is done, fixes are committed, and the wrap-up is authored
 (Step 3.92 — the create hook checks it). Three cases:
 
 1. **PR already open** → nothing to create; confirm the branch is pushed
-   (`forge-commit` pushes by default — check `git status`; unpushed
-   commits → `forge-commit --push-only`).
+   (check `git status`; unpushed commits → `forge-commit --push-only`,
+   which the wrap-up naming HEAD now allows — the push gate refuses
+   without it).
 2. **No PR yet** → push the branch (`forge-commit --push-only`; sets
    upstream when untracked), analyze the diff (`git diff --stat origin/<base>...HEAD`,
    `git log origin/<base>..HEAD --oneline`), then create the PR

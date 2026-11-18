@@ -180,7 +180,9 @@ track counts as one execution.
 
 Freeze, never guess:
 
-1. Commit and push the work as it stands (`forge-commit -m "<msg>" <files>`).
+1. Commit the work as it stands (`forge-commit -m "<msg>" <files>` —
+   local by default), author a wrap-up naming HEAD so the push gate opens
+   (`/pr` Step 3.92), then push (`forge-commit --push-only`).
 2. Open a **draft PR** (FOUNDATION §6's early-visibility escape hatch).
 3. Post PR comment(s) framing each open question, with the options
    considered and a recommendation.

@@ -1088,6 +1088,72 @@ def find_open_pr_by_head_prefix(repo_root: Path, prefix: str) -> str | None:
     return None
 
 
+class GhLookupError(Exception):
+    """A ``gh`` listing could not be read; fail-closed callers refuse on this."""
+
+
+def find_open_pr_by_head(repo_root: Path, head: str) -> str | None:
+    """Return the URL of the open PR whose head branch is exactly *head*.
+
+    Unlike :func:`find_open_pr_by_head_prefix` — which fails open for the
+    automation dedup guard — this raises on any ``gh`` failure, so a gate
+    can fail closed: an unreadable listing is not evidence that no PR is
+    open. Used by the publication-evidence gate on the push seam
+    (:func:`forge.commit.check_publication_evidence`).
+
+    Args:
+        repo_root: Working directory for the ``gh`` invocation.
+        head: The exact head branch name to match.
+
+    Returns:
+        The open PR's URL, or ``None`` when no open PR has this head.
+
+    Raises:
+        GhLookupError: When ``gh`` cannot start, times out, exits non-zero,
+            or prints unparseable output.
+    """
+    try:
+        proc = subprocess.run(
+            [
+                "gh",
+                "pr",
+                "list",
+                f"--head={head}",
+                "--state",
+                "open",
+                "--json",
+                "url",
+                "--limit",
+                "1",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=repo_root,
+            timeout=GH_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired as exc:
+        error_msg = f"gh pr list did not answer within {GH_TIMEOUT_S}s"
+        raise GhLookupError(error_msg) from exc
+    except OSError as exc:
+        error_msg = f"gh could not start: {exc}"
+        raise GhLookupError(error_msg) from exc
+    if proc.returncode != 0:
+        error_msg = f"gh pr list failed: {proc.stderr.strip()}"
+        raise GhLookupError(error_msg)
+    try:
+        prs = json.loads(proc.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        error_msg = "gh pr list returned unparseable output"
+        raise GhLookupError(error_msg) from exc
+    if not isinstance(prs, list):
+        error_msg = "gh pr list did not return a list"
+        raise GhLookupError(error_msg)
+    if not prs:
+        return None
+    return str(prs[0].get("url", ""))
+
+
 def create_commit(
     repo_root: Path, message: str, *, env: Mapping[str, str] | None = None
 ) -> None:

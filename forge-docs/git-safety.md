@@ -240,8 +240,10 @@ endpoint or the flags from the text a hook can read:
 
 One command: `forge-update-branch` (`--base <parent>` for a stacked
 branch). It commits the merge locally but never pushes — publish via
-`forge-commit`, whose push seam gates on the pre-commit verdict. Never
-rebase, never stash, never `git reset --hard`.
+`forge-commit`, whose push seam gates on the pre-commit verdict and on
+publication evidence (a wrap-up naming HEAD, an open PR for the branch,
+or an armed `forge-emergency`). Never rebase, never stash, never
+`git reset --hard`.
 
 A stacked branch's *first* commit, before any PR exists, has no PR to
 read a base from: `forge-commit --base origin/<parent-branch> -m ...
@@ -264,8 +266,9 @@ pass — it never becomes a hidden default.
      source conflicts remain, never textually merged.
 4. All resolved → commits the merge (no local gate, like a merge git
    completes itself: CI and the next commit check it). The branch is not
-   pushed; `forge-commit --push-only` publishes it through the verdict
-   gate, so deferred checks are paid at push time instead of never.
+   pushed; `forge-commit --push-only` publishes it through the verdict and
+   publication-evidence gates, so deferred checks are paid at push time
+   instead of never.
 5. Otherwise exit 3: the merge stays in progress, the paths are listed,
    an intake lesson records the stop. `forge-merge-resolver` edits the
    files (or the main agent does), then `forge-update-branch --continue`
