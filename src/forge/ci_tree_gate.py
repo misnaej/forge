@@ -785,6 +785,32 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _announce_fault(exception_name: str) -> None:
+    """Raise a GitHub warning annotation for a fault inside the gate.
+
+    The gate is fail-safe: a fault reads as not-verified and the suite
+    runs, so nothing breaks. That is also why it was invisible — a
+    permanently broken gate would cost a redundant full suite on every
+    run forever and say nothing. The annotation makes that visible in
+    the run summary without making it fatal.
+
+    Written to stderr, not stdout, so ``--json`` output stays parseable;
+    GitHub reads workflow commands from both. Only the exception's type
+    name is interpolated: an exception message is untrusted text and
+    could carry newlines or ``::`` and forge a workflow command.
+
+    Args:
+        exception_name: The caught exception's class name.
+    """
+    if not is_ci():
+        return
+    sys.stderr.write(
+        f"::warning title=forge tree gate faulted::{exception_name} - the gate "
+        "could not decide, so the full suite runs. This is safe but costs a "
+        "redundant run on every build until it is fixed.\n"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     """Print whether HEAD's tree has already passed, and why.
 
@@ -795,7 +821,10 @@ def main(argv: list[str] | None = None) -> int:
     caught and reported as
     not-verified, because a crash must never read as permission to skip
     tests; any other exception ends the step, which the workflow's
-    ``continue-on-error`` turns into a suite run.
+    ``continue-on-error`` turns into a suite run. A caught fault also
+    raises a GitHub warning annotation (:func:`_announce_fault`): being
+    fail-safe is exactly what let a broken gate stay silent, and a
+    redundant suite on every run is worth one visible line.
 
     Args:
         argv: Command-line arguments; defaults to ``sys.argv[1:]``.
@@ -816,7 +845,15 @@ def main(argv: list[str] | None = None) -> int:
         )
     except FAULTS as exc:
         decision = _run(f"internal error: {type(exc).__name__}")
-        logger.debug("tree gate raised", exc_info=True)
+        # Type name only, and no traceback: `configure_cli_logging` sends
+        # WARNING to stderr, and GitHub reads workflow commands from stderr
+        # too — so a traceback carrying an exception message could put a
+        # line beginning `::` in front of GitHub and forge a command. That
+        # is the hole `_announce_fault` exists to avoid; logging the
+        # exception would have re-opened it. The traceback stays at debug.
+        logger.warning("tree gate raised %s", type(exc).__name__)
+        logger.debug("tree gate traceback", exc_info=True)
+        _announce_fault(type(exc).__name__)
 
     if args.as_json:
         emit(

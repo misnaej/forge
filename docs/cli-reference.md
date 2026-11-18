@@ -309,6 +309,7 @@ options:
 
 ```text
 usage: forge-backlog-index [-h] [--lane LABEL=HEADING] [--dry-run]
+                           [--if-stale-hours H]
 
 Render the 📋 Backlog Index from live GitHub data and write it (exit 0 written,
 1 refused, 2 GitHub unreadable).
@@ -318,6 +319,9 @@ options:
   --lane LABEL=HEADING  Extra section for issues carrying LABEL; they leave
                         the tier sections.
   --dry-run             Print the body and its size; write nothing.
+  --if-stale-hours H    Self-skip (exit 0) when the Index was updated less
+                        than H hours ago, so a caller on a frequent event
+                        refreshes it at most that often.
 ```
 
 ## forge-changelog

@@ -50,7 +50,7 @@ premise written before them may no longer hold.
   `null` = never edited. Never REST's `updatedAt`: it bumps on every
   comment, label and assignment, retiring an endorsement the moment
   anything touches the issue.
-- **The marker is literal**, like `[issue-triage]` and `[sentinel]`. An
+- **The marker is literal**, like `[forge-issue-triage]` and `[sentinel]`. An
   agent's audit line affirming a tier is no endorsement; neither is
   approving prose.
 - **Fail closed.** A permission call that errors, rate-limits or 404s
@@ -137,7 +137,7 @@ run `gh` label/comment commands here:
 ```
 Agent(subagent_type="forge:issue-triage", prompt="Record a validated
 plan for issue #<N>: post the plan below as a comment opening with
-`[issue-triage] plan-validated:` and apply the `plan-ready` label.
+`[forge-issue-triage] plan-validated:` and apply the `plan-ready` label.
 <validated plan text>")
 ```
 

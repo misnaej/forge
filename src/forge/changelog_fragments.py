@@ -218,15 +218,18 @@ def _parse_and_validate_filename(name: str) -> tuple[str, str, list[str]]:
 
 def _parse_bump_line_and_body(
     path: Path, lines: list[str]
-) -> tuple[str, str, list[str]]:
-    """Validate bump line and extract level and body.
+) -> tuple[str, str, int, list[str]]:
+    """Validate bump line and extract level, body and the body's file line.
 
     Args:
         path: Fragment file path.
         lines: Split text lines.
 
     Returns:
-        ``(level, body, errors)`` — both strings set to empty when errors exist.
+        ``(level, body, body_line, errors)`` — ``body_line`` is the 1-based
+        line of the file the body starts on, so an error about a body
+        offset can name a line the author can jump to; both strings are
+        empty when errors exist.
     """
     errors: list[str] = []
     name = path.name
@@ -240,27 +243,41 @@ def _parse_bump_line_and_body(
                 f"{name}: unknown level '{level}' "
                 f"(allowed: {', '.join(FRAGMENT_LEVELS)})"
             )
-    body = "\n".join(lines[1:]).strip()
+    rest = lines[1:]
+    leading_blanks = next((i for i, raw in enumerate(rest) if raw.strip()), len(rest))
+    body = "\n".join(rest).strip()
     if not body:
         errors.append(f"{name}: empty entry body")
-    return level, body, errors
+    return level, body, 2 + leading_blanks, errors
 
 
-def _check_no_versions_or_headings(name: str, body: str) -> list[str]:
+def _check_no_versions_or_headings(name: str, body: str, body_line: int) -> list[str]:
     """Check for version-shaped strings and embedded headings.
 
     Args:
         name: Fragment filename (for error messages).
         body: The fragment body text.
+        body_line: 1-based file line the body starts on, so a reported
+            line points into the file rather than into the body.
 
     Returns:
         List of errors found (empty if all checks pass).
     """
     errors: list[str] = []
-    if _VERSION_SHAPED_RE.search(body):
+    found = _VERSION_SHAPED_RE.search(body)
+    if found:
+        # Quote the match and say that a *past* release in prose counts: the
+        # rule reads as "do not name the version you are releasing", so a
+        # sentence like "renamed in v1.2.3" looks allowed and is not. The
+        # line is counted from the file, not the body: the body starts after
+        # the bump line and any blank lines following it, so a body-relative
+        # number sends the author to the wrong line.
+        line = body_line + body.count("\n", 0, found.start())
         errors.append(
-            f"{name}: version-shaped string in body — the assembler is the "
-            "only writer of version numbers"
+            f"{name}: line {line}: {found.group()!r} is version-shaped — a "
+            "fragment may not name any version, a past release in prose "
+            'included (write "when agents were renamed" instead). The '
+            "assembler is the only writer of version numbers."
         )
     if _EMBEDDED_HEADING_RE.search(body):
         errors.append(
@@ -341,8 +358,8 @@ def _validate_fragment_text(path: Path, text: str) -> tuple[Fragment | None, lis
     name = path.name
     slug, ftype, filename_errors = _parse_and_validate_filename(name)
     lines = text.splitlines()
-    level, body, bump_errors = _parse_bump_line_and_body(path, lines)
-    content_errors = _check_no_versions_or_headings(name, body)
+    level, body, body_line, bump_errors = _parse_bump_line_and_body(path, lines)
+    content_errors = _check_no_versions_or_headings(name, body, body_line)
     if body:
         content_errors += _check_bullets(name, body)
     errors = filename_errors + bump_errors + content_errors

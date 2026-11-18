@@ -8325,6 +8325,28 @@ def test_freshness_verdicts_marks_log_without_producer_orphaned(
     assert verdicts["audit_summary"] == "fresh"
 
 
+def test_freshness_verdicts_skips_pr_watch_runtime_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A PR monitor's runtime log gets no verdict; ordinary step logs still do.
+
+    BEHAVIOR: the log has no stamp and no producing step, so reporting it
+    would put a bogus ``orphaned`` row in evidence packs for every watched
+    PR. The step-log half proves the skip is selective, not a function that
+    returns nothing.
+    """
+    health_dir = tmp_path / "health"
+    health_dir.mkdir()
+    monkeypatch.setenv(git_utils.CODE_HEALTH_ENV, str(health_dir))
+    (health_dir / "pr_watch_5.log").write_text("monitor output\n")
+    (health_dir / "ruff.log").write_text("log body\n")
+
+    verdicts = precommit.freshness_verdicts(tmp_path)
+
+    assert "pr_watch_5" not in verdicts
+    assert "ruff" in verdicts
+
+
 @pytest.mark.parametrize(
     "name",
     [

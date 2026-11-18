@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -980,6 +983,89 @@ def test_main_turns_a_crash_into_not_verified(
     out = capsys.readouterr().out
     assert "verified=false" in out
     assert f"internal error: {fault.__name__}" in out
+
+
+@pytest.fixture
+def exploding_gate(
+    ci_push_checkout: FakeGitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Make ``decide`` raise a ``RuntimeError`` that tries to forge a command."""
+    del ci_push_checkout
+
+    def explode(*_args: object, **_kw: object) -> mod.Decision:
+        msg = "x\n::error::pwn"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(mod, "decide", explode)
+
+
+@pytest.mark.usefixtures("exploding_gate")
+def test_fault_outside_ci_raises_no_annotation(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Behavior: off CI a gate fault is not announced as a workflow command."""
+    monkeypatch.setattr(mod, "is_ci", lambda: False)
+    assert mod.main([]) == 0
+    assert "::warning" not in capsys.readouterr().err
+
+
+@pytest.mark.usefixtures("exploding_gate")
+def test_fault_in_ci_raises_one_annotation_naming_only_the_type(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Behavior: one stderr warning line names the type, never the message.
+
+    SCENARIO: the exception message carries a newline and a forged
+    ``::error::`` command, and a real stderr handler is installed exactly as
+    ``configure_cli_logging`` does (INFO, bare message). pytest's own capture
+    handler is swapped out, since it would hide a traceback that production
+    sends to stderr, where GitHub parses lines starting ``::``.
+    EXPECTED BEHAVIOR: no stderr line starts with ``::`` except the single
+    ``::warning`` line, ``RuntimeError`` is interpolated, and none of the
+    message text reaches stderr.
+    """
+    monkeypatch.setattr(mod, "is_ci", lambda: True)
+    root = logging.getLogger()
+    saved_handlers, saved_level = list(root.handlers), root.level
+    try:
+        # force=True drops pytest's handler; stream binds to capsys's stderr.
+        logging.basicConfig(
+            level=logging.INFO, format="%(message)s", stream=sys.stderr, force=True
+        )
+        assert mod.main([]) == 0
+    finally:
+        root.handlers[:] = saved_handlers
+        root.setLevel(saved_level)
+    err = capsys.readouterr().err
+    command_lines = [line for line in err.splitlines() if line.startswith("::")]
+    assert len(command_lines) == 1
+    assert re.match(r"^::warning title=[^:]+::RuntimeError ", command_lines[0])
+    assert "tree gate raised RuntimeError" in err
+    assert "pwn" not in err
+    assert "::error::" not in err
+
+
+@pytest.mark.usefixtures("exploding_gate")
+def test_fault_annotation_keeps_json_stdout_parseable(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Behavior: with ``--json`` the annotation goes to stderr, stdout stays JSON."""
+    monkeypatch.setattr(mod, "is_ci", lambda: True)
+    assert mod.main(["--json"]) == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["verified"] is False
+    assert "::warning" not in captured.out
+    assert "::warning" in captured.err
+
+
+@pytest.mark.usefixtures("exploding_gate")
+def test_fault_logs_at_warning_with_the_type_name(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Behavior: a caught gate fault is logged at WARNING, naming the type."""
+    with caplog.at_level(logging.WARNING):
+        assert mod.main([]) == 0
+    assert "tree gate raised RuntimeError" in caplog.text
 
 
 def test_main_json_output_has_verdict_reason_and_evidence(

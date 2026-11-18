@@ -399,7 +399,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `gh_issue_edit(number: int, body: str) -> int` — Overwrite issue *number*'s body with *body* via ``gh issue edit``.
 - `class RunOptions` — What the caller asked for on the command line.
 - `class _RefusedError` _(internal)_ — A guard stopped the run; carries the exit code and the line to print.
-- `_locate_index(source: BacklogSource) -> tuple[int, list[Issue]]` _(internal)_ — Return the Index issue's number and every other open issue.
+- `_is_fresh(index: Issue, within_hours: int) -> bool` _(internal)_ — Return whether the Index was rewritten inside *within_hours*.
+- `_locate_index(source: BacklogSource) -> tuple[Issue, list[Issue]]` _(internal)_ — Return the Index issue and every other open issue.
 - `_checked_render(listed: list[Issue], inputs: IndexInputs, max_chars: int) -> Rendered` _(internal)_ — Render the body, refusing one that is oversized or empty.
 - `run(source: BacklogSource, options: RunOptions, write: Callable[[int, str], int] = gh_issue_edit) -> int` — Read the backlog, render the Index and write it when every guard passes.
 - `_lane_arg(value: str) -> Lane` _(internal)_ — Argparse type for ``--lane LABEL=HEADING``.
@@ -434,8 +435,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `class AssemblyPlan` — What one assembly run writes: per-tag backfill plus an optional mint.
   - `fragments(self) -> list[Fragment]` — Every fragment the assembly consumes, tagged groups first.
 - `_parse_and_validate_filename(name: str) -> tuple[str, str, list[str]]` _(internal)_ — Validate filename and extract slug and type.
-- `_parse_bump_line_and_body(path: Path, lines: list[str]) -> tuple[str, str, list[str]]` _(internal)_ — Validate bump line and extract level and body.
-- `_check_no_versions_or_headings(name: str, body: str) -> list[str]` _(internal)_ — Check for version-shaped strings and embedded headings.
+- `_parse_bump_line_and_body(path: Path, lines: list[str]) -> tuple[str, str, int, list[str]]` _(internal)_ — Validate bump line and extract level, body and the body's file line.
+- `_check_no_versions_or_headings(name: str, body: str, body_line: int) -> list[str]` _(internal)_ — Check for version-shaped strings and embedded headings.
 - `_check_bullets(name: str, body: str) -> list[str]` _(internal)_ — Check the body starts with a ``- `` bullet and every line continues one.
 - `validate_fragment(path: Path) -> tuple[Fragment | None, list[str]]` — Parse *path* into a :class:`Fragment`, collecting every violation.
 - `_validate_fragment_text(path: Path, text: str) -> tuple[Fragment | None, list[str]]` _(internal)_ — Apply :func:`validate_fragment`'s contract to *text* as *path*'s content.
@@ -504,6 +505,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `decision_line(decision: Decision) -> str` — Render the one line a reader scans in a CI log.
 - `_write_github_output(decision: Decision) -> None` _(internal)_ — Append ``verified`` to ``$GITHUB_OUTPUT`` when that file is set.
 - `_parser() -> argparse.ArgumentParser` _(internal)_ — Build the argument parser.
+- `_announce_fault(exception_name: str) -> None` _(internal)_ — Raise a GitHub warning annotation for a fault inside the gate.
 - `main(argv: list[str] | None = None) -> int` — Print whether HEAD's tree has already passed, and why.
 
 ## `forge.claude_settings_schema`
@@ -519,7 +521,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `class CommitRefusedError` — A guard refused the request; the message says which and why.
 - `class Request` — What the caller asked forge-commit to do.
 - `check_message(message: str) -> None` — Refuse a commit message forge's rules forbid.
-- `check_budget_and_attribution(message: str) -> None` — Refuse a message past the word ceiling or carrying AI attribution.
+- `check_budget_and_attribution(message: str) -> None` — Warn about a long message, and refuse AI attribution.
 - `current_branch(root: Path) -> str` — The checked-out branch, refused when protected or detached.
 - `refuse_mid_merge(root: Path) -> None` — Refuse while a merge is in progress: merges belong to ``forge-update-branch``.
 - `check_verdict(root: Path) -> None` — Refuse unless the latest pre-commit verdict passed on this tree.
@@ -1382,8 +1384,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `capped_echo(text: str) -> str` — Return *text* fenced and capped at :data:`ECHO_CAP` characters.
 - `is_safe_path(path: str) -> bool` — Return whether *path* may be handed to git as a repo-relative pathspec.
 - `named_paths(text: str) -> list[str]` — Return the repo-relative file paths *text* names, outside code fences.
-- `authenticated_comment(comments: Iterable[Comment], is_writer: Callable[[str], bool | None], marker: str) -> PlanLookup` — Find the newest comment opening with *marker* whose author has write access.
-- `authenticated_plan(comments: Iterable[Comment], is_writer: Callable[[str], bool | None]) -> PlanLookup` — Find the newest :data:`PLAN_MARKER` comment whose author has write access.
+- `authenticated_comment(comments: Iterable[Comment], is_writer: Callable[[str], bool | None], marker: str | tuple[str, ...]) -> PlanLookup` — Find the newest comment opening with *marker* whose author has write access.
+- `authenticated_plan(comments: Iterable[Comment], is_writer: Callable[[str], bool | None]) -> PlanLookup` — Find the newest plan comment whose author has write access.
 - `plan_paths(plan: Comment | None, body: str) -> tuple[list[str], bool]` — Return the files the plan names, falling back to the issue body's.
 - `parse_timestamp(value: str) -> datetime` — Parse an ISO-8601 timestamp, reading a naive one as UTC.
 - `parse_merge_log(raw: str) -> list[Merge]` — Parse ``git log --name-only -z --format=%x1e%H%x1f%cI%x1f%s`` output.
@@ -1830,8 +1832,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_word_total(title: str, bullets: list[str]) -> int` _(internal)_ — Count whitespace-split words across the title and every bullet.
 - `_preview(text: str) -> str` _(internal)_ — Shorten one message part to a printable first line for the breakdown.
 - `_word_breakdown(title: str, bullets: list[str]) -> list[str]` _(internal)_ — Render one indented line per message part: label, word count, preview.
-- `_check_word_count(title: str, bullets: list[str]) -> list[str]` _(internal)_ — Return the ``HARD_MAX_WORDS`` ceiling problem, with a per-part breakdown.
-- `word_cap_warning(title: str, bullets: list[str]) -> str | None` — Return the warning for a message between the target and the ceiling.
+- `word_cap_warning(title: str, bullets: list[str]) -> str | None` — Return the warning for a message well past its target, or ``None``.
 - `_check_attribution(title: str, bullets: list[str]) -> list[str]` _(internal)_ — Return the Claude / AI attribution problem per FOUNDATION §2 (shared gate).
 - `build_body(title: str, bullets: list[str]) -> str` — Build the GitHub comment body around a validated message.
 - `validate(title: str, bullets: list[str]) -> list[str]` — Return every FOUNDATION §6 rule the message breaks.
@@ -1851,7 +1852,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `class Registry` — The on-disk registry of monitors.
   - `load(cls, path: Path) -> Registry` — Read the registry, tolerating a missing or corrupt file.
   - `save(self, path: Path) -> None` — Write the registry atomically.
-- `_registry_path(root: Path) -> Path` _(internal)_
+- `_registry_path(root: Path) -> Path` _(internal)_ — Return the monitor registry file for *root*.
+- `monitor_log_path(root: Path, pr: int) -> Path` — Return the log a PR's monitor writes its output to.
 - `_resolve_repo(root: Path, repo_arg: str | None) -> str | None` _(internal)_ — Return ``owner/repo``, from *repo_arg* or the checkout's origin remote.
 - `_gh(*args: str, timeout: int = GH_TIMEOUT_S) -> subprocess.CompletedProcess[str]` _(internal)_ — Run a ``gh`` command, raising on failure.
 - `arming_check(repo: str, pr: int) -> list[str]` — Verify every signal the monitor needs is parseable.
@@ -1864,9 +1866,12 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_ci_alerts(repo: str, pr: int, *, stack_child: bool = False, base_ref: str = '') -> list[str]` _(internal)_ — Return CI-failure alerts from ``gh pr checks``.
 - `_staleness_alerts(repo: str, pr: int) -> list[str]` _(internal)_ — Return a wrap-up-staleness alert when the freshness verdict is stale.
 - `_monitor_loop(repo: str, pr: int, interval: int, bound: int, registry_path: Path) -> None` _(internal)_ — The bounded poll loop (runs in the spawned child process).
+- `cmd_monitor(args: argparse.Namespace) -> int` — Run the poll loop in the foreground (the spawned child's entry point).
 - `cmd_start(args: argparse.Namespace) -> int` — Start a bounded monitor for a PR.
 - `_pid_cmdline(pid: int) -> str` _(internal)_ — Return the command line of *pid*, or empty when unreadable.
+- `_is_monitor(pid: int) -> bool` _(internal)_ — Return whether *pid* is one of this module's monitor processes.
 - `cmd_stop(args: argparse.Namespace) -> int` — Stop one or all monitors, verifying process identity before signalling.
+- `_monitor_state(record: MonitorRecord, *, alive: bool) -> str` _(internal)_ — Return a one-word reading of a monitor's state, for display.
 - `cmd_list(_args: argparse.Namespace) -> int` — List registered monitors.
 - `_stack_order(prs: list[dict[str, object]]) -> list[dict[str, object]]` _(internal)_ — Order open PRs so every parent precedes its stacked children.
 - `cmd_stack(args: argparse.Namespace) -> int` — List the open-PR stack in dependency order with per-PR state.
@@ -1884,7 +1889,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_is_clean(body: list[str]) -> bool` _(internal)_ — Return whether a section reports a clean check (its first line says so).
 - `_check_sections(sections: list[tuple[str, list[str]]]) -> list[str]` _(internal)_ — Validate presence and one-line shape of the required sections.
 - `_count_words(head: list[str], sections: list[tuple[str, list[str]]]) -> int` _(internal)_ — Count the words the budget applies to (prose, not headers or evidence).
-- `_check_budget(head: list[str], sections: list[tuple[str, list[str]]]) -> list[str]` _(internal)_ — Enforce the word budget, scaled by the number of findings sections.
+- `_warn_if_long(head: list[str], sections: list[tuple[str, list[str]]]) -> None` _(internal)_ — Warn about a long wrap-up, scaled by the number of findings sections.
 - `_check_attribution(text: str) -> list[str]` _(internal)_ — Wrap the shared FOUNDATION §2 attribution gate as a violation list.
 - `validate_wrapup(text: str) -> list[str]` — Return every rule the wrap-up *text* breaks (empty means valid).
 - `_check_no_squash_section(text: str) -> list[str]` _(internal)_ — Refuse a wrap-up that embeds the squash-merge message.
@@ -2284,7 +2289,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _The one margin forge allows over a text-length target._
 
-- `ceiling(target: int) -> int` — Return the most words a budget with *target* accepts.
+- `ceiling(target: int) -> int` — Return the word count past which a budget with *target* warns.
 
 ## `forge.text_clip`
 

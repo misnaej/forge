@@ -23,10 +23,12 @@ Run the standard commit workflow:
    ```bash
    forge-commit -m "<type>: <description>" <file> [<file> ...]
    ```
-   Message: `$ARGUMENTS` if given, else write one (conventional, 50-word
-   target, what + why, no AI attribution). It stages exactly the named
-   files, commits (locally — the default), prints subagent-edit receipt.
-   Exit codes:
+   Message: `$ARGUMENTS` if given, else write one (conventional, 45-word
+   target — advisory, never refused — what + why, no AI attribution, and
+   no process state: not that tests passed or checks were green, not a
+   changelog fragment, not counts of tests or files). It stages exactly the named
+   files, commits locally (the default — `--push` opts in), prints
+   subagent-edit receipt. Exit codes:
    - `0` → done.
    - `1` → refused (failed/stale pre-commit verdict, protected or
      detached branch, bad message, or `--push` without publication

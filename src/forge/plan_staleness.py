@@ -36,8 +36,8 @@ a generated artifact never counts (a ``note:``), a shared hub file
 is listed — a ``weak:`` line in drift, a ``note:`` in overlap — but never
 a finding; only other files are drift or overlap.
 
-A plan comment counts only when it opens with ``[issue-triage]
-plan-validated:`` and its author has write, maintain or admin access per
+A plan comment counts only when it opens with one of
+:data:`PLAN_MARKERS` and its author has write, maintain or admin access per
 the ``collaborators/<login>/permission`` call; the newest such comment
 wins. A candidate whose author's access cannot be looked up makes the
 answer unknown — it might be the real plan. Every GitHub or JSON failure
@@ -81,7 +81,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-PLAN_MARKER: Final[str] = "[issue-triage] plan-validated:"
+PLAN_MARKER: Final[str] = "[forge-issue-triage] plan-validated:"
+#: The pre-v14 spelling, from before shipped agents gained their prefix.
+#: Read but never written: payloads posted under it are sitting on open
+#: issues, and dropping it would orphan them — a validated plan would go
+#: unfound while its ``plan-ready`` label still invited execution.
+#: Transitional by intent. Retire it once no open issue carries one; the
+#: check is a search for the literal, not a date.
+LEGACY_PLAN_MARKER: Final[str] = "[issue-triage] plan-validated:"
+#: Every spelling a reader accepts, newest first. ``str.startswith``
+#: takes a tuple, so each matcher stays a single call.
+PLAN_MARKERS: Final[tuple[str, ...]] = (PLAN_MARKER, LEGACY_PLAN_MARKER)
 # A write-access comment opening with this moves the drift window's start:
 # the sentinel read every merge before it and found the planned logic intact.
 RECHECK_CLEARED_MARKER: Final[str] = "[sentinel] recheck cleared:"
@@ -510,7 +520,7 @@ def named_paths(text: str) -> list[str]:
 def authenticated_comment(
     comments: Iterable[Comment],
     is_writer: Callable[[str], bool | None],
-    marker: str,
+    marker: str | tuple[str, ...],
 ) -> PlanLookup:
     """Find the newest comment opening with *marker* whose author has write access.
 
@@ -523,7 +533,8 @@ def authenticated_comment(
         comments: The issue's or PR's comments.
         is_writer: Tri-state permission predicate for a login (``None``
             when the lookup failed).
-        marker: Text the comment body must open with.
+        marker: Text the comment body must open with, or a tuple of
+            accepted spellings when a marker is mid-rename.
 
     Returns:
         The lookup outcome; its ``plan`` field holds the comment found.
@@ -547,7 +558,10 @@ def authenticated_comment(
 def authenticated_plan(
     comments: Iterable[Comment], is_writer: Callable[[str], bool | None]
 ) -> PlanLookup:
-    """Find the newest :data:`PLAN_MARKER` comment whose author has write access.
+    """Find the newest plan comment whose author has write access.
+
+    Accepts every spelling in :data:`PLAN_MARKERS`, so a payload posted
+    before the marker was renamed is still found.
 
     Args:
         comments: The issue's comments.
@@ -557,7 +571,7 @@ def authenticated_plan(
     Returns:
         The lookup outcome (see :func:`authenticated_comment`).
     """
-    return authenticated_comment(comments, is_writer, PLAN_MARKER)
+    return authenticated_comment(comments, is_writer, PLAN_MARKERS)
 
 
 def plan_paths(plan: Comment | None, body: str) -> tuple[list[str], bool]:
