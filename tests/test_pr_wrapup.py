@@ -480,6 +480,159 @@ def test_validate_wrapup_warns_only_above_the_ceiling_of_the_budget(
     assert ("over the 120-word target" in caplog.text) is warns
 
 
+# ---------------------------------------------------------------------------
+# _warn_if_restating — judgment slots must not assert status compose renders
+# ---------------------------------------------------------------------------
+
+
+def _restating_warnings(
+    caplog: pytest.LogCaptureFixture, *, summary: str, recommendation: str, mode: bool
+) -> str:
+    """Run ``_warn_if_restating`` on a built body and return the log text.
+
+    Args:
+        caplog: The log capture fixture.
+        summary: The one summary line.
+        recommendation: The Recommendation section body.
+        mode: Whether the head carries a ``wrapup-mode: light`` line.
+
+    Returns:
+        Everything logged at WARNING while the detector ran.
+    """
+    head_lines = [VERIFIED_AT] + (["wrapup-mode: light"] if mode else []) + [summary]
+    body = _body(head_lines, overrides={"Recommendation": recommendation})
+    head, sections = mod._split(body)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        assert mod._warn_if_restating(head, sections) is None
+    return caplog.text
+
+
+@pytest.mark.parametrize("slot_name", ["summary", "recommendation"])
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Merge after CI. New CLI = bump: minor.",
+        "Approve and merge.",
+        "Ready to merge; cc @reviewer. Follow-up to #1032; no issue closed.",
+        "light-code: reporters skipped; publishing re-runs the classifier fail-closed",
+        "Adds a CI Status refresh so the posted wrap-up cannot go stale.",
+        "Fixes the pre-commit step that discarded computed repairs.",
+        "Design flagged a dead return value; fixed in abc1234.",
+    ],
+)
+def test_warn_if_restating_is_silent_on_real_lines_that_assert_no_status(
+    caplog: pytest.LogCaptureFixture, line: str, slot_name: str
+) -> None:
+    """Behavior: lines from merged wrap-ups that assert no status never warn.
+
+    This is the load-bearing test. A detector that warns on prose describing
+    work trains authors to ignore every warning, so the false-positive rate
+    is the whole value of the check. The last three lines mention CI,
+    pre-commit and a reporter verdict respectively without asserting status.
+
+    Args:
+        line: A real line, placed in the slot under test.
+        slot_name: Which judgment slot carries *line*.
+    """
+    summary = line if slot_name == "summary" else "Adds the thing."
+    recommendation = line if slot_name == "recommendation" else "Approve and merge."
+    text = _restating_warnings(
+        caplog, summary=summary, recommendation=recommendation, mode=False
+    )
+    assert "already renders" not in text
+
+
+@pytest.mark.parametrize(
+    ("line", "sibling", "span"),
+    [
+        ("Ready. Suite green; pre-commit passes.", "## Code Quality", "Suite green"),
+        (
+            "Ready. Suite green; pre-commit passes.",
+            "## Code Quality",
+            "pre-commit passes",
+        ),
+        ("Ship it - all checks pass.", "## CI Status", "all checks pass"),
+        ("Merge. 4918 tests passed.", "## Code Quality", "4918 tests passed"),
+        ("blocking pre-commit PASS", "## Code Quality", "blocking pre-commit PASS"),
+    ],
+)
+def test_warn_if_restating_names_the_span_and_the_sibling_section(
+    caplog: pytest.LogCaptureFixture, line: str, sibling: str, span: str
+) -> None:
+    """Behavior: a status claim warns, naming the matched span and the sibling.
+
+    Args:
+        line: A Recommendation line asserting status.
+        sibling: The section the warning must name.
+        span: The matched text the warning must quote.
+    """
+    text = _restating_warnings(
+        caplog, summary="Adds the thing.", recommendation=line, mode=False
+    )
+    assert span in text
+    assert sibling in text
+
+
+def test_validate_wrapup_verdict_ignores_status_claims() -> None:
+    """Behavior: the restatement detector warns only; it never refuses."""
+    clean = _body([VERIFIED_AT, "Adds the thing."])
+    claiming = _body(
+        [VERIFIED_AT, "Adds the thing."],
+        overrides={"Recommendation": "Suite green; all checks pass."},
+    )
+    assert mod.validate_wrapup(claiming) == mod.validate_wrapup(clean) == []
+
+
+@pytest.mark.parametrize("slot_name", ["summary", "Recommendation"])
+def test_warn_if_restating_checks_both_judgment_slots(
+    caplog: pytest.LogCaptureFixture, slot_name: str
+) -> None:
+    """Behavior: a status claim warns from the summary and from the Recommendation.
+
+    Args:
+        slot_name: The slot carrying the claim; the warning must name it.
+    """
+    claim = "Suite green."
+    in_summary = slot_name == "summary"
+    text = _restating_warnings(
+        caplog,
+        summary=claim if in_summary else "Adds the thing.",
+        recommendation="Approve and merge." if in_summary else claim,
+        mode=False,
+    )
+    assert f"the {slot_name} says" in text
+
+
+def test_warn_if_restating_skips_a_compose_authored_recommendation(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Behavior: under a ``wrapup-mode:`` line only the summary is checked."""
+    recommendation_only = _restating_warnings(
+        caplog, summary="Adds the thing.", recommendation="Suite green.", mode=True
+    )
+    assert "already renders" not in recommendation_only
+    summary_claim = _restating_warnings(
+        caplog, summary="Suite green.", recommendation="Approve and merge.", mode=True
+    )
+    assert "the summary says" in summary_claim
+
+
+def test_summary_lines_ignores_machine_written_lines() -> None:
+    """Behavior: headers, mode, prior-art block and HTML comments are not prose."""
+    head = [
+        VERIFIED_AT,
+        "verified-base: abc1234",
+        "wrapup-mode: light",
+        "<!-- internal note -->",
+        "The one real summary line.",
+        "prior-art-searched: yes",
+        "- evidence line one",
+        "- evidence line two",
+    ]
+    assert mod._summary_lines(head) == ["The one real summary line."]
+
+
 def test_validate_wrapup_accepts_the_same_body_once_one_section_is_a_real_finding() -> (
     None
 ):

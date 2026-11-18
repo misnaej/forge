@@ -355,7 +355,11 @@ latest pre-commit run, CI Status "pending — PR not yet published" — and
 required report is missing. Delegate the slots to `pr-manager` ("fill
 wrap-up slots" task) together with the squash-merge message, which it
 returns and never embeds in the wrap-up. `forge-pr-wrapup validate`
-refuses any unfilled slot.
+refuses any unfilled slot, and **warns — never refuses — when a slot
+restates `Code Quality` or `CI Status`, or when the body runs long**
+(FOUNDATION §6). Those two sections are rendered from the evidence, so a
+summary or Recommendation repeating them says nothing new; say what
+changed and what the reader must decide.
 
 `forge-pr-create` enforces this: it refuses unless the wrap-up in the
 checkout it publishes names that checkout's `HEAD` — authoring at one
@@ -406,7 +410,10 @@ Verification is done, fixes are committed, and the wrap-up is authored
    descriptions"):
    ```markdown
    ## Summary
-   <2–4 plain-English sentences per FOUNDATION §6 \"PR descriptions\">
+   <2–4 plain-English sentences per FOUNDATION §6 \"PR descriptions\" —
+   the change and what it means for the reader. No release bookkeeping:
+   no word counts for this repo's own documents, no note that a changelog
+   fragment exists, no check status (that is `Test plan`).>
 
    ## Changes
    <bullets — technical detail lives here>
