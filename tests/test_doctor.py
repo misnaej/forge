@@ -299,15 +299,14 @@ def test_version_currency_silent_when_not_behind(
 # --- _check_version_skew() --------------------------------------------------
 
 
-def test_version_skew_aligned_normalizes_dev_suffix(
+def test_version_skew_dev_build_is_behind_the_release_it_anticipates(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Same X.Y.Z across pip and the git hooks reports aligned, dev-suffix and all.
+    """A development build precedes the release of the same triple.
 
-    MOCK SETUP: pip reports an editable-install dev suffix
-    (``2.23.1.dev2+gabc``), the hook sidecar reports bare ``2.23.1`` —
-    parse_semver normalizes both to the same triple.
+    MOCK SETUP: pip reports ``2.23.1.dev2+gabc``, the hook sidecar reports
+    the ``2.23.1`` release; the pip surface is the one behind.
     """
     monkeypatch.setattr(
         version_surfaces.metadata, "version", lambda _dist: "2.23.1.dev2+gabc"
@@ -316,6 +315,34 @@ def test_version_skew_aligned_normalizes_dev_suffix(
     githooks.mkdir()
     (githooks / version_surfaces.HOOK_VERSION_SIDECAR).write_text(
         "2.23.1", encoding="utf-8"
+    )
+
+    results = doctor._check_version_skew(tmp_path)
+
+    assert len(results) == 1
+    assert results[0].name == "version_skew:pip_package"
+    assert results[0].info
+    assert "2.23.1.dev2+gabc" in results[0].detail
+    assert "2.23.1" in results[0].detail
+    assert "forge-upgrade --apply" in results[0].detail
+
+
+def test_version_skew_same_build_aligned_despite_local_suffix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The same development build is aligned with or without its ``+gSHA`` suffix.
+
+    MOCK SETUP: pip reports ``2.23.1.dev2+gabc``, the hook sidecar the same
+    build without the local part, ``2.23.1.dev2``.
+    """
+    monkeypatch.setattr(
+        version_surfaces.metadata, "version", lambda _dist: "2.23.1.dev2+gabc"
+    )
+    githooks = tmp_path / ".githooks"
+    githooks.mkdir()
+    (githooks / version_surfaces.HOOK_VERSION_SIDECAR).write_text(
+        "2.23.1.dev2", encoding="utf-8"
     )
 
     results = doctor._check_version_skew(tmp_path)

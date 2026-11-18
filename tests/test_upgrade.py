@@ -1402,6 +1402,25 @@ def test_pending_action_count_counts_versions_newer_than_installed(
     assert upgrade._pending_action_count(text) == 2
 
 
+@pytest.mark.parametrize(
+    ("installed", "expected"),
+    [("14.3.2.dev1+gabc", 1), ("14.3.2", 0)],
+    ids=["dev-build", "release"],
+)
+def test_pending_action_count_dev_build_precedes_release_of_same_triple(
+    monkeypatch: pytest.MonkeyPatch, installed: str, expected: int
+) -> None:
+    """A development build owes the release of its own triple; the release does not.
+
+    Args:
+        installed: Installed forge-scripts version string.
+        expected: Pending action count for the changelog text below.
+    """
+    monkeypatch.setattr(upgrade.metadata, "version", lambda _name: installed)
+    text = "## v14.3.2\n\n**Action:** x.\n"
+    assert upgrade._pending_action_count(text) == expected
+
+
 def test_pending_action_count_zero_on_package_not_found(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

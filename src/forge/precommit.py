@@ -147,6 +147,7 @@ from forge.version_surfaces import (
     editable_install_origin,
     hook_sidecar_version,
     pip_version,
+    release_order_key,
 )
 
 
@@ -545,12 +546,19 @@ def _check_hook_sidecar(repo_root: Path) -> StepResult | None:
     the installed package means that refresh failed and the hooks run
     older logic than the CLIs.
 
+    Ordering comes from :func:`~forge.version_surfaces.release_order_key`,
+    the one definition of which forge build is newer, so a sidecar written
+    one commit before a release is not read as level with that release.
+    On a bare triple it was, which is the shape this repo's own hooks are
+    in for most of a release cycle.
+
     Args:
         repo_root: Git repo root.
 
     Returns:
         A blocking ``StepResult`` when the sidecar lags; ``None`` when it
-        matches, or when either surface is absent (nothing to compare).
+        matches or leads, or when either surface is absent (nothing to
+        compare).
     """
     recorded = hook_sidecar_version(repo_root)
     if recorded is None:
@@ -558,7 +566,7 @@ def _check_hook_sidecar(repo_root: Path) -> StepResult | None:
     have = pip_version()
     if have is None:
         return None
-    have_t, recorded_t = parse_semver(have), parse_semver(recorded)
+    have_t, recorded_t = release_order_key(have), release_order_key(recorded)
     if have_t is None or recorded_t is None or recorded_t >= have_t:
         return None
     return StepResult(

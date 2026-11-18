@@ -3966,6 +3966,22 @@ def test_check_hook_sidecar_blocks_when_behind(
     assert precommit.SKEW_REMEDIATION["git hooks"] in result.output
 
 
+def test_check_hook_sidecar_blocks_dev_build_behind_its_release(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A sidecar written by a development build precedes the release of its triple."""
+    monkeypatch.setattr(
+        precommit, "hook_sidecar_version", lambda _root: "14.3.2.dev1+gabc"
+    )
+    monkeypatch.setattr(precommit, "pip_version", lambda: "14.3.2")
+    result = precommit._check_hook_sidecar(tmp_path)
+    assert result is not None
+    assert not result.passed
+    assert "14.3.2.dev1+gabc" in result.output
+    assert "install-forge-githooks" in result.output
+
+
 # ---------------------------------------------------------------------------
 # step_env_sync — precheck wiring
 # ---------------------------------------------------------------------------

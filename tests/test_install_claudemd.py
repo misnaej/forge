@@ -822,6 +822,12 @@ def test_is_behind_false_when_equal_or_newer() -> None:
     assert install_claudemd._is_behind("1.3.0", "v1.2.9") is False
 
 
+def test_is_behind_dev_build_precedes_release_of_same_triple() -> None:
+    """A dev build precedes its triple's release; the release does not."""
+    assert install_claudemd._is_behind("14.3.2.dev1+gabc", "v14.3.2") is True
+    assert install_claudemd._is_behind("14.3.2", "v14.3.2") is False
+
+
 def test_is_behind_false_when_either_unresolvable() -> None:
     """None on either side → no warning."""
     assert install_claudemd._is_behind(None, "v1.2.9") is False

@@ -80,6 +80,7 @@ from forge.version_surfaces import (
     hook_sidecar_version,
     installed_behind_checkout,
     pip_version,
+    release_order_key,
 )
 
 
@@ -275,11 +276,13 @@ def _check_version_skew(repo_root: Path) -> list[CheckResult]:
     """Compare forge's version across its install surfaces and flag drift.
 
     Reads the two pip and git-hook surfaces a single forge install presents —
-    the pip ``forge-scripts`` package and the git-hook sidecar — normalizes
-    each with :func:`parse_semver` (so a ``.devN+g<sha>`` editable version
-    compares cleanly), and reports the ones lagging the highest (current) line
-    with the exact command to converge them. Absent surfaces (no hooks — e.g. a
-    pip-only consumer) are skipped, not failed.
+    the pip ``forge-scripts`` package and the git-hook sidecar — orders them
+    by :func:`~forge.version_surfaces.release_order_key`, and reports the
+    ones lagging the highest line with the exact command to converge them.
+    A lagging row names the versions the surfaces report rather than their
+    triples, because a build one commit before a release shares that
+    release's triple. Absent surfaces (no hooks — e.g. a pip-only consumer)
+    are skipped, not failed.
 
     Posture: a lagging surface is reported as an **advisory** (``info``), never
     a failure — it carries the remediation but never sways ``forge-doctor``'s
@@ -305,7 +308,11 @@ def _check_version_skew(repo_root: Path) -> list[CheckResult]:
         "pip package": pip_version(),
         "git hooks": hook_sidecar_version(repo_root),
     }
-    parsed = {name: parse_semver(v) for name, v in raw.items() if v is not None}
+    # Ordered by `release_order_key`, the shared definition, so a surface
+    # built one commit past a tag is not read as level with that tag's
+    # release. Displayed as the triple: the fourth element orders, it does
+    # not name a version.
+    parsed = {name: release_order_key(v) for name, v in raw.items() if v is not None}
     comparable = {name: t for name, t in parsed.items() if t is not None}
     if len(comparable) < _MIN_SURFACES_TO_COMPARE:
         only = next(iter(comparable), "no")
@@ -320,7 +327,7 @@ def _check_version_skew(repo_root: Path) -> list[CheckResult]:
 
     current = max(comparable.values())
     behind = {name: t for name, t in comparable.items() if t < current}
-    cur = ".".join(str(n) for n in current)
+    cur = ".".join(str(n) for n in current[:3])
     if not behind:
         aligned = ", ".join(sorted(comparable))
         return [
@@ -331,17 +338,21 @@ def _check_version_skew(repo_root: Path) -> list[CheckResult]:
             )
         ]
 
+    # Name the versions the surfaces actually report, not their triples: a
+    # build one commit before a release shares that release's triple, so a
+    # triple-only message reads "at vX, behind current vX".
+    ahead = next(name for name, key in comparable.items() if key == current)
     return [
         CheckResult(
             name=f"version_skew:{name.replace(' ', '_')}",
             passed=False,
             info=True,
             detail=(
-                f"{name} at v{'.'.join(str(n) for n in triple)}, behind current "
-                f"v{cur} — run `{SKEW_REMEDIATION[name]}`"
+                f"{name} at {raw[name]}, behind {ahead} at {raw[ahead]} "
+                f"— run `{SKEW_REMEDIATION[name]}`"
             ),
         )
-        for name, triple in sorted(behind.items())
+        for name in sorted(behind)
     ]
 
 

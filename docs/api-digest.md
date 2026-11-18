@@ -2538,7 +2538,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 - `read_json(path: Path) -> tuple[dict, str | None]` — Read a JSON object file. Returns (data, error_message_or_None).
 - `pip_version() -> str | None` — Version of the installed ``forge-scripts`` package, or None if absent.
-- `_release_order_key(version: str) -> tuple[int, int, int, int] | None` _(internal)_ — Return a sort key for *version* that places a dev build below its triple.
+- `release_order_key(version: str) -> tuple[int, int, int, int] | None` — Return a sort key for *version* that places a dev build below its triple.
 - `installed_behind_checkout(repo_root: Path) -> tuple[str, str] | None` — Return the installed and tagged versions when the install is behind.
 - `hook_sidecar_version(repo_root: Path) -> str | None` — Forge version recorded in the git-hook sidecar, or None when absent.
 - `editable_install_origin() -> Path | None` — Return the checkout an editable ``forge-scripts`` install points at.

@@ -99,16 +99,20 @@ def pip_version() -> str | None:
         return None
 
 
-def _release_order_key(version: str) -> tuple[int, int, int, int] | None:
+def release_order_key(version: str) -> tuple[int, int, int, int] | None:
     """Return a sort key for *version* that places a dev build below its triple.
+
+    The one definition of "which forge build is newer", for every caller
+    that orders two of them: the skew check across install surfaces, the
+    pre-commit git-hook sidecar gate, and the currency check against the
+    checkout's own tag.
 
     :func:`~forge.git_utils.parse_semver` stops at the triple, so a
     setuptools-scm build and the release it anticipates normalize to the
-    same value. That is right for skew between two installs and wrong
-    here: ``14.3.2.dev1`` is what one commit past ``v14.3.1`` is called,
-    so it precedes the ``v14.3.2`` tag rather than matching it. Without
-    the extra element, being exactly one patch behind — the state every
-    checkout is in right after a merge — reads as current.
+    same value — and ``14.3.2.dev1`` is what one commit past ``v14.3.1``
+    is called, so it precedes ``14.3.2`` rather than matching it. On a
+    bare triple, being exactly one patch behind reads as level, and that
+    is the state every checkout is in right after a merge.
 
     Args:
         version: A version string or tag name.
@@ -159,7 +163,7 @@ def installed_behind_checkout(repo_root: Path) -> tuple[str, str] | None:
     tags = v_tags(root, reachable_from="HEAD", release_shape=True)
     if installed is None or not tags:
         return None
-    have, want = _release_order_key(installed), _release_order_key(tags[0])
+    have, want = release_order_key(installed), release_order_key(tags[0])
     if have is None or want is None or have >= want:
         return None
     return installed, tags[0]
