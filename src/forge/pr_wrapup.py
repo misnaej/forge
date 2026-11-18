@@ -144,8 +144,8 @@ FINDING_ALLOWANCE: Final[int] = 40
 
 # Status a judgment slot must not assert, because `compose` renders it
 # mechanically into `## Code Quality` and `## CI Status` of the same
-# comment. Measured over the newest wrap-up of 24 merged PRs: 41% had a
-# slot restating a sibling section, 31% of all judgment-slot words.
+# comment. Measured over the newest wrap-up of 24 merged PRs: half
+# carried such a claim, on lines holding 27% of all judgment-slot words.
 # These match an assertion ("suite green", "472 tests pass"), never a
 # mention — "Merge after CI" and "fixes the pre-commit step" describe
 # work and must stay silent. Zero false positives over that corpus's 54
@@ -271,9 +271,9 @@ def _prior_art_block(head: list[str]) -> set[int]:
 def _summary_lines(head: list[str]) -> list[str]:
     """Return the head's summary lines — the author's prose, nothing else.
 
-    Hoisted so the single-line check and the restatement warning cannot
-    disagree about which lines the author wrote: headers, the mode line
-    and the prior-art evidence block are machine-written.
+    Shared by the single-line check and the restatement warning so both
+    agree on which lines the author wrote: the headers, the mode line and
+    the prior-art evidence block are machine-written.
 
     Args:
         head: Lines before the first ``## `` section.
@@ -416,7 +416,7 @@ def _warn_if_restating(head: list[str], sections: list[tuple[str, list[str]]]) -
                 found = pattern.search(line)
                 if found:
                     logger.warning(
-                        "wrap-up: the %s says %r, which `%s` already renders "
+                        "wrap-up: the %s says %r, which `%s` already covers "
                         "— say what changed instead, and spend the words on "
                         "the finding.",
                         slot_name,

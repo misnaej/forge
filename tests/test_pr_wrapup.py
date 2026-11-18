@@ -540,7 +540,7 @@ def test_warn_if_restating_is_silent_on_real_lines_that_assert_no_status(
     text = _restating_warnings(
         caplog, summary=summary, recommendation=recommendation, mode=False
     )
-    assert "already renders" not in text
+    assert "already covers" not in text
 
 
 @pytest.mark.parametrize(
@@ -611,7 +611,7 @@ def test_warn_if_restating_skips_a_compose_authored_recommendation(
     recommendation_only = _restating_warnings(
         caplog, summary="Adds the thing.", recommendation="Suite green.", mode=True
     )
-    assert "already renders" not in recommendation_only
+    assert "already covers" not in recommendation_only
     summary_claim = _restating_warnings(
         caplog, summary="Suite green.", recommendation="Approve and merge.", mode=True
     )
