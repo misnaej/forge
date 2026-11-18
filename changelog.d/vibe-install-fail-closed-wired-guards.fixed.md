@@ -1,3 +1,0 @@
-bump: patch
-
-- `install-forge-vibe` now fails closed when a guard script is missing from the installed package: exit 2, nothing written, message names the script and `Reinstall forge-scripts.` — previously the roster sidecar still named the missing script and the guard was silently disarmed at runtime (a missing hook command exits 127, which does not block the tool call); validation covers wired scripts, sourced helpers (discovered from script text, so a missing helper is still caught), and the Vibe-only extras; also runs under `--verify`, and a test pins that a consumer file at a forge-owned hook path is overwritten by the shipped guard
