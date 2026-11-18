@@ -448,9 +448,14 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `check_pending(root: Path) -> list[str]` — Validate every pending fragment under *root*.
 - `check_staged(root: Path, paths: list[str]) -> list[str]` — Validate the staged (index) copy of each fragment in *paths*.
 - `branch_added_fragments(root: Path, *, base_ref: str | None = None) -> list[str]` — Return the fragment paths this branch adds and the base does not have.
-- `_fragments_in_tag_tree(root: Path, tag: str) -> set[str]` _(internal)_ — Return the repo-relative fragment paths present in *tag*'s tree.
+- `_fragments_in_tag_tree(root: Path, tag: str, *, check: bool = False) -> set[str]` _(internal)_ — Return the repo-relative fragment paths present in *tag*'s tree.
+- `class TagGap` — A default-branch commit that brought fragments no tag names.
+- `_tagged_commits(root: Path) -> dict[str, str]` _(internal)_ — Map each ``v*`` tag's commit SHA to the tag name.
+- `tag_gaps(root: Path, *, since: str | None = None) -> list[TagGap]` — Find commits that added fragments but carry no tag of their own.
+- `_earliest_tag_holding(root: Path, fragments: tuple[str, ...]) -> str | None` _(internal)_ — Return the oldest ``v*`` tag whose tree holds any of *fragments*.
 - `_partition_by_release_tag(root: Path, fragments: list[Fragment]) -> tuple[list[tuple[str, list[Fragment]]], list[Fragment]]` _(internal)_ — Group *fragments* by the earliest tag whose tree holds each one.
 - `plan_assembly(root: Path, latest_tag: str) -> AssemblyPlan | None` — Plan the assembly: tag-aware version and per-tag fragment groups.
+- `_cmd_tag_gaps(root: Path, since: str | None) -> int` _(internal)_ — Report default-branch commits whose fragments got no tag of their own.
 - `_cmd_check(root: Path) -> int` _(internal)_ — Report on pending fragments; gate on validity.
 - `_assemble_and_stage(root: Path, fragments: list[Fragment], version: str, date: str, *, delete: bool) -> int` _(internal)_ — Assemble *fragments* into ``CHANGELOG.md`` under *version*; maybe stage.
 - `_read_changelog(root: Path) -> str` _(internal)_ — Return ``CHANGELOG.md``'s text, or ``""`` when the file does not exist.

@@ -60,6 +60,25 @@ strongest `bump:` level among the fragments the merge brought.
   fragments wait for their prose.
 - **Idempotent, and never silent**: an existing tag means another runner
   won; no new fragments means nothing to tag. Each case says so.
+- **A merge can still miss its tag, and that is reported, not hidden**:
+  the tag push can be refused, or `auto-tag` can fail for its own
+  reasons. The next merge's `auto-tag` then counts the orphaned fragments
+  into its own tag, so the version stays correct while that merge has no
+  release naming it and the next tag's notes cover two merges.
+  `forge-changelog tag-gaps` reads git alone and reports it — `HEAD` by
+  default, any window with `--since`. The `tag-main` job runs it after
+  `auto-tag`, including when `auto-tag` itself failed.
+  - **What that wiring does not reach**: the job is gated on CI
+    succeeding on a push to the default branch, so a merge whose CI went
+    red, whose run never fired, or whose runner died skips the job
+    entirely — the step never runs, and the next merge's `HEAD` window
+    cannot see backwards to the orphan. Those cases need `tag-gaps
+    --since <rev>` run deliberately, over a window that reaches back
+    past the suspect merge.
+- **One refusal is worth naming**: a remote applies its workflow-permission
+  rule to tag pushes, so tagging a commit whose `.github/workflows/` state
+  is not the one the branch tips hold is refused. `auto-tag` reports that
+  cause and its remedy; the wording lives there, not here.
 
 **Invariant.** The increment is the strongest level among fragments new
 since the latest tag; an already-tagged fragment never bumps again.
@@ -76,6 +95,24 @@ guessing the level. **Enforced by**
 the winner instead of failing. **Enforced by**
 `test_main_auto_tag_existing_tag_defers_to_winner` and
 `test_main_auto_tag_push_race_defers_to_remote_winner`.
+
+**Invariant.** A tag push the remote refuses under its workflow-permission
+rule is reported with that cause, and still fails the run. **Enforced by**
+`test_main_auto_tag_workflow_permission_refusal_reports_cause` and
+`test_push_tag_workflow_permission_refusal_is_classified`, with
+`test_push_tag_other_rejection_is_not_workflow_scope_refusal` as the
+non-misclassification half — a rejection for any other reason must not
+send the reader after a credential that was never the problem.
+
+**Invariant.** `forge-changelog tag-gaps` reports a commit that brought
+fragments but carries no tag of its own, naming the tag its fragments
+shipped under. **Enforced by**
+`test_tag_gaps_reports_fragment_commit_with_no_tag`,
+`test_tag_gaps_names_the_earliest_tag_holding_the_fragments`,
+`test_tag_gaps_default_window_is_head_only`,
+`test_tag_gaps_annotated_tag_counts_as_tagged` and
+`test_cmd_tag_gaps_exit_codes_and_output`. The claim is about the CLI: the
+`tag-main` job runs it on every merge, but no test covers that wiring.
 
 ## 3. The changelog is prose, written after the fact
 

@@ -73,3 +73,26 @@ jobs:
             rc=0
           fi
           exit $rc
+
+      # Reads git alone, so it reports this merge having no tag of its own
+      # whatever the step above did — a refused push, or any other way it
+      # failed to tag. `always()` because that failure is the case worth
+      # catching. Note the job itself is gated on CI succeeding, so a
+      # merge whose CI went red never reaches this step; finding that one
+      # needs `tag-gaps --since <rev>` run deliberately.
+      - name: Confirm this merge has a release tag of its own
+        if: always()
+        run: |
+          # `set +e` first: the runner uses `bash -e`, where a command
+          # substitution that exits non-zero ends the step at the
+          # assignment — losing the very report this step exists to print.
+          set +e
+          out=$(forge-changelog tag-gaps 2>&1); rc=$?
+          echo "$out"
+          echo "$out" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$rc" != "0" ]; then
+            # A fixed annotation body: `$out` is multi-line, and every line
+            # of step output is parsed as a possible workflow command.
+            echo "::error title=No release tag for this merge::see the step summary"
+          fi
+          exit $rc

@@ -2963,6 +2963,7 @@ def test_push_tag_real_push_to_bare_lands_on_remote(tmp_path: Path) -> None:
 
     assert result.ok is True
     assert result.returncode == 0
+    assert result.workflow_scope_refused is False
     remote_tag = subprocess.run(
         ["git", "rev-parse", "refs/tags/v1.2.3"],
         cwd=bare,
@@ -2980,6 +2981,61 @@ def test_push_tag_real_push_to_bare_lands_on_remote(tmp_path: Path) -> None:
         check=True,
     ).stdout.strip()
     assert remote_tag == local_tag
+
+
+def _push_tag_through_rejecting_hook(
+    tmp_path: Path, message: str
+) -> git_utils.PushResult:
+    """Push tag ``v14.3.1`` to a bare remote whose hook refuses it with *message*.
+
+    Args:
+        tmp_path: Parent directory for the work/bare pair.
+        message: Text the ``pre-receive`` hook writes to stderr.
+
+    Returns:
+        The :func:`~forge.git_utils.push_tag` outcome.
+    """
+    work, bare = _init_single_track_repo(tmp_path)
+    subprocess.run(["git", "tag", "v14.3.1"], cwd=work, env=_GIT_ENV, check=True)
+    hook = bare / "hooks" / "pre-receive"
+    hook.write_text(f"#!/bin/sh\necho '{message}' >&2\nexit 1\n")
+    hook.chmod(0o755)
+    return git_utils.push_tag(work, "v14.3.1")
+
+
+def test_push_tag_workflow_permission_refusal_is_classified(tmp_path: Path) -> None:
+    """The remote's workflow-permission refusal is flagged, not left as text.
+
+    The message is the verbatim line from a real refused tag push, so a
+    change to the matched clause shows up here as an edit, not as silence.
+    Without the flag the caller can only report a generic failure.
+    """
+    line = (
+        "refusing to allow a GitHub App to create or update workflow "
+        "`.github/workflows/tag-release.yml` without `workflows` permission"
+    )
+
+    result = _push_tag_through_rejecting_hook(tmp_path, line)
+
+    assert result.ok is False
+    assert result.workflow_scope_refused is True
+
+
+def test_push_tag_other_rejection_is_not_workflow_scope_refusal(
+    tmp_path: Path,
+) -> None:
+    """Any other server rejection stays a plain failure.
+
+    Classifying it as a scope refusal would send the reader to grant a
+    permission that is not the problem.
+    """
+    result = _push_tag_through_rejecting_hook(
+        tmp_path, "protected branch hook declined"
+    )
+
+    assert result.ok is False
+    assert "remote rejected" in result.stderr
+    assert result.workflow_scope_refused is False
 
 
 def test_push_tag_argv_uses_fully_qualified_same_name_refspec(

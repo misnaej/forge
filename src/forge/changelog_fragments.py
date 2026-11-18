@@ -76,6 +76,7 @@ from forge.git_utils import (
     create_commit,
     diff_names_z,
     emit,
+    fetch_tags_best_effort,
     find_open_pr_by_head_prefix,
     git_z_names,
     latest_v_tag,
@@ -103,6 +104,11 @@ logger = logging.getLogger(__name__)
 
 
 FRAGMENTS_DIR = Path("changelog.d")
+
+# Fields per ``for-each-ref`` tag line: direct object, peeled object (annotated
+# tags only), then the short name. An unpeeled line carries two.
+_TAG_LINE_PEELED_FIELDS = 3
+_TAG_LINE_DIRECT_FIELDS = 2
 
 # Fragment type token → release-entry group heading, in assembly order.
 # dict order IS the rendered group order — deliberate and stable.
@@ -585,22 +591,182 @@ def branch_added_fragments(root: Path, *, base_ref: str | None = None) -> list[s
     )
 
 
-def _fragments_in_tag_tree(root: Path, tag: str) -> set[str]:
+def _fragments_in_tag_tree(root: Path, tag: str, *, check: bool = False) -> set[str]:
     """Return the repo-relative fragment paths present in *tag*'s tree.
 
     Args:
         root: Repository root directory.
         tag: An existing tag name.
+        check: Raise when git fails instead of reading as an empty tree.
+            Callers that turn this listing into a statement about where a
+            fragment shipped pass ``True``: an unreadable tree is not the
+            same as a tag holding nothing, and reporting it as such puts a
+            false sentence in front of a reader.
 
     Returns:
-        Paths under ``changelog.d/`` as ``git ls-tree`` prints them;
-        empty when the tag has none (or cannot be read).
+        Paths under ``changelog.d/`` as ``git ls-tree`` prints them; empty
+        when the tag holds none — or, with *check* off, when it could not
+        be read.
     """
     return set(
         git_z_names(
-            root, "ls-tree", "-r", "-z", "--name-only", tag, "--", str(FRAGMENTS_DIR)
+            root,
+            "ls-tree",
+            "-r",
+            "-z",
+            "--name-only",
+            tag,
+            "--",
+            str(FRAGMENTS_DIR),
+            check=check,
         )
     )
+
+
+@dataclass(frozen=True)
+class TagGap:
+    """A default-branch commit that brought fragments no tag names.
+
+    Attributes:
+        commit: The full commit SHA.
+        subject: The commit's subject line.
+        fragments: Repo-relative fragment paths the commit added.
+        folded_into: The earliest tag whose tree holds those fragments, or
+            ``None`` when no tag counts them yet. A fold is still a gap:
+            the commit shipped without a release of its own, and the next
+            tag's notes carry two merges' worth of change.
+    """
+
+    commit: str
+    subject: str
+    fragments: tuple[str, ...]
+    folded_into: str | None
+
+
+def _tagged_commits(root: Path) -> dict[str, str]:
+    """Map each ``v*`` tag's commit SHA to the tag name.
+
+    Annotated tags are peeled (``*objectname``), so a tag object's own SHA
+    never stands in for the commit it names.
+
+    Args:
+        root: Repository root directory.
+
+    Returns:
+        Commit SHA to tag name; empty when no ``v*`` tag exists.
+    """
+    raw = run_git(
+        "for-each-ref",
+        "--format=%(objectname) %(*objectname) %(refname:short)",
+        "refs/tags/v*",
+        cwd=root,
+        # A repo with no tags lists nothing and exits 0, so only a broken
+        # listing raises — and that must raise rather than read as "no tag
+        # anywhere", which would report every commit as a gap.
+        check=True,
+    )
+    tagged: dict[str, str] = {}
+    for line in raw.splitlines():
+        parts = line.split()
+        if len(parts) == _TAG_LINE_PEELED_FIELDS:
+            direct, peeled, name = parts
+            tagged[peeled or direct] = name
+        elif len(parts) == _TAG_LINE_DIRECT_FIELDS:
+            tagged[parts[0]] = parts[1]
+    return tagged
+
+
+def tag_gaps(root: Path, *, since: str | None = None) -> list[TagGap]:
+    """Find commits that added fragments but carry no tag of their own.
+
+    The tag-per-merge invariant says every merge bringing fragments gets a
+    release tag. A merge can miss one for reasons the tagging step never
+    sees — its run never fired, CI went red, the runner died, or the remote
+    refused the tag push — so this reads git alone and never consults why.
+    The next merge's ``auto-tag`` then counts the orphaned fragments into
+    its own tag, which repairs the version but loses the per-merge release
+    and silently doubles up the notes.
+
+    First-parent only: a squash-merging repo records each merge as one
+    commit on the default branch, so a merge that added a fragment is a
+    first-parent commit whose diff adds a path under ``changelog.d/``.
+
+    Args:
+        root: Repository root directory.
+        since: Revision to start after, exclusive. ``None`` examines
+            ``HEAD`` alone — the shape for a tagging job checking the
+            merge it just handled.
+
+    Returns:
+        One :class:`TagGap` per offending commit, newest first; empty when
+        every fragment-bearing commit in the window carries its own tag.
+    """
+    # `-1` is an option, so it has to precede `--end-of-options`: after it
+    # git reads it as a revision and refuses the whole command. `check` is
+    # on because that refusal exits non-zero with no output, which a
+    # tolerant call would hand back as "no gaps" — a broken probe must not
+    # read as a clean one. An empty window exits 0, so it still returns [].
+    limit = [] if since else ["-1"]
+    raw = run_git(
+        "log",
+        "--first-parent",
+        "--diff-filter=A",
+        "--name-only",
+        "-z",
+        "--format=%x1e%H%x1f%s",
+        *limit,
+        "--end-of-options",
+        f"{since}..HEAD" if since else "HEAD",
+        "--",
+        str(FRAGMENTS_DIR),
+        cwd=root,
+        check=True,
+    )
+    tagged = _tagged_commits(root)
+    gaps: list[TagGap] = []
+    for record in raw.split("\x1e"):
+        if not record.strip():
+            continue
+        header, _, names = record.partition("\x00")
+        commit, _, subject = header.partition("\x1f")
+        # Git writes the format line, then a NUL, then a newline before the
+        # first name: the names need stripping, not just filtering, or each
+        # carries that newline into the tag-tree comparison.
+        added = tuple(sorted(n.strip() for n in names.split("\x00") if n.strip()))
+        if not added or commit in tagged:
+            continue
+        gaps.append(
+            TagGap(
+                commit=commit,
+                subject=subject.strip(),
+                fragments=added,
+                folded_into=_earliest_tag_holding(root, added),
+            )
+        )
+    return gaps
+
+
+def _earliest_tag_holding(root: Path, fragments: tuple[str, ...]) -> str | None:
+    """Return the oldest ``v*`` tag whose tree holds any of *fragments*.
+
+    A fragment stays in the tree until an assembly PR deletes it, so it is
+    present in every tag cut after the one that counted it. The oldest
+    holder is therefore the tag that shipped it; :func:`v_tags` lists
+    newest first, hence the reversal.
+
+    Args:
+        root: Repository root directory.
+        fragments: Repo-relative fragment paths.
+
+    Returns:
+        The oldest tag whose tree holds one, or ``None`` when no tag does —
+        meaning the fragments are still waiting for any release.
+    """
+    wanted = set(fragments)
+    for tag in reversed(v_tags(root)):
+        if wanted & _fragments_in_tag_tree(root, tag, check=True):
+            return tag
+    return None
 
 
 def _partition_by_release_tag(
@@ -683,6 +849,53 @@ def plan_assembly(root: Path, latest_tag: str) -> AssemblyPlan | None:
         level = None
         version = latest_tag.removeprefix("v")
     return AssemblyPlan(tagged=tagged, untagged=untagged, version=version, level=level)
+
+
+def _cmd_tag_gaps(root: Path, since: str | None) -> int:
+    """Report default-branch commits whose fragments got no tag of their own.
+
+    Reads git only, so it reports the lost release whatever caused it —
+    including the causes the tagging step cannot observe, which is why it
+    is not folded into ``auto-tag``'s own result. Tags are refreshed first:
+    a CI checkout may start without them, and a local-only view would call
+    a tagged commit untagged.
+
+    Args:
+        root: Repository root directory.
+        since: Revision to start after, exclusive, or ``None`` for ``HEAD``
+            alone.
+
+    Returns:
+        ``0`` when every fragment-bearing commit in the window carries its
+        own tag; ``2`` when any does not.
+    """
+    for note in fetch_tags_best_effort(root):
+        emit(f"tag-gaps: {note}")
+    gaps = tag_gaps(root, since=since)
+    window = f"{since}..HEAD" if since else "HEAD"
+    if not gaps:
+        emit(f"tag-gaps: every fragment-bearing commit in {window} has its own tag.")
+        return 0
+    for gap in gaps:
+        fold = (
+            f"its fragments ship under {gap.folded_into}"
+            if gap.folded_into
+            else "its fragments are in no tag yet"
+        )
+        emit(
+            f"tag-gaps: {gap.commit[:7]} brought "
+            f"{len(gap.fragments)} fragment(s) but no tag names it — "
+            f"{fold}. {gap.subject}"
+        )
+    emit(
+        f"tag-gaps: {len(gaps)} commit(s) in {window} carry no release tag "
+        "of their own. Where a later tag holds their fragments the version "
+        "is intact, but those merges have no release to name and the next "
+        "tag's notes cover more than one merge. On a branch the window also "
+        "spans commits that have not merged yet, which no tag names because "
+        "none is due."
+    )
+    return 2
 
 
 def _cmd_check(root: Path) -> int:
@@ -1027,6 +1240,13 @@ def _create_and_push_tag(root: Path, version: str, level: str, n_fragments: int)
     bounded and never prompts: this runs unattended in CI, where a
     credential prompt would hang the job instead of failing it.
 
+    A refusal under the remote's workflow-permission rule
+    (:attr:`~forge.git_utils.PushResult.workflow_scope_refused`) is
+    reported with its cause and remedy rather than as a generic push
+    failure. It still returns ``2``: the merge has no tag of its own, a
+    lost release until something cuts one, and a warning would leave that
+    looking handled.
+
     Args:
         root: Repository root directory.
         version: The version string to tag (e.g., "v1.2.3").
@@ -1051,6 +1271,22 @@ def _create_and_push_tag(root: Path, version: str, level: str, n_fragments: int)
         if tag_on_remote(root, version):
             emit(f"auto-tag: {version} appeared remotely — another runner won.")
             return 0
+        if push.workflow_scope_refused:
+            emit(
+                f"auto-tag: the remote refused {version} under the "
+                "workflow-permission rule. The commit being tagged reaches a "
+                "different .github/workflows/ state than the remote's branch "
+                "tips hold — most often because a later merge changed a "
+                "workflow file — and this credential cannot carry one. "
+                f"No tag now names this commit: the next auto-tag that "
+                f"succeeds counts these fragments, or `forge-release` cuts "
+                f"{version} by hand. Only a pushing credential carrying the "
+                f"workflows scope removes the refusal — scoped to this "
+                f"repository, since it is the narrowest that works; no "
+                f"permission on the default token can. Git said: "
+                f"{push.stderr}"
+            )
+            return 2
         emit(
             f"auto-tag: pushing {version} FAILED (exit {push.returncode}) and "
             f"no concurrent winner explains it: {push.stderr}"
@@ -1528,6 +1764,17 @@ def main(argv: list[str] | None = None) -> int:
         "(tag-per-merge CI seam; pushes the tag only; never tags a repo "
         "with a plugin manifest, which is tagged at the assembly merge)",
     )
+    gaps = sub.add_parser(
+        "tag-gaps",
+        help="report commits that brought changelog fragments but carry no "
+        "release tag of their own (reads git only, so it catches a lost "
+        "tag whatever stopped it)",
+    )
+    gaps.add_argument(
+        "--since",
+        default="",
+        help="revision to start after, exclusive (default: HEAD alone)",
+    )
     relpr = sub.add_parser(
         "release-pr",
         help="branch, stage, commit and open the assembly PR for the "
@@ -1553,6 +1800,7 @@ def main(argv: list[str] | None = None) -> int:
         "next-version": lambda: _cmd_next_version(root),
         "release": lambda: _cmd_release(root, args.date),
         "auto-tag": lambda: _cmd_auto_tag(root),
+        "tag-gaps": lambda: _cmd_tag_gaps(root, args.since or None),
         "release-pr": lambda: _cmd_release_pr(root, args.date, draft=args.draft),
         "restrand": lambda: _cmd_restrand(root, args.bump),
         "assemble": lambda: _cmd_assemble(
