@@ -17,6 +17,7 @@ import pytest
 
 from forge import commit
 from forge.commit import CommitRefusedError, Request
+from forge.text_budget import ceiling
 from tests.conftest import (
     GIT_ENV,
     commit_all,
@@ -82,13 +83,12 @@ def test_current_branch_feature_returns_name(feature_repo: Path) -> None:
     "message",
     [
         "not conventional",
-        "fix: " + " ".join(["w"] * 55),
         "fix: x\n\nCo-Authored-By: Claude <noreply@anthropic.com>",
     ],
-    ids=["bad-title", "56-words", "ai-attribution"],
+    ids=["bad-title", "ai-attribution"],
 )
 def test_check_message_refuses(message: str) -> None:
-    """Non-conventional, over-long or AI-attributed messages are refused.
+    """Non-conventional or AI-attributed messages are refused.
 
     Args:
         message: Commit message breaking one rule.
@@ -97,13 +97,51 @@ def test_check_message_refuses(message: str) -> None:
         commit.check_message(message)
 
 
-def test_check_message_within_margin_passes_with_warning(
-    caplog: pytest.LogCaptureFixture,
+def _message_of_words(total: int, *, tail: str = "") -> str:
+    """Build a conventional message of exactly ``total`` words, ``"fix: "`` included.
+
+    Args:
+        total: Whole-message word count.
+        tail: Extra text appended after the padding (counted in ``total``).
+
+    Returns:
+        The message.
+    """
+    padding = total - 1 - len(tail.split())
+    return " ".join(["fix:", *(["w"] * padding), *([tail] if tail else [])])
+
+
+@pytest.mark.parametrize(
+    "total",
+    [
+        commit.COMMIT_MAX_WORDS + 1,
+        ceiling(commit.COMMIT_MAX_WORDS),
+        ceiling(commit.COMMIT_MAX_WORDS) + 1,
+        200,
+    ],
+)
+def test_check_budget_never_refuses_and_warns_only_above_the_ceiling(
+    total: int, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A 52-word message is over the 50 target, under the ceiling: warn, pass."""
+    """Behavior: length never refuses a commit; only past the ceiling does it warn.
+
+    Args:
+        total: Whole-message word count under test.
+    """
     with caplog.at_level(logging.WARNING):
-        commit.check_message("fix: " + " ".join(["w"] * 51))
-    assert "52 words" in caplog.text
+        commit.check_budget_and_attribution(_message_of_words(total))
+    assert (f"{total} words" in caplog.text) is (
+        total > ceiling(commit.COMMIT_MAX_WORDS)
+    )
+
+
+def test_a_long_message_with_ai_attribution_is_still_refused() -> None:
+    """Behavior: the length warning does not short-circuit the attribution check."""
+    message = _message_of_words(
+        200, tail="Co-Authored-By: Claude <noreply@anthropic.com>"
+    )
+    with pytest.raises(CommitRefusedError):
+        commit.check_budget_and_attribution(message)
 
 
 def test_check_message_accepts_valid() -> None:

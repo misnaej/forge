@@ -496,6 +496,11 @@ class RunOptions:
     inputs: IndexInputs
     dry_run: bool = False
     max_chars: int = BODY_LIMIT
+    # None runs unconditionally. A number makes the run self-skip when the
+    # Index is younger than that, so a caller fired on a frequent event —
+    # every PR merge — refreshes it at most that often without deciding
+    # anything itself.
+    fresh_within_hours: int | None = None
 
 
 class _RefusedError(Exception):
@@ -513,8 +518,32 @@ class _RefusedError(Exception):
         self.message = message
 
 
-def _locate_index(source: BacklogSource) -> tuple[int, list[Issue]]:
-    """Return the Index issue's number and every other open issue.
+def _is_fresh(index: Issue, within_hours: int) -> bool:
+    """Return whether the Index was rewritten inside *within_hours*.
+
+    Read from the Index issue's own ``updated_at``, which the open-issue
+    listing already carries — so the check costs no extra API call. An
+    unparseable or missing timestamp reads as stale: rewriting the Index
+    when it did not need it wastes a little work, while skipping one that
+    did leaves a wrong Index standing.
+
+    Args:
+        index: The Index issue.
+        within_hours: Hours under which the Index counts as fresh.
+
+    Returns:
+        True when the Index was updated less than *within_hours* ago.
+    """
+    try:
+        updated = datetime.fromisoformat(index.updated_at)
+    except ValueError:
+        return False
+    age_hours = (datetime.now(UTC) - updated).total_seconds() / 3600
+    return age_hours < within_hours
+
+
+def _locate_index(source: BacklogSource) -> tuple[Issue, list[Issue]]:
+    """Return the Index issue and every other open issue.
 
     Args:
         source: GitHub reads.
@@ -540,9 +569,9 @@ def _locate_index(source: BacklogSource) -> tuple[int, list[Issue]]:
             f"refused: the listing returned {len(issues)} of {total} open issues; "
             "the old Index is left standing — retry",
         )
-    index = [i.number for i in issues if i.title == INDEX_TITLE]
+    index = [i for i in issues if i.title == INDEX_TITLE]
     if len(index) != 1:
-        found = ", ".join(f"#{n}" for n in index) or "none"
+        found = ", ".join(f"#{i.number}" for i in index) or "none"
         raise _RefusedError(
             EXIT_REFUSED,
             f"refused: expected exactly one open issue titled {INDEX_TITLE!r}, "
@@ -550,7 +579,7 @@ def _locate_index(source: BacklogSource) -> tuple[int, list[Issue]]:
             "— create one with the forge-issue-triage `bootstrap` mode, "
             "or close the extras",
         )
-    return index[0], [i for i in issues if i.number != index[0]]
+    return index[0], [i for i in issues if i.number != index[0].number]
 
 
 def _checked_render(
@@ -602,6 +631,14 @@ def run(
     """
     try:
         index, listed = _locate_index(source)
+        if options.fresh_within_hours is not None and _is_fresh(
+            index, options.fresh_within_hours
+        ):
+            emit(
+                f"skipped: Index #{index.number} was rewritten less than "
+                f"{options.fresh_within_hours}h ago"
+            )
+            return EXIT_OK
         inputs = replace(
             options.inputs,
             plan_dates={**_plan_dates(listed, source), **options.inputs.plan_dates},
@@ -617,12 +654,15 @@ def run(
         emit(rendered.body)
         emit("\n".join([f"chars: {size}", *trimmed]))
         return EXIT_OK
-    if write(index, rendered.body) != 0:
-        emit(f"refused: writing Index #{index} failed; see the error above")
+    if write(index.number, rendered.body) != 0:
+        emit(f"refused: writing Index #{index.number} failed; see the error above")
         return EXIT_REFUSED
     emit(
         "\n".join(
-            [f"wrote: Index #{index} — {len(listed)} issues, {size} chars", *trimmed]
+            [
+                f"wrote: Index #{index.number} — {len(listed)} issues, {size} chars",
+                *trimmed,
+            ]
         )
     )
     return EXIT_OK
@@ -664,6 +704,14 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print the body and its size; write nothing.",
     )
+    parser.add_argument(
+        "--if-stale-hours",
+        type=int,
+        metavar="H",
+        help="Self-skip (exit 0) when the Index was rewritten less than H "
+        "hours ago, so a caller on a frequent event refreshes it at most "
+        "that often.",
+    )
     return parser
 
 
@@ -692,6 +740,7 @@ def main(
             lanes=tuple(args.lane),
         ),
         dry_run=args.dry_run,
+        fresh_within_hours=args.if_stale_hours,
     )
     return run(source, options, write)
 

@@ -334,18 +334,23 @@ def _count_words(head: list[str], sections: list[tuple[str, list[str]]]) -> int:
 
 
 def _check_budget(head: list[str], sections: list[tuple[str, list[str]]]) -> list[str]:
-    """Enforce the word budget, scaled by the number of findings sections.
+    """Warn about a long wrap-up, scaled by the number of findings sections.
+
+    Length refuses nothing, here as everywhere (see
+    :mod:`forge.text_budget`): a wrap-up over its target posts with one
+    warning. Refusing it sent the author back to re-cut text already
+    written, and the words worth cutting are the ones a reader does not
+    need — process state and bookkeeping — which is a content rule, not
+    a count.
 
     Args:
         head: Lines before the first section.
         sections: ``(title, body_lines)`` pairs in document order.
 
     Returns:
-        One violation when the body exceeds the
-        :func:`forge.text_budget.ceiling` of the budget (``WORD_BUDGET``
-        plus ``FINDING_ALLOWANCE`` per required non-clean, non-status
-        section). Between the budget and its ceiling it only logs a
-        warning and returns nothing.
+        Always empty. The budget (``WORD_BUDGET`` plus
+        ``FINDING_ALLOWANCE`` per required non-clean, non-status section)
+        only warns, above :func:`forge.text_budget.ceiling` of it.
     """
     titles = {title.casefold(): body for title, body in sections}
     findings = sum(
@@ -356,19 +361,17 @@ def _check_budget(head: list[str], sections: list[tuple[str, list[str]]]) -> lis
         and not _is_clean(body)
     )
     budget = WORD_BUDGET + FINDING_ALLOWANCE * findings
-    limit = ceiling(budget)
     words = _count_words(head, sections)
-    if words > limit:
-        return [
-            (
-                f"wrap-up is {words} words; budget is {budget} ({WORD_BUDGET} + "
-                f"{FINDING_ALLOWANCE} x {findings} findings), at most {limit} — "
-                f"cut {words - limit}; clean checks are one line"
-            )
-        ]
-    if words > budget:
+    if words > ceiling(budget):
         logger.warning(
-            "wrap-up is %d words, over the %d budget (within %d).", words, budget, limit
+            "wrap-up is %d words, over the %d-word target (%d + %d x %d "
+            "findings) — posting anyway; shorten the next one by dropping "
+            "process state, not findings.",
+            words,
+            budget,
+            WORD_BUDGET,
+            FINDING_ALLOWANCE,
+            findings,
         )
     return []
 

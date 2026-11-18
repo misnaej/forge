@@ -15,8 +15,8 @@ git commands is enforced here (FOUNDATION §7: a CLI performing a
   ``forge-emergency`` lets stale or missing logs through, never a failed
   step) — the gate sits on the push seam, so every publication path pays it,
   including ``--push-only`` and any deferred-checkpoint recovery;
-- the message is conventional, a 50-word target (warned up to 55, refused
-  past it), with no AI attribution;
+- the message is conventional, with a 45-word advisory target (well over
+  it warns, nothing is refused on length), and no AI attribution;
 - the index must equal the named files before the commit, and the commit
   may add only what the hook regenerates (generated docs, the cadence stamp);
 - the pre-commit hook runs on the commit (git's per-process overrides
@@ -62,7 +62,7 @@ from forge.git_utils import (
     repo_root,
     run_git,
 )
-from forge.pr_squash_comment import MAX_WORDS, TITLE_RE
+from forge.pr_squash_comment import TITLE_RE
 from forge.precommit import verdict
 from forge.regen_docs import API_DIGEST_DOC, CLI_REFERENCE_DOC
 from forge.smart_test.lifecycle import STAMP_RELPATH
@@ -79,6 +79,12 @@ logger = logging.getLogger(__name__)
 EXIT_OK: Final = 0
 EXIT_REFUSED: Final = 1
 EXIT_PUSH_FAILED: Final = 2
+
+# A commit message's own target, not the squash message's. The two are
+# different artifacts — a commit explains one step, a squash message the
+# whole PR — so reaching into the other module's budget coupled numbers
+# that have no reason to move together.
+COMMIT_MAX_WORDS: Final = 45
 
 #: Files the pre-commit hook itself regenerates and stages into a commit it
 #: lets through (the generated docs, the full-run cadence stamp); a commit
@@ -120,10 +126,9 @@ def check_message(message: str) -> None:
         message: The full commit message (title, optional body).
 
     Raises:
-        CommitRefusedError: When the title is not conventional, the message runs
-            past the ceiling of :data:`forge.pr_squash_comment.MAX_WORDS`
-            (the 50-word target commit and squash messages share; see
-            :mod:`forge.text_budget`), or it carries AI attribution.
+        CommitRefusedError: When the title is not conventional, or the
+            message carries AI attribution. Never for length — a long
+            message warns and commits (see :mod:`forge.text_budget`).
     """
     title = message.strip().splitlines()[0] if message.strip() else ""
     if not TITLE_RE.match(title):
@@ -133,34 +138,31 @@ def check_message(message: str) -> None:
 
 
 def check_budget_and_attribution(message: str) -> None:
-    """Refuse a message past the word ceiling or carrying AI attribution.
+    """Warn about a long message, and refuse AI attribution.
 
     The half of :func:`check_message` a ``wip-sync:`` checkpoint shares:
     its title is a marker, not a conventional type, but the length and
     attribution rules still hold.
 
+    Length refuses nothing. A message over target commits with one
+    warning, because sending the author back to re-cut a written message
+    costs more than the words, and what makes a message quick to read is
+    the process state it omits (FOUNDATION §6) rather than its count.
+
     Args:
         message: The full commit message.
 
     Raises:
-        CommitRefusedError: When the message runs past the ceiling of
-            :data:`forge.pr_squash_comment.MAX_WORDS` or carries AI
-            attribution.
+        CommitRefusedError: When the message carries AI attribution.
     """
     words = len(message.split())
-    limit = ceiling(MAX_WORDS)
-    if words > limit:
-        msg = (
-            f"commit message is {words} words; budget is {MAX_WORDS}, "
-            f"at most {limit} — cut {words - limit}."
-        )
-        raise CommitRefusedError(msg)
-    if words > MAX_WORDS:
+    if words > ceiling(COMMIT_MAX_WORDS):
         logger.warning(
-            "forge-commit: message is %d words, over the %d target (within %d).",
+            "forge-commit: message is %d words, over the %d-word target — "
+            "committing anyway; shorten the next one by dropping process "
+            "state (test counts, green checks), not prose.",
             words,
-            MAX_WORDS,
-            limit,
+            COMMIT_MAX_WORDS,
         )
     try:
         validate_no_ai_attribution(message)

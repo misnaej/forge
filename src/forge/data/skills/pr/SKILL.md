@@ -457,9 +457,14 @@ Verification is done, fixes are committed, and the wrap-up is authored
 ### Squash-merge message hard rules
 
 `forge-pr-squash-comment` enforces (check the bullets before posting):
-- **Target 50 words.** 51–55 posts with a warning naming what to trim;
-  over 55 is refused. Inside the band, post as is: a rewrite costs more
-  tokens than the words it saves (same 10% margin as the wrap-up budget).
+- **Target 45 words, advisory.** Over it warns and still posts; nothing
+  is refused on length. Post as written — a rewrite costs more than the
+  words it saves.
+- **Every bullet states a behaviour change or its consequence.** Never
+  that tests passed or pre-commit was green, that a changelog fragment
+  exists, forge's own document word counts, or a count of tests,
+  suppressions, rows or files. This is what keeps a message short; the
+  word count never was (FOUNDATION §6).
 - **3–5 bullet points.** Not 6, not 2.
 - **Conventional commit format** for the title line: `<type>: <brief description>`
 - **No prose paragraphs.** Title + bullets only, in two separate fences —
@@ -512,7 +517,7 @@ Skip when `forge.run_context.is_ci()` — nobody is there to answer them
 
 17. **`issue-triage`** — Run `post-pr` mode after merge:
     ```
-    Agent(subagent_type="forge:issue-triage", prompt="Run post-pr mode. PR #<number> was just merged. Detect issues closed by this PR, remove their tier labels, run the overlap sweep (forge-plan-check overlap <number>), re-check the placement of its follow-ups (forge-plan-check tracks --from-pr <number>), and regenerate the 📋 Backlog Index issue.")
+    Agent(subagent_type="forge:issue-triage", prompt="Run post-pr mode. PR #<number> was just merged. Detect issues closed by this PR, remove their tier labels, run the overlap sweep (forge-plan-check overlap <number>), and re-check the placement of its follow-ups (forge-plan-check tracks --from-pr <number>). Touch only what this merge changed, and do not look for the next task. Finish with forge-backlog-index --if-stale-hours 24, which refreshes the Index only if it has gone a day stale.")
     ```
     Then record the PR's cost: `forge-metrics record --pr <number>`
     ([`forge-docs/metrics.md`](../../forge-docs/metrics.md)); best effort,

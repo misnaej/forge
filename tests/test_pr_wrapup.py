@@ -247,8 +247,8 @@ def test_validate_wrapup_reports_many_violations_for_a_narrated_body(
     assert any("summary line" in p for p in problems)
     assert any("is clean (PASS) but runs" in p for p in problems)
     assert any("is a status line" in p for p in problems)
-    assert any("wrap-up is" in p and "budget is" in p for p in problems)
-    assert len(problems) >= 5
+    assert not any("budget" in p for p in problems)
+    assert len(problems) >= 4
 
 
 @pytest.mark.parametrize("marker_line", [SQUASH_MARKER, f"  {SQUASH_MARKER}\t"])
@@ -375,8 +375,60 @@ def test_validate_wrapup_refuses_a_multiline_status_section() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_validate_wrapup_refuses_an_over_budget_clean_body() -> None:
-    """A verbose but line-count-clean body can still bust the flat 120-word cap."""
+def _budget_inputs(
+    total_words: int, *, findings: int
+) -> tuple[list[str], list[tuple[str, list[str]]]]:
+    """Build ``_check_budget`` inputs with an exact word count and finding count.
+
+    Args:
+        total_words: Words the budget counts across head and sections.
+        findings: Required non-status sections reporting a real finding.
+
+    Returns:
+        ``(head, sections)`` for ``mod._check_budget``.
+    """
+    names = ["Design Check", "Security Review", "Documentation Check"]
+    sections = [(name, ["Found: two words"]) for name in names[:findings]]
+    sections += [(name, ["PASS"]) for name in names[findings:]]
+    padding = total_words - mod._count_words([], sections)
+    return [" ".join(["w"] * padding)], sections
+
+
+@pytest.mark.parametrize("findings", [0, 1, 3])
+@pytest.mark.parametrize("over", [False, True], ids=["at-ceiling", "over-ceiling"])
+def test_check_budget_never_refuses_and_warns_only_above_the_ceiling(
+    caplog: pytest.LogCaptureFixture, *, findings: int, over: bool
+) -> None:
+    """Behavior: ``_check_budget`` always returns ``[]``; warns above ``ceiling``.
+
+    The budget scales by ``FINDING_ALLOWANCE`` per finding, so the warn
+    line moves with it.
+
+    Args:
+        findings: Number of real-finding sections.
+        over: Whether the body sits one word over the ceiling.
+    """
+    limit = ceiling(mod.WORD_BUDGET + mod.FINDING_ALLOWANCE * findings)
+    head, sections = _budget_inputs(limit + int(over), findings=findings)
+    with caplog.at_level(logging.WARNING):
+        assert mod._check_budget(head, sections) == []
+    assert ("over the" in caplog.text) is over
+
+
+def test_check_budget_accepts_a_thousand_word_body_and_an_under_budget_one(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Behavior: a ~1000-word body is never refused; it warns only when over budget."""
+    with caplog.at_level(logging.WARNING):
+        assert mod._check_budget(*_budget_inputs(1000, findings=0)) == []
+        assert "over the" in caplog.text
+        caplog.clear()
+        assert mod._check_budget(*_budget_inputs(50, findings=0)) == []
+    assert "over the" not in caplog.text
+
+
+def test_validate_wrapup_refuses_nothing_for_an_over_budget_clean_body() -> None:
+    """Behavior: a verbose clean body past the 120-word target still validates."""
     status_long = (
         "PASS — reviewed the change carefully end to end, re-read every "
         "touched file twice, and found absolutely nothing at all worth "
@@ -402,32 +454,30 @@ def test_validate_wrapup_refuses_an_over_budget_clean_body() -> None:
             ),
         },
     )
-    problems = mod.validate_wrapup(body)
-    limit = ceiling(mod.WORD_BUDGET)
-    assert any(
-        f"budget is {mod.WORD_BUDGET} ({mod.WORD_BUDGET} + "
-        f"{mod.FINDING_ALLOWANCE} x 0 findings), at most {limit}" in p
-        for p in problems
-    )
+    assert mod.validate_wrapup(body) == []
 
 
-@pytest.mark.parametrize("summary_words", [108, 115])
-def test_validate_wrapup_accepts_a_clean_body_within_the_margin_with_a_warning(
-    summary_words: int, caplog: pytest.LogCaptureFixture
+@pytest.mark.parametrize(
+    ("summary_words", "warns"),
+    [(127, False), (128, True)],
+)
+def test_validate_wrapup_warns_only_above_the_ceiling_of_the_budget(
+    summary_words: int, caplog: pytest.LogCaptureFixture, *, warns: bool
 ) -> None:
-    """A clean body past the budget but within the ceiling passes, warning once.
+    """A clean body validates either way; only one past ``ceiling(120)`` warns.
 
-    The clean sections add 17 words, so 108 and 115 summary words give
-    bodies of 125 and 132 words: over 120, not over 132.
+    The clean sections add 17 words and ``ceiling(120)`` is 144, so 127
+    summary words give 144 (silent) and 128 give 145 (warns).
 
     Args:
         summary_words: Words in the one-line summary.
+        warns: Whether the over-target warning is expected.
     """
     body = _body([VERIFIED_AT, " ".join(["word"] * summary_words)])
     with caplog.at_level(logging.WARNING):
         problems = mod.validate_wrapup(body)
     assert problems == []
-    assert "over the 120 budget" in caplog.text
+    assert ("over the 120-word target" in caplog.text) is warns
 
 
 def test_validate_wrapup_accepts_the_same_body_once_one_section_is_a_real_finding() -> (

@@ -430,7 +430,7 @@ Mechanics (modes, commands, templates): the `/forge-pr` skill. Rules:
 - `verified-at:` header (reporter contract, `agents/_TEMPLATE.md`) makes wrap-up drift detectable.
 - **The flow does not end at posting — monitor the PR.** Canonical; skills state only call-site delta. Default: after wrap-up posts, start one background monitor per open PR (`forge-pr-watch start --pr <N>`):
   - **New review comments** → surface.
-  - **Merged / closed** → on merge: local cleanup (sync base, prune merged local branch, `forge-metrics record` — `/forge-next` cleanup phase) **and** `forge-issue-triage` `post-pr` mode (closed-issue tier-label removal + Backlog Index regeneration).
+  - **Merged / closed** → on merge: local cleanup (sync base, prune merged local branch, `forge-metrics record` — `/forge-next` cleanup phase) **and** `forge-issue-triage` `post-pr` mode — **only what the merge changed**: closed-issue tier labels, the plans its diff outdated, its own follow-ups. Never the next task (`recommend-next` owns that). The Backlog Index rides along, gated: `forge-backlog-index --if-stale-hours 24` rebuilds it on the first merge after a day stale and self-skips otherwise, so it stays about daily without charging every merge.
   - **`mergeable == CONFLICTING`** → alert only; **the monitor never syncs the branch it watches** (read-only watcher).
   - **A CI run concluding in failure** → surface, investigate (§1); never auto-push fixes.
   - **Wrap-up staleness** — `forge-pr-plan --freshness --pr <N>` → `fresh: false` → alert **once per new head**, naming both SHAs. Refresh = `/forge-pr <N>` (delta mode) by whoever picks up work; newer `verified-at:` clears signal. `fresh: null` = unknown: skip poll, never alert, retry; `cause` names the degrade path. **The monitor never posts the refresh.** `warn_stale_wrapup` Claude Code hook runs same verdict after every agent `git push` (at-the-cause); monitor covers pushes elsewhere. Both read-only.
@@ -442,7 +442,15 @@ Mechanics (modes, commands, templates): the `/forge-pr` skill. Rules:
 ### Squash-merge messages (mandatory at PR finalization)
 
 Rules (mechanics: the `/forge-pr` skill Step 4; enforcement: `forge-pr-squash-comment`, never hand-built):
-- 50-word target; 51–55 posts with warning; over 55 refused. Can't fit 50 → PR too big.
+- **45-word target, advisory.** Over it warns once and still posts;
+  length refuses nothing. Once written, not rewritten — re-cutting a
+  written message costs more than the words.
+- **A bullet states a behaviour change or its consequence.** Never that
+  tests passed or pre-commit was green (CI proves it), never that a
+  changelog fragment exists (enforced), never forge's own document word
+  counts, never a count of tests, suppressions, rows or files. Measured
+  over 60 merged messages: 26% carried such a bullet, 9% of all bullet
+  words. That, not length, is what makes a message slow to read.
 - 3–5 bullets; conventional-commit title; title + bullets only; no Claude/AI attribution.
 - Own comment, never embedded in wrap-up. Becomes permanent `main` commit.
 - **Two fences, one per field of the squash dialog**; posting **forces the PR title to match the title it posts**.
