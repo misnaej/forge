@@ -191,13 +191,44 @@ def test_validate_fragment_version_shaped_body(tmp_path: Path) -> None:
     assert len(errors) == 1
     # Asserted by the parts that make the message actionable, not as one
     # literal: the author needs to know which string, where, and that a
-    # past release in prose counts — two fragments were refused because
-    # the message said none of that. Pinning the whole sentence would
+    # past release in prose counts. Pinning the whole sentence would
     # make every wording improvement a test failure.
     assert "note.added.md" in errors[0]
-    assert "line 1" in errors[0]
+    assert "line 2" in errors[0]
     assert "'v1.2.3'" in errors[0]
     assert "past release in prose" in errors[0]
+
+
+@pytest.mark.parametrize(
+    ("fragment_text", "expected_line"),
+    [
+        pytest.param(
+            "bump: minor\n\n- See v1.2.3 for context.\n", 3, id="one-leading-blank"
+        ),
+        pytest.param(
+            "bump: minor\n\n\n- fine\n- See v1.2.3 here.\n",
+            5,
+            id="two-blanks-match-on-later-line",
+        ),
+    ],
+)
+def test_validate_fragment_version_shaped_body_reports_file_line(
+    tmp_path: Path, fragment_text: str, expected_line: int
+) -> None:
+    """The reported line is file-relative, not body-relative.
+
+    The body is stripped of the bump line and leading blanks, so a
+    body-relative number would send the author to the wrong line; they
+    edit the file, not the body.
+
+    Args:
+        fragment_text: Full fragment file content.
+        expected_line: File line (1-based) holding the version string.
+    """
+    path = _write_fragment(tmp_path, "note.added.md", fragment_text)
+    _fragment, errors = validate_fragment(path)
+    assert len(errors) == 1
+    assert f"line {expected_line}:" in errors[0]
 
 
 @pytest.mark.parametrize(
