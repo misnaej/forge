@@ -188,12 +188,16 @@ def test_validate_fragment_version_shaped_body(tmp_path: Path) -> None:
     )
     fragment, errors = validate_fragment(path)
     assert fragment is None
-    assert errors == [
-        (
-            "note.added.md: version-shaped string in body — the assembler is the "
-            "only writer of version numbers"
-        )
-    ]
+    assert len(errors) == 1
+    # Asserted by the parts that make the message actionable, not as one
+    # literal: the author needs to know which string, where, and that a
+    # past release in prose counts — two fragments were refused because
+    # the message said none of that. Pinning the whole sentence would
+    # make every wording improvement a test failure.
+    assert "note.added.md" in errors[0]
+    assert "line 1" in errors[0]
+    assert "'v1.2.3'" in errors[0]
+    assert "past release in prose" in errors[0]
 
 
 @pytest.mark.parametrize(

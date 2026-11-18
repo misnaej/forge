@@ -257,10 +257,18 @@ def _check_no_versions_or_headings(name: str, body: str) -> list[str]:
         List of errors found (empty if all checks pass).
     """
     errors: list[str] = []
-    if _VERSION_SHAPED_RE.search(body):
+    found = _VERSION_SHAPED_RE.search(body)
+    if found:
+        # Quote the match and say that prose about a *past* release counts:
+        # the rule reads as "do not name the version you are releasing", so
+        # a sentence like "renamed in v1.2.3" looks allowed and is not. Two
+        # fragments were refused that way before this said so.
+        line = body.count("\n", 0, found.start()) + 1
         errors.append(
-            f"{name}: version-shaped string in body — the assembler is the "
-            "only writer of version numbers"
+            f"{name}: line {line}: {found.group()!r} is version-shaped — a "
+            "fragment may not name any version, a past release in prose "
+            'included (write "when agents were renamed" instead). The '
+            "assembler is the only writer of version numbers."
         )
     if _EMBEDDED_HEADING_RE.search(body):
         errors.append(
