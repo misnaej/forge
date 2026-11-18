@@ -69,6 +69,8 @@ CANONICAL_AGENT_NAMESPACE: Final = "forge:"
 # A namespaced reference: the canonical prefix plus the whole name token.
 # The hyphen is in the class because every shipped name carries one; `\w`
 # alone stopped at it and read `forge:design` for `forge:design-checker`.
+# A match followed by a colon is a managed-block marker, not a reference:
+# see `match_is_marker`, which every caller deciding that uses.
 PLUGIN_REFERENCE_RE: Final = re.compile(
     rf"{re.escape(CANONICAL_AGENT_NAMESPACE)}([\w-]+)"
 )
@@ -80,11 +82,11 @@ def match_is_marker(match: re.Match[str]) -> bool:
     A managed-block marker carries a third segment — `forge:c4:start`,
     `forge:state:begin`, `forge:config:end`, `forge:badges:start` — while a
     reference ends at the name: `forge:design-checker`. Only the marker is
-    followed by a colon, so that one character tells them apart, and every
-    `forge:<token>:` in the repo is a marker.
+    followed by a colon, so that one character tells them apart — the colon
+    is the definition, not a list of marker names to keep current.
 
     This is the single definition of the distinction: the mapper uses it to
-    leave markers alone, and the reference-leak check uses it so a surviving
+    leave markers alone, and the reference-leak checks use it so a surviving
     marker is not reported as an unmapped reference. Without it, a marker
     whose token happens to be a shipped name is rewritten into the harness
     namespace and the tool that reads the marker no longer recognises it.
@@ -538,14 +540,10 @@ def map_plugin_references(
     (``forge:<name>``) and a name forge does not ship therefore survive
     untouched.
 
-    A managed-block marker survives too, by design rather than by luck:
-    :func:`match_is_marker` excludes anything carrying a third segment, so
-    a marker is safe even when its token is a shipped name. It was not:
-    ``forge:c4:start`` became ``forge-c4:start``, which the tool reading
-    that marker rejects. The hazard was known for the handoff note's
-    ``forge:state`` markers and held off by refusing to ship a name called
-    ``state`` — a prohibition that had to be restated per marker, and was
-    not restated for ``c4``.
+    A managed-block marker survives too: :func:`match_is_marker` excludes
+    anything carrying a third segment, so a marker is safe even when its
+    token is a shipped name. Rewriting one yields a marker the tool that
+    reads it no longer recognises.
 
     Args:
         text: Canonical content, authored in ``CANONICAL_AGENT_NAMESPACE``.

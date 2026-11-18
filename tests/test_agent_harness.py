@@ -211,11 +211,11 @@ def test_map_plugin_references_leaves_block_markers_alone(
 ) -> None:
     """A managed-block marker passes through unchanged in both harnesses.
 
-    Behavior regression: ``forge:c4:start`` was rewritten to
-    ``forge-c4:start`` because ``c4`` is a shipped skill, a form the tool
-    that reads the marker rejects. Parametrized over every marker family,
-    not just ``c4``, so the guarantee never depends on which tokens happen
-    to be shipped names.
+    ``c4`` is a shipped skill name, so without the marker exclusion a
+    marker carrying that token is rewritten into a form the tool that
+    reads it rejects. Parametrized over every marker family, not just
+    ``c4``, so the guarantee never depends on which tokens happen to be
+    shipped names.
 
     Args:
         marker: Marker comment that must survive the mapper byte for byte.
