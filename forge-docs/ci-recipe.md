@@ -26,13 +26,13 @@ dev = [
 ```
 
 `@main` = every release (forge is single-track). See the
-[pin table](../docs/adopting.md#pick-a-pin).
+[pin table](https://github.com/misnaej/forge/blob/main/docs/adopting.md#pick-a-pin).
 
 A tag pin (`@v1.9.1`) is also supported for one-off frozen releases.
 For ongoing automated upgrades the channel pin is the recommended
 default: it requires no per-version maintenance and the scheduled
 workflow below handles the rest. Switching an existing branch pin to a
-tag pin? Read ["Pick a pin"](../docs/adopting.md#pick-a-pin)
+tag pin? Read ["Pick a pin"](https://github.com/misnaej/forge/blob/main/docs/adopting.md#pick-a-pin)
 first — branch-only refresh wrappers silently stop updating forge after
 the switch; `forge-upgrade` and `forge-doctor` now detect the mismatch.
 
@@ -51,7 +51,7 @@ on:
     # moment it is marked ready.
     types: [opened, synchronize, reopened, ready_for_review]
 
-# Defense-in-depth: this workflow only reads — see docs/security.md
+# Defense-in-depth: this workflow only reads — see https://github.com/misnaej/forge/blob/main/docs/security.md
 # "Least-privilege GITHUB_TOKEN". Jobs needing writes (the upgrade /
 # resync / tag-on-merge workflows below) declare their own overrides.
 permissions:
@@ -71,7 +71,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # SHA-pin actions (tag comment for humans) — tags are movable, SHAs are
-      # not; see docs/security.md "Pin GitHub Actions". To keep pinned SHAs
+      # not; see https://github.com/misnaej/forge/blob/main/docs/security.md "Pin GitHub Actions". To keep pinned SHAs
       # current, enable Dependabot's `github-actions` ecosystem in your repo
       # (or run `gha-update`).
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
@@ -87,11 +87,13 @@ jobs:
 
       - name: Install project + forge-scripts
         run: pip install -e ".[dev]"
+```
 
 A failing step prints its own captured output under the `see code_health/<step>.log` line whenever `forge.run_context.is_ci()` is true — the log itself lives on a runner that is gone by the time anyone reads the run, so the pointer alone names the failure without saying what was wrong. Blocking failures only, to bound volume; locally nothing changes.
 
 That output goes to the job log, where it is as visible as the log is. It is capped, and it is what the checker printed — a linter's findings, a type error, a failing assertion — but if your logs are forwarded somewhere less private than the repository, weigh that before adopting the recipe.
 
+```yaml
       - name: Bootstrap forge artifacts (idempotent)
         run: install-forge-bootstrap
 
@@ -257,7 +259,7 @@ The `changelog_version` step detects entries stranded under an
 already-released heading — but a one-shot check goes stale: a PR green
 when checked can strand *afterwards*, when a sibling PR merges first
 and the base cuts the tag, with no merge conflict to warn (see
-[`consumer-release.md`](../docs/consumer-release.md) "Enforcement"). To catch
+[`consumer-release.md`](https://github.com/misnaej/forge/blob/main/docs/consumer-release.md) "Enforcement"). To catch
 that pre-merge, run the step as its own **required status check**:
 
 ```yaml
@@ -362,7 +364,7 @@ jobs:
   upgrade:
     runs-on: ubuntu-latest
     steps:
-      # SHA-pinned per docs/security.md "Pin GitHub Actions" — see the §2
+      # SHA-pinned per https://github.com/misnaej/forge/blob/main/docs/security.md "Pin GitHub Actions" — see the §2
       # note for the rationale and how to keep the SHAs current.
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
@@ -511,6 +513,67 @@ verifies it is the tip of `origin/<base_branch>` instead of requiring a
 branch checkout. Only the `push` trigger is safe here — never run a
 `contents: write` job from `pull_request_target`.
 
+### Fragments-mode repos (`changelog.d/` fragments)
+
+Fragments-mode repos tag from the fragments each merge brought, not from a
+CHANGELOG heading, so the tag job lives in a **separate workflow** gated
+with `workflow_run` — `needs:` cannot cross workflow files, and a separate
+file also keeps your `ci.yml` read-only, since the tag job needs
+`contents: write`. The workflow fires when CI completes, keeps only runs
+that succeeded, were `push` events, and targeted the base branch, and
+checks out `workflow_run.head_sha` — the exact commit CI validated, never
+a branch ref that could re-resolve to a newer, unvalidated tip.
+
+Opt in with `[tool.forge.release] auto = "merge"` in `pyproject.toml`;
+without it `forge-changelog auto-tag` exits `3` (surface it as a warning,
+not a failure) and cuts nothing. The command is idempotent — tag already
+cut, or another runner won the race, both exit `0` — and it validates the
+new fragments first (bad level line → exit `2`, no tag).
+
+`.github/workflows/tag-release.yml`:
+
+```yaml
+name: tag-release
+on:
+  workflow_run:
+    workflows: [ci]        # must match ci.yml's `name:` exactly
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  tag-main:
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0   # tag comparison + setuptools-scm need history and tags
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
+        with:
+          python-version: '3.13'
+      - run: pip install -e ".[dev]"
+      - name: Tag the release from the fragments this merge brought
+        run: |
+          set +e
+          out=$(forge-changelog auto-tag 2>&1); rc=$?
+          echo "$out"
+          if [ "$rc" = "3" ]; then echo "::warning::$out"; rc=0; fi
+          exit $rc
+```
+
+SHA-pin the actions as in §2. The assembly PR that later collates the
+fragments into `CHANGELOG.md` prose is §5 below; on the assembly merge
+itself, `auto-tag` no-ops (the fragments were just consumed) — see §5 for
+the post-assembly cure.
+
 ### Safety details (both flavors)
 
 - **Keep the write surface separate.** A dedicated tag workflow (or at
@@ -530,7 +593,7 @@ branch checkout. Only the `push` trigger is safe here — never run a
 
 With either job in place, `/forge-next`'s tag step becomes a no-op fallback
 (both CLIs are idempotent), and the manual `forge-release` recipe in
-[`consumer-release.md`](../docs/consumer-release.md) remains available for
+[`consumer-release.md`](https://github.com/misnaej/forge/blob/main/docs/consumer-release.md) remains available for
 repos without the workflow.
 
 ## 5. Scheduled assembly PRs (fragments mode)
@@ -579,7 +642,7 @@ post-assembly step if you want it automatic.
 |---|---|
 | `forge-upgrade --apply` aborts with `git_auth_mode() == "none"` in CI | Add `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}` to the step's `env`. |
 | pip hangs on credential prompt | The runner lacks both SSH keys and a GitHub token. Inject `GITHUB_TOKEN` as above. |
-| Fork is private, CI can't clone | See [`ci-access.md`](../docs/ci-access.md) for deploy-key + token recipes. |
+| Fork is private, CI can't clone | See [`ci-access.md`](https://github.com/misnaej/forge/blob/main/docs/ci-access.md) for deploy-key + token recipes. |
 
 `forge.run_context.git_auth_mode()` picks the URL form
 (`ssh` / `https-token` / `https-anonymous` / `none`) based on what the

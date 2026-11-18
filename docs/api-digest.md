@@ -874,6 +874,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 - `flatten_vibe_instructions(repo_root: Path) -> str | None` — Compose the flattened instruction file as this harness needs it.
 - `_update_skill_content(content: str) -> str` _(internal)_ — Update skill content to use Vibe-compatible references.
+- `prune_stale_generated(dir_path: Path, *, prefix: str = AGENT_NAME_PREFIX, dry_run: bool = False) -> list[str]` — Remove entries in a forge-generated directory whose name lacks *prefix*.
 - `_copy_skills(src_dir: Path, dest_dir: Path) -> tuple[int, list[str]]` _(internal)_ — Copy skills from skills/ to .agents/skills/ with updates.
 - `_check_file_references(file_path: Path) -> list[str]` _(internal)_ — Check a single file for references.
 - `_check_agent_references(src_dir: Path) -> list[str]` _(internal)_ — Check for forge:<agent> and CLAUDE.md references in skills and agents.

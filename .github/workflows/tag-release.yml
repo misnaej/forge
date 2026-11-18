@@ -21,7 +21,7 @@ name: tag-release
 # main. Checkout pins `workflow_run.head_sha` — the exact commit
 # CI validated — never a branch ref that could re-resolve to a newer,
 # unvalidated tip. Actions are SHA-pinned (write-capable workflow).
-# Consumer recipe: docs/ci-recipe.md §4.
+# Consumer recipe: forge-docs/ci-recipe.md §4.
 
 on:
   workflow_run:

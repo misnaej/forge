@@ -561,3 +561,49 @@ def test_validate_shipped_scripts_raises_on_missing_vibe_extra(
     _patched_source(monkeypatch, mirror)
     with pytest.raises(hook_registry.HookWiringError, match="vibe_session_start\\.sh"):
         hook_registry.validate_shipped_scripts()
+
+
+# ---------------------------------------------------------------------------
+# prune-on-generate for prompts + agents toml + skills dirs (#1044)
+# ---------------------------------------------------------------------------
+
+
+def test_install_prunes_stale_unprefixed_generated_entries(
+    consumer_repo: Path,
+) -> None:
+    """SCENARIO: stale pre-rename entries sit in the three generated dirs.
+
+    EXPECTED BEHAVIOR: a re-run of install-forge-vibe removes them and keeps
+    the prefixed generated entries.
+    """
+    assert install_vibe(consumer_repo) == 0
+    prompts = consumer_repo / ".vibe" / "prompts"
+    agents = consumer_repo / ".vibe" / "agents"
+    skills = consumer_repo / ".agents" / "skills"
+    (prompts / "oldagent.md").write_text("x", encoding="utf-8")
+    (agents / "oldagent.toml").write_text("x", encoding="utf-8")
+    stale_skill = skills / "oldskill"
+    stale_skill.mkdir()
+    (stale_skill / "SKILL.md").write_text("x", encoding="utf-8")
+
+    assert install_vibe(consumer_repo) == 0
+
+    assert not (prompts / "oldagent.md").exists()
+    assert not (agents / "oldagent.toml").exists()
+    assert not stale_skill.exists()
+    assert any(p.name.startswith("forge-") for p in prompts.iterdir())
+    assert any(p.stem.startswith("forge-") for p in agents.glob("*.toml"))
+    assert any(d.name.startswith("forge-") for d in skills.iterdir())
+
+
+def test_install_check_mode_reports_stale_without_deleting(
+    consumer_repo: Path,
+) -> None:
+    """check_mode: stale entries are reported, never removed."""
+    assert install_vibe(consumer_repo) == 0
+    prompts = consumer_repo / ".vibe" / "prompts"
+    (prompts / "oldagent.md").write_text("x", encoding="utf-8")
+
+    assert install_vibe(consumer_repo, check_mode=True) == 0
+
+    assert (prompts / "oldagent.md").exists()
