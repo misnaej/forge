@@ -142,6 +142,45 @@ STATUS_SECTIONS: Final[tuple[str, ...]] = (
 WORD_BUDGET: Final[int] = 120
 FINDING_ALLOWANCE: Final[int] = 40
 
+# Status a judgment slot must not assert, because `compose` renders it
+# mechanically into `## Code Quality` and `## CI Status` of the same
+# comment. Measured over the newest wrap-up of 24 merged PRs: half
+# carried such a claim, on lines holding 27% of all judgment-slot words.
+# These match an assertion ("suite green", "472 tests pass"), never a
+# mention — "Merge after CI" and "fixes the pre-commit step" describe
+# work and must stay silent. Zero false positives over that corpus's 54
+# slot lines; keep it that way when adding one. One known limit: a slot
+# *quoting* the phrase to discuss this rule warns too, because nothing
+# here can tell a quotation from a claim. Rewording costs a word, which
+# is cheaper than a quoting heuristic — that would widen the hole this
+# closes.
+_RESTATED_STATUS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
+    (
+        "## Code Quality",
+        re.compile(
+            r"\b(pre-?commit (is )?(green|passes|passed|clean)"
+            r"|blocking pre-?commit PASS)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "## Code Quality",
+        re.compile(
+            r"\b(suite (is )?green|\d+ tests? pass(ed|es)?"
+            r"|tests? (are )?green|full suite (green|passed))\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "## CI Status",
+        re.compile(
+            r"\b(CI (is )?(green|passing|passed)|all checks? pass(ed|es)?"
+            r"|checks? (are )?green)\b",
+            re.IGNORECASE,
+        ),
+    ),
+)
+
 # A section opening with one of these is clean and must be exactly one line.
 _CLEAN_PREFIXES: Final[tuple[str, ...]] = ("pass", "skipped", "n/a")
 
@@ -267,6 +306,32 @@ def _prior_art_block(head: list[str]) -> set[int]:
     return indexes
 
 
+def _summary_lines(head: list[str]) -> list[str]:
+    """Return the head's summary lines — the author's prose, nothing else.
+
+    Shared by the single-line check and the restatement warning so both
+    agree on which lines the author wrote: the headers, the mode line and
+    the prior-art evidence block are machine-written.
+
+    Args:
+        head: Lines before the first ``## `` section.
+
+    Returns:
+        The lines of the head that are author prose.
+    """
+    evidence = _prior_art_block(head)
+    return [
+        line
+        for i, line in enumerate(head[1:], start=1)
+        if line.strip()
+        and i not in evidence
+        and not _MODE_RE.match(line)
+        and not VERIFIED_BASE_RE.match(line)
+        and not line.startswith("# ")
+        and not line.startswith("<!--")
+    ]
+
+
 def _check_head(head: list[str]) -> list[str]:
     """Validate the header contract and the single summary line.
 
@@ -279,17 +344,7 @@ def _check_head(head: list[str]) -> list[str]:
     problems: list[str] = []
     if not head or not VERIFIED_AT_RE.match(head[0]):
         problems.append("first line must be the `verified-at: <sha>` header")
-    evidence = _prior_art_block(head)
-    summary_lines = [
-        line
-        for i, line in enumerate(head[1:], start=1)
-        if line.strip()
-        and i not in evidence
-        and not _MODE_RE.match(line)
-        and not VERIFIED_BASE_RE.match(line)
-        and not line.startswith("# ")
-        and not line.startswith("<!--")
-    ]
+    summary_lines = _summary_lines(head)
     if len(summary_lines) != 1:
         problems.append(
             "exactly one summary line belongs between the header and the first "
@@ -365,6 +420,47 @@ def _count_words(head: list[str], sections: list[tuple[str, list[str]]]) -> int:
     for _title, body in sections:
         counted.extend(line for line in body if not line.startswith("<!--"))
     return sum(len(line.split()) for line in counted)
+
+
+def _warn_if_restating(head: list[str], sections: list[tuple[str, list[str]]]) -> None:
+    """Warn when a judgment slot asserts status a sibling section renders.
+
+    The summary and the Recommendation are the author's two slots; Code
+    Quality and CI Status are written by ``compose`` from the evidence.
+    A slot that says "suite green; pre-commit passes" spends the wrap-up's
+    scarcest words repeating the two sections directly below it, and tells
+    the reader nothing the comment did not already say.
+
+    It matches the claim, never the sibling's value: a slot may legitimately
+    disagree with CI — FOUNDATION §6 requires saying so plainly when CI is
+    incomplete — so nothing here compares the two. A Recommendation written
+    by ``compose`` itself (the light and emergency modes) is skipped, since
+    the author did not write it.
+
+    Warns; never refuses. Length and content are review lenses, not gates
+    (FOUNDATION §18).
+
+    Args:
+        head: Lines before the first ``## `` section.
+        sections: ``(title, body_lines)`` pairs in document order.
+    """
+    slots = [("summary", _summary_lines(head))]
+    if not any(_MODE_RE.match(line) for line in head):
+        bodies = {title.casefold(): body for title, body in sections}
+        slots.append(("Recommendation", bodies.get("recommendation", [])))
+    for slot_name, lines in slots:
+        for line in lines:
+            for sibling, pattern in _RESTATED_STATUS:
+                found = pattern.search(line)
+                if found:
+                    logger.warning(
+                        "wrap-up: the %s says %r, which `%s` already covers "
+                        "— say what changed instead, and spend the words on "
+                        "the finding.",
+                        slot_name,
+                        found.group(),
+                        sibling,
+                    )
 
 
 def _warn_if_long(head: list[str], sections: list[tuple[str, list[str]]]) -> None:
@@ -471,6 +567,7 @@ def validate_wrapup(text: str) -> list[str]:
     ]
     head, sections = _split(text)
     _warn_if_long(head, sections)
+    _warn_if_restating(head, sections)
     return (
         slots
         + _check_head(head)

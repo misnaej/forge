@@ -1886,10 +1886,12 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `wrapup_names_head(wrapup_text: str, head_sha: str) -> bool` — Whether the wrap-up's OWN header names *head_sha*.
 - `_split(text: str) -> tuple[list[str], list[tuple[str, list[str]]]]` _(internal)_ — Split the body into its head and its ``## `` sections, in order.
 - `_prior_art_block(head: list[str]) -> set[int]` _(internal)_ — Return the indexes of the ``prior-art-searched:`` block within *head*.
+- `_summary_lines(head: list[str]) -> list[str]` _(internal)_ — Return the head's summary lines — the author's prose, nothing else.
 - `_check_head(head: list[str]) -> list[str]` _(internal)_ — Validate the header contract and the single summary line.
 - `_is_clean(body: list[str]) -> bool` _(internal)_ — Return whether a section reports a clean check (its first line says so).
 - `_check_sections(sections: list[tuple[str, list[str]]]) -> list[str]` _(internal)_ — Validate presence and one-line shape of the required sections.
 - `_count_words(head: list[str], sections: list[tuple[str, list[str]]]) -> int` _(internal)_ — Count the words the budget applies to (prose, not headers or evidence).
+- `_warn_if_restating(head: list[str], sections: list[tuple[str, list[str]]]) -> None` _(internal)_ — Warn when a judgment slot asserts status a sibling section renders.
 - `_warn_if_long(head: list[str], sections: list[tuple[str, list[str]]]) -> None` _(internal)_ — Warn about a long wrap-up, scaled by the number of findings sections.
 - `_check_attribution(text: str) -> list[str]` _(internal)_ — Wrap the shared FOUNDATION §2 attribution gate as a violation list.
 - `validate_wrapup(text: str) -> list[str]` — Return every rule the wrap-up *text* breaks (empty means valid).
