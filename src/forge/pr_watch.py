@@ -11,8 +11,9 @@ session improvises a detached process whose only record is a pid:
   loud non-zero exit, never a silent start.
 - ``list`` reads the registry and reports each monitor's state.
 - ``stop`` kills a monitor by PR identity, verifying the process's
-  command line matches before signalling; a stale record is reported,
-  never killed by pid alone.
+  command line matches before signalling; a stale record is removed
+  without signalling, never killed by pid alone. A live monitor that
+  refuses the signal stays registered and is reported as kept.
 
 The command self-skips under :func:`forge.run_context.is_ci` — CI has
 no human to receive alerts.
@@ -31,6 +32,11 @@ Registry format (``.plan/pr_monitors.json``)::
             }
         ]
     }
+
+Each monitor's own output — the alerts it raises and any crash — goes to
+``code_health/pr_watch_<pr>.log``, truncated when that PR's monitor starts.
+That file is the only channel: the monitor runs detached, so nothing it
+writes reaches the session that started it.
 """
 
 from __future__ import annotations
@@ -48,7 +54,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
-from forge.git_utils import configure_cli_logging, repo_root, run_git
+from forge.git_utils import (
+    code_health_dir,
+    configure_cli_logging,
+    repo_root,
+    run_git,
+)
 from forge.pr_plan import wrapup_freshness
 from forge.run_context import is_ci
 
@@ -61,6 +72,9 @@ configure_cli_logging()
 logger = logging.getLogger(__name__)
 
 REGISTRY_RELPATH: Final = ".plan/pr_monitors.json"
+# The argv[1] of the spawned child. `cmd_stop` matches on it to identify a
+# monitor process, so it must be a token no unrelated command carries.
+MONITOR_SUBCOMMAND: Final = "_monitor"
 DEFAULT_INTERVAL_S: Final = 60
 DEFAULT_BOUND_S: Final = 1800
 GH_TIMEOUT_S: Final = 30
@@ -140,7 +154,34 @@ class Registry:
 
 
 def _registry_path(root: Path) -> Path:
+    """Return the monitor registry file for *root*.
+
+    Args:
+        root: Git repo root.
+
+    Returns:
+        Path to the registry JSON.
+    """
     return root / REGISTRY_RELPATH
+
+
+def monitor_log_path(root: Path, pr: int) -> Path:
+    """Return the log a PR's monitor writes its output to.
+
+    One file per PR, because several monitors run at once and a shared
+    file interleaves them. This is a runtime log, not step evidence: no
+    step produces it and it carries no ``# produced-at:`` stamp, so
+    ``forge-precommit``'s freshness check skips it by name rather than
+    reporting a stamp it could never have.
+
+    Args:
+        root: Git repo root.
+        pr: PR number.
+
+    Returns:
+        Path to the monitor's log file.
+    """
+    return code_health_dir(root) / f"pr_watch_{pr}.log"
 
 
 def _resolve_repo(root: Path, repo_arg: str | None) -> str | None:
@@ -466,31 +507,37 @@ def _monitor_loop(
 ) -> None:
     """The bounded poll loop (runs in the spawned child process).
 
+    Takes the registry as an absolute path and resolves nothing itself, so
+    the child needs no checkout of its own: it runs detached and may
+    outlive the state its parent read.
+
     Args:
         repo: ``owner/repo`` slug.
         pr: PR number.
         interval: Seconds between polls.
         bound: Total seconds before the loop exits and reports.
-        registry_path: Registry file to update with last_poll.
+        registry_path: Absolute path of the registry file to stamp.
     """
     deadline = time.monotonic() + bound
-    root = repo_root()
-    reg_path = (
-        root / registry_path if not registry_path.is_absolute() else registry_path
-    )
     while time.monotonic() < deadline:
         alerts = _poll_once(repo, pr)
         for line in alerts:
             logger.warning("pr-watch: %s", line)
-        # Update registry last_poll
+        # Match on the PR alone, never on our own pid: the parent registers
+        # the record *after* spawning us, so a fast first poll can run before
+        # it exists, and a pid comparison would silently skip the stamp. One
+        # record per PR is the registry's invariant (the parent drops any
+        # earlier one), so the PR identifies ours.
         try:
-            reg = Registry.load(reg_path)
+            reg = Registry.load(registry_path)
             for m in reg.monitors:
-                if m.pr == pr and m.pid == os.getpid():
+                if m.pr == pr:
                     m.last_poll = datetime.now(UTC).isoformat()
-            reg.save(reg_path)
+            reg.save(registry_path)
         except OSError:
-            pass
+            # Never silent: swallowing this is what let a dead monitor look
+            # like a running one. The log this writes to is the alert channel.
+            logger.exception("pr-watch: could not stamp last_poll in %s", registry_path)
         time.sleep(interval)
     logger.warning(
         "pr-watch: bound of %ds reached for PR #%s — %d poll(s) ran; "
@@ -500,6 +547,23 @@ def _monitor_loop(
         int((bound) / max(interval, 1)),
         pr,
     )
+
+
+def cmd_monitor(args: argparse.Namespace) -> int:
+    """Run the poll loop in the foreground (the spawned child's entry point).
+
+    Not a user-facing subcommand: ``cmd_start`` spawns it. It exists so the
+    child's arguments are converted by argparse — inside code a type checker
+    reads — rather than interpolated into a ``python -c`` string.
+
+    Args:
+        args: Parsed CLI arguments.
+
+    Returns:
+        Exit code.
+    """
+    _monitor_loop(args.repo, args.pr, args.interval, args.bound, args.registry)
+    return EXIT_OK
 
 
 def cmd_start(args: argparse.Namespace) -> int:
@@ -558,19 +622,40 @@ def cmd_start(args: argparse.Namespace) -> int:
         for f in failures:
             logger.error("pr-watch: arming check failed — %s", f)
         return EXIT_ARMING_FAILED
-    # Spawn the detached monitor process
+    # Spawn the detached monitor process. Run it as a subcommand, never as a
+    # `python -c` string: argparse converts each argument inside code a type
+    # checker reads, and interpolating values into source text is what let a
+    # str reach a Path parameter and kill every monitor before its first poll.
     reg_path = _registry_path(root)
-    script = (
-        f"from forge.pr_watch import _monitor_loop; "
-        f"_monitor_loop({repo!r}, {pr}, {args.interval}, {args.bound}, "
-        f"{str(reg_path)!r})"
-    )
-    proc = subprocess.Popen(
-        [sys.executable, "-c", script],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    log_path = monitor_log_path(root, pr)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    argv = [
+        sys.executable,
+        "-m",
+        "forge.pr_watch",
+        MONITOR_SUBCOMMAND,
+        "--repo",
+        repo,
+        "--pr",
+        str(pr),
+        "--interval",
+        str(args.interval),
+        "--bound",
+        str(args.bound),
+        "--registry",
+        str(reg_path),
+    ]
+    # Truncated per start, so the log describes the monitor now running. The
+    # child inherits the descriptor; the parent closes its own copy. Both
+    # streams go here because the alerts are log records on stderr — sending
+    # them to DEVNULL discarded every alert the monitor ever raised.
+    with log_path.open("w", encoding="utf-8") as log:
+        proc = subprocess.Popen(
+            argv,
+            stdout=log,
+            stderr=log,
+            start_new_session=True,
+        )
     reg = Registry.load(reg_path)
     # Remove any stale record for this PR
     reg.monitors = [m for m in reg.monitors if m.pr != pr]
@@ -584,12 +669,14 @@ def cmd_start(args: argparse.Namespace) -> int:
     )
     reg.save(reg_path)
     logger.info(
-        "pr-watch: started monitor pid %d for PR #%d (%s), interval %ds, bound %ds.",
+        "pr-watch: started monitor pid %d for PR #%d (%s), interval %ds, bound %ds. "
+        "Alerts and any crash go to %s.",
         proc.pid,
         pr,
         repo,
         args.interval,
         args.bound,
+        log_path,
     )
     return EXIT_OK
 
@@ -610,14 +697,42 @@ def _pid_cmdline(pid: int) -> str:
         return ""
 
 
+def _is_monitor(pid: int) -> bool:
+    """Return whether *pid* is one of this module's monitor processes.
+
+    The single identity test, so ``stop`` never signals a process that
+    ``list`` would not have called a monitor. It matches the child's own
+    subcommand rather than the module name alone: a bare ``pr_watch``
+    also matches a test run or an editor, and once the operating system
+    reuses a pid that would make an unrelated process look like ours —
+    reported as ``alive``, and in ``stop``'s case sent a signal.
+
+    Args:
+        pid: Process id from a registry record.
+
+    Returns:
+        True when the process is a monitor started by this module.
+    """
+    cmdline = _pid_cmdline(pid)
+    return MONITOR_SUBCOMMAND in cmdline and "forge.pr_watch" in cmdline
+
+
 def cmd_stop(args: argparse.Namespace) -> int:
     """Stop one or all monitors, verifying process identity before signalling.
+
+    A record whose pid is gone or is not a monitor is pruned without a
+    signal, and counts as success: after a merge that is the usual case.
+    A monitor that is alive but refuses the signal keeps its record —
+    dropping it would leave a running process nothing tracks.
 
     Args:
         args: Parsed CLI arguments.
 
     Returns:
-        Exit code.
+        ``EXIT_OK`` when a monitor was stopped, a stale record was removed,
+        or none was registered; ``EXIT_REFUSED`` when no monitor matches
+        ``--pr``, or when any target could not be signalled — even
+        alongside one that stopped, since the caller asked for all of them.
     """
     root = repo_root()
     reg = Registry.load(_registry_path(root))
@@ -629,16 +744,18 @@ def cmd_stop(args: argparse.Namespace) -> int:
         logger.error("pr-watch: no monitor for PR #%s.", args.pr)
         return EXIT_REFUSED
     stopped = 0
+    pruned = 0
+    kept: list[MonitorRecord] = []
     for m in targets:
-        cmdline = _pid_cmdline(m.pid)
-        if "forge.pr_watch" not in cmdline and "pr_watch" not in cmdline:
+        if not _is_monitor(m.pid):
             logger.warning(
-                "pr-watch: pid %d (PR #%s) command line %r does not match a pr-watch "
-                "monitor — stale record, not killing.",
+                "pr-watch: pid %d (PR #%s) command line %r is not a pr-watch "
+                "monitor — stale record, removing it without signalling.",
                 m.pid,
                 m.pr,
-                cmdline[:80],
+                _pid_cmdline(m.pid)[:80],
             )
+            pruned += 1
             continue
         try:
             os.kill(m.pid, signal.SIGTERM)
@@ -646,19 +763,52 @@ def cmd_stop(args: argparse.Namespace) -> int:
             logger.info("pr-watch: stopped pid %d (PR #%s).", m.pid, m.pr)
         except ProcessLookupError:
             logger.warning("pr-watch: pid %d (PR #%s) already gone.", m.pid, m.pr)
+            pruned += 1
         except PermissionError:
+            # Keep the record: the monitor is alive and we failed to stop it,
+            # so dropping it would leave a running process nothing tracks.
             logger.exception("pr-watch: cannot signal pid %d (PR #%s).", m.pid, m.pr)
-    reg.monitors = [
-        m
-        for m in reg.monitors
-        if m not in targets
-        or any(t.pid == m.pid for t in targets if _pid_cmdline(t.pid) == "")
-    ]
-    # Simpler: remove all stopped targets
-    reg.monitors = [m for m in reg.monitors if m not in targets]
+            kept.append(m)
+    reg.monitors = [m for m in reg.monitors if m not in targets or m in kept]
     reg.save(_registry_path(root))
-    logger.info("pr-watch: %d monitor(s) stopped.", stopped)
-    return EXIT_OK if stopped or not targets else EXIT_REFUSED
+    # Report every number: clearing stale records is the common case after a
+    # merge, and reporting it as "0 stopped" with a refusal exit code read as
+    # "nothing happened" while the registry had in fact been pruned.
+    tail = f", {len(kept)} kept (could not signal)" if kept else ""
+    logger.info(
+        "pr-watch: %d monitor(s) stopped, %d stale record(s) removed%s.",
+        stopped,
+        pruned,
+        tail,
+    )
+    # A monitor we could not signal fails the command even when another
+    # target succeeded: the caller asked for them all to stop, and a script
+    # reading only the exit code must not be told that happened.
+    if kept:
+        return EXIT_REFUSED
+    return EXIT_OK if stopped or pruned or not targets else EXIT_REFUSED
+
+
+def _monitor_state(record: MonitorRecord, *, alive: bool) -> str:
+    """Return a one-word reading of a monitor's state, for display.
+
+    Shared by ``list`` and ``stack`` so one wording is produced in both
+    (FOUNDATION §12). ``alive`` is tested first because a monitor that has
+    started but not yet finished its first poll also has an empty
+    ``last_poll`` — only a dead one means the poll never happened.
+
+    Args:
+        record: The registry record to read.
+        alive: Whether the recorded pid is still a monitor process, as
+            :func:`_is_monitor` decides — occupancy alone is not enough,
+            since a reused pid would otherwise read as ``alive``.
+
+    Returns:
+        ``alive``, ``dead`` or ``died-before-first-poll``.
+    """
+    if alive:
+        return "alive"
+    return "dead" if record.last_poll else "died-before-first-poll"
 
 
 def cmd_list(_args: argparse.Namespace) -> int:
@@ -676,12 +826,17 @@ def cmd_list(_args: argparse.Namespace) -> int:
         sys.stdout.write("no monitors registered\n")
         return EXIT_OK
     for m in reg.monitors:
-        alive = _pid_cmdline(m.pid) != ""
+        state = _monitor_state(m, alive=_is_monitor(m.pid))
         sys.stdout.write(
             f"PR #{m.pr}  pid={m.pid}  repo={m.repo}  "
             f"started={m.started_at}  last_poll={m.last_poll or '-'}  "
-            f"{'alive' if alive else 'dead'}\n"
+            f"{state}\n"
         )
+        if state == "died-before-first-poll":
+            sys.stdout.write(
+                f"    never polled — read {monitor_log_path(root, m.pr)}, "
+                f"then restart with forge-pr-watch start --pr {m.pr}\n"
+            )
     return EXIT_OK
 
 
@@ -787,10 +942,10 @@ def cmd_stack(args: argparse.Namespace) -> int:
         m = monitors.get(number)
         if m is None:
             monitor_text = "no-monitor"
-        elif _pid_cmdline(m.pid) != "":
+        elif _is_monitor(m.pid):
             monitor_text = f"alive(pid {m.pid})"
         else:
-            monitor_text = "dead"
+            monitor_text = _monitor_state(m, alive=False)
         sys.stdout.write(
             f"#{number} {title}  base={base}  mergeable={mergeable or '?'}  "
             f"fresh={fresh_text}  monitor={monitor_text}\n"
@@ -804,7 +959,10 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="forge-pr-watch",
         description="Start, list and stop bounded background PR monitors.",
     )
-    sub = parser.add_subparsers(dest="command", required=True)
+    # metavar hides the internal _monitor subcommand from help output.
+    sub = parser.add_subparsers(
+        dest="command", required=True, metavar="{start,list,stop,stack}"
+    )
     p_start = sub.add_parser("start", help="Start a monitor for a PR.")
     p_start.add_argument(
         "--pr", type=int, help="PR number (default: the current branch's PR)."
@@ -831,6 +989,15 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_stack.add_argument("--repo", help="owner/repo (default: the checkout's origin).")
     p_stack.set_defaults(func=cmd_stack)
+    # Internal: what cmd_start spawns. Declared here so argparse does the
+    # type conversion the child used to miss.
+    p_monitor = sub.add_parser(MONITOR_SUBCOMMAND)
+    p_monitor.add_argument("--repo", required=True)
+    p_monitor.add_argument("--pr", type=int, required=True)
+    p_monitor.add_argument("--interval", type=int, required=True)
+    p_monitor.add_argument("--bound", type=int, required=True)
+    p_monitor.add_argument("--registry", type=Path, required=True)
+    p_monitor.set_defaults(func=cmd_monitor)
     return parser
 
 

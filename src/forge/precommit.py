@@ -3659,6 +3659,13 @@ def _forced_steps(only: list[str]) -> Iterator[None]:
 # describe them.
 _HISTORY_LOG_SUFFIX = "_history.log"
 
+# Runtime logs that describe a running process rather than a tree. They
+# live here because `code_health_dir` is the one directory a test can
+# redirect, but no step produces them and no stamp would mean anything:
+# freshness skips them entirely rather than calling them orphaned, which
+# would put a bogus row in every evidence pack for every watched PR.
+_RUNTIME_LOG_PREFIXES = ("pr_watch_",)
+
 # Logs written by something other than a registered step. A log matching
 # neither these nor a step name has no producer left — typically a step
 # that was removed — and its stamp is evidence of nothing.
@@ -3693,7 +3700,8 @@ def freshness_verdicts(root: Path) -> dict[str, str]:
     ``n/a`` — its stamp says nothing about its result. A log nothing forge
     runs still writes reports ``orphaned``: a fresh stamp on it would read
     as current evidence for a check that no longer exists. Append-only
-    history logs are left out: they describe no single tree.
+    history logs and runtime logs (``_RUNTIME_LOG_PREFIXES``) are left
+    out: they describe no single tree.
 
     Args:
         root: Repo root.
@@ -3708,7 +3716,9 @@ def freshness_verdicts(root: Path) -> dict[str, str]:
     environment_steps = {step.name for step in _STEP_REGISTRY if not step.checks_files}
     verdicts: dict[str, str] = {}
     for path in sorted(log_dir.glob("*.log")):
-        if path.name.endswith(_HISTORY_LOG_SUFFIX):
+        if path.name.endswith(_HISTORY_LOG_SUFFIX) or path.name.startswith(
+            _RUNTIME_LOG_PREFIXES
+        ):
             continue
         if path.stem in environment_steps:
             verdicts[path.stem] = "n/a"

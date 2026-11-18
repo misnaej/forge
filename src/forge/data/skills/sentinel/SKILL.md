@@ -201,7 +201,8 @@ their actions are enumerated there). Sentinel delta: question replies
 route back into the frozen branch's resume flow. The monitors need no
 exemption — §6 skips only under `is_ci()`, which no sentinel run
 satisfies, so they start by default here as everywhere. The main loop
-never blocks on an open PR.
+never blocks on an open PR. Where a monitor's alerts land, and who has
+to read them: `/forge-pr` Step 7.
 
 ## After each PR
 
