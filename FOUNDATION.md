@@ -400,7 +400,7 @@ Pin change (floor, cap, new pin — advisory or not) never rides a feature/fix P
 
 ### Commit messages
 
-- What + why, under the squash message's budget and **content rule** (below), both unchanged here. **No Claude/AI attribution.**
+- What + why, under the squash message's budget and **content rule** (below). **No Claude/AI attribution.**
 - Conventional format — types in `forge.pr_squash_comment.CONVENTIONAL_COMMIT_TYPES` (canonical; shell hook synced via `forge-gen-commit-types`).
 
 ### PR descriptions
@@ -414,17 +414,9 @@ Pin change (floor, cap, new pin — advisory or not) never rides a feature/fix P
 
 Mechanics (modes, commands, templates): the `/forge-pr` skill. Rules:
 
-- **Verification precedes publication.** Finalization reviews (design / security / docs reporters + strict pre-commit) run on local tree about to be pushed → findings fixed in PR's own commits, changelog heading settles pre-publish. Order: verify → fix → commit → **compose and fill the wrap-up, author the squash message** → push → open PR → post.
-<<<<<<< HEAD
+- **Verification precedes publication.** Finalization reviews (§3's order) run on local tree about to be pushed → findings fixed in PR's own commits, changelog heading settles pre-publish. Order: verify → fix → commit → **compose and fill the wrap-up, author the squash message** → push → open PR → post.
   - Publishing is gated, and the gates **refuse**: a stale base, a wrap-up not naming `HEAD`, a raw create. **A rework returns a ready PR to draft.** Emergencies go through **`forge-emergency`** — human-armed, ledger-backed, owing verification after delivery, armed only on explicit user instruction. It defers ceremony alone: never a §2 hook, never the CVE-scan refusal, and of pre-commit only steps that already self-skip in CI. Which gate refuses what: `/forge-pr`.
-=======
-  - The push itself is gated, not only PR creation: `forge-commit` commits locally by default and refuses `--push` / `--push-only` unless a wrap-up names `HEAD`, an open PR already exists for the branch (review-fix pushes), or an armed `forge-emergency` excuses it — so no commit reaches the remote before verification evidence exists. Raw `git push` is already refused by `block_raw_git`; `FORGE_SKIP_WRAPUP_GATE=1` is the recorded user bypass.
-  - `forge-pr-create` and `forge-pr-wrapup post` refuse a branch behind or conflicting with base; post also an unreadable PR or wrap-up not naming head.
-  - `block_unverified_pr_create` hook refuses raw create, names `forge-pr-create`. Runs in checkout it publishes; refuses unless its wrap-up names `HEAD`. `wrapup-mode: light` / `wrapup-mode: light-release` re-earned by fail-closed `forge-pr-plan` re-run (must agree light-code / light-release). `FORGE_SKIP_WRAPUP_GATE=1` on explicit user request only.
-  - **Draft PR** = escape hatch for early visibility.
-  - **A rework returns a ready PR to draft** (commits changing what posted wrap-up describes): `gh pr ready <N> --undo`, say so; ready again when refreshed wrap-up posts. Review-comment fixes are no rework.
-  - Genuine emergency → **`forge-emergency`**: one human-armed, ledger-backed `wrapup-mode: emergency` publication. Defers only verification ceremony — never a §2 hook, never publish-time CVE-scan-since-fork check, and of pre-commit only steps already self-skipping in CI. Owes retroactive verification after delivery. Agents arm it only on explicit user instruction.
->>>>>>> origin/main
+  - **The push is gated too, not only the create.** `forge-commit` commits locally by default and refuses `--push` / `--push-only` without publication evidence: a wrap-up naming `HEAD`, an open PR for the branch (review-fix pushes), or an armed `forge-emergency`. Nothing reaches the remote unverified.
 - **Verification starts itself.** Implementation commits done → run finalization reviews automatically (read-only, no permission). Stopping at "ready to finalize?" unverified = too early. Commit, push, open PR: no pause after verification. Merging, force ops, cutting release, publishing package: pause. Every §2 bypass keeps own confirmation.
 - **The wrap-up never waits on CI.** Post when checks done; state plainly when CI incomplete — unqualified wrap-up reads "all green", false.
 - **The summary and Recommendation never restate a section the wrap-up renders.** `Code Quality` and `CI Status` come from the evidence; a slot repeating them ("suite green; pre-commit passes") says what the same comment says two lines down. Say what changed and what the reader must decide. Saying CI *disagrees* is required, not restating. `forge-pr-wrapup validate` warns, never refuses.
@@ -433,12 +425,12 @@ Mechanics (modes, commands, templates): the `/forge-pr` skill. Rules:
 - `verified-at:` header (reporter contract, `agents/_TEMPLATE.md`) makes wrap-up drift detectable.
 - **The flow does not end at posting — monitor the PR.** Canonical; skills state only call-site delta. Default: after wrap-up posts, start one background monitor per open PR (`forge-pr-watch start --pr <N>`):
   - **New review comments** → surface.
-  - **Merged / closed** → local cleanup (`/forge-next`) **and** `forge-issue-triage` `post-pr`, which touches **only what the merge changed** and never hunts the next task (`recommend-next` owns that). The Backlog Index rides along gated (`--if-stale-hours`), refreshing about daily rather than every merge.
+  - **Merged / closed** → local cleanup (`/forge-next`) **and** `forge-issue-triage` `post-pr`, which touches **only what the merge changed** and never hunts the next task (`recommend-next` owns that).
   - **`mergeable == CONFLICTING`** → alert only; **the monitor never syncs the branch it watches** (read-only watcher).
   - **A CI run concluding in failure** → surface, investigate (§1); never auto-push fixes.
-  - **Wrap-up staleness** → alert **once per new head**, naming both SHAs; unknown is never an alert. **The monitor never posts the refresh** — whoever picks up the work does, and a newer `verified-at:` clears it. `warn_stale_wrapup` runs the same verdict at-the-cause. Both read-only; the verdict is `forge-pr-plan --freshness`.
+  - **Wrap-up staleness** → alert **once per new head**, naming both SHAs; unknown is never an alert. **The monitor never posts the refresh** — whoever picks up the work does. `warn_stale_wrapup` runs the same verdict at-the-cause. Both read-only; the verdict is `forge-pr-plan --freshness`.
 
-  **Resolving a conflict** falls to whoever picks up the work, never the monitor: `forge-update-branch` (§2: never rebase) needs no permission, since a merge destroys nothing. It resolves the mechanical conflicts and stops on the rest for `forge-merge-resolver`. Detail: [`forge-docs/git-safety.md`](forge-docs/git-safety.md).
+  **Resolving a conflict** falls to whoever picks up the work, never the monitor: `forge-update-branch` (§2: never rebase) needs no permission — a merge destroys nothing. Detail: [`forge-docs/git-safety.md`](forge-docs/git-safety.md).
 
   Main session stays free. Skip only on explicit user request or `forge.run_context.is_ci()` — never `is_non_interactive()` (§15).
 
