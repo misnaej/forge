@@ -538,8 +538,13 @@ def _is_fresh(index: Issue, within_hours: int) -> bool:
         updated = datetime.fromisoformat(index.updated_at)
     except ValueError:
         return False
+    if updated.tzinfo is None:
+        # A naive timestamp would raise TypeError on the subtraction below
+        # and crash the run instead of failing toward stale.
+        return False
     age_hours = (datetime.now(UTC) - updated).total_seconds() / 3600
-    return age_hours < within_hours
+    # A timestamp in the future would otherwise read as fresh forever.
+    return 0 <= age_hours < within_hours
 
 
 def _locate_index(source: BacklogSource) -> tuple[Issue, list[Issue]]:
@@ -549,7 +554,8 @@ def _locate_index(source: BacklogSource) -> tuple[Issue, list[Issue]]:
         source: GitHub reads.
 
     Returns:
-        The Index issue number and the remaining open issues.
+        The Index issue itself (its ``updated_at`` feeds the staleness
+        gate) and the remaining open issues.
 
     Raises:
         _RefusedError: When the listing is unreadable or short, or there is
@@ -635,7 +641,7 @@ def run(
             index, options.fresh_within_hours
         ):
             emit(
-                f"skipped: Index #{index.number} was rewritten less than "
+                f"skipped: Index #{index.number} was updated less than "
                 f"{options.fresh_within_hours}h ago"
             )
             return EXIT_OK
@@ -708,7 +714,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--if-stale-hours",
         type=int,
         metavar="H",
-        help="Self-skip (exit 0) when the Index was rewritten less than H "
+        help="Self-skip (exit 0) when the Index was updated less than H "
         "hours ago, so a caller on a frequent event refreshes it at most "
         "that often.",
     )

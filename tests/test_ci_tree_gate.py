@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -1015,16 +1016,31 @@ def test_fault_in_ci_raises_one_annotation_naming_only_the_type(
     """Behavior: one stderr warning line names the type, never the message.
 
     SCENARIO: the exception message carries a newline and a forged
-    ``::error::`` command.
-    EXPECTED BEHAVIOR: exactly one ``::warning`` line, ``RuntimeError``
-    interpolated, and none of the message text reaches stderr.
+    ``::error::`` command, and a real stderr handler is installed exactly as
+    ``configure_cli_logging`` does (INFO, bare message). pytest's own capture
+    handler is swapped out, since it would hide a traceback that production
+    sends to stderr, where GitHub parses lines starting ``::``.
+    EXPECTED BEHAVIOR: no stderr line starts with ``::`` except the single
+    ``::warning`` line, ``RuntimeError`` is interpolated, and none of the
+    message text reaches stderr.
     """
     monkeypatch.setattr(mod, "is_ci", lambda: True)
-    assert mod.main([]) == 0
+    root = logging.getLogger()
+    saved_handlers, saved_level = list(root.handlers), root.level
+    try:
+        # force=True drops pytest's handler; stream binds to capsys's stderr.
+        logging.basicConfig(
+            level=logging.INFO, format="%(message)s", stream=sys.stderr, force=True
+        )
+        assert mod.main([]) == 0
+    finally:
+        root.handlers[:] = saved_handlers
+        root.setLevel(saved_level)
     err = capsys.readouterr().err
-    lines = [line for line in err.splitlines() if "::" in line]
-    assert len(lines) == 1
-    assert re.match(r"^::warning title=[^:]+::RuntimeError ", lines[0])
+    command_lines = [line for line in err.splitlines() if line.startswith("::")]
+    assert len(command_lines) == 1
+    assert re.match(r"^::warning title=[^:]+::RuntimeError ", command_lines[0])
+    assert "tree gate raised RuntimeError" in err
     assert "pwn" not in err
     assert "::error::" not in err
 

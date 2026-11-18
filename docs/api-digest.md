@@ -1883,7 +1883,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_is_clean(body: list[str]) -> bool` _(internal)_ — Return whether a section reports a clean check (its first line says so).
 - `_check_sections(sections: list[tuple[str, list[str]]]) -> list[str]` _(internal)_ — Validate presence and one-line shape of the required sections.
 - `_count_words(head: list[str], sections: list[tuple[str, list[str]]]) -> int` _(internal)_ — Count the words the budget applies to (prose, not headers or evidence).
-- `_check_budget(head: list[str], sections: list[tuple[str, list[str]]]) -> list[str]` _(internal)_ — Warn about a long wrap-up, scaled by the number of findings sections.
+- `_warn_if_long(head: list[str], sections: list[tuple[str, list[str]]]) -> None` _(internal)_ — Warn about a long wrap-up, scaled by the number of findings sections.
 - `_check_attribution(text: str) -> list[str]` _(internal)_ — Wrap the shared FOUNDATION §2 attribution gate as a violation list.
 - `validate_wrapup(text: str) -> list[str]` — Return every rule the wrap-up *text* breaks (empty means valid).
 - `_check_no_squash_section(text: str) -> list[str]` _(internal)_ — Refuse a wrap-up that embeds the squash-merge message.

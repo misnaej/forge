@@ -605,12 +605,25 @@ def test_is_fresh_compares_age_to_window(
     assert bi._is_fresh(index, 24) is expected
 
 
-@pytest.mark.parametrize("updated", ["", "garbage"])
-def test_is_fresh_unreadable_timestamp_is_stale(updated: str) -> None:
-    """Behavior: an unreadable timestamp regenerates rather than skips.
+@pytest.mark.parametrize(
+    "updated",
+    [
+        "",
+        "garbage",
+        "2026-11-18T10:00:00",
+        _stamp(-5, "Z"),
+    ],
+    ids=["empty", "garbage", "naive", "future"],
+)
+def test_is_fresh_unusable_timestamp_is_stale(updated: str) -> None:
+    """Behavior: an unusable timestamp regenerates rather than skips or crashes.
+
+    Unreadable, timezone-naive (the subtraction would raise ``TypeError``)
+    and future-dated stamps all return False. Each failure mode points at
+    regenerating the Index, the safe direction.
 
     Args:
-        updated: Unparseable last-activity timestamp.
+        updated: Unparseable, naive or future last-activity timestamp.
     """
     assert bi._is_fresh(_index_updated(updated), 24) is False
 
@@ -626,6 +639,7 @@ def test_fresh_index_with_gate_writes_nothing(
     out = capsys.readouterr().out
     assert writes.calls == []
     assert "skipped:" in out
+    assert "was updated less than 24h ago" in out
     assert "#7" in out
     assert "wrote:" not in out
 

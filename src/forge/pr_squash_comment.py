@@ -35,8 +35,8 @@ Rules (FOUNDATION §6 "Squash-merge messages"):
 
 - title matches conventional-commit ``<type>(...)?: <subject>``
 - 3-5 ``--bullet`` entries
-- total whitespace-split word count (title + bullets): target ≤ 50;
-  51-55 posts with a warning; over 55 is refused
+- total whitespace-split word count (title + bullets): advisory target
+  of 45; well past it warns and still posts, nothing is refused on length
 - no Claude / AI attribution patterns
 
 A failing run names every broken rule at once. Length is never one of

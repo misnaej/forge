@@ -7,8 +7,8 @@ dispositioned. Two things go wrong when it is posted by hand. It grows —
 lives in agent prose, and prose is a remembered step — and it never gets
 retired, so every earlier wrap-up on the PR keeps reading as a current
 attestation of a tree that no longer exists. This CLI makes both
-mechanical: ``validate`` refuses a body that narrates clean checks or
-exceeds its budget, and ``post`` stamps the new wrap-up with a marker,
+mechanical: ``validate`` refuses a body that narrates clean checks (a long one
+only warns), and ``post`` stamps the new wrap-up with a marker,
 collapses every earlier marker-carrying wrap-up into a ``<details>``
 block (history kept, one live attestation visible), and re-posts the
 squash-merge comment so it stays the PR's newest.
@@ -333,7 +333,7 @@ def _count_words(head: list[str], sections: list[tuple[str, list[str]]]) -> int:
     return sum(len(line.split()) for line in counted)
 
 
-def _check_budget(head: list[str], sections: list[tuple[str, list[str]]]) -> list[str]:
+def _warn_if_long(head: list[str], sections: list[tuple[str, list[str]]]) -> None:
     """Warn about a long wrap-up, scaled by the number of findings sections.
 
     Length refuses nothing, here as everywhere (see
@@ -347,10 +347,9 @@ def _check_budget(head: list[str], sections: list[tuple[str, list[str]]]) -> lis
         head: Lines before the first section.
         sections: ``(title, body_lines)`` pairs in document order.
 
-    Returns:
-        Always empty. The budget (``WORD_BUDGET`` plus
-        ``FINDING_ALLOWANCE`` per required non-clean, non-status section)
-        only warns, above :func:`forge.text_budget.ceiling` of it.
+    The budget is ``WORD_BUDGET`` plus ``FINDING_ALLOWANCE`` per required
+    non-clean, non-status section, and warns above
+    :func:`forge.text_budget.ceiling` of it.
     """
     titles = {title.casefold(): body for title, body in sections}
     findings = sum(
@@ -373,7 +372,6 @@ def _check_budget(head: list[str], sections: list[tuple[str, list[str]]]) -> lis
             FINDING_ALLOWANCE,
             findings,
         )
-    return []
 
 
 def _check_attribution(text: str) -> list[str]:
@@ -438,11 +436,11 @@ def validate_wrapup(text: str) -> list[str]:
         for name in unfilled_slots(text)
     ]
     head, sections = _split(text)
+    _warn_if_long(head, sections)
     return (
         slots
         + _check_head(head)
         + _check_sections(sections)
-        + _check_budget(head, sections)
         + _check_attribution(text)
         + _check_no_squash_section(text)
     )

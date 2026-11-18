@@ -7,8 +7,8 @@
 
 ## Evidence
 
-Rule now lives in `FOUNDATION.md:445` (content rule) and
-`src/forge/pr_squash_comment.py:133` (target); neither is checked.
+Rule now lives in `FOUNDATION.md:448` (content rule) and
+`src/forge/pr_squash_comment.py:135` (target); neither is checked.
 
 Measured last 60 merged squash messages: 26% carried >=1 bullet of pure
 process state or bookkeeping, 9% of all bullet words. Five categories:

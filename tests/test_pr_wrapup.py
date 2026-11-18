@@ -378,14 +378,14 @@ def test_validate_wrapup_refuses_a_multiline_status_section() -> None:
 def _budget_inputs(
     total_words: int, *, findings: int
 ) -> tuple[list[str], list[tuple[str, list[str]]]]:
-    """Build ``_check_budget`` inputs with an exact word count and finding count.
+    """Build ``_warn_if_long`` inputs with an exact word count and finding count.
 
     Args:
         total_words: Words the budget counts across head and sections.
         findings: Required non-status sections reporting a real finding.
 
     Returns:
-        ``(head, sections)`` for ``mod._check_budget``.
+        ``(head, sections)`` for ``mod._warn_if_long``.
     """
     names = ["Design Check", "Security Review", "Documentation Check"]
     sections = [(name, ["Found: two words"]) for name in names[:findings]]
@@ -396,10 +396,10 @@ def _budget_inputs(
 
 @pytest.mark.parametrize("findings", [0, 1, 3])
 @pytest.mark.parametrize("over", [False, True], ids=["at-ceiling", "over-ceiling"])
-def test_check_budget_never_refuses_and_warns_only_above_the_ceiling(
+def test_warn_if_long_warns_only_above_the_ceiling(
     caplog: pytest.LogCaptureFixture, *, findings: int, over: bool
 ) -> None:
-    """Behavior: ``_check_budget`` always returns ``[]``; warns above ``ceiling``.
+    """Behavior: ``_warn_if_long`` warns only above ``ceiling`` of the budget.
 
     The budget scales by ``FINDING_ALLOWANCE`` per finding, so the warn
     line moves with it.
@@ -411,19 +411,19 @@ def test_check_budget_never_refuses_and_warns_only_above_the_ceiling(
     limit = ceiling(mod.WORD_BUDGET + mod.FINDING_ALLOWANCE * findings)
     head, sections = _budget_inputs(limit + int(over), findings=findings)
     with caplog.at_level(logging.WARNING):
-        assert mod._check_budget(head, sections) == []
+        mod._warn_if_long(head, sections)
     assert ("over the" in caplog.text) is over
 
 
-def test_check_budget_accepts_a_thousand_word_body_and_an_under_budget_one(
+def test_warn_if_long_warns_for_a_thousand_word_body_not_an_under_budget_one(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Behavior: a ~1000-word body is never refused; it warns only when over budget."""
+    """Behavior: a ~1000-word body warns; an under-budget one stays silent."""
     with caplog.at_level(logging.WARNING):
-        assert mod._check_budget(*_budget_inputs(1000, findings=0)) == []
+        mod._warn_if_long(*_budget_inputs(1000, findings=0))
         assert "over the" in caplog.text
         caplog.clear()
-        assert mod._check_budget(*_budget_inputs(50, findings=0)) == []
+        mod._warn_if_long(*_budget_inputs(50, findings=0))
     assert "over the" not in caplog.text
 
 
