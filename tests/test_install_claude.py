@@ -21,13 +21,12 @@ import pytest
 
 from forge import install_claude as ic
 from forge.agent_harness import PLUGIN_REFERENCE_RE
-from forge.hook_registry import script_names
+from forge.hook_registry import required_scripts, script_names
 from forge.install_claude import (
     hook_command,
     install_claude,
     is_forge_group,
     merge_settings,
-    required_scripts,
 )
 from forge.instruction_files import generated_name, shipped_path
 from forge.plugin_roster import shipped_plugin_names
@@ -597,3 +596,35 @@ def test_main_exit_codes(
         assert _files(bare_repo) == before
     else:
         assert (bare_repo / ".claude").is_dir()
+
+
+def test_consumer_file_at_forge_owned_hook_path_is_overwritten(
+    bare_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A consumer-owned file at a forge-owned path is replaced by the shipped guard.
+
+    SCENARIO: the bare consumer pre-creates .claude/hooks/block_force_push.sh
+    with its own content, plus an unrelated .claude/agents/my-agent.md.
+    EXPECTED BEHAVIOR: the forge-owned hook path is overwritten with the
+    packaged script — asserted against the resolved real packaged path, not
+    a copied literal — and the unrelated consumer file is untouched. This
+    pins the ownership boundary: repo files are never modified outside
+    forge-owned paths, and at a forge-owned path the shipped guard wins, so
+    a repo cannot substitute a weaker guard.
+    """
+    victim = "block_force_push.sh"
+    assert victim in script_names()
+    hooks_dir = bare_repo / ".claude" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    (hooks_dir / victim).write_text("echo consumer-owned\n", encoding="utf-8")
+    own = bare_repo / ".claude" / "agents" / "my-agent.md"
+    own.parent.mkdir(parents=True, exist_ok=True)
+    own.write_text("my own agent\n", encoding="utf-8")
+    monkeypatch.chdir(bare_repo)
+    monkeypatch.setattr(sys, "argv", ["install-forge-claude"])
+    assert ic.main() == 0
+    packaged = shipped_path("claude-hooks") / victim
+    assert (hooks_dir / victim).read_text(encoding="utf-8") == packaged.read_text(
+        encoding="utf-8"
+    )
+    assert own.read_text(encoding="utf-8") == "my own agent\n"
