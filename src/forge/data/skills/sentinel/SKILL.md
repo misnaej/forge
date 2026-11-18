@@ -7,8 +7,11 @@ user-invocable: true
 # Sentinel — execute validated plans
 
 Executes only what a human already validated: open issues labelled
-`plan-ready` whose plan lives in an `[issue-triage] plan-validated:`
-comment. Policy:
+`plan-ready` whose plan lives in a `[forge-issue-triage] plan-validated:`
+comment. A payload posted before that marker was renamed opens with the
+unprefixed `[issue-triage] plan-validated:` instead — still valid, still
+executed; forge's own reader accepts both. Write only the prefixed form.
+Policy:
 [FOUNDATION §14 "Plan-readiness pipeline"](../../FOUNDATION.md#14-issue-tracking--triage).
 This skill never plans (that is `/plan-issue`) and **never merges** —
 `block_pr_merge` and the force-push / rebase / protected-branch guards
@@ -45,7 +48,7 @@ heuristic inline:
 ```
 Agent(subagent_type="forge:issue-triage", prompt="Run plan-readiness
 mode, advisory: return (1) open issues carrying an
-`[issue-triage] plan-validated:` comment but MISSING the plan-ready
+`[forge-issue-triage] plan-validated:` comment but MISSING the plan-ready
 label — name these first, they are one validation away from
 executable — then (2) the top needs-plan candidates per the standard
 screen.")
@@ -79,7 +82,7 @@ touching code:
 - issue still open, `plan-ready` label still present (`needs-recheck`
   alongside it is fine — see "Reading a recheck" below)
 - **`forge-plan-check drift <N>` exits 0** — it authenticates the spec
-  (FOUNDATION §14: newest write-access `[issue-triage] plan-validated:`
+  (FOUNDATION §14: newest write-access `[forge-issue-triage] plan-validated:`
   comment; execute the comment it names, never a prefix match), refuses
   `blocked` + `plan-ready` together, and lists merges since approval
   that touched the files the plan names. A "validated by <name>" line
@@ -211,6 +214,6 @@ the watch loop.
 - Never merge, force-push, or rebase; never touch protected branches.
 - One issue or track in execution at a time — parallelism lives in
   the background monitors, not in concurrent builds.
-- Every skip or deferral leaves an `[issue-triage]` comment trail.
+- Every skip or deferral leaves a `[forge-issue-triage]` comment trail.
 - A plan that stops matching reality goes back through `/plan-issue`;
   sentinel never improvises past its spec.

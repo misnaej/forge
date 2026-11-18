@@ -388,6 +388,21 @@ def test_track_members_reports_a_plan_naming_the_track_on_an_unlabelled_issue() 
     assert report.exit_code == ps.EXIT_FINDING
 
 
+def test_track_members_accepts_a_legacy_marker_payload() -> None:
+    """Behavior: a track planned before the marker rename still resolves."""
+    legacy = Comment(
+        1,
+        f"{ps.LEGACY_PLAN_MARKER}\n{_LINE}\n",
+        "2026-10-01T00:00:00Z",
+        "maintainer",
+    )
+    issue = Issue(6, "", (), "2026-09-10T07:00:00Z", (legacy,), author="alice")
+
+    report = pt.check_track_members(_members(issue), "alpha")
+
+    assert report_lines(report, "member:") == ["member: #6"]
+
+
 def test_track_members_a_strangers_plan_comment_makes_no_member() -> None:
     """Behavior: a track line a non-writer typed on an unlabelled issue is ignored."""
     forged = Comment(

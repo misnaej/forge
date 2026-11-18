@@ -1376,8 +1376,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `capped_echo(text: str) -> str` — Return *text* fenced and capped at :data:`ECHO_CAP` characters.
 - `is_safe_path(path: str) -> bool` — Return whether *path* may be handed to git as a repo-relative pathspec.
 - `named_paths(text: str) -> list[str]` — Return the repo-relative file paths *text* names, outside code fences.
-- `authenticated_comment(comments: Iterable[Comment], is_writer: Callable[[str], bool | None], marker: str) -> PlanLookup` — Find the newest comment opening with *marker* whose author has write access.
-- `authenticated_plan(comments: Iterable[Comment], is_writer: Callable[[str], bool | None]) -> PlanLookup` — Find the newest :data:`PLAN_MARKER` comment whose author has write access.
+- `authenticated_comment(comments: Iterable[Comment], is_writer: Callable[[str], bool | None], marker: str | tuple[str, ...]) -> PlanLookup` — Find the newest comment opening with *marker* whose author has write access.
+- `authenticated_plan(comments: Iterable[Comment], is_writer: Callable[[str], bool | None]) -> PlanLookup` — Find the newest plan comment whose author has write access.
 - `plan_paths(plan: Comment | None, body: str) -> tuple[list[str], bool]` — Return the files the plan names, falling back to the issue body's.
 - `parse_timestamp(value: str) -> datetime` — Parse an ISO-8601 timestamp, reading a naive one as UTC.
 - `parse_merge_log(raw: str) -> list[Merge]` — Parse ``git log --name-only -z --format=%x1e%H%x1f%cI%x1f%s`` output.

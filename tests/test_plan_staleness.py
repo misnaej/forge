@@ -416,6 +416,50 @@ def test_plan_from_non_writer_is_ignored() -> None:
     assert lookup.ignored == (2,)
 
 
+@pytest.mark.parametrize(
+    "marker",
+    [ps.PLAN_MARKER, ps.LEGACY_PLAN_MARKER],
+    ids=["canonical", "legacy"],
+)
+def test_plan_is_found_under_every_accepted_marker(marker: str) -> None:
+    """Behavior: a writer's payload opening with either spelling is the plan.
+
+    The legacy spelling is the orphaning case: payloads posted before the
+    rename sit on open issues beside a live `plan-ready` label.
+
+    Args:
+        marker: Marker spelling the comment opens with.
+    """
+    comment = Comment(1, f"{marker}\n\nEdit `src/a.py`.", PLAN_TIME, "maintainer")
+    gh = _source("", [comment])
+
+    lookup = ps.authenticated_plan(gh.comment_lists[10], ps.WriterCheck(gh))
+
+    assert lookup.plan is comment
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "[other] plan-validated:\n\nEdit `src/a.py`.",
+        f"quoting {ps.PLAN_MARKER}\n\nEdit `src/a.py`.",
+        f"x{ps.LEGACY_PLAN_MARKER}\n\nEdit `src/a.py`.",
+    ],
+    ids=["foreign-prefix", "marker-mid-line", "marker-glued-to-prefix"],
+)
+def test_plan_comment_must_open_with_a_marker(body: str) -> None:
+    """Behavior: a comment merely containing a marker, or a foreign one, is no plan.
+
+    Args:
+        body: Comment text that does not open with an accepted marker.
+    """
+    gh = _source("", [Comment(1, body, PLAN_TIME, "maintainer")])
+
+    lookup = ps.authenticated_plan(gh.comment_lists[10], ps.WriterCheck(gh))
+
+    assert lookup.plan is None
+
+
 def test_unresolvable_plan_author_is_unknown_everywhere() -> None:
     """A plan whose author's access cannot be looked up makes every check unknown.
 
