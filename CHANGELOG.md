@@ -17,8 +17,95 @@ from you.
 **Format.** Per release: an optional **⚠️ Upgrade notes** lane
 (assembled from `upgrade` fragments), then change groups by changelog
 fragment type (**Features / Changes / Fixes / Removed / Docs**).
-Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
-versions follow forge's rolling-next convention.
+Follows [Keep a Changelog](https://keepachangelog.com/) in spirit; a
+release tag is cut per merge, from the entries that merge brought.
+
+## v14.5.1 — 2026-11-18
+
+### Changes
+- The contributor guide now says a merge can miss its release tag: the next tag picks up its entries, and `forge-changelog tag-gaps` reports the gap once the release job runs. Affects forge's own contributors only.
+
+### Fixes
+- **The wrap-up comment's length budget now reaches the writer before the text is written, instead of arriving as a complaint about text already finished.** The budget was enforced by refusing an over-long wrap-up; when that refusal became a warning, nothing carried the number — it appeared in no instruction, no template and no command output, only in a message that fired after the fact and suggested shortening the *next* one. Each slot now states its own allowance, the command that creates the file prints the total, and the warning says what to cut from the text in front of you.
+- The same "shorten the next one" wording is gone from the commit-message warning, which had the same problem: advice you cannot act on without writing a second commit.
+- Nothing newly refuses. Over-length still posts and still commits, by design — the fix is telling the writer the budget early, not reinstating a gate.
+
+## v14.5.0 — 2026-11-18
+
+### Features
+- **The health check now says when forge itself is out of date, not just when its pieces disagree with each other.** It already compared the installed package against the git hooks and reported them aligned — which they can be while both are equally old. That is what happened: it reported alignment at one version while the checkout had already moved a release ahead, so the reassuring line was true about agreement and silent about being current. It now also reports an installed build that is behind the newest release its own checkout is built on, naming both versions and the command that refreshes it.
+- Only forge's own working copy is judged this way. In a project that merely uses forge, the newest tag is that project's own version and says nothing about which forge is installed, so no comparison is made.
+- **One rule now decides which forge build is newer, everywhere that asks.** A development build counts as preceding the release it anticipates rather than matching it — which is what being exactly one patch behind looks like, and was previously invisible. Four reports change accordingly, all in the same direction and all naming the fixes they already named: the installed-versus-hooks comparison, the commit-time gate on those hooks, the "newer forge available" notice, and the count of upgrade steps still owed.
+
+## v14.4.0 — 2026-11-18
+
+### Features
+- **A merge that ships without a release tag of its own is now reported instead of passing unnoticed.** Every merge is supposed to cut a release tag, computed from the changelog entries that merge brought. When something stops that — a refused tag push, or tagging failing for its own reasons — the next merge quietly counts the orphaned entries into its own tag. The version stays correct, so nothing looks wrong; what is lost is that one merge has no release naming it, and the following release notes cover two merges' work. `forge-changelog tag-gaps` reads the repository history and says so, checking the merge at hand by default or any span on request. The tagging job runs it after tagging, including when tagging itself failed, so the report does not depend on the thing that broke.
+- **A refused tag push now explains itself.** A remote can refuse a tag whose commit holds a different copy of the automation's own workflow files than the current branch does, which happens whenever a later merge edits one. It now names that cause, says this merge has no tag yet and how to get one, and names the credential change that removes the refusal.
+
+## v14.3.1 — 2026-11-18
+
+### Fixes
+- **A managed-block marker is no longer mistaken for an agent reference and rewritten.** Shipped instructions name each other in a neutral form that each harness rewrites into its own namespace at install time. A managed block — the kind a tool writes between two comment markers so it can find and refresh its own output later — is spelled the same way, and when its first segment happened to match the name of a shipped skill, the rewriter treated the marker as a reference and renamed it. The architecture-diagram skill was affected: its installed instructions told you to write a marker its own generator then refused, so the feature could not be adopted by following them. A reference ends at the name; a marker carries a further segment, and that difference now tells them apart, so a marker is safe whatever it is called.
+- **Re-generating the Vibe integration now removes what the agent rename left behind.** Stale unprefixed skills, prompts and agent files sat in the generated directories; a re-run prunes them, `--check` reports them without deleting, and `forge-doctor` fails until one does.
+- **The CI recipe matches what forge actually wires.** It now documents the tag-on-merge job, drops prose that had landed inside a YAML fence, and points its links at URLs that resolve from an installed package rather than paths that only exist in this repository.
+
+## v14.3.0 — 2026-11-18
+
+### Changes
+- **A pull-request wrap-up no longer spends its scarcest words telling you what it already told you.** The wrap-up renders two sections from the evidence — one for the local checks, one for continuous integration — then asks its author for a summary and a recommendation. Those slots were often spent repeating the two sections: "suite green; pre-commit passes", directly above a section saying exactly that. They now say what changed and what the reader has to decide, and the tool warns when one restates a section instead. It warns and still passes.
+- **The warning matches a claim, never a mention.** A line saying the change *adds* a continuous-integration refresh, or that a reviewer flagged something now fixed, is describing work and stays silent. Saying that continuous integration *disagrees* with the local result is likewise untouched: reporting that is required.
+- **A pull-request description keeps release bookkeeping out of its summary.** No word counts for the repository's own documents, no note that a changelog entry exists, no check status outside the testing section.
+- **A commit message follows the same content rule as the squash message it will become**, which until now only the squash message stated.
+
+## v14.2.0 — 2026-11-18
+
+### Changes
+- `forge-commit` commits locally by default; pushing is opt-in via `--push` / `--push-only` and `--no-push` is removed (clean break). A push is now refused (exit 1, the commit stays local) unless publication evidence exists: a wrap-up naming the current HEAD (`code_health/pr_wrapup.md`), an open PR for the branch (review-fix pushes), or an armed `forge-emergency` — FOUNDATION §6's "verification precedes publication" is now enforced on the push seam, not only at PR creation, so an implementation commit can no longer reach the remote before verification ran. Raw `git push` was already refused by `block_raw_git`; `FORGE_SKIP_WRAPUP_GATE=1` remains the recorded user bypass. An unreadable `gh` PR listing fails closed
+- `forge.git_utils.find_open_pr_by_head` (new): tri-state open-PR-by-head lookup that raises `GhLookupError` on any `gh` failure so gates fail closed; `forge.pr_wrapup.wrapup_names_head` (hoisted from `forge.pr_create._verified`) is the shared wrap-up-names-HEAD check used by both `forge-pr-create` and the push gate
+
+## v14.1.0 — 2026-11-18
+
+### Changes
+- **A word budget no longer refuses anything you have written.** Commit messages, squash-merge messages and PR wrap-ups each name a target the prompt asks for; a message past it warns once and still goes out. Refusing at a word count sent the author back to re-cut text that was already written and already correct, which costs more than the words it saves. The margin before that single warning is also wider than it was.
+- **What makes a message quick to read is what it leaves out, not how long it is.** A bullet now states a change in behaviour or what it means for the reader, and never reports process state or internal counts — that tests passed, that a changelog entry exists, how many files were touched. That rule, not a lower number, is what shortens a message.
+- **The post-merge triage pass now touches only what the merge changed** — the issues it closed, the plans its diff outdated, its own follow-ups. It no longer hunts for the next thing to work on; picking work is a separate, deliberate act.
+- **The backlog index refreshes about once a day instead of on every merge.** The first merge after it has gone a day stale rebuilds it; the rest skip. `forge-backlog-index --if-stale-hours <H>` makes the same choice available to anything else that runs often.
+- **The next stage of a plan is offered, never started.** A plan stated once is not standing permission for each of its parts — between stages it may have been reordered, narrowed or dropped.
+- **A fault inside the continuous-integration shortcut is now visible.** The check that tells when a tree has already been tested fails safely, so a permanently broken one would have quietly paid for a redundant full run on every build. It now warns on the run, naming the fault's type and never its message, while still never failing the build.
+
+## v14.0.3 — 2026-11-18
+
+### Fixes
+- **Every background PR monitor died before its first poll, so nothing forge promises to watch was ever watched.** The monitor is the piece that surfaces new review comments, runs the local cleanup when a PR merges, warns that a branch has started conflicting with its base, reports a failed CI run, and notices that a wrap-up no longer describes the commit it names. None of it ran: the command reported a started monitor and registered it while the process was already gone. **Action required:** none, but a monitor started before this release was never doing anything, so a PR you believed was being watched was not. Re-start monitors on PRs you still care about.
+- **The monitor's alerts had nowhere to go even if it had lived.** Its alerts went to standard error, which was discarded. Each monitor now writes to `code_health/pr_watch_<pr>.log`, truncated when that PR's monitor starts, and the start command names the file. The monitor runs detached, so that file is the only channel — nothing reads it for you yet.
+- **`forge-pr-watch list` now distinguishes a monitor that died before polling from one that finished**, and points at its log and the command to restart it.
+- **Stopping a monitor could signal an unrelated process, and listing one could call it alive**, because the check for "is this really a monitor" matched any command line mentioning the module, so a reused process id read as healthy. Both now match the monitor's own subcommand.
+
+## v14.0.2 — 2026-11-18
+
+### Fixes
+- **The gate that refuses a version number in a changelog fragment now says which string it found and where.** It rejected a fragment that mentioned a *past* release in its prose — correctly, since the assembler is the only writer of version numbers — but the message named neither the line nor the string, and read as "do not name the version you are releasing", so a sentence like "renamed in the agent-prefix release" looked allowed. Two fragments were refused that way in a row, and because `auto-tag` runs the same validation, the merges they rode went untagged until the prose was rewritten. The message now quotes the offending string with its line number and states that a past release in prose counts; the release documentation says so too.
+- **A validated plan could stop being found, stalling autonomous execution in silence.** The comment prefix carrying a plan was spelled two ways — the reader looked for the unprefixed form while the rules documented the prefixed one agents gained when they were renamed. The issue kept its `plan-ready` label, still inviting execution, while the plan behind it had become invisible. The prefixed form is now written everywhere, and the old spelling is still *read* for a transition so plans already sitting on open issues keep working. **If you have your own tooling that reads this marker**, teach it to accept both spellings.
+- **Four checks had silently stopped working after agents were renamed, and three of them were guards.** The places that *announce* a name were updated and the places that *match* on one were not — and a comparison against a name nothing is called any more does not fail, it just stops recognising anything. All four work again. **Action required:** run `install-forge-claude` (or `install-forge-vibe`), then **restart the session** — a running session keeps the hooks it loaded at startup. If you maintain your own wiring that matches an agent by the old `forge:<name>` form, rename it.
+- **The cause is fixed, not just the names.** Forge's hook wiring now names an agent by its permanent stem rather than by the name it is addressed under, and the installer resolves that to whatever the current name is — building the pattern, and telling the guard which agent it restricts. No guard script and no pattern spells an agent name any more, so renaming an agent cannot leave one behind. A stem naming no shipped agent fails at install time rather than quietly matching nothing, checked against the agents actually present on disk, because the alternative read returns an empty list when it fails and would have approved anything. The resolved name is also refused if it holds anything a pattern could read specially, since a pattern the harness will not compile matches nothing — the same silent failure by another route.
+- **A guard that cannot tell which agent it restricts now stands aside rather than blocking, and `forge-doctor` is what reports it.** Blocking would be worse: one of these guards runs on every shell command, and the other runs when an agent tries to stop, so failing closed over a configuration fault takes a session down or wedges an agent. The guard writes a message, but a hook's output is not generally shown when it allows the call — so the detection that matters is `forge-doctor`'s integration line, which reports exactly the drift that causes this and names the command that fixes it.
+- Messages, help text and documentation that named agents and slash commands in their retired forms are corrected throughout, including the base-sync tool's advice to "spawn forge:merge-resolver", which a reader had to translate before it would work. The forge-only triage wrapper in this repo was delegating to a name that resolved only on a machine that still had the retired plugin installed.
+
+## v14.0.1 — 2026-11-18
+
+### Fixes
+- `install-forge-vibe` now fails closed when a guard script is missing from the installed package: exit 2, nothing written, message names the script and `Reinstall forge-scripts.` — previously the roster sidecar still named the missing script and the guard was silently disarmed at runtime (a missing hook command exits 127, which does not block the tool call); validation covers wired scripts, sourced helpers (discovered from script text, so a missing helper is still caught), and the Vibe-only extras; also runs under `--verify`, and a test pins that a consumer file at a forge-owned hook path is overwritten by the shipped guard
+
+## v14.0.0 — 2026-11-17
+
+### Changes
+- **The Claude Code plugin is gone. Forge's agents, skills and guards are now generated into your repo**, the same way the Mistral Vibe integration already was. `install-forge-claude` writes them into `.claude/` — agents, skills, the guard scripts, their registration in `.claude/settings.json`, and a `.claude/.gitignore` naming which files are forge's. The bootstrap runs it, and the managed `post-merge` / `post-checkout` hooks re-run it, so the version you have installed is the version you run. There is no marketplace, no per-checkout install, and no cache that can go stale. **Action required:** uninstall the old plugin once — `claude plugin uninstall forge@forge --scope user`, plus `--scope local` in any checkout that had its own — then run `install-forge-claude` and restart the session. It clears the settings keys that named the plugin. Retired with it: `forge-plugin-sync`, `install-forge-claude-settings`, `verify-forge-manifest`, the `plugin_sync` and `manifest_json` pre-commit steps, the `[tool.forge.plugin_sync]` config table, and `forge-doctor --plugin-name`. Any CI step or config of yours that names one of these breaks until it is removed.
+- **Agents and skills are now named with a `forge-` prefix, which renames what you type.** `forge:design-checker` becomes `forge-design-checker`, and the slash commands move with it: `/pr` is now `/forge-pr`, `/commit` is `/forge-commit`, `/next` is `/forge-next`, and so on for every shipped skill. The prefix is part of the generated file name, so forge's agents are distinguishable from yours on sight and cannot collide with them. The same names are used on every harness, so one reference works wherever it is read. **Action required:** rename the references you own — `forge:<x>` to `forge-<x>` in your own wrapper agents, in `Task(subagent_type=...)` and `Skill(skill=...)` calls, and in your `CLAUDE.md`, docs and scripts; use `/forge-<skill>` where you used `/<skill>`; and rename any file of your own that starts with `forge-`, since that prefix is now forge's. Your unprefixed agents and skills need no change and will no longer collide with a shipped name.
+- **Installing forge from a tag could fail and leave a repo with no forge at all.** The shipped sources were symlinks, which git tracks as files, so the build tried to copy a directory and aborted — and since the old version is removed first, an upgrade that hit this left nothing installed, in a repository whose commit path needs forge to run. Those sources are now real directories inside the package.
+- **A release tag is cut on every merge**, computed from the changelog entries that merge brought, and the tag is the only place a version lives, so two copies can no longer disagree. `CHANGELOG.md` prose is assembled afterwards, filing each entry under the tag that already shipped it. **Action required for a consumer who wants tags cut this way:** set `[tool.forge.release].auto = "merge"`; without it the tag job warns and cuts nothing. Retired with it: rolling-next versioning, the `plugin_version` guard, `forge-rebump`, and `forge-next-prep --tag`.
+- `forge-doctor` reports one `claude:integration` line — current, drifted with the files named, or not generated — in place of the three plugin-install checks.
+- **Everything forge ships now counts as high-blast-radius for PR verification.** A pull request editing a shipped agent or skill prompt had been classified documentation-only, which skips the design and security reviewers. The whole packaged-data directory is now shipped surface, so edits to anything in it take the full verification round.
 
 ## v13.1.0 — 2026-11-17
 

@@ -1,4 +1,0 @@
-bump: patch
-
-- `install-forge-vibe` / `forge-gen-vibe-agents` now prune stale unprefixed entries (skills, prompts, agent TOMLs) left in the generated dirs by the `forge:` → `forge-` rename — prune-on-generate via a shared `prune_stale_generated()` helper, with `--check` reporting them without deleting; `forge-doctor`'s vibe checks fail on any stale unprefixed entry until a re-run prunes it (count vs shipped stays informational)
-- `forge-docs/ci-recipe.md` accuracy fixes: prose paragraphs removed from inside the §2 yaml fence, `../docs/*.md` links that are dead in installed consumer packages repointed to absolute GitHub URLs, §4 now documents the fragments-mode tag-on-merge `workflow_run` + `forge-changelog auto-tag` job (gated on `[tool.forge.release].auto = "merge"`) that `docs/release-process.md` already claimed the recipe wires; `tag-release.yml` comment points at `forge-docs/ci-recipe.md` §4
