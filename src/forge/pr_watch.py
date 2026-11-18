@@ -731,9 +731,8 @@ def cmd_stop(args: argparse.Namespace) -> int:
     Returns:
         ``EXIT_OK`` when a monitor was stopped, a stale record was removed,
         or none was registered; ``EXIT_REFUSED`` when no monitor matches
-        ``--pr``, when none of the targets could be stopped or pruned, or
-        when any target could not be signalled — even alongside one that
-        stopped, since the caller asked for all of them.
+        ``--pr``, or when any target could not be signalled — even
+        alongside one that stopped, since the caller asked for all of them.
     """
     root = repo_root()
     reg = Registry.load(_registry_path(root))
