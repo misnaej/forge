@@ -1640,11 +1640,6 @@ def push_tag(repo_root: Path, tag: str, *, remote: str = "origin") -> PushResult
     never force-updates one — a concurrent runner's tag survives, and the
     caller sees the rejection.
 
-    Args:
-        repo_root: Git repo root.
-        tag: Tag name to push (e.g. ``v1.2.3``).
-        remote: Remote name.
-
     A rejection carrying the workflow-permission clause is classified here
     (:attr:`PushResult.workflow_scope_refused`) so callers report the cause
     instead of matching on git's text themselves. The remote applies that
@@ -1653,6 +1648,11 @@ def push_tag(repo_root: Path, tag: str, *, remote: str = "origin") -> PushResult
     commit being new, so tagging a commit whose workflow files have since
     been superseded on the branch tips is refused while tagging the commit
     that superseded them is not.
+
+    Args:
+        repo_root: Git repo root.
+        tag: Tag name to push (e.g. ``v1.2.3``).
+        remote: Remote name.
 
     Returns:
         The outcome. A *tag* or *remote* starting with ``-`` or ``+`` is

@@ -591,20 +591,34 @@ def branch_added_fragments(root: Path, *, base_ref: str | None = None) -> list[s
     )
 
 
-def _fragments_in_tag_tree(root: Path, tag: str) -> set[str]:
+def _fragments_in_tag_tree(root: Path, tag: str, *, check: bool = False) -> set[str]:
     """Return the repo-relative fragment paths present in *tag*'s tree.
 
     Args:
         root: Repository root directory.
         tag: An existing tag name.
+        check: Raise when git fails instead of reading as an empty tree.
+            Callers that turn this listing into a statement about where a
+            fragment shipped pass ``True``: an unreadable tree is not the
+            same as a tag holding nothing, and reporting it as such puts a
+            false sentence in front of a reader.
 
     Returns:
-        Paths under ``changelog.d/`` as ``git ls-tree`` prints them;
-        empty when the tag has none (or cannot be read).
+        Paths under ``changelog.d/`` as ``git ls-tree`` prints them; empty
+        when the tag holds none — or, with *check* off, when it could not
+        be read.
     """
     return set(
         git_z_names(
-            root, "ls-tree", "-r", "-z", "--name-only", tag, "--", str(FRAGMENTS_DIR)
+            root,
+            "ls-tree",
+            "-r",
+            "-z",
+            "--name-only",
+            tag,
+            "--",
+            str(FRAGMENTS_DIR),
+            check=check,
         )
     )
 
@@ -737,9 +751,8 @@ def _earliest_tag_holding(root: Path, fragments: tuple[str, ...]) -> str | None:
 
     A fragment stays in the tree until an assembly PR deletes it, so it is
     present in every tag cut after the one that counted it. The oldest
-    holder is therefore the tag that shipped it, and :func:`v_tags` lists
-    newest first — hence the reversal, without which this names the latest
-    release instead of the one the work went out in.
+    holder is therefore the tag that shipped it; :func:`v_tags` lists
+    newest first, hence the reversal.
 
     Args:
         root: Repository root directory.
@@ -751,7 +764,7 @@ def _earliest_tag_holding(root: Path, fragments: tuple[str, ...]) -> str | None:
     """
     wanted = set(fragments)
     for tag in reversed(v_tags(root)):
-        if wanted & _fragments_in_tag_tree(root, tag):
+        if wanted & _fragments_in_tag_tree(root, tag, check=True):
             return tag
     return None
 
@@ -875,10 +888,12 @@ def _cmd_tag_gaps(root: Path, since: str | None) -> int:
             f"{fold}. {gap.subject}"
         )
     emit(
-        f"tag-gaps: {len(gaps)} commit(s) in {window} shipped without a "
-        "release tag of their own. A later tag carries their fragments, so "
-        "the version is intact, but those merges have no release to name "
-        "and the next tag's notes cover more than one merge."
+        f"tag-gaps: {len(gaps)} commit(s) in {window} carry no release tag "
+        "of their own. Where a later tag holds their fragments the version "
+        "is intact, but those merges have no release to name and the next "
+        "tag's notes cover more than one merge. On a branch the window also "
+        "spans commits that have not merged yet, which no tag names because "
+        "none is due."
     )
     return 2
 
@@ -1227,11 +1242,10 @@ def _create_and_push_tag(root: Path, version: str, level: str, n_fragments: int)
 
     A refusal under the remote's workflow-permission rule
     (:attr:`~forge.git_utils.PushResult.workflow_scope_refused`) is
-    reported with its cause and remedy rather than as an unexplained
-    failure, because the generic wording sends the reader looking for a
-    race that did not happen. It still returns ``2``: the merge has no tag
-    of its own, which is a lost release until something cuts one, and a
-    warning would leave that looking handled.
+    reported with its cause and remedy rather than as a generic push
+    failure. It still returns ``2``: the merge has no tag of its own, a
+    lost release until something cuts one, and a warning would leave that
+    looking handled.
 
     Args:
         root: Repository root directory.
@@ -1266,9 +1280,11 @@ def _create_and_push_tag(root: Path, version: str, level: str, n_fragments: int)
                 "workflow file — and this credential cannot carry one. "
                 f"No tag now names this commit: the next auto-tag that "
                 f"succeeds counts these fragments, or `forge-release` cuts "
-                f"{version} by hand. Granting the pushing credential the "
-                f"workflows scope removes the refusal; more permissions on "
-                f"the default token cannot. Git said: {push.stderr}"
+                f"{version} by hand. Only a pushing credential carrying the "
+                f"workflows scope removes the refusal — scoped to this "
+                f"repository, since it is the narrowest that works; no "
+                f"permission on the default token can. Git said: "
+                f"{push.stderr}"
             )
             return 2
         emit(

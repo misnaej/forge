@@ -1680,10 +1680,10 @@ def test_tag_gaps_reports_fragment_commit_with_no_tag(
 ) -> None:
     r"""Only the fragment commit without its own tag is reported, exactly.
 
-    The exact-tuple check on ``fragments`` is the regression for paths that
-    kept a leading newline from git's ``%x1f...\\x00\\n`` framing — such a
-    path never matches a tree entry, so the fold lookup silently fails.
-    The source-only commit adds no fragment and must not appear.
+    The exact-tuple check on ``fragments`` pins that no path carries the
+    newline git writes after ``%x1f...\x00`` in its framing: such a path
+    matches no tree entry, so the fold lookup fails silently rather than
+    loudly. The source-only commit adds no fragment and must not appear.
     """
     repo = repo_with_untagged_fragment_commit
 
@@ -1716,8 +1716,8 @@ def test_tag_gaps_unknown_since_revision_raises(
 ) -> None:
     """A refused git probe raises instead of reporting a clean window.
 
-    A tolerant call once turned a refused command into "no gaps" on the
-    window CI uses, so a broken check read as a passing one.
+    A broken check must not read as a passing one: "no gaps" is a claim
+    about the history, and a command git refused supports no claim at all.
     """
     with pytest.raises(subprocess.CalledProcessError):
         changelog_fragments.tag_gaps(
@@ -1770,8 +1770,8 @@ def test_cmd_tag_gaps_exit_codes_and_output(
     """Exit 0 for a clean window, 2 for a gap; the line matches the fold.
 
     A gap folded into a later tag names that tag and must not also say "in
-    no tag yet" — the per-gap line and the summary once contradicted each
-    other. A gap no tag holds says so.
+    no tag yet": the per-gap line has to agree with the fold it reports. A
+    gap no tag holds says so.
     """
     repo = repo_with_untagged_fragment_commit
     monkeypatch.setattr(changelog_fragments, "fetch_tags_best_effort", lambda _r: [])
