@@ -1846,7 +1846,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `class Registry` — The on-disk registry of monitors.
   - `load(cls, path: Path) -> Registry` — Read the registry, tolerating a missing or corrupt file.
   - `save(self, path: Path) -> None` — Write the registry atomically.
-- `_registry_path(root: Path) -> Path` _(internal)_
+- `_registry_path(root: Path) -> Path` _(internal)_ — Return the monitor registry file for *root*.
+- `monitor_log_path(root: Path, pr: int) -> Path` — Return the log a PR's monitor writes its output to.
 - `_resolve_repo(root: Path, repo_arg: str | None) -> str | None` _(internal)_ — Return ``owner/repo``, from *repo_arg* or the checkout's origin remote.
 - `_gh(*args: str, timeout: int = GH_TIMEOUT_S) -> subprocess.CompletedProcess[str]` _(internal)_ — Run a ``gh`` command, raising on failure.
 - `arming_check(repo: str, pr: int) -> list[str]` — Verify every signal the monitor needs is parseable.
@@ -1859,9 +1860,11 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_ci_alerts(repo: str, pr: int, *, stack_child: bool = False, base_ref: str = '') -> list[str]` _(internal)_ — Return CI-failure alerts from ``gh pr checks``.
 - `_staleness_alerts(repo: str, pr: int) -> list[str]` _(internal)_ — Return a wrap-up-staleness alert when the freshness verdict is stale.
 - `_monitor_loop(repo: str, pr: int, interval: int, bound: int, registry_path: Path) -> None` _(internal)_ — The bounded poll loop (runs in the spawned child process).
+- `cmd_monitor(args: argparse.Namespace) -> int` — Run the poll loop in the foreground (the spawned child's entry point).
 - `cmd_start(args: argparse.Namespace) -> int` — Start a bounded monitor for a PR.
 - `_pid_cmdline(pid: int) -> str` _(internal)_ — Return the command line of *pid*, or empty when unreadable.
 - `cmd_stop(args: argparse.Namespace) -> int` — Stop one or all monitors, verifying process identity before signalling.
+- `_monitor_state(record: MonitorRecord, *, alive: bool) -> str` _(internal)_ — Return a one-word reading of a monitor's state, for display.
 - `cmd_list(_args: argparse.Namespace) -> int` — List registered monitors.
 - `_stack_order(prs: list[dict[str, object]]) -> list[dict[str, object]]` _(internal)_ — Order open PRs so every parent precedes its stacked children.
 - `cmd_stack(args: argparse.Namespace) -> int` — List the open-PR stack in dependency order with per-PR state.

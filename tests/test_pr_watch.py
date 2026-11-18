@@ -2,15 +2,21 @@
 
 # MOCKING STRATEGY: registry I/O uses real tmp files; gh calls are faked
 # via monkeypatching _gh; process identity via /proc is faked by monkeypatching
-# _pid_cmdline; the poll loop is not spawned in tests (start is tested with
-# arming-check gating only).
+# _pid_cmdline. One test (test_start_spawns_monitor_that_polls_and_logs) spawns
+# the real detached monitor: it fakes only the `gh` executable on PATH, never
+# Popen, so the process boundary is exercised for real.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import logging
+import os
+import signal
 import subprocess
+import time
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
@@ -65,13 +71,12 @@ def test_registry_load_missing_or_corrupt(tmp_path: Path) -> None:
 
 def test_arming_check_all_signals_pass(monkeypatch: pytest.MonkeyPatch) -> None:
     """When gh works, arming_check returns no failures."""
-
-    class FakeProc:
-        stdout = json.dumps({"number": 993, "comments": []})
-        stderr = "Logged in to github.com"
-        returncode = 0
-
-    monkeypatch.setattr(pr_watch, "_gh", lambda *_a, **_k: FakeProc())
+    proc = SimpleNamespace(
+        stdout=json.dumps({"number": 993, "comments": []}),
+        stderr="Logged in to github.com",
+        returncode=0,
+    )
+    monkeypatch.setattr(pr_watch, "_gh", lambda *_a, **_k: proc)
     assert pr_watch.arming_check("o/r", 993) == []
 
 
@@ -81,6 +86,15 @@ def test_arming_check_fails_loudly_on_missing_gh(
     """When gh is missing, arming_check names the signal."""
 
     def fake_gh(*a: object, **k: object) -> object:
+        """Simulate a missing gh executable.
+
+        Args:
+            *a: Positional gh arguments, ignored.
+            **k: Keyword gh arguments, ignored.
+
+        Returns:
+            Never returns; always raises FileNotFoundError.
+        """
         msg = "gh"
         raise FileNotFoundError(msg)
 
@@ -94,19 +108,33 @@ def test_arming_check_fails_on_unparseable_pr_view(
 ) -> None:
     """When gh pr view returns garbage, arming_check names pr-view-json."""
 
-    class FakeProc:
-        def __init__(self, stdout: str) -> None:
-            self.stdout = stdout
-            self.stderr = ""
-            self.returncode = 0
+    def fake_proc(stdout: str) -> SimpleNamespace:
+        """Build a successful gh result with the given stdout.
 
-    def fake_gh(*args: object, **_kw: object) -> FakeProc:
+        Args:
+            stdout: Text the fake gh call prints.
+
+        Returns:
+            Namespace mimicking a successful subprocess result.
+        """
+        return SimpleNamespace(stdout=stdout, stderr="", returncode=0)
+
+    def fake_gh(*args: object, **_kw: object) -> SimpleNamespace:
+        """Answer gh version, auth and pr view calls; garbage for pr view.
+
+        Args:
+            *args: Positional gh arguments, inspected for the subcommand.
+            **_kw: Keyword gh arguments, ignored.
+
+        Returns:
+            Namespace with the canned gh output.
+        """
         joined = " ".join(str(a) for a in args)
         if "--version" in joined:
-            return FakeProc("gh version 2.0")
+            return fake_proc("gh version 2.0")
         if "auth" in joined:
-            return FakeProc("Logged in to github.com")
-        return FakeProc("not json")
+            return fake_proc("Logged in to github.com")
+        return fake_proc("not json")
 
     monkeypatch.setattr(pr_watch, "_gh", fake_gh)
     failures = pr_watch.arming_check("o/r", 993)
@@ -119,6 +147,15 @@ def test_start_refuses_when_arming_fails(
     """Start exits 2 when the arming check finds a blind signal."""
 
     def fake_gh(*a: object, **k: object) -> object:
+        """Simulate a missing gh executable.
+
+        Args:
+            *a: Positional gh arguments, ignored.
+            **k: Keyword gh arguments, ignored.
+
+        Returns:
+            Never returns; always raises FileNotFoundError.
+        """
         msg = "gh"
         raise FileNotFoundError(msg)
 
@@ -138,10 +175,25 @@ def test_start_self_skips_in_ci(
     assert not (tmp_path / ".plan" / "pr_monitors.json").exists()
 
 
+@pytest.mark.parametrize(
+    "cmdline",
+    [
+        "/usr/bin/something-else",
+        # The false positive the old bare "pr_watch" match allowed: with pid
+        # reuse it could SIGTERM an unrelated test run.
+        "python -m pytest tests/test_pr_watch.py",
+    ],
+)
 def test_stop_refuses_to_kill_unmatched_pid(
-    watch_repo: Path, monkeypatch: pytest.MonkeyPatch
+    watch_repo: Path, monkeypatch: pytest.MonkeyPatch, cmdline: str
 ) -> None:
-    """Stop does not signal a pid whose command line is not pr-watch."""
+    """Stop does not signal a pid whose command line is not a pr-watch monitor.
+
+    Args:
+        watch_repo: Temporary repo holding the monitor registry.
+        monkeypatch: Pytest fixture used to stub the pid lookup and kill.
+        cmdline: Command line reported for the recorded pid.
+    """
     reg_path = watch_repo / ".plan" / "pr_monitors.json"
     reg = Registry(
         monitors=[
@@ -149,9 +201,7 @@ def test_stop_refuses_to_kill_unmatched_pid(
         ]
     )
     reg.save(reg_path)
-    monkeypatch.setattr(
-        pr_watch, "_pid_cmdline", lambda _pid: "/usr/bin/something-else"
-    )
+    monkeypatch.setattr(pr_watch, "_pid_cmdline", lambda _pid: cmdline)
     killed: list[int] = []
     monkeypatch.setattr(pr_watch.os, "kill", lambda pid, _sig: killed.append(pid))
     args = argparse.Namespace(pr=993, all=False)
@@ -162,7 +212,7 @@ def test_stop_refuses_to_kill_unmatched_pid(
 def test_stop_kills_matching_pid(
     watch_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Stop signals a pid whose command line contains pr_watch."""
+    """Stop signals a pid whose command line is a pr-watch monitor."""
     reg_path = watch_repo / ".plan" / "pr_monitors.json"
     reg = Registry(
         monitors=[
@@ -173,7 +223,7 @@ def test_stop_kills_matching_pid(
     monkeypatch.setattr(
         pr_watch,
         "_pid_cmdline",
-        lambda _pid: "python -c from forge.pr_watch import _monitor_loop",
+        lambda _pid: "python -m forge.pr_watch _monitor --pr 993",
     )
     killed: list[int] = []
     monkeypatch.setattr(pr_watch.os, "kill", lambda pid, _sig: killed.append(pid))
@@ -182,6 +232,126 @@ def test_stop_kills_matching_pid(
     assert code == pr_watch.EXIT_OK
     assert killed == [999998]
     assert Registry.load(reg_path).monitors == []
+
+
+def test_stop_stale_only_record_is_removed_and_ok(
+    watch_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A record whose process is gone is pruned, exit OK, reported as stale."""
+    reg_path = watch_repo / ".plan" / "pr_monitors.json"
+    Registry(
+        monitors=[
+            MonitorRecord(pid=999997, pr=993, repo="o/r", started_at="2026-01-01")
+        ]
+    ).save(reg_path)
+    monkeypatch.setattr(pr_watch, "_pid_cmdline", lambda _pid: "")
+    with caplog.at_level(logging.INFO, logger=pr_watch.logger.name):
+        code = pr_watch.cmd_stop(argparse.Namespace(pr=993, all=False))
+    assert code == pr_watch.EXIT_OK
+    assert Registry.load(reg_path).monitors == []
+    assert "0 monitor(s) stopped, 1 stale record(s) removed." in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("alive", "last_poll", "expected"),
+    [
+        (True, "", "alive"),
+        (True, "2026-01-01T00:00:00+00:00", "alive"),
+        (False, "2026-01-01T00:00:00+00:00", "dead"),
+        (False, "", "died-before-first-poll"),
+    ],
+)
+def test_monitor_state_reading(*, alive: bool, last_poll: str, expected: str) -> None:
+    """Liveness is tested first; an empty last_poll only damns a dead monitor.
+
+    Args:
+        alive: Whether the monitor process is running.
+        last_poll: ISO timestamp of the last poll, or empty if none happened.
+        expected: Expected state label from ``_monitor_state``.
+    """
+    record = MonitorRecord(
+        pid=1, pr=1, repo="o/r", started_at="2026-01-01", last_poll=last_poll
+    )
+    assert pr_watch._monitor_state(record, alive=alive) == expected
+
+
+def test_list_reports_monitor_that_never_polled(
+    watch_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """List names the log to read and the restart command for an unpolled monitor."""
+    monkeypatch.setenv("FORGE_CODE_HEALTH_DIR", str(watch_repo / "health"))
+    Registry(
+        monitors=[
+            MonitorRecord(pid=999996, pr=993, repo="o/r", started_at="2026-01-01")
+        ]
+    ).save(watch_repo / ".plan" / "pr_monitors.json")
+    monkeypatch.setattr(pr_watch, "_pid_cmdline", lambda _pid: "")
+    pr_watch.cmd_list(argparse.Namespace())
+    out = capsys.readouterr().out
+    assert "died-before-first-poll" in out
+    assert str(pr_watch.monitor_log_path(watch_repo, 993)) in out
+    assert "forge-pr-watch start --pr 993" in out
+
+
+_FAKE_GH = """#!/bin/sh
+# Answers every gh call _poll_once makes; reports the PR MERGED.
+case "$1 $2" in
+  "pr view") echo '{"number": 993, "state": "MERGED", "mergeable": "MERGEABLE", \
+"headRefOid": "abc", "baseRefName": "main", "comments": []}' ;;
+  "pr list") echo '[]' ;;
+  "pr checks") echo '[]' ;;
+  "auth status") echo 'Logged in to github.com' ;;
+  *) echo 'gh version 2.0' ;;
+esac
+"""
+
+
+def test_start_spawns_monitor_that_polls_and_logs(
+    watch_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The detached monitor really starts, completes a poll, and logs its alert.
+
+    Regression test for a real bug: every monitor died before its first poll
+    (a str reached a Path parameter) and its stderr went to DEVNULL, so
+    nothing showed it. This is the only test crossing the process boundary;
+    ``cmd_start`` and ``Popen`` are real, only the ``gh`` executable is fake.
+    """
+    bin_dir = watch_repo / "bin"
+    bin_dir.mkdir()
+    fake_gh = bin_dir / "gh"
+    fake_gh.write_text(_FAKE_GH)
+    fake_gh.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("FORGE_CODE_HEALTH_DIR", str(watch_repo / "health"))
+    monkeypatch.setattr(pr_watch, "arming_check", lambda *_a, **_k: [])
+    reg_path = watch_repo / ".plan" / "pr_monitors.json"
+    log_path = pr_watch.monitor_log_path(watch_repo, 993)
+    args = argparse.Namespace(pr=993, repo="o/r", interval=1, bound=3)
+    assert pr_watch.cmd_start(args) == pr_watch.EXIT_OK
+    pid = Registry.load(reg_path).monitors[0].pid
+    try:
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if Registry.load(reg_path).monitors[0].last_poll:
+                break
+            # A monitor that died reports now rather than at the deadline:
+            # that is the regression this test exists for, and waiting ten
+            # seconds to say so buys nothing. Read /proc rather than signal
+            # 0, which succeeds on a zombie.
+            if pr_watch._pid_cmdline(pid) == "":
+                break
+            time.sleep(0.1)
+        log_text = log_path.read_text() if log_path.exists() else "<no log file>"
+        assert Registry.load(reg_path).monitors[0].last_poll != "", log_text
+        assert "Traceback" not in log_text, log_text
+        assert "PR #993 MERGED" in log_text, log_text
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
 
 
 def test_list_empty(watch_repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -195,10 +365,6 @@ def test_resolve_repo_from_origin(
     watch_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """_resolve_repo reads owner/repo from the origin remote URL."""
-
-    class FakeProc:
-        returncode = 0
-
     monkeypatch.setattr(
         pr_watch,
         "run_git",

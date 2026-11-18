@@ -528,7 +528,11 @@ Skip when `forge.run_context.is_ci()` — nobody is there to answer them
     (per FOUNDATION §6 "PR finalization" — the canonical description of
     what it watches, what runs on merge, and when to skip; the command
     owns the lifecycle: `list` to enumerate, `stop --pr <N>` to stop).
-    Call-site delta: new review comments route to `/pr-comments`.
+    Call-site delta: new review comments route to `/pr-comments`. The
+    monitor runs detached, so its alerts reach nobody directly — they go
+    to `code_health/pr_watch_<pr>.log`, which `start` names and `list`
+    points at. Read that file when you want to know what it saw; nothing
+    reads it for you.
 
 ## Rules
 
