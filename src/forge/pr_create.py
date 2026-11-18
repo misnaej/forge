@@ -57,9 +57,9 @@ from forge.git_utils import (
     resolve_current_branch,
     run_git,
 )
-from forge.pr_delta import extract_verified_shas, unlisted_closing_refs
+from forge.pr_delta import unlisted_closing_refs
 from forge.pr_plan import classify
-from forge.pr_wrapup import WRAPUP_NAME, base_sync_verdict
+from forge.pr_wrapup import WRAPUP_NAME, base_sync_verdict, wrapup_names_head
 from forge.precommit import install_refresh_hint, resolve_steps
 
 
@@ -67,7 +67,6 @@ configure_cli_logging()
 logger = logging.getLogger(__name__)
 
 
-HEADER_LINES: Final[int] = 5
 SHORT_FLAG_LENGTH: Final[int] = 2
 
 # Each wrap-up mode that skips reporters on the author's classification,
@@ -135,34 +134,6 @@ def _disallowed_passthrough(extra: list[str]) -> str | None:
             continue
         return tok
     return None
-
-
-def _verified(wrapup_text: str, head_sha: str) -> bool:
-    """Whether the wrap-up's OWN header names *head_sha*.
-
-    Scoped to the header on purpose. A wrap-up legitimately quotes older
-    reporter stamps below its own, each carrying a ``verified-at:`` line
-    that may name an earlier commit — a reporter that ran before a later
-    fixup. Scanning the whole file would let any of those stand in for the
-    file's own claim, so a wrap-up authored for one commit would verify a
-    different one. Worse, ``code_health/`` is gitignored, so a wrap-up
-    survives a branch switch: an unscoped match would let a leftover file
-    from another branch satisfy this check here.
-
-    Args:
-        wrapup_text: Full wrap-up contents.
-        head_sha: The commit to match.
-
-    Returns:
-        ``True`` when a header ``verified-at:`` and *head_sha* share a
-        prefix in either direction — the header records a short SHA while
-        ``rev-parse`` yields a full one.
-    """
-    header = "\n".join(wrapup_text.splitlines()[:HEADER_LINES])
-    return any(
-        head_sha.startswith(sha) or sha.startswith(head_sha)
-        for sha in extract_verified_shas(header)
-    )
 
 
 def _earn_escape(root: Path, base: str, declared: str) -> str | None:
@@ -391,7 +362,7 @@ def _read_verified_wrapup(root: Path, branch: str) -> tuple[str | None, str | No
     head = run_git("rev-parse", "HEAD", cwd=root, check=False).strip()
     if not head:
         return None, f"{root} is not a git checkout, so nothing can be verified."
-    if not _verified(text, head):
+    if not wrapup_names_head(text, head):
         return None, (
             f"{wrapup} does not name {head[:7]} in a verified-at: line — "
             "it was authored for a different tree. Re-run /forge-pr Step 3.92."

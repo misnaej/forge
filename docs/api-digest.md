@@ -516,7 +516,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 ## `forge.commit`
 
-> _forge-commit — commit named files and push them, with forge's git guards in code._
+> _forge-commit — commit named files, push them only with evidence._
 
 - `class CommitRefusedError` — A guard refused the request; the message says which and why.
 - `class Request` — What the caller asked forge-commit to do.
@@ -529,10 +529,14 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_staged(root: Path, *diff_filter: str) -> set[str]` _(internal)_ — Paths currently staged, a rename counted as its old and new path.
 - `stage_exactly(root: Path, paths: tuple[str, ...]) -> None` — Stage *paths* and refuse when the index then holds anything else.
 - `committed_paths(root: Path) -> set[str]` — Paths the HEAD commit changed.
-- `push(root: Path, branch: str, *, tool: str = 'forge-commit') -> int` — Push *branch* after the pre-commit verdict passes, retrying on transient errors.
+- `check_publication_evidence(root: Path, branch: str) -> None` — Refuse a push that lacks publication evidence (FOUNDATION §6, first half).
+- `push(root: Path, branch: str, *, tool: str = 'forge-commit') -> int` — Push *branch* once the verdict and publication-evidence gates pass.
 - `commit_and_push(root: Path, request: Request) -> int` — Run the guarded commit, then the push.
 - `checkpoint(root: Path, message: str, *, push_after: bool = False) -> int` — Commit the whole working tree as a ``wip-sync:`` checkpoint.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — The CLI surface.
+- `_check_push_only_args(args: argparse.Namespace) -> None` _(internal)_ — Refuse a ``--push-only`` invocation that also carries commit arguments.
+- `_check_wip_sync_args(args: argparse.Namespace) -> None` _(internal)_ — Refuse a ``--wip-sync`` invocation that carries files or a base.
+- `_validated_base(root: Path, base: str | None) -> str | None` _(internal)_ — Validate an explicit ``--base`` ref, returning it unchanged when valid.
 - `_dispatch(args: argparse.Namespace, root: Path) -> int` _(internal)_ — Route parsed arguments to push-only or a guarded commit.
 - `main(argv: list[str] | None = None) -> int` — Entry point for ``forge-commit``.
 
@@ -958,6 +962,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `wrap_in_code_fence(text: str) -> str` — Return *text* inside a markdown code fence it cannot close.
 - `run_gate_evidence(repo_root: Path, gates: str, *, success_headline: str, failure_headline: str, section_title: str) -> tuple[bool, str]` — Run ``forge-precommit --only`` gates and format PR-body evidence.
 - `find_open_pr_by_head_prefix(repo_root: Path, prefix: str) -> str | None` — Return the URL of an open PR whose head branch starts with *prefix*.
+- `class GhLookupError` — A ``gh`` listing could not be read; fail-closed callers refuse on this.
+- `find_open_pr_by_head(repo_root: Path, head: str) -> str | None` — Return the URL of the open PR whose head branch is exactly *head*.
 - `create_commit(repo_root: Path, message: str, *, env: Mapping[str, str] | None = None) -> None` — Commit the staged index, surviving identity-less runners.
 - `resolve_current_branch(repo_root: Path) -> tuple[str, str] | None` — Return the current branch name and where it came from, or ``None``.
 - `ref_exists(repo_root: Path, ref: str) -> bool` — Return whether *ref* resolves to a commit in the repo.
@@ -1485,7 +1491,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 > _forge-pr-create — publish a pull request from the branch being published._
 
 - `_disallowed_passthrough(extra: list[str]) -> str | None` _(internal)_ — Return the first passthrough flag that is not on the allowlist.
-- `_verified(wrapup_text: str, head_sha: str) -> bool` _(internal)_ — Whether the wrap-up's OWN header names *head_sha*.
 - `_earn_escape(root: Path, base: str, declared: str) -> str | None` _(internal)_ — Re-run the classifier so a reporter-skipping wrap-up is earned, not asserted.
 - `_claim_emergency(root: Path, branch: str) -> str | None` _(internal)_ — Claim the armed emergency bypass for this publish, or refuse.
 - `_pr_number_from_url(stdout: str) -> int | None` _(internal)_ — Return the PR number from the URL ``gh pr create`` prints, if any.
@@ -1877,6 +1882,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _forge-pr-wrapup — compose, validate and post the PR wrap-up, retiring older ones._
 
+- `wrapup_names_head(wrapup_text: str, head_sha: str) -> bool` — Whether the wrap-up's OWN header names *head_sha*.
 - `_split(text: str) -> tuple[list[str], list[tuple[str, list[str]]]]` _(internal)_ — Split the body into its head and its ``## `` sections, in order.
 - `_prior_art_block(head: list[str]) -> set[int]` _(internal)_ — Return the indexes of the ``prior-art-searched:`` block within *head*.
 - `_summary_lines(head: list[str]) -> list[str]` _(internal)_ — Return the head's summary lines — the author's prose, nothing else.

@@ -2328,3 +2328,31 @@ def test_main_post_without_follow_ups_prints_no_follow_ups_line(
     assert mod.main(["post", "--pr", "61", "--body-file", str(path)]) == 0
     assert "Follow-ups:" not in post_calls[0][1]
     assert "follow-ups:" not in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# wrapup_names_head — shared wrap-up/HEAD check (hoisted from pr_create, #1026)
+# ---------------------------------------------------------------------------
+
+
+def test_wrapup_names_head_matches_short_header_sha() -> None:
+    """A header ``verified-at:`` with the short SHA matches the full HEAD."""
+    text = "verified-at: abc1234\n\n## Design Check\npass\n"
+    assert mod.wrapup_names_head(text, "abc1234567890abcdef") is True
+
+
+def test_wrapup_names_head_full_sha_in_header() -> None:
+    """A full SHA in the header matches a full HEAD."""
+    head = "abc1234567890abcdef" * 2
+    assert mod.wrapup_names_head(f"verified-at: {head}\n", head) is True
+
+
+def test_wrapup_names_head_ignores_stamps_below_header() -> None:
+    """An older verified-at quoted in the body never verifies a different HEAD."""
+    text = "verified-at: abc1234\n\nbody quotes verified-at: deadbee here\n"
+    assert mod.wrapup_names_head(text, "deadbee99") is False
+
+
+def test_wrapup_names_head_mismatch() -> None:
+    """A header naming another commit does not match."""
+    assert mod.wrapup_names_head("verified-at: abc1234\n", "def4567890") is False

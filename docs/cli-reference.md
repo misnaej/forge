@@ -361,11 +361,12 @@ options:
 ## forge-commit
 
 ```text
-usage: forge-commit [-h] [-m MESSAGE] [--no-push] [--push-only] [--wip-sync]
+usage: forge-commit [-h] [-m MESSAGE] [--push] [--push-only] [--wip-sync]
                     [--base REF]
                     [paths ...]
 
-Commit exactly the named files with forge's guards enforced, then push (never
+Commit exactly the named files with forge's guards enforced. Commits are local
+by default; --push / --push-only push, gated on publication evidence (never
 force, never to a protected branch).
 
 positional arguments:
@@ -375,11 +376,16 @@ options:
   -h, --help            show this help message and exit
   -m, --message MESSAGE
                         Commit message (conventional title).
-  --no-push             Commit only.
-  --push-only           Push commits that already exist (no new commit).
+  --push                Push after committing. The push is refused unless
+                        publication evidence exists: a wrap-up naming the
+                        current HEAD, an open PR for the branch, or an armed
+                        forge-emergency.
+  --push-only           Push commits that already exist (no new commit),
+                        through the same gates.
   --wip-sync            Checkpoint the whole working tree (forge-update-branch
                         takes one itself): no files named, message starts
                         'wip-sync:', gate deferred to the next real commit.
+                        Pushes only with --push.
   --base REF            Explicit PR base ref for this commit's pre-commit
                         gate, for a stacked branch before its PR exists:
                         threaded to the hook as FORGE_PR_BASE_REF — below

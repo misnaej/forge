@@ -6,6 +6,7 @@ modified-file detection, output filtering, and CLI logging setup.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -14,6 +15,7 @@ import subprocess
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -33,6 +35,10 @@ from tests.conftest import (
 from tests.conftest import (
     init_single_track_repo as _init_single_track_repo,
 )
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 @pytest.fixture(autouse=True)
@@ -5393,3 +5399,89 @@ def test_forge_data_dir_honours_xdg_and_falls_back_home(
     monkeypatch.setenv("XDG_DATA_HOME", "")
     monkeypatch.setenv("HOME", str(tmp_path))
     assert git_utils.forge_data_dir() == tmp_path / ".local" / "share" / "forge"
+
+
+# ---------------------------------------------------------------------------
+# find_open_pr_by_head — tri-state lookup for the push gate (#1026)
+# ---------------------------------------------------------------------------
+
+
+def _fake_gh_run(
+    payload: object, returncode: int = 0, stderr: str = ""
+) -> Callable[..., object]:
+    """Build a subprocess.run fake returning *payload* as gh's JSON stdout.
+
+    Args:
+        payload: Object to JSON-encode as stdout, or a raw string.
+        returncode: The fake process's exit code.
+        stderr: The fake process's stderr text.
+
+    Returns:
+        A ``subprocess.run`` replacement function.
+    """
+
+    def _run(_cmd: list[str], **_kwargs: object) -> object:
+        return type(
+            "P",
+            (),
+            {
+                "returncode": returncode,
+                "stdout": payload if isinstance(payload, str) else json.dumps(payload),
+                "stderr": stderr,
+            },
+        )()
+
+    return _run
+
+
+def test_find_open_pr_by_head_returns_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An open PR with the exact head yields its URL."""
+    monkeypatch.setattr(
+        git_utils.subprocess, "run", _fake_gh_run([{"url": "https://x/pr/7"}])
+    )
+    assert git_utils.find_open_pr_by_head(tmp_path, "feat/x") == "https://x/pr/7"
+
+
+def test_find_open_pr_by_head_none_when_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No open PR with this head yields None (not an error)."""
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_gh_run([]))
+    assert git_utils.find_open_pr_by_head(tmp_path, "feat/x") is None
+
+
+def test_find_open_pr_by_head_raises_on_gh_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A non-zero gh exit raises GhLookupError — fail closed, not fail open."""
+    monkeypatch.setattr(
+        git_utils.subprocess,
+        "run",
+        _fake_gh_run("", returncode=1, stderr="no auth"),
+    )
+    with pytest.raises(git_utils.GhLookupError, match="no auth"):
+        git_utils.find_open_pr_by_head(tmp_path, "feat/x")
+
+
+def test_find_open_pr_by_head_raises_on_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hung gh raises GhLookupError via the timeout."""
+
+    def _run(*_a: object, **_kw: object) -> object:
+        raise subprocess.TimeoutExpired(cmd="gh", timeout=10)
+
+    monkeypatch.setattr(git_utils.subprocess, "run", _run)
+    with pytest.raises(git_utils.GhLookupError, match="did not answer"):
+        git_utils.find_open_pr_by_head(tmp_path, "feat/x")
+
+
+def test_find_open_pr_by_head_raises_on_unparseable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unparseable gh output raises GhLookupError rather than reading as none."""
+    monkeypatch.setattr(git_utils.subprocess, "run", _fake_gh_run("not json"))
+    with pytest.raises(git_utils.GhLookupError, match="unparseable"):
+        git_utils.find_open_pr_by_head(tmp_path, "feat/x")

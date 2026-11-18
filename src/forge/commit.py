@@ -1,9 +1,11 @@
-"""forge-commit — commit named files and push them, with forge's git guards in code.
+"""forge-commit — commit named files, push them only with evidence.
 
 The commit step every forge workflow ends in is mechanical: stage exactly
 the files the caller names, commit with the caller's message, check the
-commit holds those files, push. A command does that in one call instead
+commit holds those files. A command does that in one call instead
 of a helper agent's model round trips (FOUNDATION §7 "Mechanical first").
+Committing is local by default; a push is opt-in (``--push`` /
+``--push-only``) and gated on publication evidence.
 
 Claude Code hooks only see commands an agent types, never what a CLI runs
 internally, so every guard that would have stopped an agent typing these
@@ -15,6 +17,11 @@ git commands is enforced here (FOUNDATION §7: a CLI performing a
   ``forge-emergency`` lets stale or missing logs through, never a failed
   step) — the gate sits on the push seam, so every publication path pays it,
   including ``--push-only`` and any deferred-checkpoint recovery;
+- verification precedes publication (FOUNDATION §6, first half): a push
+  needs a wrap-up naming the current HEAD (``code_health/pr_wrapup.md``),
+  an open PR for the branch (review-fix pushes), or an armed
+  ``forge-emergency`` — see :func:`check_publication_evidence`;
+  ``FORGE_SKIP_WRAPUP_GATE=1`` is the recorded user bypass;
 - the message is conventional, with a 45-word advisory target (well over
   it warns, nothing is refused on length), and no AI attribution;
 - the index must equal the named files before the commit, and the commit
@@ -26,12 +33,14 @@ git commands is enforced here (FOUNDATION §7: a CLI performing a
 
 Usage:
 
-- ``forge-commit -m "fix: x" path/a path/b`` — commit, then push.
-- ``forge-commit -m "fix: x" --no-push path/a`` — commit only.
-- ``forge-commit --push-only`` — push commits that already exist.
+- ``forge-commit -m "fix: x" path/a path/b`` — commit only (local).
+- ``forge-commit -m "fix: x" --push path/a`` — commit, then push if the
+  publication-evidence gate allows.
+- ``forge-commit --push-only`` — push commits that already exist, through
+  the same gates.
 - ``forge-commit --wip-sync -m "wip-sync: <what>"`` — checkpoint the whole
   dirty tree; the gate is deferred (``forge-update-branch`` takes one
-  itself before merging the base).
+  itself before merging the base). Pushes only with ``--push``.
 
 Merges are not commits of the caller's own edits: while one is in
 progress every form refuses and names ``forge-update-branch --continue``.
@@ -41,6 +50,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import re
 import subprocess
 import sys
@@ -53,8 +63,11 @@ from forge.config import load_config
 from forge.emergency_state import active_state
 from forge.gh_comments import ValidationError, validate_no_ai_attribution
 from forge.git_utils import (
+    GhLookupError,
+    code_health_dir,
     configure_cli_logging,
     create_commit,
+    find_open_pr_by_head,
     git_env_overrides_removed,
     merge_in_progress,
     push_branch,
@@ -63,6 +76,7 @@ from forge.git_utils import (
     run_git,
 )
 from forge.pr_squash_comment import TITLE_RE
+from forge.pr_wrapup import WRAPUP_NAME, wrapup_names_head
 from forge.precommit import verdict
 from forge.regen_docs import API_DIGEST_DOC, CLI_REFERENCE_DOC
 from forge.smart_test.lifecycle import STAMP_RELPATH
@@ -345,12 +359,88 @@ def committed_paths(root: Path) -> set[str]:
     )
 
 
+def check_publication_evidence(root: Path, branch: str) -> None:
+    """Refuse a push that lacks publication evidence (FOUNDATION §6, first half).
+
+    Verification precedes publication: a branch reaches the remote only
+    when a wrap-up names the current HEAD (the /pr flow's evidence, the
+    same one ``forge-pr-create`` checks), an open PR already exists for
+    the branch (review-fix pushes are no rework), or an emergency is
+    armed. ``FORGE_SKIP_WRAPUP_GATE=1`` is the recorded user bypass,
+    honoured here with the same parity as ``block_unverified_pr_create``.
+    An unreadable ``gh`` listing fails closed — an unknown PR state is not
+    evidence of no PR.
+
+    Args:
+        root: Repo root.
+        branch: The branch about to be pushed.
+
+    Raises:
+        CommitRefusedError: When no evidence allows the push; nothing is
+            pushed and the message names the remedy.
+    """
+    if os.environ.get("FORGE_SKIP_WRAPUP_GATE") == "1":
+        logger.warning(
+            "forge-commit: FORGE_SKIP_WRAPUP_GATE=1 — skipping the "
+            "publication-evidence gate (recorded user bypass)."
+        )
+        return
+    if active_state(root) is not None:
+        logger.warning(
+            "forge-commit: emergency armed — pushing without fresh "
+            "verification evidence."
+        )
+        return
+    head = run_git("rev-parse", "HEAD", cwd=root, check=False).strip()
+    wrapup = code_health_dir(root) / WRAPUP_NAME
+    wrapup_stale = False
+    if wrapup.is_file() and head:
+        try:
+            text = wrapup.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        if text and wrapup_names_head(text, head):
+            return
+        wrapup_stale = True
+    try:
+        pr_url = find_open_pr_by_head(root, branch)
+    except GhLookupError as exc:
+        msg = (
+            f"could not determine whether an open PR exists for {branch!r} "
+            f"({exc}), so the push is refused rather than run unverified. "
+            "Author the wrap-up (/pr Step 3.92) so it names the current HEAD, "
+            "or fix the gh failure and retry."
+        )
+        raise CommitRefusedError(msg) from exc
+    if pr_url:
+        logger.info("forge-commit: open PR at %s covers this branch.", pr_url)
+        return
+    if wrapup_stale:
+        msg = (
+            f"{wrapup} does not name {head[:7]} in a verified-at: line — it "
+            "was authored for a different tree. Re-run /pr Step 3.92 so the "
+            "wrap-up names the current HEAD, then push again."
+        )
+    else:
+        msg = (
+            f"no publication evidence for {branch!r}: no wrap-up naming the "
+            f"current HEAD ({wrapup}) and no open PR. Verification precedes "
+            "publication (FOUNDATION §6) — run /pr so the wrap-up names HEAD, "
+            "then push with forge-commit --push / --push-only. The commit "
+            "stays local."
+        )
+    raise CommitRefusedError(msg)
+
+
 def push(root: Path, branch: str, *, tool: str = "forge-commit") -> int:
-    """Push *branch* after the pre-commit verdict passes, retrying on transient errors.
+    """Push *branch* once the verdict and publication-evidence gates pass.
+
+    Retries on transient errors.
 
     Every publication path goes through here, so the verdict gate pays any
     deferral (``FORGE_MERGE_SYNC`` / ``FORGE_WIP_SYNC``) at push time instead
-    of never. Never forces and never deletes
+    of never, and :func:`check_publication_evidence` enforces FOUNDATION
+    §6's first half. Never forces and never deletes
     (:func:`forge.git_utils.push_branch`). Sets the upstream when the branch
     has none yet.
 
@@ -364,10 +454,12 @@ def push(root: Path, branch: str, *, tool: str = "forge-commit") -> int:
         (the commits stay local).
 
     Raises:
-        CommitRefusedError: When the pre-commit verdict did not pass (and no
-            armed emergency excuses it); nothing is pushed.
+        CommitRefusedError: When the pre-commit verdict did not pass or no
+            publication evidence allows the push (and no armed emergency
+            or recorded bypass excuses it); nothing is pushed.
     """
     check_verdict(root)
+    check_publication_evidence(root, branch)
     upstream = run_git(
         "rev-parse",
         "--abbrev-ref",
@@ -460,7 +552,8 @@ def checkpoint(root: Path, message: str, *, push_after: bool = False) -> int:
     Args:
         root: Repo root.
         message: The commit message; must start with ``wip-sync:``.
-        push_after: Push the branch once committed.
+        push_after: Push the branch once committed, through the same gates
+            (verdict deferred by the checkpoint, publication evidence not).
 
     Returns:
         An exit code.
@@ -498,17 +591,26 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="forge-commit",
         description=(
-            "Commit exactly the named files with forge's guards enforced, then "
-            "push (never force, never to a protected branch)."
+            "Commit exactly the named files with forge's guards enforced. "
+            "Commits are local by default; --push / --push-only push, gated on "
+            "publication evidence (never force, never to a protected branch)."
         ),
     )
     parser.add_argument("paths", nargs="*", help="Files to commit (repo-relative).")
     parser.add_argument("-m", "--message", help="Commit message (conventional title).")
-    parser.add_argument("--no-push", action="store_true", help="Commit only.")
+    parser.add_argument(
+        "--push",
+        action="store_true",
+        help=(
+            "Push after committing. The push is refused unless publication "
+            "evidence exists: a wrap-up naming the current HEAD, an open PR "
+            "for the branch, or an armed forge-emergency."
+        ),
+    )
     parser.add_argument(
         "--push-only",
         action="store_true",
-        help="Push commits that already exist (no new commit).",
+        help="Push commits that already exist (no new commit), through the same gates.",
     )
     parser.add_argument(
         "--wip-sync",
@@ -516,7 +618,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Checkpoint the whole working tree (forge-update-branch takes one "
             "itself): no files named, message starts 'wip-sync:', gate "
-            "deferred to the next real commit."
+            "deferred to the next real commit. Pushes only with --push."
         ),
     )
     parser.add_argument(
@@ -530,6 +632,67 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     return parser
+
+
+def _check_push_only_args(args: argparse.Namespace) -> None:
+    """Refuse a ``--push-only`` invocation that also carries commit arguments.
+
+    Args:
+        args: Parsed CLI arguments.
+
+    Raises:
+        CommitRefusedError: When ``--push`` or commit arguments are present.
+    """
+    if args.push:
+        msg = "--push-only already pushes; --push with --push-only is redundant."
+        raise CommitRefusedError(msg)
+    if args.paths or args.message or args.wip_sync or args.base:
+        msg = "--push-only takes no files, no message, no --wip-sync and no --base."
+        raise CommitRefusedError(msg)
+
+
+def _check_wip_sync_args(args: argparse.Namespace) -> None:
+    """Refuse a ``--wip-sync`` invocation that carries files or a base.
+
+    Args:
+        args: Parsed CLI arguments.
+
+    Raises:
+        CommitRefusedError: When paths or ``--base`` are present.
+    """
+    if args.paths:
+        msg = "--wip-sync takes no files: a checkpoint commits the whole tree."
+        raise CommitRefusedError(msg)
+    if args.base:
+        msg = "--wip-sync defers the gate; --base applies to real commits only."
+        raise CommitRefusedError(msg)
+
+
+def _validated_base(root: Path, base: str | None) -> str | None:
+    """Validate an explicit ``--base`` ref, returning it unchanged when valid.
+
+    Args:
+        root: Repo root.
+        base: The ``--base`` value, or ``None``.
+
+    Returns:
+        *base* when it names a resolvable ref, else ``None``.
+
+    Raises:
+        CommitRefusedError: When the value looks like an option or no ref
+            resolves to it.
+    """
+    if not base:
+        return None
+    if base.startswith("-"):
+        msg = f"--base looks like an option: {base!r}."
+        raise CommitRefusedError(msg)
+    if not ref_exists(root, f"origin/{base}") and not ref_exists(root, base):
+        msg = (
+            f"--base {base!r} is not a resolvable ref (tried origin/{base} and {base})."
+        )
+        raise CommitRefusedError(msg)
+    return base
 
 
 def _dispatch(args: argparse.Namespace, root: Path) -> int:
@@ -547,36 +710,23 @@ def _dispatch(args: argparse.Namespace, root: Path) -> int:
             guard refuses.
     """
     # --push-only publishes existing commits; the push seam gates on the
-    # verdict, so deferred checks (FORGE_MERGE_SYNC / FORGE_WIP_SYNC) are
-    # paid here at push time.
+    # verdict and on publication evidence, so deferred checks
+    # (FORGE_MERGE_SYNC / FORGE_WIP_SYNC) are paid here at push time.
     if args.push_only:
-        if args.paths or args.message or args.wip_sync or args.base:
-            msg = "--push-only takes no files, no message, no --wip-sync and no --base."
-            raise CommitRefusedError(msg)
+        _check_push_only_args(args)
         return push(root, current_branch(root))
     if not args.message:
         msg = "a commit needs -m/--message."
         raise CommitRefusedError(msg)
     if args.wip_sync:
-        if args.paths:
-            msg = "--wip-sync takes no files: a checkpoint commits the whole tree."
-            raise CommitRefusedError(msg)
-        if args.base:
-            msg = "--wip-sync defers the gate; --base applies to real commits only."
-            raise CommitRefusedError(msg)
-        return checkpoint(root, args.message, push_after=not args.no_push)
-    base = args.base
-    if base:
-        if base.startswith("-"):
-            msg = f"--base looks like an option: {base!r}."
-            raise CommitRefusedError(msg)
-        if not ref_exists(root, f"origin/{base}") and not ref_exists(root, base):
-            msg = (
-                f"--base {base!r} is not a resolvable ref "
-                f"(tried origin/{base} and {base})."
-            )
-            raise CommitRefusedError(msg)
-    request = Request(args.message, tuple(args.paths), push=not args.no_push, base=base)
+        _check_wip_sync_args(args)
+        return checkpoint(root, args.message, push_after=args.push)
+    request = Request(
+        args.message,
+        tuple(args.paths),
+        push=args.push,
+        base=_validated_base(root, args.base),
+    )
     return commit_and_push(root, request)
 
 

@@ -1,6 +1,6 @@
 ---
 name: commit
-description: Run the standard commit flow - precommit-fixer, then forge-commit commits and pushes the named files. Use when the user wants to commit changes.
+description: Run the standard commit flow - precommit-fixer, then forge-commit commits the named files (local by default; --push publishes through the evidence gate). Use when the user wants to commit changes.
 user-invocable: true
 ---
 
@@ -27,15 +27,18 @@ Run the standard commit workflow:
    target — advisory, never refused — what + why, no AI attribution, and
    no process state: not that tests passed or checks were green, not a
    changelog fragment, not counts of tests or files). It stages exactly the named
-   files, commits, pushes; prints subagent-edit receipt. Exit codes:
+   files, commits locally (the default — `--push` opts in), prints
+   subagent-edit receipt. Exit codes:
    - `0` → done.
    - `1` → refused (failed/stale pre-commit verdict, protected or
-     detached branch, bad message). Pre-commit failure → back to step 1;
-     else fix cause, rerun. Never route around a refusal.
+     detached branch, bad message, or `--push` without publication
+     evidence). Pre-commit failure → back to step 1; a push refusal means
+     the wrap-up does not name HEAD yet — publish later, at `/pr` Step
+     3.95; else fix cause, rerun. Never route around a refusal.
    - `2` → push failed, commit stays local. Investigate (behind remote →
      `forge-update-branch --base <branch>`, which merges and commits; push
-     separately via `forge-commit --push-only`, which gates on the verdict).
-     Never force.
+     separately via `forge-commit --push-only`, which gates on the verdict
+     and on publication evidence). Never force.
    - Refused mid-merge → finish the merge with `forge-update-branch
      --continue`; forge-commit commits your own edits, not merges.
 
@@ -53,7 +56,12 @@ Run the standard commit workflow:
 
 ## Push behavior
 
-**Push by default.** Pass `--no-push` when `$ARGUMENTS` contains
-`--no-push` / `--local-only` or the user says "commit only" / "no push".
+**Commit-only by default.** `forge-commit -m "<msg>" <files>` never
+pushes. Add `--push` to publish in the same call — the push is refused
+(exit 1, the commit stays local) unless publication evidence exists: a
+wrap-up naming the current HEAD (`code_health/pr_wrapup.md`, authored by
+`/pr` Step 3.92), an open PR for the branch (review-fix pushes), or an
+armed `forge-emergency`. `forge-commit --push-only` pushes existing
+commits through the same gates, and is how `/pr` Step 3.95 publishes.
 `forge-commit` refuses protected branches itself and sets upstream on a
-branch's first push.
+branch's first allowed push.
