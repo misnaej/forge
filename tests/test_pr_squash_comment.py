@@ -199,123 +199,64 @@ def test_check_bullets_reports_count_and_empty_bullet_problems_together() -> Non
 # ---------------------------------------------------------------------------
 
 
-def test_check_word_count_accepts_at_cap() -> None:
-    """Exactly MAX_WORDS across title + bullets reports no problems (cap inclusive)."""
-    title = "feat: title with five words"  # 5 words
-    bullets = [" ".join(["word"] * 15)] * 3  # 45 words
-    assert mod._check_word_count(title, bullets) == []
+LONG_PART = "alphabetazetadelta" * 5  # one long word, no spaces
 
 
-def test_check_word_count_over_cap_reports_header_and_breakdown() -> None:
-    """MAX_WORDS + 1 reports the header line and a per-part breakdown.
+@pytest.mark.parametrize(
+    ("text", "present", "absent"),
+    [
+        pytest.param(
+            LONG_PART, [LONG_PART[:30], "…"], [LONG_PART], id="long-text-ellipsis"
+        ),
+        pytest.param(
+            "feat: firstlinemarker\nsecondlinemarker",
+            ["firstlinemarker"],
+            ["secondlinemarker"],
+            id="first-line-only",
+        ),
+        # Security property: the preview is written raw to stderr.
+        pytest.param(
+            "escape \x1b[31m alert message here",
+            ["escape", "alert", "message", "here"],
+            ["\x1b"],
+            id="terminal-escapes-stripped",
+        ),
+        pytest.param("   ", ["(empty)"], [], id="whitespace-only-is-empty"),
+    ],
+)
+def test_preview_shortens_to_a_printable_first_line(
+    text: str, present: list[str], absent: list[str]
+) -> None:
+    """A breakdown preview is one short printable line, or ``(empty)``.
 
-    Pins the observed count, the cut amount, that each bullet's 1-based
-    label (``bullet 1``/``bullet 2``/``bullet 3``) appears verbatim
-    rather than a 0-based or unlabeled variant, and that the breakdown
-    orders title before bullet 1 before bullet 2 before bullet 3 — a
-    reversed or scrambled breakdown must fail this test. The exact
-    column spacing is still an implementation detail this test does
-    not pin.
+    Args:
+        text: The message part to preview.
+        present: Substrings the preview must contain.
+        absent: Substrings it must not contain.
     """
-    # Deliberately avoids the word "title" in the subject text itself,
-    # so counting occurrences of the label below isn't thrown off by a
-    # coincidental match in the previewed content.
-    title = "feat: message with five words here"  # 6 words
-    bullets = [" ".join(["word"] * n) for n in (17, 17, 16)]  # 50 words
-    problems = mod._check_word_count(title, bullets)
-    text = "\n".join(problems).lower()
-    assert "56 words" in text
-    assert "(cut 6)" in text
-    assert text.count("bullet") >= 3
-    assert text.count("title") == 1
-    assert "bullet 1" in text
-    assert "bullet 2" in text
-    assert "bullet 3" in text
-    lines = text.splitlines()
-    title_idx = next(i for i, line in enumerate(lines) if line.startswith("  title"))
-    bullet_1_idx = next(i for i, line in enumerate(lines) if "bullet 1" in line)
-    bullet_2_idx = next(i for i, line in enumerate(lines) if "bullet 2" in line)
-    bullet_3_idx = next(i for i, line in enumerate(lines) if "bullet 3" in line)
-    assert title_idx < bullet_1_idx < bullet_2_idx < bullet_3_idx
+    preview = mod._preview(text)
+    for needle in present:
+        assert needle in preview
+    for needle in absent:
+        assert needle not in preview
 
 
-def test_check_word_count_truncates_a_long_part_with_ellipsis() -> None:
-    """A long part's preview is truncated, never the full text, in the breakdown.
+@pytest.mark.parametrize("n_bullets", [3, 0])
+def test_word_breakdown_lists_title_then_numbered_bullets(n_bullets: int) -> None:
+    """One row per existing part: title first, then ``bullet 1..n`` in order.
 
-    Pins that the breakdown stays scannable — a bullet long enough to
-    matter for the cap must not reproduce itself in full.
+    Pins 1-based labels, title-before-bullets ordering, and that zero
+    bullets means zero bullet rows rather than empty placeholders.
+
+    Args:
+        n_bullets: How many bullets the message carries.
     """
-    title = "feat: short title"  # 3 words
-    long_bullet = "alphabetazetadelta" * 5  # one long word, no spaces
-    other_bullets = [" ".join(["word"] * 26)] * 2  # 52 words
-    bullets = [long_bullet, *other_bullets]
-    problems = mod._check_word_count(title, bullets)
-    text = "\n".join(problems)
-    assert long_bullet not in text
-    assert long_bullet[:30] in text
-    assert "…" in text
-
-
-def test_check_word_count_multiline_title_preview_shows_first_line_only() -> None:
-    """A multi-line title's preview stops at its first line.
-
-    Pins that a later line never leaks into the breakdown — the
-    preview is one line, matching the rest of the per-part rows.
-    """
-    title = "feat: firstlinemarker\nsecondlinemarker should not appear in preview"
-    bullets = [" ".join(["word"] * 20)] * 3  # 60 words, well over cap with title
-    problems = mod._check_word_count(title, bullets)
-    text = "\n".join(problems)
-    assert "firstlinemarker" in text
-    assert "secondlinemarker" not in text
-
-
-def test_check_word_count_preview_drops_terminal_escape_sequences() -> None:
-    """A bullet's raw escape byte is stripped before the breakdown is built.
-
-    Pins that a non-printable control byte (e.g. an ANSI color code) never
-    survives into the per-part preview, which is written raw to stderr —
-    while the bullet's other, printable words still appear, since the
-    fix filters characters rather than blanking the whole part.
-    """
-    title = "feat: title with five words"  # 5 words
-    escape_bullet = "escape \x1b[31m alert message here"  # 5 tokens
-    other_bullets = [" ".join(["word"] * 24)] * 2  # 48 words
-    bullets = [escape_bullet, *other_bullets]
-    problems = mod._check_word_count(title, bullets)
-    text = "\n".join(problems)
-    assert "\x1b" not in text
-    assert "escape" in text
-    assert "alert" in text
-    assert "message" in text
-    assert "here" in text
-
-
-def test_check_word_count_whitespace_only_bullet_shows_as_empty() -> None:
-    """A whitespace-only bullet's preview reads as empty, not blank.
-
-    Pins that the breakdown makes an empty part visible rather than
-    rendering an indistinguishable blank line.
-    """
-    title = " ".join(["word"] * 40)  # 40 words
-    bullets = ["   ", " ".join(["word"] * 16)]  # whitespace-only + 16 words = 56 total
-    problems = mod._check_word_count(title, bullets)
-    text = "\n".join(problems)
-    assert "(empty)" in text
-
-
-def test_check_word_count_zero_bullets_breakdown_covers_only_the_title() -> None:
-    """With no bullets, the breakdown names the title and mentions no bullet.
-
-    Pins that the breakdown only ever lists parts that exist — zero
-    bullets means zero bullet rows, not empty placeholders.
-    """
-    title = " ".join(["word"] * 60)  # 60 words, no bullets
-    problems = mod._check_word_count(title, [])
-    text = "\n".join(problems).lower()
-    assert "60 words" in text
-    assert "title" in text
-    assert "bullet" not in text
+    bullets = [" ".join(["word"] * (i + 1)) for i in range(n_bullets)]
+    rows = mod._word_breakdown("feat: message", bullets)
+    assert len(rows) == 1 + n_bullets
+    assert rows[0].startswith("  title")
+    for i, row in enumerate(rows[1:], start=1):
+        assert row.startswith(f"  bullet {i}")
 
 
 # ---------------------------------------------------------------------------
@@ -527,40 +468,50 @@ def test_squash_listing_ignores_a_wrapup_quoting_the_marker(
     assert calls == []
 
 
+def _message_of(total_words: int) -> tuple[str, list[str]]:
+    """Build a valid title and 3 bullets holding exactly ``total_words`` words.
+
+    Args:
+        total_words: Whole-message word count wanted (at least 6).
+
+    Returns:
+        ``(title, bullets)``; the title is 3 words.
+    """
+    rest = total_words - 3
+    first = rest // 3
+    sizes = (first, first, rest - 2 * first)
+    return "feat: one two", [" ".join(["w"] * n) for n in sizes]
+
+
 @pytest.mark.parametrize(
-    ("total_words", "warns", "refused", "cut"),
-    [(50, False, False, 0), (53, True, False, 3), (56, False, True, 6)],
+    "total_words",
+    [
+        mod.MAX_WORDS,
+        mod.WARN_OVER_WORDS,
+        mod.WARN_OVER_WORDS + 1,
+        56,
+        200,
+    ],
 )
-def test_word_band_validate_and_warning(
-    *, total_words: int, warns: bool, refused: bool, cut: int
+def test_length_never_refuses_and_warns_only_above_the_margin(
+    total_words: int,
 ) -> None:
-    """The 50/55 band: at target silent, 51-55 warns only, over 55 refuses.
+    """Behavior: no length refuses; only a total past ``WARN_OVER_WORDS`` warns.
+
+    The target itself stays silent — the margin is the warn line.
 
     Args:
         total_words: Whole-message word count under test.
-        warns: Whether ``word_cap_warning`` should return a warning.
-        refused: Whether ``validate`` should report the word-count problem.
-        cut: Words over the 50-word target.
     """
-    title = "feat: one two"  # 3 words
-    rest = total_words - 3
-    bullets = [
-        " ".join(["w"] * n) for n in (rest // 3, rest // 3, rest - 2 * (rest // 3))
-    ]
-    problems = mod.validate(title, bullets)
+    title, bullets = _message_of(total_words)
+    assert mod._word_total(title, bullets) == total_words
+    assert mod.validate(title, bullets) == []
     warning = mod.word_cap_warning(title, bullets)
-    if refused:
-        assert len(problems) == 1
-        assert f"cut {cut}" in problems[0]
+    if total_words <= mod.WARN_OVER_WORDS:
         assert warning is None
     else:
-        assert problems == []
-        if warns:
-            assert warning is not None
-            assert str(total_words) in warning
-            assert f"cut {cut}" in warning
-        else:
-            assert warning is None
+        assert warning is not None
+        assert str(total_words) in warning
 
 
 # ---------------------------------------------------------------------------
@@ -630,7 +581,7 @@ def test_main_dry_run_prints_body_and_returns_zero(
     captured = capsys.readouterr()
     assert captured.out == mod.build_body(VALID_TITLE, VALID_BULLETS)
     # VALID_TITLE is 4 words; VALID_BULLETS are 3 words x 3 bullets = 9. 4 + 9 = 13.
-    assert "13/50 words" in captured.err
+    assert f"13/{mod.MAX_WORDS} words" in captured.err
     # VALID_TITLE's own subject text contains the word "title", so this
     # only pins presence, not an exact count (see the over-cap test for
     # the count-pinned version, on title text chosen to avoid the clash).
@@ -662,32 +613,25 @@ def test_main_validation_failure_returns_one(
 def test_main_reports_every_failing_rule_prefixed_on_its_own_stderr_line(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Three broken rules all reach stderr; the prefix opens each once.
+    """Two broken rules both reach stderr, each on its own prefixed line.
 
-    SCENARIO: title, bullet count, and word count are all broken at
-    once — the last one's problem is multi-line (header + breakdown).
-    EXPECTED BEHAVIOR: all three problems are visible in one run, and
-    the ``forge-pr-squash-comment: `` prefix opens only the FIRST line
-    of each problem — the word-count problem's breakdown lines stay
-    unprefixed, since carrying the prefix would make a continuation
-    line read as a second, unrelated problem.
+    SCENARIO: title and bullet count are both broken, with a long bullet
+    that would once also have broken the word count.
+    EXPECTED BEHAVIOR: both problems are visible in one run, each opened
+    by the ``forge-pr-squash-comment: `` prefix; length is not a problem.
     """
-    long_bullet = " ".join(["word"] * 55)  # alone pushes the total over MAX_WORDS
+    long_bullet = " ".join(["word"] * 55)
     sys.argv.extend(
         ["--dry-run", "--title", "not conventional", "--bullet", long_bullet]
     )
     assert mod.main() == 1
     err = capsys.readouterr().err
     prefix = "forge-pr-squash-comment: "
-    lines = err.splitlines()
-    prefixed_lines = [line for line in lines if line.startswith(prefix)]
-    unprefixed_lines = [line for line in lines if line and not line.startswith(prefix)]
-    assert len(prefixed_lines) == 3
+    prefixed_lines = [line for line in err.splitlines() if line.startswith(prefix)]
+    assert len(prefixed_lines) == 2
     assert any("conventional-commit" in line for line in prefixed_lines)
     assert any("requires 3-5" in line for line in prefixed_lines)
-    assert any("words" in line for line in prefixed_lines)
-    # The word-count problem's breakdown lines are real and unprefixed.
-    assert unprefixed_lines
+    assert "words" not in err
 
 
 @pytest.mark.usefixtures("_cli_argv")
@@ -1040,21 +984,32 @@ def test_main_ensure_last_errors_without_an_existing_comment(
 
 
 @pytest.mark.usefixtures("_cli_argv")
-def test_main_dry_run_warns_on_stderr_for_a_message_over_target(
-    capsys: pytest.CaptureFixture[str],
+@pytest.mark.parametrize(
+    ("total_words", "warns"),
+    [(mod.WARN_OVER_WORDS, False), (200, True)],
+)
+def test_main_dry_run_warns_on_stderr_only_well_over_target(
+    capsys: pytest.CaptureFixture[str], *, total_words: int, warns: bool
 ) -> None:
-    """A 53-word message dry-runs fine: body on stdout, warning on stderr."""
-    bullets = [" ".join(["w"] * n) for n in (17, 17, 16)]  # 50 + 3-word title
+    """Behavior: dry run exits 0 with the body on stdout; warns only past the margin.
+
+    Args:
+        total_words: Whole-message word count under test.
+        warns: Whether stderr should carry the ``warning:`` line.
+    """
+    title, bullets = _message_of(total_words)
     sys.argv.extend(
         [
             "--dry-run",
             "--title",
-            "feat: one two",
+            title,
             *(item for b in bullets for item in ("--bullet", b)),
         ]
     )
     assert mod.main() == 0
     captured = capsys.readouterr()
-    assert captured.out == mod.build_body("feat: one two", bullets)
-    assert "forge-pr-squash-comment: warning: " in captured.err
-    assert "53 words" in captured.err
+    assert captured.out == mod.build_body(title, bullets)
+    assert f"{total_words}/{mod.MAX_WORDS} words" in captured.err
+    assert ("forge-pr-squash-comment: warning: " in captured.err) is warns
+    if warns:
+        assert f"is {total_words} words" in captured.err

@@ -18,9 +18,9 @@ one auto-generated `📋 Backlog Index` issue per repo.
 ## Source of truth
 
 [FOUNDATION §14](../FOUNDATION.md#14-issue-tracking--triage) owns the
-label schema, the `Requires:` convention and override policy — read it
-first. This file owns each mode's gh recipes **and when the Backlog
-Index is regenerated**; `forge-backlog-index` owns its layout.
+label schema, `Requires:` convention, override policy — read first.
+This file owns each mode's gh recipes; `forge-backlog-index` owns the
+Index's layout and, via `--if-stale-hours`, when it is rebuilt.
 
 ## Workflow
 
@@ -28,16 +28,16 @@ Caller picks the mode via the prompt. Default: `triage`.
 
 ### Data pulls — every mode
 
-`gh issue list` truncates silently (30 rows by default; any cap keeps the
-*newest*). Every pull passes `--limit 1000`, and any mode that publishes a
-count or the Index first cross-checks the total:
+`gh issue list` truncates silently (30 rows default; any cap keeps the
+*newest*). Every pull passes `--limit 1000`; any mode publishing a count
+or the Index first cross-checks the total:
 
 ```bash
 gh api "search/issues?q=repo:{owner}/{repo}+is:issue+is:open&per_page=1" --jq .total_count
 ```
 
-Fewer rows than that total → **do not publish**: name the short pull and
-stop. A total above `--limit` means raise the limit and re-pull.
+Fewer rows than that total → **do not publish**: name the short pull,
+stop. Total above `--limit` → raise it, re-pull.
 
 ### `bootstrap`
 
@@ -113,12 +113,17 @@ gh issue edit <N> --add-label needs-recheck
 gh issue comment <N> --body "[forge-issue-triage] needs-recheck: PR #<PR> (<sha>) changed <files> named by this plan; /sentinel reads the diff before pickup."
 ```
 
-Other lines change no label; issues without a plan are only counted.
-Exit 2 → report it, change no label. Then re-run
-`placement` for the PR (`--from-pr <PR>`) — the merge may have moved
-its follow-ups.
+Other lines: no label change; planless issues only counted. Exit 2 →
+report, change nothing. Re-run `placement --from-pr <PR>`: the merge
+may have moved follow-ups. Then last:
 
-Regenerate the Backlog Index.
+```bash
+forge-backlog-index --if-stale-hours 24
+```
+
+Self-skips unless Index a day stale; never judge the date yourself.
+
+**Nothing else** — no next-work hunt (`recommend-next` owns it).
 
 ### `stale-scan`
 

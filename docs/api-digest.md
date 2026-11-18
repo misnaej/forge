@@ -399,7 +399,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `gh_issue_edit(number: int, body: str) -> int` — Overwrite issue *number*'s body with *body* via ``gh issue edit``.
 - `class RunOptions` — What the caller asked for on the command line.
 - `class _RefusedError` _(internal)_ — A guard stopped the run; carries the exit code and the line to print.
-- `_locate_index(source: BacklogSource) -> tuple[int, list[Issue]]` _(internal)_ — Return the Index issue's number and every other open issue.
+- `_is_fresh(index: Issue, within_hours: int) -> bool` _(internal)_ — Return whether the Index was rewritten inside *within_hours*.
+- `_locate_index(source: BacklogSource) -> tuple[Issue, list[Issue]]` _(internal)_ — Return the Index issue and every other open issue.
 - `_checked_render(listed: list[Issue], inputs: IndexInputs, max_chars: int) -> Rendered` _(internal)_ — Render the body, refusing one that is oversized or empty.
 - `run(source: BacklogSource, options: RunOptions, write: Callable[[int, str], int] = gh_issue_edit) -> int` — Read the backlog, render the Index and write it when every guard passes.
 - `_lane_arg(value: str) -> Lane` _(internal)_ — Argparse type for ``--lane LABEL=HEADING``.
@@ -504,6 +505,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `decision_line(decision: Decision) -> str` — Render the one line a reader scans in a CI log.
 - `_write_github_output(decision: Decision) -> None` _(internal)_ — Append ``verified`` to ``$GITHUB_OUTPUT`` when that file is set.
 - `_parser() -> argparse.ArgumentParser` _(internal)_ — Build the argument parser.
+- `_announce_fault(exception_name: str) -> None` _(internal)_ — Raise a GitHub warning annotation for a fault inside the gate.
 - `main(argv: list[str] | None = None) -> int` — Print whether HEAD's tree has already passed, and why.
 
 ## `forge.claude_settings_schema`
@@ -519,7 +521,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `class CommitRefusedError` — A guard refused the request; the message says which and why.
 - `class Request` — What the caller asked forge-commit to do.
 - `check_message(message: str) -> None` — Refuse a commit message forge's rules forbid.
-- `check_budget_and_attribution(message: str) -> None` — Refuse a message past the word ceiling or carrying AI attribution.
+- `check_budget_and_attribution(message: str) -> None` — Warn about a long message, and refuse AI attribution.
 - `current_branch(root: Path) -> str` — The checked-out branch, refused when protected or detached.
 - `refuse_mid_merge(root: Path) -> None` — Refuse while a merge is in progress: merges belong to ``forge-update-branch``.
 - `check_verdict(root: Path) -> None` — Refuse unless the latest pre-commit verdict passed on this tree.
@@ -1825,8 +1827,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_word_total(title: str, bullets: list[str]) -> int` _(internal)_ — Count whitespace-split words across the title and every bullet.
 - `_preview(text: str) -> str` _(internal)_ — Shorten one message part to a printable first line for the breakdown.
 - `_word_breakdown(title: str, bullets: list[str]) -> list[str]` _(internal)_ — Render one indented line per message part: label, word count, preview.
-- `_check_word_count(title: str, bullets: list[str]) -> list[str]` _(internal)_ — Return the ``HARD_MAX_WORDS`` ceiling problem, with a per-part breakdown.
-- `word_cap_warning(title: str, bullets: list[str]) -> str | None` — Return the warning for a message between the target and the ceiling.
+- `word_cap_warning(title: str, bullets: list[str]) -> str | None` — Return the warning for a message well past its target, or ``None``.
 - `_check_attribution(title: str, bullets: list[str]) -> list[str]` _(internal)_ — Return the Claude / AI attribution problem per FOUNDATION §2 (shared gate).
 - `build_body(title: str, bullets: list[str]) -> str` — Build the GitHub comment body around a validated message.
 - `validate(title: str, bullets: list[str]) -> list[str]` — Return every FOUNDATION §6 rule the message breaks.
@@ -1882,7 +1883,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_is_clean(body: list[str]) -> bool` _(internal)_ — Return whether a section reports a clean check (its first line says so).
 - `_check_sections(sections: list[tuple[str, list[str]]]) -> list[str]` _(internal)_ — Validate presence and one-line shape of the required sections.
 - `_count_words(head: list[str], sections: list[tuple[str, list[str]]]) -> int` _(internal)_ — Count the words the budget applies to (prose, not headers or evidence).
-- `_check_budget(head: list[str], sections: list[tuple[str, list[str]]]) -> list[str]` _(internal)_ — Enforce the word budget, scaled by the number of findings sections.
+- `_warn_if_long(head: list[str], sections: list[tuple[str, list[str]]]) -> None` _(internal)_ — Warn about a long wrap-up, scaled by the number of findings sections.
 - `_check_attribution(text: str) -> list[str]` _(internal)_ — Wrap the shared FOUNDATION §2 attribution gate as a violation list.
 - `validate_wrapup(text: str) -> list[str]` — Return every rule the wrap-up *text* breaks (empty means valid).
 - `_check_no_squash_section(text: str) -> list[str]` _(internal)_ — Refuse a wrap-up that embeds the squash-merge message.
@@ -2282,7 +2283,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _The one margin forge allows over a text-length target._
 
-- `ceiling(target: int) -> int` — Return the most words a budget with *target* accepts.
+- `ceiling(target: int) -> int` — Return the word count past which a budget with *target* warns.
 
 ## `forge.text_clip`
 

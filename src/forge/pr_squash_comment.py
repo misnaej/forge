@@ -35,13 +35,12 @@ Rules (FOUNDATION §6 "Squash-merge messages"):
 
 - title matches conventional-commit ``<type>(...)?: <subject>``
 - 3-5 ``--bullet`` entries
-- total whitespace-split word count (title + bullets): target ≤ 50;
-  51-55 posts with a warning; over 55 is refused
+- total whitespace-split word count (title + bullets): advisory target
+  of 45; well past it warns and still posts, nothing is refused on length
 - no Claude / AI attribution patterns
 
-A failing run names every broken rule at once; a word-cap violation
-also lists each part's word count and how many words to cut to reach
-the 50-word target. A message in the 51-55 band prints the same
+A failing run names every broken rule at once. Length is never one of
+them: a message well past the 45-word target prints a per-part
 breakdown as a warning (also under ``--dry-run``) and posts.
 
 Only a comment whose body starts with :data:`SQUASH_MARKER` is treated
@@ -125,13 +124,16 @@ TITLE_RE: Final[re.Pattern[str]] = re.compile(
 
 MIN_BULLETS: Final[int] = 3
 MAX_BULLETS: Final[int] = 5
-# The target, and what "cut N" is measured against. Messages up to the
-# hard ceiling still post, with a warning: a hard edge at the target sent
-# agents round a retry loop over a word or two, while the intent — if it
-# cannot be said in about 50 words, the PR is too big — survives a
-# small, visible overshoot.
-MAX_WORDS: Final[int] = 50
-HARD_MAX_WORDS: Final[int] = ceiling(MAX_WORDS)
+# The target the prompt asks for, and what "cut N" is measured against.
+# Nothing is refused on length: a message over the target posts, and only
+# one past WARN_OVER_WORDS says so. A hard edge sent agents round a
+# rewrite loop over a word or two, and length was the wrong lever anyway
+# — across the last 60 merged messages, 26% carried a bullet reporting
+# process state or bookkeeping (tests passed, a fragment exists, forge's
+# own word counts), 9% of all bullet words. The content rules in
+# FOUNDATION §6 cut that; a counter never could.
+MAX_WORDS: Final[int] = 45
+WARN_OVER_WORDS: Final[int] = ceiling(MAX_WORDS)
 # A breakdown line only has to identify the part to shorten, not show it.
 PREVIEW_CHARS: Final[int] = 40
 
@@ -203,7 +205,7 @@ def _word_total(title: str, bullets: list[str]) -> int:
 
     Returns:
         The combined word count :data:`MAX_WORDS` targets and
-        :data:`HARD_MAX_WORDS` caps.
+        :data:`WARN_OVER_WORDS` warns above.
     """
     return len(title.split()) + sum(len(b.split()) for b in bullets)
 
@@ -252,49 +254,29 @@ def _word_breakdown(title: str, bullets: list[str]) -> list[str]:
     ]
 
 
-def _check_word_count(title: str, bullets: list[str]) -> list[str]:
-    """Return the ``HARD_MAX_WORDS`` ceiling problem, with a per-part breakdown.
-
-    Args:
-        title: Squash title.
-        bullets: Bullet strings.
-
-    Returns:
-        An empty list at or under the ceiling. Over it, one problem whose
-        first line names the total and how many words to cut to reach the
-        ``MAX_WORDS`` target, followed by the :func:`_word_breakdown` lines.
-    """
-    total = _word_total(title, bullets)
-    if total <= HARD_MAX_WORDS:
-        return []
-    header = (
-        f"squash-merge message is {total} words; FOUNDATION §6 refuses over "
-        f"{HARD_MAX_WORDS} and targets {MAX_WORDS} (cut {total - MAX_WORDS})"
-    )
-    return ["\n".join([header, *_word_breakdown(title, bullets)])]
-
-
 def word_cap_warning(title: str, bullets: list[str]) -> str | None:
-    """Return the warning for a message between the target and the ceiling.
+    """Return the warning for a message well past its target, or ``None``.
 
-    Kept out of :func:`validate` so validation stays a pure list of
-    refusals: a warning never blocks, it only tells the author the
-    message is over target and what to trim.
+    Kept out of :func:`validate` because length refuses nothing: this is
+    the whole of the word budget's enforcement. It fires only above
+    :data:`WARN_OVER_WORDS`, not at the first word over, so the author is
+    told once and posts anyway rather than trimming toward a line.
 
     Args:
         title: Squash title.
         bullets: Bullet strings.
 
     Returns:
-        The warning (total, target, per-part breakdown) for a total of
-        ``MAX_WORDS + 1`` to ``HARD_MAX_WORDS`` words, else ``None``.
+        The warning (total, target, per-part breakdown) above
+        ``WARN_OVER_WORDS``, else ``None``.
     """
     total = _word_total(title, bullets)
-    if not MAX_WORDS < total <= HARD_MAX_WORDS:
+    if total <= WARN_OVER_WORDS:
         return None
     header = (
         f"squash-merge message is {total} words — over the {MAX_WORDS}-word "
-        f"target (posting anyway; aim for <= {MAX_WORDS}, cut {total - MAX_WORDS})"
+        f"target (posting anyway, not refused; shorten the next one by "
+        f"dropping process state, not prose)"
     )
     return "\n".join([header, *_word_breakdown(title, bullets)])
 
@@ -359,13 +341,13 @@ def validate(title: str, bullets: list[str]) -> list[str]:
         bullets: Bullet strings.
 
     Returns:
-        Problem messages in rule order (title, bullets, word count,
-        attribution); empty when the message is valid.
+        Problem messages in rule order (title, bullets, attribution);
+        empty when the message is valid. Length is not among them: it
+        warns through :func:`word_cap_warning` and refuses nothing.
     """
     return (
         _check_title(title)
         + _check_bullets(bullets)
-        + _check_word_count(title, bullets)
         + _check_attribution(title, bullets)
     )
 
@@ -608,8 +590,8 @@ def main() -> int:
 
     problems = validate(args.title, args.bullet)
     if problems:
-        # A multi-line problem (the word-cap breakdown) keeps the prefix on
-        # its first line only, so the breakdown reads as one indented block.
+        # A multi-line problem keeps the prefix on its first line only, so
+        # the rest reads as one indented block.
         for problem in problems:
             sys.stderr.write(f"forge-pr-squash-comment: {problem}\n")
         return 1

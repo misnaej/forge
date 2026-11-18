@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -557,3 +558,108 @@ def test_cli_rejects_malformed_pairs() -> None:
             ["--lane", "noequals", "--dry-run"], source=FakeBacklog(), write=Writes()
         )
     assert excinfo.value.code == 2
+
+
+def _stamp(hours_ago: float, suffix: str = "Z") -> str:
+    """Build an ISO timestamp *hours_ago* before now.
+
+    Args:
+        hours_ago: Age of the timestamp in hours.
+        suffix: UTC marker; ``Z`` is what GitHub emits, ``+00:00`` the offset form.
+
+    Returns:
+        The timestamp string.
+    """
+    moment = datetime.now(UTC) - timedelta(hours=hours_ago)
+    return moment.strftime("%Y-%m-%dT%H:%M:%S") + suffix
+
+
+def _index_updated(updated: str, number: int = 7) -> Issue:
+    """Build the Index issue last updated at *updated*.
+
+    Args:
+        updated: Last-activity timestamp.
+        number: Issue number.
+
+    Returns:
+        An issue titled :data:`bi.INDEX_TITLE`.
+    """
+    return _issue(number, bi.INDEX_TITLE, updated=updated)
+
+
+@pytest.mark.parametrize("suffix", ["Z", "+00:00"])
+@pytest.mark.parametrize(
+    ("hours_ago", "expected"), [(1, True), (23, True), (25, False)]
+)
+def test_is_fresh_compares_age_to_window(
+    hours_ago: float, expected: object, suffix: str
+) -> None:
+    """Behavior: only an Index younger than the window is fresh.
+
+    Args:
+        hours_ago: Age of the Index timestamp, in hours.
+        expected: Whether the Index counts as fresh at that age.
+        suffix: UTC designator appended to the timestamp (``Z`` or ``+00:00``).
+    """
+    index = _index_updated(_stamp(hours_ago, suffix))
+    assert bi._is_fresh(index, 24) is expected
+
+
+@pytest.mark.parametrize(
+    "updated",
+    [
+        "",
+        "garbage",
+        "2026-11-18T10:00:00",
+        _stamp(-5, "Z"),
+    ],
+    ids=["empty", "garbage", "naive", "future"],
+)
+def test_is_fresh_unusable_timestamp_is_stale(updated: str) -> None:
+    """Behavior: an unusable timestamp regenerates rather than skips or crashes.
+
+    Unreadable, timezone-naive (the subtraction would raise ``TypeError``)
+    and future-dated stamps all return False. Each failure mode points at
+    regenerating the Index, the safe direction.
+
+    Args:
+        updated: Unparseable, naive or future last-activity timestamp.
+    """
+    assert bi._is_fresh(_index_updated(updated), 24) is False
+
+
+def test_fresh_index_with_gate_writes_nothing(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Behavior: a fresh Index under --if-stale-hours is skipped, never written."""
+    source = FakeBacklog(issues=[_index_updated(_stamp(1)), _issue(2, "a")])
+    writes = Writes()
+    argv = ["--if-stale-hours", "24"]
+    assert bi.main(argv, source=source, write=writes) == bi.EXIT_OK
+    out = capsys.readouterr().out
+    assert writes.calls == []
+    assert "skipped:" in out
+    assert "was updated less than 24h ago" in out
+    assert "#7" in out
+    assert "wrote:" not in out
+
+
+def test_stale_index_with_gate_writes(capsys: pytest.CaptureFixture[str]) -> None:
+    """Behavior: a stale Index under --if-stale-hours is written as ungated."""
+    source = FakeBacklog(issues=[_index_updated(_stamp(25)), _issue(2, "a")])
+    writes = Writes()
+    argv = ["--if-stale-hours", "24"]
+    assert bi.main(argv, source=source, write=writes) == bi.EXIT_OK
+    assert [number for number, _ in writes.calls] == [7]
+    assert capsys.readouterr().out.startswith("wrote: Index #7")
+
+
+def test_no_gate_writes_even_when_index_is_fresh(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Behavior: the gate is opt-in; without it a fresh Index is still written."""
+    source = FakeBacklog(issues=[_index_updated(_stamp(0.1)), _issue(2, "a")])
+    writes = Writes()
+    assert bi.main([], source=source, write=writes) == bi.EXIT_OK
+    assert [number for number, _ in writes.calls] == [7]
+    assert "skipped:" not in capsys.readouterr().out
