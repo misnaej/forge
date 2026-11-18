@@ -74,6 +74,34 @@ PLUGIN_REFERENCE_RE: Final = re.compile(
 )
 
 
+def match_is_marker(match: re.Match[str]) -> bool:
+    """Return whether a :data:`PLUGIN_REFERENCE_RE` match is a block marker.
+
+    A managed-block marker carries a third segment — `forge:c4:start`,
+    `forge:state:begin`, `forge:config:end`, `forge:badges:start` — while a
+    reference ends at the name: `forge:design-checker`. Only the marker is
+    followed by a colon, so that one character tells them apart, and every
+    `forge:<token>:` in the repo is a marker.
+
+    This is the single definition of the distinction: the mapper uses it to
+    leave markers alone, and the reference-leak check uses it so a surviving
+    marker is not reported as an unmapped reference. Without it, a marker
+    whose token happens to be a shipped name is rewritten into the harness
+    namespace and the tool that reads the marker no longer recognises it.
+
+    Known limit: a reference written with a trailing colon as punctuation
+    ("run `forge:commit`: then …") reads as a marker and is left alone.
+    Nothing in the repo does that.
+
+    Args:
+        match: A match produced by :data:`PLUGIN_REFERENCE_RE`.
+
+    Returns:
+        True when the matched token is followed by a colon.
+    """
+    return match.string[match.end() : match.end() + 1] == ":"
+
+
 @dataclass(frozen=True)
 class HarnessProfile:
     """Frozen profile for a single agent harness.
@@ -507,8 +535,17 @@ def map_plugin_references(
     from any token a shipped name merely begins — ``forge:fixture`` reads
     as the skill ``fix``, and ``forge:precommit-managed`` as ``pr`` — so
     the token is taken whole and tested for membership. A placeholder
-    (``forge:<name>``), the handoff note's ``forge:state`` markers and a
-    name forge does not ship therefore all survive untouched.
+    (``forge:<name>``) and a name forge does not ship therefore survive
+    untouched.
+
+    A managed-block marker survives too, by design rather than by luck:
+    :func:`match_is_marker` excludes anything carrying a third segment, so
+    a marker is safe even when its token is a shipped name. It was not:
+    ``forge:c4:start`` became ``forge-c4:start``, which the tool reading
+    that marker rejects. The hazard was known for the handoff note's
+    ``forge:state`` markers and held off by refusing to ship a name called
+    ``state`` — a prohibition that had to be restated per marker, and was
+    not restated for ``c4``.
 
     Args:
         text: Canonical content, authored in ``CANONICAL_AGENT_NAMESPACE``.
@@ -530,6 +567,8 @@ def map_plugin_references(
 
     def _rewrite(match: re.Match[str]) -> str:
         name = match.group(1)
-        return f"{namespace}{name}" if name in known else match.group(0)
+        if name not in known or match_is_marker(match):
+            return match.group(0)
+        return f"{namespace}{name}"
 
     return PLUGIN_REFERENCE_RE.sub(_rewrite, text)
