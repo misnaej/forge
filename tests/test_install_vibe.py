@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from forge import hook_registry
 from forge import install_vibe as install_vibe_module
 from forge.audit.agents import REQUIRED_SECTIONS
 from forge.install_vibe import _generate_roster_sidecar, install_vibe
@@ -431,3 +432,128 @@ class TestBareConsumerRepo:
         )
         assert install_vibe(root) == 0
         assert install_vibe(root, verify_mode=True) == 0
+
+
+def test_validate_shipped_scripts_passes_on_real_package() -> None:
+    """The packaged wiring and scripts agree: every wired script ships."""
+    needed = hook_registry.validate_shipped_scripts()
+    assert hook_registry.script_names() <= needed
+
+
+def test_validate_shipped_scripts_raises_on_missing_wired_script(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A wired script absent from the shipped dir fails the validation loudly."""
+    source = tmp_path / "hooks"
+    source.mkdir()
+    (source / "a.sh").write_text("echo a\n", encoding="utf-8")
+    monkeypatch.setattr(
+        hook_registry, "script_names", lambda: frozenset({"a.sh", "gone.sh"})
+    )
+    with pytest.raises(hook_registry.HookWiringError, match="gone\\.sh"):
+        hook_registry.validate_shipped_scripts(source)
+
+
+def test_install_fails_closed_and_writes_nothing_when_guard_missing(
+    consumer_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """install-forge-vibe exits 2 and writes nothing when a wired script is missing.
+
+    SCENARIO: the packaged hooks dir is mirrored minus one wired script;
+    the install must refuse before writing hooks.toml or the roster.
+    EXPECTED BEHAVIOR: exit 2, stderr names the missing script and the
+    reinstall command, and neither the hooks file nor the roster sidecar
+    exists afterwards.
+    """
+    real = shipped_path(hook_registry.HOOKS_DIR)
+    mirror = tmp_path / "mirror"
+    mirror.mkdir()
+    victim = "block_force_push.sh"
+    assert victim in hook_registry.script_names()
+    for p in real.glob("*.sh"):
+        if p.name != victim:
+            (mirror / p.name).write_text(
+                p.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+    monkeypatch.setattr(
+        hook_registry,
+        "shipped_path",
+        lambda rel: mirror if rel == hook_registry.HOOKS_DIR else real.parent / rel,
+    )
+    assert install_vibe(consumer_repo) == 2
+    err = capsys.readouterr().err
+    assert victim in err
+    assert "Reinstall forge-scripts" in err
+    vibe_dir = consumer_repo / ".vibe"
+    assert not (vibe_dir / "hooks.toml").exists()
+    assert not (vibe_dir / "forge-roster.json").exists()
+
+
+def _mirror_without(tmp_path: Path, victim: str) -> Path:
+    """Copy the packaged hooks dir minus *victim*.
+
+    Args:
+        tmp_path: pytest tmp dir the mirror is created under.
+        victim: Script file name to leave out of the mirror.
+
+    Returns:
+        The mirror directory path.
+    """
+    real = shipped_path(hook_registry.HOOKS_DIR)
+    mirror = tmp_path / "mirror"
+    mirror.mkdir()
+    for p in real.glob("*.sh"):
+        if p.name != victim:
+            (mirror / p.name).write_text(
+                p.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+    return mirror
+
+
+def _patched_source(monkeypatch: pytest.MonkeyPatch, mirror: Path) -> None:
+    """Point hook_registry's shipped_path at *mirror* for the hooks dir.
+
+    Args:
+        monkeypatch: pytest monkeypatch fixture.
+        mirror: Directory to serve as the packaged hooks dir.
+    """
+    real = shipped_path(hook_registry.HOOKS_DIR)
+    monkeypatch.setattr(
+        hook_registry,
+        "shipped_path",
+        lambda rel: mirror if rel == hook_registry.HOOKS_DIR else real.parent / rel,
+    )
+
+
+def test_validate_shipped_scripts_raises_on_missing_sourced_helper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing sourced helper fails validation, not just a missing wired script.
+
+    git_anchor.sh is sourced by most guards but wired nowhere; discovering
+    helpers by on-disk glob would make its absence invisible. The
+    reference must come from the wired scripts' text.
+    """
+    victim = "git_anchor.sh"
+    real = shipped_path(hook_registry.HOOKS_DIR)
+    wired_refs = hook_registry.required_scripts(real, hook_registry.script_names())
+    assert victim in wired_refs  # wired scripts reference it in their text
+    mirror = _mirror_without(tmp_path, victim)
+    _patched_source(monkeypatch, mirror)
+    with pytest.raises(hook_registry.HookWiringError, match="git_anchor\\.sh"):
+        hook_registry.validate_shipped_scripts()
+
+
+def test_validate_shipped_scripts_raises_on_missing_vibe_extra(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Vibe-only extra hooks are guard surface too: their scripts are validated."""
+    victim = "vibe_session_start.sh"
+    assert victim in hook_registry._vibe_extra_script_names()
+    mirror = _mirror_without(tmp_path, victim)
+    _patched_source(monkeypatch, mirror)
+    with pytest.raises(hook_registry.HookWiringError, match="vibe_session_start\\.sh"):
+        hook_registry.validate_shipped_scripts()
