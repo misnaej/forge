@@ -194,11 +194,17 @@ def test_info_results_do_not_affect_exit_code(
     monkeypatch.setattr(doctor.shutil, "which", lambda _name: "/usr/bin/found")
     monkeypatch.setattr(doctor.subprocess, "run", make_fake_run(returncode=0))
     monkeypatch.setattr(doctor.Path, "cwd", classmethod(lambda _: tmp_path))
+    monkeypatch.setattr(
+        doctor,
+        "installed_behind_checkout",
+        lambda _root: ("14.3.2.dev1", "v14.4.0"),
+    )
     argv = ["forge-doctor", "--skip-plugin-checks"]
     with patch.object(doctor.sys, "argv", argv):
         rc = doctor.main()
     captured = capsys.readouterr().out
     assert "[i]" in captured  # advisory marker rendered
+    assert "version_currency" in captured  # main() runs the currency check
     assert rc == 0
 
 
@@ -253,7 +259,44 @@ def test_step_tools_keys_are_opt_in_steps() -> None:
     assert set(doctor._STEP_TOOLS).issubset(opt_in)
 
 
-# --- _check_version_skew() (#184) -------------------------------------------
+# --- _check_version_currency() ----------------------------------------------
+
+
+def test_version_currency_renders_advisory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stale install yields one advisory naming both versions and the fix.
+
+    MOCK SETUP: ``installed_behind_checkout`` is replaced on ``doctor``, the
+    namespace the name is looked up in, with a canned stale answer.
+    """
+    monkeypatch.setattr(
+        doctor,
+        "installed_behind_checkout",
+        lambda _root: ("14.3.2.dev1+gabc", "v14.4.0"),
+    )
+
+    results = doctor._check_version_currency(tmp_path)
+
+    assert len(results) == 1
+    assert results[0].name == "version_currency"
+    assert results[0].passed
+    assert results[0].info
+    assert "14.3.2.dev1+gabc" in results[0].detail
+    assert "v14.4.0" in results[0].detail
+    assert "./dev/setup.sh" in results[0].detail
+
+
+def test_version_currency_silent_when_not_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No staleness found means no row at all, never a "current" row."""
+    monkeypatch.setattr(doctor, "installed_behind_checkout", lambda _root: None)
+
+    assert doctor._check_version_currency(tmp_path) == []
+
+
+# --- _check_version_skew() --------------------------------------------------
 
 
 def test_version_skew_aligned_normalizes_dev_suffix(

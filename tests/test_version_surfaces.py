@@ -10,11 +10,13 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
 
 from forge import version_surfaces
+from tests.conftest import GIT_ENV, commit_all, init_git_repo
 
 
 if TYPE_CHECKING:
@@ -394,3 +396,159 @@ class InstallHome(NamedTuple):
 def install_home(tmp_path: Path, claude_home: Path) -> InstallHome:
     """Bundle the temp directory and the Claude Code records for one install check."""
     return InstallHome(tmp_path, claude_home)
+
+
+# ---------------------------------------------------------------------------
+# installed_behind_checkout
+# ---------------------------------------------------------------------------
+# MOCKING STRATEGY: real git repos under tmp_path; only the two environment
+# readers (pip_version, editable_install_origin) are replaced, as module-level
+# names resolved at call time.
+
+
+def _git(repo: Path, *args: str) -> None:
+    """Run git in *repo* with the shared test identity.
+
+    Args:
+        repo: Directory to run git in.
+        *args: Git command arguments.
+    """
+    subprocess.run(["git", *args], cwd=repo, env=GIT_ENV, check=True)
+
+
+def _make_repo(repo: Path, *, name: str, tag: str | None) -> Path:
+    """Create a one-commit repo whose pyproject names the project *name*.
+
+    Args:
+        repo: Existing empty directory.
+        name: ``[project] name`` to write.
+        tag: Tag to put on the commit, or ``None`` for no tag.
+
+    Returns:
+        The resolved repo path, as ``editable_install_origin`` reports it.
+    """
+    init_git_repo(repo)
+    (repo / "pyproject.toml").write_text(
+        f'[project]\nname = "{name}"\n', encoding="utf-8"
+    )
+    commit_all(repo, "add pyproject")
+    if tag is not None:
+        _git(repo, "tag", tag)
+    return repo.resolve()
+
+
+def _stub_install(
+    monkeypatch: pytest.MonkeyPatch, *, version: str | None, origin: Path | None
+) -> None:
+    """Replace the two environment readers with fixed answers.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+        version: What ``pip_version`` reports.
+        origin: What ``editable_install_origin`` reports.
+    """
+    monkeypatch.setattr(version_surfaces, "pip_version", lambda: version)
+    monkeypatch.setattr(version_surfaces, "editable_install_origin", lambda: origin)
+
+
+def test_installed_behind_when_dev_build_precedes_same_triple_tag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dev build of a triple is behind that triple's release tag.
+
+    A dev build precedes the release it anticipates, so being exactly one
+    patch behind (``14.3.2.dev1`` vs ``v14.3.2``) is the state to detect.
+    Tag and build share one triple, so only the dev-below-release ordering
+    can make this report behind.
+    """
+    root = _make_repo(tmp_path, name="forge-scripts", tag="v14.3.2")
+    _stub_install(monkeypatch, version="14.3.2.dev1+gabc", origin=root)
+
+    assert version_surfaces.installed_behind_checkout(root) == (
+        "14.3.2.dev1+gabc",
+        "v14.3.2",
+    )
+
+
+@pytest.mark.parametrize(
+    ("tag", "installed"),
+    [
+        ("v14.4.0", "14.4.0"),
+        ("v14.4.0", "14.4.1.dev2"),
+        ("v14.4.0", None),
+        ("v14.4.0", "garbage"),
+        (None, "14.3.0"),
+    ],
+    ids=["equal", "ahead-dev", "not-installed", "unparseable", "no-release-tag"],
+)
+def test_installed_current_or_ahead_reports_nothing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tag: str | None,
+    installed: str | None,
+) -> None:
+    """Current, ahead, unknown or unjudgeable installs yield no advisory.
+
+    Args:
+        tag: Latest release tag of the fake checkout, or None for no tag.
+        installed: Stubbed installed version string, or None when not installed.
+    """
+    root = _make_repo(tmp_path, name="forge-scripts", tag=tag)
+    _stub_install(monkeypatch, version=installed, origin=root)
+
+    assert version_surfaces.installed_behind_checkout(root) is None
+
+
+def test_ancestry_scoped_tag_ignores_unreachable_newer_tag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A newer tag the checked-out commit does not contain is not judged against.
+
+    Tags the checked-out commit does not contain are ignored; no reinstall
+    could satisfy them. Real git on purpose: the behaviour under test is
+    which tags ``--merged`` returns.
+    """
+    root = _make_repo(tmp_path, name="forge-scripts", tag="v14.3.0")
+    _git(root, "branch", "old")
+    (root / "later.txt").write_text("b\n", encoding="utf-8")
+    commit_all(root, "later")
+    _git(root, "tag", "v14.4.0")
+    _git(root, "checkout", "-q", "old")
+    _stub_install(monkeypatch, version="14.3.0", origin=root)
+
+    assert version_surfaces.installed_behind_checkout(root) is None
+
+
+def test_consumer_repo_never_judged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A repo not named forge-scripts is never compared, whatever its tags.
+
+    Origin is stubbed to match ``tmp_path``, so only the repo-identity
+    check can return ``None``.
+    """
+    root = _make_repo(tmp_path, name="some-product", tag="v99.0.0")
+    _stub_install(monkeypatch, version="14.3.2", origin=root)
+
+    assert version_surfaces.installed_behind_checkout(root) is None
+
+
+@pytest.mark.parametrize(
+    "foreign", [False, True], ids=["non-editable", "other-checkout"]
+)
+def test_non_editable_or_foreign_origin_not_judged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, foreign: bool
+) -> None:
+    """An install not built from this checkout is never judged against it.
+
+    An index or wheel install, or one editable from another clone, was not
+    derived from this tree, so the comparison is meaningless.
+
+    Args:
+        foreign: True to stub an editable origin elsewhere, False for non-editable.
+    """
+    root = _make_repo(tmp_path, name="forge-scripts", tag="v14.4.0")
+    origin = tmp_path.parent.resolve() if foreign else None
+    _stub_install(monkeypatch, version="14.0.0", origin=origin)
+
+    assert version_surfaces.installed_behind_checkout(root) is None
