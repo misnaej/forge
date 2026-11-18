@@ -73,3 +73,18 @@ jobs:
             rc=0
           fi
           exit $rc
+
+      # Reads git alone, so it reports a merge left without its own tag
+      # whatever stopped the tag — a refused push, a run that never fired,
+      # a dead runner. `always()` because the case worth catching is the
+      # one where the step above just failed.
+      - name: Confirm this merge has a release tag of its own
+        if: always()
+        run: |
+          out=$(forge-changelog tag-gaps 2>&1); rc=$?
+          echo "$out"
+          echo "$out" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$rc" != "0" ]; then
+            echo "::error title=No release tag for this merge::$out"
+          fi
+          exit $rc

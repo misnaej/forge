@@ -1468,12 +1468,18 @@ class PushResult:
             git rejected with its lease text (``stale info``): the remote
             branch no longer pointed at the expected commit, so it moved and
             was left alone. Any other rejection leaves it ``False``.
+        workflow_scope_refused: ``True`` only for a :func:`push_tag` the
+            remote rejected for the workflow-permission rule — the ref
+            reaches a different ``.github/workflows/`` state than the
+            remote's branch tips hold, and the credential lacks the scope
+            to carry one. Any other rejection leaves it ``False``.
     """
 
     ok: bool
     returncode: int | None
     stderr: str
     stale_lease: bool = False
+    workflow_scope_refused: bool = False
 
 
 def _refuse_dash_or_plus(remote: str, ref: str, kind: str) -> PushResult | None:
@@ -1639,6 +1645,15 @@ def push_tag(repo_root: Path, tag: str, *, remote: str = "origin") -> PushResult
         tag: Tag name to push (e.g. ``v1.2.3``).
         remote: Remote name.
 
+    A rejection carrying the workflow-permission clause is classified here
+    (:attr:`PushResult.workflow_scope_refused`) so callers report the cause
+    instead of matching on git's text themselves. The remote applies that
+    rule to a *tag* as it does to a branch: the refusal is about the
+    ``.github/workflows/`` state the pushed ref reaches, not about the
+    commit being new, so tagging a commit whose workflow files have since
+    been superseded on the branch tips is refused while tagging the commit
+    that superseded them is not.
+
     Returns:
         The outcome. A *tag* or *remote* starting with ``-`` or ``+`` is
         refused without running git, so it can never parse as an option or
@@ -1647,7 +1662,21 @@ def push_tag(repo_root: Path, tag: str, *, remote: str = "origin") -> PushResult
     refusal = _refuse_dash_or_plus(remote, tag, "tag")
     if refusal is not None:
         return refusal
-    return _push_refspec(repo_root, remote, f"refs/tags/{tag}:refs/tags/{tag}")
+    result = _push_refspec(repo_root, remote, f"refs/tags/{tag}:refs/tags/{tag}")
+    if result.ok or result.returncode is None:
+        return result
+    # Only the scope clause means the workflow-permission rule: any other
+    # rejection (`! [remote rejected] … (protected branch hook declined)`)
+    # is a plain failure the caller must not report as a scope problem. The
+    # match is deliberately the clause and not the whole line, which names
+    # whichever workflow file differed and so is never twice the same.
+    refused = "without `workflows` permission" in result.stderr
+    return PushResult(
+        ok=False,
+        returncode=result.returncode,
+        stderr=result.stderr,
+        workflow_scope_refused=refused,
+    )
 
 
 _FULL_SHA_RE = re.compile(r"[0-9a-f]{40}([0-9a-f]{24})?")

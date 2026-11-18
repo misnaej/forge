@@ -11,6 +11,7 @@ from __future__ import annotations
 import subprocess
 from datetime import datetime
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 
@@ -32,6 +33,7 @@ from tests.conftest import (
     GIT_ENV,
     FakeProc,
     commit_all,
+    git_stdout,
     init_autotag_repo,
     init_git_repo,
     init_single_track_repo,
@@ -1550,6 +1552,250 @@ def test_main_auto_tag_push_failure_without_winner_reports_failure(
     assert main(["auto-tag"]) == 2
 
     assert "no concurrent winner" in capsys.readouterr().out
+
+
+def test_main_auto_tag_workflow_permission_refusal_reports_cause(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A workflow-permission refusal names its cause, not a phantom race.
+
+    SCENARIO: the remote refuses the tag under its workflow-permission rule
+    and holds no competing tag, so nothing else explains the failure.
+    MOCK SETUP: `push_tag` is replaced with a lambda returning a
+    ``PushResult`` flagged ``workflow_scope_refused``; origin stays empty
+    of tags so the winner check finds nothing.
+    EXPECTED BEHAVIOR: exit 2 (the merge has no tag), the output names the
+    workflow-permission cause and the version, and the generic "no
+    concurrent winner" wording is absent — it would send the reader
+    hunting for a race that did not happen.
+    """
+    origin = tmp_path / "origin.git"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    init_autotag_repo(repo, origin)
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: repo)
+    refusal = (
+        " ! [remote rejected] v0.1.0 -> v0.1.0 (refusing to allow a GitHub "
+        "App to create or update workflow `.github/workflows/tag-release.yml` "
+        "without `workflows` permission)"
+    )
+    monkeypatch.setattr(
+        changelog_fragments,
+        "push_tag",
+        lambda *_a, **_kw: git_utils.PushResult(
+            ok=False, returncode=1, stderr=refusal, workflow_scope_refused=True
+        ),
+    )
+
+    assert main(["auto-tag"]) == 2
+
+    out = capsys.readouterr().out
+    assert "workflow-permission" in out
+    assert "v0.1.0" in out
+    assert "no concurrent winner" not in out
+
+
+# ---------------------------------------------------------------------------
+# tag-gaps
+# ---------------------------------------------------------------------------
+
+
+def _commit_fragment(repo: Path, name: str) -> str:
+    """Commit one new fragment *name* and return the commit SHA.
+
+    Args:
+        repo: Repository root.
+        name: Fragment slug; the file is ``changelog.d/<name>.fix.md``.
+
+    Returns:
+        The full SHA of the new commit.
+    """
+    _write_fragment(
+        repo / "changelog.d", f"{name}.fix.md", f"bump: patch\n- {name} fix\n"
+    )
+    commit_all(repo, f"fix: {name}")
+    return git_stdout(repo, "rev-parse", "HEAD").strip()
+
+
+def _tag(repo: Path, name: str, *, annotated: bool = False) -> None:
+    """Tag HEAD in *repo* as *name*.
+
+    Args:
+        repo: Repository root.
+        name: Tag name.
+        annotated: Create an annotated tag (a tag object) instead of a
+            lightweight one.
+    """
+    args = ["tag", "-a", name, "-m", name] if annotated else ["tag", name]
+    git_stdout(repo, *args)
+
+
+class _GapRepo(NamedTuple):
+    """Commits of the shared tag-gap repo, oldest first."""
+
+    root: Path
+    a: str
+    source_only: str
+    b: str
+    c: str
+    d: str
+
+
+@pytest.fixture(scope="module")
+def repo_with_untagged_fragment_commit(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> _GapRepo:
+    """Repo where only commit ``b`` of four fragment commits lacks a tag.
+
+    History: ``a`` (``v1.0.0``), a source-only commit, ``b`` (no tag),
+    ``c`` (``v1.0.1``), ``d`` (``v1.0.2``). Fragments stay in the tree until
+    an assembly deletes them, so ``b``'s fragment is in the tree of both
+    ``v1.0.1`` and ``v1.0.2``.
+
+    Returns:
+        The repo path and its commit SHAs. Read-only: the fixture is
+        module-scoped and shared, so no test may commit or tag into it.
+    """
+    repo = tmp_path_factory.mktemp("tag_gaps")
+    init_git_repo(repo)
+    (repo / "seed.txt").write_text("seed\n")
+    commit_all(repo, "seed")
+    a = _commit_fragment(repo, "a")
+    _tag(repo, "v1.0.0")
+    (repo / "code.py").write_text("x = 1\n")
+    commit_all(repo, "refactor: source only")
+    source_only = git_stdout(repo, "rev-parse", "HEAD").strip()
+    b = _commit_fragment(repo, "b")
+    c = _commit_fragment(repo, "c")
+    _tag(repo, "v1.0.1")
+    d = _commit_fragment(repo, "d")
+    _tag(repo, "v1.0.2")
+    return _GapRepo(repo, a, source_only, b, c, d)
+
+
+def test_tag_gaps_reports_fragment_commit_with_no_tag(
+    repo_with_untagged_fragment_commit: _GapRepo,
+) -> None:
+    r"""Only the fragment commit without its own tag is reported, exactly.
+
+    The exact-tuple check on ``fragments`` is the regression for paths that
+    kept a leading newline from git's ``%x1f...\\x00\\n`` framing — such a
+    path never matches a tree entry, so the fold lookup silently fails.
+    The source-only commit adds no fragment and must not appear.
+    """
+    repo = repo_with_untagged_fragment_commit
+
+    gaps = changelog_fragments.tag_gaps(repo.root, since=repo.a)
+
+    assert [g.commit for g in gaps] == [repo.b]
+    assert gaps[0].fragments == ("changelog.d/b.fix.md",)
+    assert gaps[0].subject == "fix: b"
+    assert repo.source_only not in {g.commit for g in gaps}
+
+
+def test_tag_gaps_names_the_earliest_tag_holding_the_fragments(
+    repo_with_untagged_fragment_commit: _GapRepo,
+) -> None:
+    """The gap folds into the tag cut right after it, not the newest tag.
+
+    Fragment ``b`` is in the tree of ``v1.0.1`` and ``v1.0.2`` alike; the
+    later ``d`` commit and ``v1.0.2`` exist so a newest-first scan, which
+    would answer ``v1.0.2``, fails here.
+    """
+    repo = repo_with_untagged_fragment_commit
+
+    gaps = changelog_fragments.tag_gaps(repo.root, since=repo.a)
+
+    assert gaps[0].folded_into == "v1.0.1"
+
+
+def test_tag_gaps_unknown_since_revision_raises(
+    repo_with_untagged_fragment_commit: _GapRepo,
+) -> None:
+    """A refused git probe raises instead of reporting a clean window.
+
+    A tolerant call once turned a refused command into "no gaps" on the
+    window CI uses, so a broken check read as a passing one.
+    """
+    with pytest.raises(subprocess.CalledProcessError):
+        changelog_fragments.tag_gaps(
+            repo_with_untagged_fragment_commit.root, since="no-such-rev"
+        )
+
+
+def test_tag_gaps_default_window_is_head_only(tmp_path: Path) -> None:
+    """Without ``since`` only HEAD is judged, so an older gap is not reported.
+
+    A tagging job checks the merge it just handled; an untagged fragment
+    commit further back is not its business. The same repo then gets an
+    untagged fragment commit at HEAD, which is reported.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "seed.txt").write_text("seed\n")
+    commit_all(tmp_path, "seed")
+    _commit_fragment(tmp_path, "old")
+    _commit_fragment(tmp_path, "tagged")
+    _tag(tmp_path, "v1.0.0")
+
+    assert changelog_fragments.tag_gaps(tmp_path) == []
+
+    head = _commit_fragment(tmp_path, "new")
+
+    assert [g.commit for g in changelog_fragments.tag_gaps(tmp_path)] == [head]
+
+
+def test_tag_gaps_annotated_tag_counts_as_tagged(tmp_path: Path) -> None:
+    """An annotated tag marks its commit as tagged.
+
+    ``auto-tag`` pushes annotated tags. Without peeling to the commit, the
+    tag object's own SHA is recorded and every annotated tag reads as a gap.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "seed.txt").write_text("seed\n")
+    commit_all(tmp_path, "seed")
+    _commit_fragment(tmp_path, "a")
+    _tag(tmp_path, "v1.0.0", annotated=True)
+
+    assert changelog_fragments.tag_gaps(tmp_path) == []
+
+
+def test_cmd_tag_gaps_exit_codes_and_output(
+    repo_with_untagged_fragment_commit: _GapRepo,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Exit 0 for a clean window, 2 for a gap; the line matches the fold.
+
+    A gap folded into a later tag names that tag and must not also say "in
+    no tag yet" — the per-gap line and the summary once contradicted each
+    other. A gap no tag holds says so.
+    """
+    repo = repo_with_untagged_fragment_commit
+    monkeypatch.setattr(changelog_fragments, "fetch_tags_best_effort", lambda _r: [])
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: repo.root)
+
+    assert main(["tag-gaps", "--since", repo.c]) == 0
+    assert "has its own tag" in capsys.readouterr().out
+
+    assert main(["tag-gaps", "--since", repo.a]) == 2
+    folded = capsys.readouterr().out
+    assert "v1.0.1" in folded
+    assert "in no tag yet" not in folded
+
+    lone = tmp_path / "lone"
+    lone.mkdir()
+    init_git_repo(lone)
+    (lone / "seed.txt").write_text("seed\n")
+    commit_all(lone, "seed")
+    base = git_stdout(lone, "rev-parse", "HEAD").strip()
+    _commit_fragment(lone, "x")
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: lone)
+
+    assert main(["tag-gaps", "--since", base]) == 2
+    assert "in no tag yet" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------

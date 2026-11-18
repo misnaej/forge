@@ -328,14 +328,14 @@ options:
 
 ```text
 usage: forge-changelog [-h]
-                       {check,next-version,release,assemble,auto-tag,release-pr,restrand} ...
+                       {check,next-version,release,assemble,auto-tag,tag-gaps,release-pr,restrand} ...
 
 Changelog fragments: validate pending entries, assemble them into CHANGELOG.md
 at release (single writer). Shared-heading repos: `restrand` repairs stranded
 entries mechanically.
 
 positional arguments:
-  {check,next-version,release,assemble,auto-tag,release-pr,restrand}
+  {check,next-version,release,assemble,auto-tag,tag-gaps,release-pr,restrand}
     check               validate pending changelog.d/ fragments
     next-version        print the computed next release version — latest v*
                         tag + max level over the UNRELEASED fragments;
@@ -348,6 +348,9 @@ positional arguments:
                         (tag-per-merge CI seam; pushes the tag only; never
                         tags a repo with a plugin manifest, which is tagged at
                         the assembly merge)
+    tag-gaps            report commits that brought changelog fragments but
+                        carry no release tag of their own (reads git only, so
+                        it catches a lost tag whatever stopped it)
     release-pr          branch, stage, commit and open the assembly PR for the
                         pending fragments (scheduled CI seam; merge stays
                         human)
