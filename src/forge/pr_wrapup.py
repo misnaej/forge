@@ -149,11 +149,11 @@ FINDING_ALLOWANCE: Final[int] = 40
 # These match an assertion ("suite green", "472 tests pass"), never a
 # mention — "Merge after CI" and "fixes the pre-commit step" describe
 # work and must stay silent. Zero false positives over that corpus's 54
-# slot lines; keep it that way when adding one. One known limit, found by
-# this check firing on the wrap-up that introduced it: a slot *quoting*
-# the phrase to discuss this rule warns too, because nothing here can
-# tell a quotation from a claim. Rewording costs a word, so that is
-# cheaper than a quoting heuristic — which would widen the hole it closes.
+# slot lines; keep it that way when adding one. One known limit: a slot
+# *quoting* the phrase to discuss this rule warns too, because nothing
+# here can tell a quotation from a claim. Rewording costs a word, which
+# is cheaper than a quoting heuristic — that would widen the hole this
+# closes.
 _RESTATED_STATUS: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     (
         "## Code Quality",
