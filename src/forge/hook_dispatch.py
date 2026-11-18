@@ -293,6 +293,19 @@ def _run_guard(
     # Build environment with CLAUDE_PROJECT_DIR set
     env = os.environ.copy()
     env["CLAUDE_PROJECT_DIR"] = project_dir
+    # An agent-scoped guard is told which agent it is scoped to, resolved
+    # at generation from the wiring's canonical stem. It compares against
+    # this instead of spelling a name, so renaming an agent cannot leave
+    # it matching nothing.
+    scoped_agent = guard.get("agent")
+    if isinstance(scoped_agent, str) and scoped_agent:
+        env["FORGE_HOOK_AGENT"] = scoped_agent
+    else:
+        # Cleared rather than left alone: an ambient value inherited from
+        # the launcher would otherwise decide the scope of a guard whose
+        # roster entry carries none — which is what a roster written by an
+        # older install looks like.
+        env.pop("FORGE_HOOK_AGENT", None)
 
     # Run the guard with the original bytes on stdin
     try:

@@ -23,7 +23,7 @@ never written. The PR body flags that mechanical regen does not surface
 adoption-required changes; ``forge-upgrade --check`` lists those.
 
 Invocation surfaces: manual run, a scheduled CI workflow
-(``forge-docs/ci-recipe.md``), and ``/next`` offering it on detected drift.
+(``forge-docs/ci-recipe.md``), and ``/forge-next`` offering it on detected drift.
 
 :func:`regenerate_artifact` is also the generated-artifact half of
 ``forge-update-branch``'s conflict resolution: a generated file's
@@ -141,7 +141,7 @@ def _provenance_evidence(root: Path) -> tuple[bool, str]:
     ``forge-resync`` opens its PR from a subprocess, where the wrap-up
     authoring hook cannot see it — so the PR body itself must carry the
     verification evidence: the same ``forge-precommit --only`` gate run
-    the ``/pr`` regen-verified light path embeds in its wrap-up
+    the ``/forge-pr`` regen-verified light path embeds in its wrap-up
     (`skills/pr/SKILL.md`). Formatting and the failure-never-blocks
     contract live in :func:`forge.git_utils.run_gate_evidence`.
 
@@ -158,7 +158,7 @@ def _provenance_evidence(root: Path) -> tuple[bool, str]:
         success_headline=(
             "✅ **Regen byte-verified against the installed forge package** "
             f"(`forge-precommit --only {gates}`) — the same evidence the "
-            "`/pr` regen-verified light path uses."
+            "`/forge-pr` regen-verified light path uses."
         ),
         failure_headline=(
             "⚠️ **Provenance gates FAILED — full review required; do not "

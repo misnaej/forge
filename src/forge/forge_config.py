@@ -471,8 +471,8 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
     ConfigKey(
         ("tool", "forge", "memory_audit", "threshold"),
         default=5,
-        description="New agent memories since the last /memory-audit at "
-        "which `forge-memory-audit status` (run by /next) says to offer the "
+        description="New agent memories since the last /forge-memory-audit at "
+        "which `forge-memory-audit status` (run by /forge-next) says to offer the "
         "audit.",
     ),
     ConfigKey(

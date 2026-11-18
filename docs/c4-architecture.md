@@ -1,7 +1,7 @@
 # C4 architecture-diagram generator — design & rationale
 
 > **Status:** Implemented (shipped in #99). This is the design-rationale
-> doc for `forge-gen-c4` + the `/c4` skill — why it works the way it does,
+> doc for `forge-gen-c4` + the `/forge-c4` skill — why it works the way it does,
 > what was deliberately left out, and the deferred future work in
 > [§9](#9-future-work). For *how to configure it* see
 > [`forge-docs/configuration.md`](../forge-docs/configuration.md) (`[tool.forge.c4]`); for the
@@ -82,7 +82,7 @@ So the system is two pieces:
 1. **`forge-gen-c4`** — *deterministic* CLI. Given the config + the
    import graph, it emits Structurizr DSL. Pure function of inputs; has a
    `--check` drift mode like the other generators. **Ships in v1.**
-2. **`/c4` skill** — *reasoned* layer. An agent digs into the repo
+2. **`/forge-c4` skill** — *reasoned* layer. An agent digs into the repo
    (`REPO_STRUCTURE.md`, `api-digest.md`, the dep tree, the source) and
    **proposes the human half**: the system context, containers, and
    component groupings, written into `[tool.forge.c4]`. Then it runs the
@@ -450,7 +450,7 @@ reference.
   `forge-config`.
 - **Opt-in bootstrap step** — self-skips when `[tool.forge.c4]` is
   absent, like `readme-badges`.
-- **`/c4` skill** auto-discovered by the plugin, like every other skill.
+- **`/forge-c4` skill** generated into the harness like every other skill.
 
 ## 7. Risks & limitations
 
@@ -485,7 +485,7 @@ Deferred enhancements (the feature shipped without these by design):
    downstream PlantUML/Mermaid conversion, or emit DSL only and leave
    rendering entirely to the user? (v1: **DSL only**.)
 3. Is "Structurizr vNext" fully free/OSS and DSL-compatible long-term?
-4. Should the `/c4` skill grow into a skill + sub-agent fleet (one
+4. Should the `/forge-c4` skill grow into a skill + sub-agent fleet (one
    agent per C4 level) or stay a single reasoning pass? (v1: single.)
 5. **Shape/style per element type** — C4's reference notation uses
    distinct shapes/colors for person vs. system vs. container vs.

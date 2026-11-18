@@ -14,8 +14,8 @@ One row per merged PR:
   transcript text is free-form.
 - **Size** (from GitHub): files changed, lines added and removed, commits.
 - **Review rounds**: the most runs any one reporter
-  (`forge:design-checker`, `forge:security-checker`,
-  `forge:docs-types-checker`) made on the branch — each review pass runs
+  (`forge-design-checker`, `forge-security-checker`,
+  `forge-docs-types-checker`) made on the branch — each review pass runs
   each reporter once.
 - **Wrap-ups posted**: PR comments opening with a `verified-at:` header.
 - **Tokens**, per agent type (`main` = the main session): requests, input,
@@ -23,7 +23,7 @@ One row per merged PR:
   (the installed package's roster) and Claude Code's built-ins
   (`Explore`, `Plan`, `general-purpose`, `claude-code-guide`) keep their
   name; every other type is summed under `other` before it is stored — a
-  repo's own wrappers often carry its name, `forge:`-prefixed or not. An
+  repo's own wrappers often carry its name with a suffix (`design-checker-<repo>`). An
   unreadable roster stops recording with an error rather than storing
   every forge agent as `other`.
 - **Time**: wall (first to last transcript record on the branch) and
@@ -50,7 +50,7 @@ not charged twice. Work on the base branch goes to an
 
 ## When
 
-- `forge-metrics record --pr <N>` — after merge: the `/next` cleanup and
+- `forge-metrics record --pr <N>` — after merge: the `/forge-next` cleanup and
   the PR monitor's merge handling run it. Re-recording replaces the PR's
   rows.
 - `forge-metrics backfill [--limit N] [--refresh]` — merged PRs not yet

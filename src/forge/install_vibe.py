@@ -46,7 +46,11 @@ from forge.agent_harness import (
 from forge.gen_vibe_agents import flatten_vibe_instructions, generate_vibe_agents
 from forge.gen_vibe_hooks import verify_existing_hooks, write_vibe_hooks
 from forge.git_utils import configure_cli_logging
-from forge.hook_registry import rendered_hooks
+from forge.hook_registry import (
+    HookWiringError,
+    rendered_hooks,
+    validate_shipped_scripts,
+)
 from forge.instruction_files import generated_name, shipped_path
 
 
@@ -105,6 +109,16 @@ def _generate_roster_sidecar(repo_root: Path) -> tuple[dict, list[str]]:
                 for hook in (raw_hooks if isinstance(raw_hooks, list) else [])
                 if isinstance(hook, dict)
             ]
+
+            # An agent-scoped group carries the resolved agent name. The
+            # dispatcher execs a command as a bare path, so the name
+            # cannot ride in the command the way it does in Claude's
+            # shell-run settings: it travels per hook and the dispatcher
+            # puts it in the environment.
+            scoped_agent = matcher_config.get("agent")
+            if isinstance(scoped_agent, str):
+                for hook in expanded_hooks:
+                    hook["agent"] = scoped_agent
 
             # No matcher specified - applies to all
             matcher = matcher_config.get("matcher", "")
@@ -528,6 +542,17 @@ def install_vibe(
     """
     if repo_root is None:
         repo_root = Path.cwd()
+
+    # Fail closed before anything else — including --verify, which must
+    # not pass an install whose guards are missing from the package: the
+    # roster names absolute script paths, so a wired guard that does not
+    # ship would be registered and then silently disarmed at runtime (a
+    # missing hook command exits 127, which does not block the tool call).
+    try:
+        validate_shipped_scripts()
+    except HookWiringError as exc:
+        sys.stderr.write(f"install-forge-vibe: {exc}\n")
+        return 2
 
     if verify_mode:
         return _verify_vibe_installation(repo_root)

@@ -15,7 +15,6 @@ from forge.agent_profile import (
     LOOP_REPEAT_THRESHOLD,
     MAIN_SESSION_TYPE,
     MUTATING_TOOLS,
-    PRECOMMIT_FIXER_AGENT,
     PRECOMMIT_RUN_CAP,
     AgentRun,
     EditReceipt,
@@ -34,6 +33,7 @@ from forge.agent_profile import (
     type_rows,
 )
 from forge.git_utils import code_health_dir
+from forge.instruction_files import generated_name
 from tests.conftest import GIT_ENV, commit_all, init_git_repo
 
 
@@ -41,6 +41,13 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
     from pathlib import Path
 
+
+# Neutral labels: tests that only group, count or time runs must not depend on
+# any shipped agent's name. Name-dependent tests build theirs with generated_name.
+_AGENT = "reporter"
+_OTHER_AGENT = "writer"
+_THIRD_AGENT = "runner"
+_FIXER = generated_name("precommit-fixer")
 
 BASE_MS = 1_757_412_000_000  # a fixed, round instant — exact date is not load-bearing
 BASE_DT = datetime(2026, 9, 9, 9, 0, 0, tzinfo=UTC)
@@ -207,13 +214,13 @@ def test_runs_from_ledger_pairs_subagent_start_and_stop_by_agent_id() -> None:
             event="SubagentStart",
             ts_ms=BASE_MS,
             agent_id="a1",
-            agent_type="forge:design-checker",
+            agent_type=_AGENT,
         ),
         _event(
             event="PostToolUse",
             ts_ms=BASE_MS + 1000,
             agent_id="a1",
-            agent_type="forge:design-checker",
+            agent_type=_AGENT,
             tool_name="Bash",
             tool_use_id="t1",
             duration_ms=500,
@@ -222,7 +229,7 @@ def test_runs_from_ledger_pairs_subagent_start_and_stop_by_agent_id() -> None:
             event="PostToolUse",
             ts_ms=BASE_MS + 3000,
             agent_id="a1",
-            agent_type="forge:design-checker",
+            agent_type=_AGENT,
             tool_name="Read",
             tool_use_id="t2",
             duration_ms=2000,
@@ -231,13 +238,13 @@ def test_runs_from_ledger_pairs_subagent_start_and_stop_by_agent_id() -> None:
             event="SubagentStop",
             ts_ms=BASE_MS + 4000,
             agent_id="a1",
-            agent_type="forge:design-checker",
+            agent_type=_AGENT,
             transcript_path="agent-a1.jsonl",
         ),
     ]
     runs = runs_from_ledger(events)
     run = runs["a1"]
-    assert run.agent_type == "forge:design-checker"
+    assert run.agent_type == _AGENT
     assert run.started == _ms_to_dt(BASE_MS)
     assert run.ended == _ms_to_dt(BASE_MS + 4000)
     assert run.tool_calls == 2
@@ -254,13 +261,13 @@ def test_runs_from_ledger_run_without_stop_uses_last_event_as_end() -> None:
             event="SubagentStart",
             ts_ms=BASE_MS,
             agent_id="a1",
-            agent_type="forge:design-checker",
+            agent_type=_AGENT,
         ),
         _event(
             event="PostToolUse",
             ts_ms=BASE_MS + 5000,
             agent_id="a1",
-            agent_type="forge:design-checker",
+            agent_type=_AGENT,
             tool_name="Bash",
             duration_ms=100,
         ),
@@ -302,11 +309,11 @@ def test_runs_from_ledger_agent_type_arrives_only_on_later_event_still_recorded(
             event="SubagentStop",
             ts_ms=BASE_MS + 1000,
             agent_id="a2",
-            agent_type="forge:test-writer",
+            agent_type=_OTHER_AGENT,
         ),
     ]
     run = runs_from_ledger(events)["a2"]
-    assert run.agent_type == "forge:test-writer"
+    assert run.agent_type == _OTHER_AGENT
 
 
 def test_apply_event_precommit_full_run_increments_ledger_precommit_runs() -> None:
@@ -316,19 +323,19 @@ def test_apply_event_precommit_full_run_increments_ledger_precommit_runs() -> No
             event="SubagentStart",
             ts_ms=BASE_MS,
             agent_id="a3",
-            agent_type=PRECOMMIT_FIXER_AGENT,
+            agent_type=_FIXER,
         ),
         _event(
             event="precommit_full_run",
             ts_ms=BASE_MS + 1000,
             agent_id="a3",
-            agent_type=PRECOMMIT_FIXER_AGENT,
+            agent_type=_FIXER,
         ),
         _event(
             event="precommit_full_run",
             ts_ms=BASE_MS + 2000,
             agent_id="a3",
-            agent_type=PRECOMMIT_FIXER_AGENT,
+            agent_type=_FIXER,
         ),
     ]
     run = runs_from_ledger(events)["a3"]
@@ -347,13 +354,13 @@ def test_runs_from_ledger_gap_over_idle_threshold_clipped_in_ledger_active_s() -
             event="SubagentStart",
             ts_ms=BASE_MS,
             agent_id="a3",
-            agent_type="forge:design-checker",
+            agent_type=_AGENT,
         ),
         _event(
             event="PostToolUse",
             ts_ms=BASE_MS + 400_000,
             agent_id="a3",
-            agent_type="forge:design-checker",
+            agent_type=_AGENT,
             tool_name="Bash",
             duration_ms=10,
         ),
@@ -361,7 +368,7 @@ def test_runs_from_ledger_gap_over_idle_threshold_clipped_in_ledger_active_s() -
             event="PostToolUse",
             ts_ms=BASE_MS + 600_000,
             agent_id="a3",
-            agent_type="forge:design-checker",
+            agent_type=_AGENT,
             tool_name="Bash",
             duration_ms=10,
         ),
@@ -374,20 +381,18 @@ def test_agent_run_active_s_prefers_transcript_stats_over_ledger_when_present() 
     """``active_s`` prefers transcript stats over ledger gap sum."""
     with_stats = AgentRun(
         agent_id="a4",
-        agent_type="forge:design-checker",
+        agent_type=_AGENT,
         ledger_active_s=100.0,
         stats=TranscriptStats(active_s=250.0),
     )
     assert with_stats.active_s == pytest.approx(250.0)
 
-    without_stats = AgentRun(
-        agent_id="a5", agent_type="forge:design-checker", ledger_active_s=42.0
-    )
+    without_stats = AgentRun(agent_id="a5", agent_type=_AGENT, ledger_active_s=42.0)
     assert without_stats.active_s == pytest.approx(42.0)
 
     zero_stats = AgentRun(
         agent_id="a6",
-        agent_type="forge:design-checker",
+        agent_type=_AGENT,
         ledger_active_s=17.0,
         stats=TranscriptStats(active_s=0.0),
     )
@@ -564,7 +569,7 @@ def test_agent_type_linked_via_tool_result_agent_id(tmp_path: Path) -> None:
                         "toolu_agent1",
                         "Agent",
                         {
-                            "subagent_type": "forge:design-checker",
+                            "subagent_type": _AGENT,
                             "description": "Review the diff",
                         },
                     )
@@ -590,10 +595,63 @@ def test_agent_type_linked_via_tool_result_agent_id(tmp_path: Path) -> None:
 
     assert "a1" in runs
     run = runs["a1"]
-    assert run.agent_type == "forge:design-checker"
+    assert run.agent_type == _AGENT
     assert run.description == "Review the diff"
     assert run.transcript_path == str(sub_path)
     assert run.stats is not None
+
+
+def test_cap_fires_end_to_end_for_the_shipped_fixer_name(tmp_path: Path) -> None:
+    """Behavior: a transcript run linked under the shipped fixer name breaches the cap.
+
+    SCENARIO: the main session launches the fixer by its generated name;
+    the subagent transcript runs one more bare `forge-precommit` than the
+    cap allows, plus `--only` runs, which are free.
+    EXPECTED BEHAVIOR: `cap_breach` is true and the report names the cap.
+    A matcher on a retired spelling would leave it false without any error,
+    which is the silent no-fire this pins.
+    """
+    session = tmp_path / "session1.jsonl"
+    _write_jsonl(
+        session,
+        [
+            _assistant(
+                BASE_DT,
+                [
+                    _tool_use(
+                        "toolu_fix",
+                        "Agent",
+                        {"subagent_type": _FIXER, "description": "Clear hooks"},
+                    )
+                ],
+            ),
+            _user_tool_result(
+                BASE_DT + timedelta(seconds=1), "toolu_fix", agent_id="f1"
+            ),
+        ],
+    )
+    commands = ["forge-precommit"] * (PRECOMMIT_RUN_CAP + 1) + [
+        "forge-precommit --only ruff"
+    ] * 3
+    _write_jsonl(
+        tmp_path / "proj" / "subagents" / "agent-f1.jsonl",
+        [
+            _assistant(
+                BASE_DT + timedelta(seconds=2 + i),
+                [_tool_use(f"t{i}", "Bash", {"command": command})],
+            )
+            for i, command in enumerate(commands)
+        ],
+    )
+
+    run = runs_from_transcripts(tmp_path)["f1"]
+
+    assert run.agent_type == _FIXER
+    assert run.precommit_runs == PRECOMMIT_RUN_CAP + 1
+    assert run.cap_breach is True
+    assert f"{_FIXER} runs past the {PRECOMMIT_RUN_CAP}-run cap: 1" in render_report(
+        [run], [], top=5
+    )
 
 
 def test_runs_from_transcripts_unlinked_transcript_gets_unknown_type_placeholder(
@@ -633,13 +691,13 @@ def test_collect_runs_ledger_run_enriched_by_its_named_transcript(
                 event="SubagentStart",
                 ts_ms=BASE_MS,
                 agent_id="a1",
-                agent_type="forge:design-checker",
+                agent_type=_AGENT,
             ),
             _event(
                 event="SubagentStop",
                 ts_ms=BASE_MS + 1000,
                 agent_id="a1",
-                agent_type="forge:design-checker",
+                agent_type=_AGENT,
                 transcript_path=str(transcript_path),
             ),
         ],
@@ -678,13 +736,13 @@ def test_collect_runs_ignores_ledger_transcript_path_when_it_is_the_main_session
                 event="SubagentStart",
                 ts_ms=BASE_MS,
                 agent_id="a1",
-                agent_type="forge:design-checker",
+                agent_type=_AGENT,
             ),
             _event(
                 event="SubagentStop",
                 ts_ms=BASE_MS + 1000,
                 agent_id="a1",
-                agent_type="forge:design-checker",
+                agent_type=_AGENT,
                 transcript_path=str(main_session_path),
             ),
         ],
@@ -742,13 +800,13 @@ def test_collect_runs_derives_the_agents_own_subagent_transcript_from_session_id
                 event="SubagentStart",
                 ts_ms=BASE_MS,
                 agent_id="a1",
-                agent_type="forge:design-checker",
+                agent_type=_AGENT,
             ),
             _event(
                 event="SubagentStop",
                 ts_ms=BASE_MS + 1000,
                 agent_id="a1",
-                agent_type="forge:design-checker",
+                agent_type=_AGENT,
                 transcript_path=str(main_session_path),
             ),
         ],
@@ -784,13 +842,13 @@ def test_collect_runs_backfills_ledger_run_from_transcripts_root_when_unresolvab
                 event="SubagentStart",
                 ts_ms=BASE_MS,
                 agent_id="a1",
-                agent_type="forge:design-checker",
+                agent_type=_AGENT,
             ),
             _event(
                 event="SubagentStop",
                 ts_ms=BASE_MS + 1000,
                 agent_id="a1",
-                agent_type="forge:design-checker",
+                agent_type=_AGENT,
                 transcript_path=str(unresolvable_path),
             ),
         ],
@@ -867,14 +925,14 @@ def test_collect_runs_rejects_path_traversal_via_absolute_or_dotdot_session_id(
                 ts_ms=BASE_MS,
                 session_id=str(evil_root),
                 agent_id="a1",
-                agent_type="forge:design-checker",
+                agent_type=_AGENT,
             ),
             _event(
                 event="SubagentStop",
                 ts_ms=BASE_MS + 1000,
                 session_id=str(evil_root),
                 agent_id="a1",
-                agent_type="forge:design-checker",
+                agent_type=_AGENT,
                 transcript_path=str(recorded_a1),
             ),
             _event(
@@ -882,14 +940,14 @@ def test_collect_runs_rejects_path_traversal_via_absolute_or_dotdot_session_id(
                 ts_ms=BASE_MS,
                 session_id="..",
                 agent_id="a2",
-                agent_type="forge:design-checker",
+                agent_type=_AGENT,
             ),
             _event(
                 event="SubagentStop",
                 ts_ms=BASE_MS + 1000,
                 session_id="..",
                 agent_id="a2",
-                agent_type="forge:design-checker",
+                agent_type=_AGENT,
                 transcript_path=str(recorded_a2),
             ),
         ],
@@ -915,13 +973,13 @@ def test_collect_runs_transcript_only_run_backfills_when_absent_from_ledger(
                 event="SubagentStart",
                 ts_ms=BASE_MS,
                 agent_id="a1",
-                agent_type="forge:design-checker",
+                agent_type=_AGENT,
             ),
             _event(
                 event="SubagentStop",
                 ts_ms=BASE_MS + 1000,
                 agent_id="a1",
-                agent_type="forge:design-checker",
+                agent_type=_AGENT,
             ),
         ],
     )
@@ -948,13 +1006,13 @@ def test_collect_runs_orders_by_start_time_oldest_first_unknown_start_sorts_firs
                 event="SubagentStart",
                 ts_ms=BASE_MS + 5000,
                 agent_id="a1",
-                agent_type="forge:design-checker",
+                agent_type=_AGENT,
             ),
             _event(
                 event="SubagentStart",
                 ts_ms=BASE_MS,
                 agent_id="a2",
-                agent_type="forge:test-writer",
+                agent_type=_OTHER_AGENT,
             ),
         ],
     )
@@ -995,13 +1053,13 @@ def _ledger_naming_transcript(ledger_path: Path, transcript_path: Path) -> None:
                 event="SubagentStart",
                 ts_ms=BASE_MS,
                 agent_id="a1",
-                agent_type="forge:design-checker",
+                agent_type=_AGENT,
             ),
             _event(
                 event="SubagentStop",
                 ts_ms=BASE_MS + 1000,
                 agent_id="a1",
-                agent_type="forge:design-checker",
+                agent_type=_AGENT,
                 transcript_path=str(transcript_path),
             ),
         ],
@@ -1314,20 +1372,20 @@ def test_fmt_s_formats_seconds_minutes_and_hours_boundaries(
 
 
 def test_cap_breach_true_only_for_precommit_fixer_agent_type_past_cap() -> None:
-    """Only ``forge:precommit-fixer`` runs strictly over PRECOMMIT_RUN_CAP breach."""
+    """Only the shipped fixer's runs strictly over PRECOMMIT_RUN_CAP breach."""
     over_cap = AgentRun(
         agent_id="1",
-        agent_type=PRECOMMIT_FIXER_AGENT,
+        agent_type=_FIXER,
         stats=TranscriptStats(precommit_runs=PRECOMMIT_RUN_CAP + 1),
     )
     at_cap = AgentRun(
         agent_id="2",
-        agent_type=PRECOMMIT_FIXER_AGENT,
+        agent_type=_FIXER,
         stats=TranscriptStats(precommit_runs=PRECOMMIT_RUN_CAP),
     )
     other_type_over_cap = AgentRun(
         agent_id="3",
-        agent_type="forge:design-checker",
+        agent_type=_AGENT,
         stats=TranscriptStats(precommit_runs=PRECOMMIT_RUN_CAP + 5),
     )
     assert over_cap.cap_breach is True
@@ -1345,13 +1403,13 @@ def test_precommit_runs_property_takes_max_of_ledger_and_transcript() -> None:
     """
     ledger_wins = AgentRun(
         agent_id="1",
-        agent_type=PRECOMMIT_FIXER_AGENT,
+        agent_type=_FIXER,
         ledger_precommit_runs=6,
         stats=TranscriptStats(precommit_runs=2),
     )
     transcript_wins = AgentRun(
         agent_id="2",
-        agent_type=PRECOMMIT_FIXER_AGENT,
+        agent_type=_FIXER,
         ledger_precommit_runs=2,
         stats=TranscriptStats(precommit_runs=5),
     )
@@ -1363,7 +1421,7 @@ def test_cap_breach_true_from_ledger_count_alone_no_transcript() -> None:
     """A ledger-only run (no transcript at all) still breaches from its own count."""
     run = AgentRun(
         agent_id="1",
-        agent_type=PRECOMMIT_FIXER_AGENT,
+        agent_type=_FIXER,
         ledger_precommit_runs=PRECOMMIT_RUN_CAP + 1,
         stats=None,
     )
@@ -1402,7 +1460,7 @@ def test_render_report_includes_loop_suspects_and_gated_cap_breaches_section() -
     """A loop-suspect run and a cap-breaching precommit-fixer run both surface."""
     loop_run = AgentRun(
         agent_id="loop1",
-        agent_type="forge:design-checker",
+        agent_type=_AGENT,
         started=BASE_DT,
         ended=BASE_DT + timedelta(seconds=30),
         description="loop desc",
@@ -1418,7 +1476,7 @@ def test_render_report_includes_loop_suspects_and_gated_cap_breaches_section() -
     )
     fixer_run = AgentRun(
         agent_id="fix1",
-        agent_type=PRECOMMIT_FIXER_AGENT,
+        agent_type=_FIXER,
         started=BASE_DT,
         ended=BASE_DT + timedelta(seconds=60),
         description="fixer desc",
@@ -1435,10 +1493,7 @@ def test_render_report_includes_loop_suspects_and_gated_cap_breaches_section() -
         in report
     )
     assert "5x Bash: git status" in report
-    assert (
-        f"{PRECOMMIT_FIXER_AGENT} runs past the {PRECOMMIT_RUN_CAP}-run cap: 1"
-        in report
-    )
+    assert f"{_FIXER} runs past the {PRECOMMIT_RUN_CAP}-run cap: 1" in report
     assert f"{PRECOMMIT_RUN_CAP + 1} full forge-precommit runs" in report
 
 
@@ -1465,7 +1520,7 @@ def test_render_json_with_stats_serialises_nested_datetimes_and_flags() -> None:
     """A run's nested ``stats`` datetimes serialise to ISO; flags land top-level."""
     run = AgentRun(
         agent_id="1",
-        agent_type=PRECOMMIT_FIXER_AGENT,
+        agent_type=_FIXER,
         stats=TranscriptStats(
             started=BASE_DT,
             ended=BASE_DT + timedelta(seconds=10),
@@ -1520,7 +1575,7 @@ def test_subagent_edits_excludes_main_session_and_stale_since_and_other_session(
             event="PostToolUse",
             ts_ms=BASE_MS + 1000,  # older than cutoff — excluded
             session_id="s1",
-            agent_type="forge:design-checker",
+            agent_type=_AGENT,
             tool_name="Edit",
             file_path=str(tmp_path / "stale.py"),
         ),
@@ -1528,7 +1583,7 @@ def test_subagent_edits_excludes_main_session_and_stale_since_and_other_session(
             event="PostToolUse",
             ts_ms=BASE_MS + 10_000,
             session_id="other-session",  # different session — excluded
-            agent_type="forge:design-checker",
+            agent_type=_AGENT,
             tool_name="Edit",
             file_path=str(tmp_path / "other.py"),
         ),
@@ -1536,7 +1591,7 @@ def test_subagent_edits_excludes_main_session_and_stale_since_and_other_session(
             event="PostToolUse",
             ts_ms=BASE_MS + 10_000,
             session_id="s1",
-            agent_type="forge:design-checker",
+            agent_type=_AGENT,
             tool_name="Edit",
             file_path=str(tmp_path / "qualifying.py"),
         ),
@@ -1546,7 +1601,7 @@ def test_subagent_edits_excludes_main_session_and_stale_since_and_other_session(
     receipt = subagent_edits(tmp_path, since=cutoff, session_id="s1")
 
     assert receipt.known is True
-    assert receipt.by_file == {"qualifying.py": {"forge:design-checker"}}
+    assert receipt.by_file == {"qualifying.py": {_AGENT}}
 
 
 def test_subagent_edits_aggregates_multiple_agents_per_file_ignores_non_mutating_tool(
@@ -1560,21 +1615,21 @@ def test_subagent_edits_aggregates_multiple_agents_per_file_ignores_non_mutating
         _event(
             event="PostToolUse",
             ts_ms=BASE_MS,
-            agent_type="forge:design-checker",
+            agent_type=_AGENT,
             tool_name="Edit",
             file_path=shared,
         ),
         _event(
             event="PostToolUse",
             ts_ms=BASE_MS + 1000,
-            agent_type="forge:test-writer",
+            agent_type=_OTHER_AGENT,
             tool_name="Write",
             file_path=shared,
         ),
         _event(
             event="PostToolUse",
             ts_ms=BASE_MS + 2000,
-            agent_type="forge:precommit-fixer",
+            agent_type=_THIRD_AGENT,
             tool_name="Bash",
             file_path=None,
         ),
@@ -1584,9 +1639,7 @@ def test_subagent_edits_aggregates_multiple_agents_per_file_ignores_non_mutating
     receipt = subagent_edits(tmp_path)
 
     assert receipt.known is True
-    assert receipt.by_file == {
-        "shared.py": {"forge:design-checker", "forge:test-writer"}
-    }
+    assert receipt.by_file == {"shared.py": {_AGENT, _OTHER_AGENT}}
 
 
 def test_subagent_edits_normalizes_absolute_paths_and_matches_restricted_paths(
@@ -1604,7 +1657,7 @@ def test_subagent_edits_normalizes_absolute_paths_and_matches_restricted_paths(
         _event(
             event="PostToolUse",
             ts_ms=BASE_MS,
-            agent_type="forge:design-checker",
+            agent_type=_AGENT,
             tool_name="Edit",
             file_path=str(absolute),
         ),
@@ -1614,7 +1667,7 @@ def test_subagent_edits_normalizes_absolute_paths_and_matches_restricted_paths(
     receipt = subagent_edits(tmp_path, paths={"src/foo.py"})
 
     assert receipt.known is True
-    assert receipt.by_file == {"src/foo.py": {"forge:design-checker"}}
+    assert receipt.by_file == {"src/foo.py": {_AGENT}}
 
 
 @pytest.mark.parametrize(
@@ -1654,7 +1707,7 @@ def test_render_edit_receipt_unknown_vs_none_recorded_vs_per_file_lines() -> Non
     empty = EditReceipt(known=True, by_file={})
     multi = EditReceipt(
         known=True,
-        by_file={"a.py": {"forge:test-writer", "forge:design-checker"}},
+        by_file={"a.py": {_OTHER_AGENT, _AGENT}},
     )
 
     unknown_line = render_edit_receipt(unknown)
@@ -1666,7 +1719,7 @@ def test_render_edit_receipt_unknown_vs_none_recorded_vs_per_file_lines() -> Non
     assert "none recorded" in empty_line
     # Fenced deliberately: the path is agent-supplied and this line is
     # reproduced into a markdown PR comment, so it must render literally.
-    assert "`a.py` — forge:design-checker, forge:test-writer" in multi_line
+    assert f"`a.py` — {_AGENT}, {_OTHER_AGENT}" in multi_line
 
 
 def test_subagent_edits_unknown_when_every_row_lacks_a_path(tmp_path: Path) -> None:
@@ -1681,14 +1734,14 @@ def test_subagent_edits_unknown_when_every_row_lacks_a_path(tmp_path: Path) -> N
         _event(
             event="PostToolUse",
             ts_ms=BASE_MS,
-            agent_type="forge:design-checker",
+            agent_type=_AGENT,
             tool_name="Edit",
             file_path=None,
         ),
         _event(
             event="PostToolUse",
             ts_ms=BASE_MS + 1000,
-            agent_type="forge:test-writer",
+            agent_type=_OTHER_AGENT,
             tool_name="Write",
             file_path=None,
         ),
@@ -1710,11 +1763,11 @@ def test_render_edit_receipt_marks_partial_attribution_incomplete() -> None:
     """
     partial = EditReceipt(
         known=True,
-        by_file={"a.py": {"forge:design-checker"}},
+        by_file={"a.py": {_AGENT}},
         pathless=2,
     )
     unknown = EditReceipt(known=False, reason="no ledger at code_health/x.jsonl")
-    complete = EditReceipt(known=True, by_file={"a.py": {"forge:design-checker"}})
+    complete = EditReceipt(known=True, by_file={"a.py": {_AGENT}})
 
     partial_line = render_edit_receipt(partial)
 
@@ -1855,7 +1908,7 @@ def test_render_edits_reports_a_file_still_dirty_after_an_unrelated_commit(
             _event(
                 event="PostToolUse",
                 ts_ms=BASE_MS,
-                agent_type="forge:test-writer",
+                agent_type=_OTHER_AGENT,
                 tool_name="Edit",
                 file_path=str(tmp_path / "b.py"),
             )
@@ -1878,7 +1931,7 @@ def test_render_edits_reports_a_file_still_dirty_after_an_unrelated_commit(
 
     assert code == 0
     # Fenced deliberately (render_edit_receipt): assert on the fenced form.
-    assert "`b.py` — forge:test-writer" in caplog.text
+    assert f"`b.py` — {_OTHER_AGENT}" in caplog.text
 
 
 @pytest.mark.parametrize("name", ["two words.py", "café.py", " lead space.py"])
@@ -1907,7 +1960,7 @@ def test_render_edits_reports_awkward_names_modified_and_untracked(
             _event(
                 event="PostToolUse",
                 ts_ms=BASE_MS,
-                agent_type="forge:test-writer",
+                agent_type=_OTHER_AGENT,
                 tool_name="Edit",
                 file_path=str(tmp_path / path),
             )
@@ -1920,8 +1973,8 @@ def test_render_edits_reports_awkward_names_modified_and_untracked(
 
     # The match uses the real recorded name; only the displayed label is
     # stripped of leading/trailing blanks by _safe_label.
-    assert f"`{name.strip()}` — forge:test-writer" in caplog.text
-    assert f"`{untracked.strip()}` — forge:test-writer" in caplog.text
+    assert f"`{name.strip()}` — {_OTHER_AGENT}" in caplog.text
+    assert f"`{untracked.strip()}` — {_OTHER_AGENT}" in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -1935,14 +1988,14 @@ def test_append_history_writes_label_runs_types_wall_active_loop_and_cap_fields(
     """One appended line carries the label plus every aggregate field."""
     loop_run = AgentRun(
         agent_id="loop1",
-        agent_type="forge:design-checker",
+        agent_type=_AGENT,
         started=BASE_DT,
         ended=BASE_DT + timedelta(seconds=10),
         stats=TranscriptStats(max_repeat=LOOP_REPEAT_THRESHOLD),
     )
     fixer_run = AgentRun(
         agent_id="fix1",
-        agent_type=PRECOMMIT_FIXER_AGENT,
+        agent_type=_FIXER,
         started=BASE_DT,
         ended=BASE_DT + timedelta(seconds=20),
         stats=TranscriptStats(precommit_runs=PRECOMMIT_RUN_CAP + 1),
@@ -1999,13 +2052,13 @@ def test_main_json_flag_writes_json_report_and_still_appends_history(
                 event="SubagentStart",
                 ts_ms=BASE_MS,
                 agent_id="a1",
-                agent_type="forge:design-checker",
+                agent_type=_AGENT,
             ),
             _event(
                 event="SubagentStop",
                 ts_ms=BASE_MS + 1000,
                 agent_id="a1",
-                agent_type="forge:design-checker",
+                agent_type=_AGENT,
             ),
         ],
     )

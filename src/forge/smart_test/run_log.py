@@ -243,7 +243,7 @@ def _write_sink(path: Path, text: str, *, append: bool) -> None:
 class RunLog:
     """The two log sinks of one run, written incrementally.
 
-    ``smart_test.log`` is what ``forge:precommit-fixer`` reads;
+    ``smart_test.log`` is what ``forge-precommit-fixer`` reads;
     ``pytest.log`` is ``forge-slow-tests-report``'s default input. Both
     get the same bytes.
     """

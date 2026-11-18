@@ -5,7 +5,7 @@ returns only the first page without saying so: past the 30th comment a
 review looks complete and the rest never get a reply. This CLI reads
 every page (``list``) and answers mechanically whether every review
 thread has been replied to (``unreplied``), so neither the
-``pr-manager`` agent nor the ``/pr-comments`` skill has to re-derive it
+``pr-manager`` agent nor the ``/forge-pr-comments`` skill has to re-derive it
 from a ``jq`` expression.
 
 Exit codes: ``0`` done (``unreplied``: every thread has a reply), ``1``

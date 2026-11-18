@@ -53,7 +53,7 @@ options:
                         $VIBE_HOME/logs/session/unified, else
                         ~/.vibe/logs/session/unified, when it exists).
   --agent-type AGENT_TYPE
-                        Only runs of this agent type (e.g. forge:precommit-
+                        Only runs of this agent type (e.g. forge-precommit-
                         fixer).
   --since SINCE         Only runs starting at or after this ISO-8601 instant.
   --last LAST           Only the N most recent runs.
@@ -631,7 +631,7 @@ options:
 ```text
 usage: forge-memory-audit [-h] {status,stamp} ...
 
-Count agent memories added since the last /memory-audit.
+Count agent memories added since the last /forge-memory-audit.
 
 positional arguments:
   {status,stamp}
@@ -675,7 +675,8 @@ options:
 usage: forge-next-prep [-h] [--no-prune-branches] [--prune-remote] [--no-sync]
 
 Prepare main for the next task: fetch + pull --ff-only, optionally tag the
-rolling-next release, prune stale local branches. Used by the /next skill.
+rolling-next release, prune stale local branches. Used by the /forge-next
+skill.
 
 options:
   -h, --help           show this help message and exit

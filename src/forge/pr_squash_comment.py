@@ -391,7 +391,7 @@ def _latest_activity_at(pr_number: int) -> str | None:
 
     Conversation comments, review-thread replies, and review
     submissions each live behind a different endpoint; a squash comment
-    buried by a `/pr-comments` reply is invisible to the conversation
+    buried by a `/forge-pr-comments` reply is invisible to the conversation
     listing alone.
 
     Args:

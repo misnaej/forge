@@ -1042,8 +1042,13 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `class HookWiringError` — The canonical wiring is missing, unparseable, or malformed.
 - `_entry(raw: object, where: str) -> HookEntry` _(internal)_ — Build one :class:`HookEntry` from a parsed table.
 - `read_wiring() -> dict[str, tuple[HookGroup, ...]]` — Return the canonical wiring, keyed by harness-neutral event name.
+- `_group(raw: object, event: str) -> HookGroup` _(internal)_ — Validate one declared group and return it.
+- `_resolved_agent(stem: str | None, event: str) -> str | None` _(internal)_ — Resolve a group's canonical agent stem to its generated name.
 - `rendered_hooks(command_for: Callable[[str], str]) -> dict[str, list[dict[str, object]]]` — Render the wiring into the event/matcher/command shape harnesses use.
 - `script_names() -> frozenset[str]` — Return every script the canonical wiring references.
+- `required_scripts(source: Path, wired: frozenset[str]) -> frozenset[str]` — Return every script needed for the wired ones to run.
+- `_vibe_extra_script_names() -> frozenset[str]` _(internal)_ — Return the script names the Vibe-only hook extras run.
+- `validate_shipped_scripts(source: Path | None = None) -> frozenset[str]` — Return the full guard script set, failing closed if any is missing.
 
 ## `forge.import_graph`
 
@@ -1086,7 +1091,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_for_claude(text: str) -> str` _(internal)_ — Rewrite shipped content into this harness's agent namespace.
 - `_publish_agents(repo_root: Path, *, check: bool) -> list[str]` _(internal)_ — Copy shipped agents into ``.claude/agents/``.
 - `_publish_skills(repo_root: Path, *, check: bool) -> list[str]` _(internal)_ — Copy shipped skills into ``.claude/skills/``.
-- `required_scripts(source: Path, wired: frozenset[str]) -> frozenset[str]` — Return every script needed for the wired ones to run.
 - `_publish_hooks(repo_root: Path, scripts: frozenset[str], *, check: bool) -> list[str]` _(internal)_ — Copy the guard scripts into ``.claude/hooks/``, executable.
 - `_render_ignore(scripts: frozenset[str]) -> str` _(internal)_ — Build the ``.claude/.gitignore`` that lists what forge generates.
 - `previously_generated(repo_root: Path) -> frozenset[str]` — Return every path the last run recorded as forge's own.
@@ -1496,7 +1500,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 ## `forge.pr_delta`
 
-> _pr_delta — thresholds and helpers for pr-manager finalization short-circuits._
+> _pr_delta — thresholds and helpers for forge-pr-manager finalization short-circuits._
 
 - `path_classifier(extra_hub: Sequence[str] = ()) -> Callable[[str], PathClass]` — Return a classifier sorting a path into generated, hub or other.
 - `extract_verified_shas(text: str) -> list[str]` — Return every ``verified-at:`` SHA referenced in *text*.
@@ -1783,7 +1787,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 ## `forge.pr_plan`
 
-> _forge-pr-plan — deterministic finalization-path decision for the ``/pr`` skill._
+> _forge-pr-plan — deterministic finalization-path decision for the ``/forge-pr`` skill._
 
 - `class PrPlan` — The finalization plan for one classification run.
 - `class WrapupFreshness` — Whether a PR's newest posted wrap-up still describes its head.

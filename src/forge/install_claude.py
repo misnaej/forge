@@ -62,7 +62,11 @@ from typing import Final
 from forge.agent_harness import HarnessName, map_plugin_references
 from forge.claude_settings_schema import MARKETPLACE_KEY, PLUGIN_KEY
 from forge.git_utils import configure_cli_logging
-from forge.hook_registry import HookWiringError, rendered_hooks, script_names
+from forge.hook_registry import (
+    HookWiringError,
+    rendered_hooks,
+    validate_shipped_scripts,
+)
 from forge.instruction_files import (
     generated_name,
     renamed_frontmatter,
@@ -139,6 +143,13 @@ def is_forge_group(group: object, scripts: frozenset[str]) -> bool:
 def forge_hook_groups() -> dict[str, list[dict[str, object]]]:
     """Build forge's hook registrations in Claude settings shape.
 
+    An agent-scoped group arrives carrying the resolved agent name. That
+    name is not a Claude settings key, so it is spent here: each command
+    in the group gains a leading ``FORGE_HOOK_AGENT=`` assignment, which
+    works because Claude runs a hook command through a shell. The guard
+    then compares against that value instead of spelling a name of its
+    own, so no rename can strand it.
+
     Returns:
         Event name to its groups, each carrying the matcher (when the
         event has one) and its commands in declaration order.
@@ -146,7 +157,15 @@ def forge_hook_groups() -> dict[str, list[dict[str, object]]]:
     Raises:
         HookWiringError: Propagated from :func:`read_wiring`.
     """
-    return rendered_hooks(hook_command)
+    groups = rendered_hooks(hook_command)
+    for blocks in groups.values():
+        for block in blocks:
+            agent = block.pop("agent", None)
+            if not isinstance(agent, str):
+                continue
+            for hook in block["hooks"]:  # type: ignore[union-attr]
+                hook["command"] = f"FORGE_HOOK_AGENT={agent} {hook['command']}"
+    return groups
 
 
 def _drop_plugin_era_keys(settings: dict[str, object]) -> None:
@@ -316,76 +335,30 @@ def _publish_skills(repo_root: Path, *, check: bool) -> list[str]:
     return written
 
 
-def required_scripts(source: Path, wired: frozenset[str]) -> frozenset[str]:
-    """Return every script needed for the wired ones to run.
-
-    A wired guard may ``source`` a shipped helper — the git-command
-    anchor, the once-marker, the wrap-up anchor — which the wiring never
-    names because nothing fires it directly. Copying only the wired set
-    leaves those helpers behind, and a guard that cannot source its
-    helper refuses the call it was protecting: the guards fail closed, so
-    the omission disarms nothing but blocks everything.
-
-    Dependencies are read from the scripts themselves rather than listed
-    here, so a helper added later needs no change in this module.
-
-    Args:
-        source: Directory holding the shipped guard scripts. Passed in
-            rather than resolved here so the traversal can be exercised
-            on a synthetic chain, and so the one place that decides where
-            shipped sources come from stays
-            :func:`forge.instruction_files.shipped_path`.
-        wired: Script names the canonical wiring references.
-
-    Returns:
-        The wired scripts plus every shipped script they reference,
-        transitively.
-    """
-    shipped = {p.name for p in source.glob("*.sh")}
-    needed = set(wired)
-    pending = list(wired)
-    while pending:
-        path = source / pending.pop()
-        if not path.is_file():
-            continue
-        text = path.read_text(encoding="utf-8")
-        for candidate in shipped - needed:
-            if candidate in text:
-                needed.add(candidate)
-                pending.append(candidate)
-    return frozenset(needed)
-
-
 def _publish_hooks(
     repo_root: Path, scripts: frozenset[str], *, check: bool
 ) -> list[str]:
     """Copy the guard scripts into ``.claude/hooks/``, executable.
 
+    The caller validates the set first
+    (:func:`forge.hook_registry.validate_shipped_scripts`), so copying
+    nothing on a missing script is that one check's job — kept single
+    there, not re-implemented here.
+
     Args:
         repo_root: The checkout being installed into.
         scripts: Script names to copy — the wired set plus the helpers
-            they source (:func:`required_scripts`).
+            they reference (:func:`forge.hook_registry.required_scripts`).
         check: Report what would change without writing.
 
     Returns:
         Repo-relative paths that were written, or would be.
-
-    Raises:
-        HookWiringError: When a required script does not ship. Copying
-            nothing in that case would register a command pointing at a
-            file that never arrives.
     """
     source = shipped_path("claude-hooks")
     dest_dir = repo_root / CLAUDE_DIR / HOOKS_SUBDIR
     written: list[str] = []
     for name in sorted(scripts):
         src = source / name
-        if not src.is_file():
-            msg = (
-                f"wiring references {name}, which forge does not ship at "
-                f"{source}. Reinstall forge-scripts."
-            )
-            raise HookWiringError(msg)
         dest = dest_dir / name
         content = src.read_text(encoding="utf-8")
         changed = not dest.is_file() or dest.read_text(encoding="utf-8") != content
@@ -606,8 +579,9 @@ def install_claude(
         groups = forge_hook_groups()
         # The wired set registers the guards; the required set is what
         # gets copied, since a guard that cannot source its helper
-        # refuses every call it was protecting.
-        scripts = required_scripts(shipped_path("claude-hooks"), script_names())
+        # refuses every call it was protecting. Validated here so a
+        # script that does not ship fails before anything is written.
+        scripts = validate_shipped_scripts()
     except HookWiringError as exc:
         return [], str(exc)
 

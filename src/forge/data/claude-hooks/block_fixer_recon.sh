@@ -40,9 +40,24 @@ COMMAND=$(jq -r '.tool_input.command // empty' <<< "$INPUT")
     IFS= read -r CWD
 } <<< "$(jq -r '.agent_type // "", .agent_id // "", .session_id // "", .cwd // "."' <<< "$INPUT")"
 
-# Scoped: only the precommit-fixer is restricted (both name forms, per
-# the block_raw_git precedent).
-if [ "$AGENT_TYPE" != "precommit-fixer" ] && [ "$AGENT_TYPE" != "forge:precommit-fixer" ]; then
+# Scoped: only the one agent named by the wiring is restricted. The name
+# arrives in FORGE_HOOK_AGENT, resolved at generation from the canonical
+# stem in data/hooks.toml, so this guard spells no agent name of its own
+# and a rename cannot leave it matching nothing.
+#
+# Unset means the integration predates the agent-scope wiring or was
+# generated wrong. This guard stands aside rather than blocking, because
+# it runs on *every* Bash call: failing closed here takes the whole
+# session down over a config fault, which is worse than this one narrow
+# restriction being absent. Note what that costs — Claude Code does not
+# surface hook stderr on exit 0, so the message below usually reaches
+# nobody. The detection that matters is `forge-doctor`'s integration
+# check, which reports the drift that causes this.
+if [ -z "${FORGE_HOOK_AGENT:-}" ]; then
+    echo "[forge] block_fixer_recon: FORGE_HOOK_AGENT unset — the fixer's Bash restriction is NOT being applied. Run install-forge-claude and restart the session." >&2
+    exit 0
+fi
+if [ "$AGENT_TYPE" != "$FORGE_HOOK_AGENT" ]; then
     exit 0
 fi
 

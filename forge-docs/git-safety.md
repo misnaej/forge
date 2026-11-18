@@ -267,7 +267,7 @@ pass — it never becomes a hidden default.
    pushed; `forge-commit --push-only` publishes it through the verdict
    gate, so deferred checks are paid at push time instead of never.
 5. Otherwise exit 3: the merge stays in progress, the paths are listed,
-   an intake lesson records the stop. `forge:merge-resolver` edits the
+   an intake lesson records the stop. `forge-merge-resolver` edits the
    files (or the main agent does), then `forge-update-branch --continue`
    stages marker-free files, re-runs step 3, refuses any staged change
    outside the conflicted files, and commits — through the pre-commit
