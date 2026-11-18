@@ -9,9 +9,9 @@
 # monitor that may not be running (the §6 monitor's fifth signal covers
 # pushes made elsewhere). A Claude Code hook rather than a git pre-push
 # hook because the audience is the agent session — git hooks fire for
-# any human terminal too, where "re-run /pr" has no reader.
+# any human terminal too, where "re-run /forge-pr" has no reader.
 #
-# Read-only: prints one line, never posts the refresh (that is `/pr N`).
+# Read-only: prints one line, never posts the refresh (that is `/forge-pr N`).
 # Deliberately no `set -e`: every probe here may legitimately fail (no
 # PR, no CLI, gh offline) and none are errors — a post-tool hook must
 # never turn a working push into a failed one.
@@ -36,7 +36,7 @@ DRAFT=${PR_STATE#* }
 [ -n "$PR" ] || exit 0
 
 # A wrap-up already authored for this HEAD is a refresh in flight
-# (`/pr` pushes its fix commits before posting) — no reminder needed.
+# (`/forge-pr` pushes its fix commits before posting) — no reminder needed.
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo ".")
 # Log directory: FORGE_CODE_HEALTH_DIR when set (absolute, or relative to
 # the repo root), else <root>/code_health — the same rule as
@@ -59,7 +59,7 @@ FRESH=$(printf '%s' "$VERDICT" | jq -r '.fresh | tostring' 2>/dev/null)
 
 AT=$(printf '%s' "$VERDICT" | jq -r '.latest_verified_at // "?"')
 HEAD7=$(printf '%s' "$VERDICT" | jq -r '.head_oid // "?"' | cut -c1-7)
-MSG="[forge] wrap-up on PR #$PR was verified at $AT but the head is now $HEAD7 — re-run /pr $PR to post a refreshed wrap-up (FOUNDATION §6)."
+MSG="[forge] wrap-up on PR #$PR was verified at $AT but the head is now $HEAD7 — re-run /forge-pr $PR to post a refreshed wrap-up (FOUNDATION §6)."
 # The push that outdates a wrap-up is also the moment a rework begins;
 # a ready PR should not stay ready through one (FOUNDATION §6).
 if [ "$DRAFT" != "true" ]; then

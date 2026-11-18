@@ -19,7 +19,7 @@ keystroke (FOUNDATION §2, §6):
      nothing else conflicts (:func:`forge.resync.regenerate_artifact`);
 
 5. Anything left stops the run: the paths are listed, an intake lesson
-   records the stop, and the next step is named — ``forge:merge-resolver``
+   records the stop, and the next step is named — ``forge-merge-resolver``
    edits the files, then ``forge-update-branch --continue``.
 6. Commit the merge. A merge only this command resolved commits
    without the local gate, like a merge git completes itself; CI and the
@@ -525,7 +525,7 @@ def _commit(root: Path, message: str, *, gated: bool) -> None:
     except subprocess.CalledProcessError as exc:
         msg = (
             "the merge commit was blocked by the pre-commit gate; the merge "
-            "stays in progress. Run forge:precommit-fixer, then "
+            "stays in progress. Run forge-precommit-fixer, then "
             "`forge-update-branch --continue`."
             if gated
             else f"git refused the merge commit; the merge stays in progress. {exc}"
@@ -579,7 +579,7 @@ def _stop(root: Path, base_ref: str, done: Resolution) -> int:
     record = _record_stop(root, base_ref, done)
     logger.warning(
         "forge-update-branch: stopped — these conflicts need judgment: %s.\n"
-        "Next: spawn forge:merge-resolver to resolve them (or resolve and "
+        "Next: spawn forge-merge-resolver to resolve them (or resolve and "
         "`git add` them yourself), then run `forge-update-branch --continue`."
         "%s",
         ", ".join(done.remaining),

@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Final, TypeVar, cast
 
 from forge.agent_profile_tokens import MAIN_AGENT, TokenUsage, fmt_tokens
 from forge.git_utils import parse_semver
+from forge.instruction_files import AGENT_NAME_PREFIX
 from forge.pr_metrics_charts import (
     COMPACT_FROM,
     Change,
@@ -36,7 +37,8 @@ if TYPE_CHECKING:
 
 #: Token table columns, in storage order.
 TOKEN_COLUMNS: Final = ("requests", "input", "cache_write", "cache_read", "output")
-_SHARED_PREFIX: Final = "forge:"
+#: Same prefix the generator uses, from the one place that declares it.
+_SHARED_PREFIX: Final = AGENT_NAME_PREFIX
 #: Characters of the repo id shown in PR labels.
 SHORT_ID: Final = 6
 #: What a stored repo id looks like (hex uuid); anything else is a label.

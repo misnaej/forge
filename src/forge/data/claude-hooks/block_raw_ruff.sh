@@ -83,6 +83,6 @@ RUFF_ANCHOR="${RUFF_PREFIX}(([^[:space:];&|()]*/)?python[0-9.]*[[:space:]]+-m[[:
 RUFF_RUNNER="${RUFF_PREFIX}(uvx|pipx[[:space:]]+run|(uv|pixi|poetry|pipenv|conda)[[:space:]]+run)[[:space:]]([^;&|]*[[:space:]/])?${RUFF_VERB}"
 # `invoked <regex>` (git_anchor.sh) reads CMDPOS above.
 if invoked "$RUFF_ANCHOR" || invoked "$RUFF_RUNNER"; then
-    echo "BLOCKED: raw 'ruff' from Bash is forbidden (FOUNDATION §2). Use forge-precommit — it verifies and self-heals (ruff format + ruff check --fix --unsafe-fixes on failure). Agents delegate to the forge:precommit-fixer agent." >&2
+    echo "BLOCKED: raw 'ruff' from Bash is forbidden (FOUNDATION §2). Use forge-precommit — it verifies and self-heals (ruff format + ruff check --fix --unsafe-fixes on failure). Agents delegate to the forge-precommit-fixer agent." >&2
     exit 2
 fi

@@ -941,7 +941,7 @@ def _per_agent_findings(
             prior_art,
             header="prior-art-searched:",
             rationale=(
-                "the /pr consumption gate and the refusal contract depend on "
+                "the /forge-pr consumption gate and the refusal contract depend on "
                 "it (see _TEMPLATE.md 'Pre-write agent header contract')"
             ),
         )

@@ -6,7 +6,7 @@ Forge times pre-commit steps (``precommit_timing.log``), tests
 reporter answers, per agent type: how long a run takes, how much of
 that is active work versus idle waiting, which runs were slowest,
 which tool calls cost the most, and whether a run looks stuck —
-re-issuing an identical tool call, or ``forge:precommit-fixer``
+re-issuing an identical tool call, or ``forge-precommit-fixer``
 exceeding the three full ``forge-precommit`` runs its contract allows.
 
 Three inputs, one primary and two best-effort:
@@ -45,13 +45,13 @@ It is a reporter (always exits ``0``) whose only writes are its own
 ledgers: each run appends one summary line to
 ``code_health/agent_profile_history.log`` so trends survive after the
 per-run output scrolls away, and refreshes the transcript digest;
-``--no-history`` skips both writes. ``/perf`` reads it as one of its
-surfaces; ``/report-to-forge`` quotes it as evidence.
+``--no-history`` skips both writes. ``/forge-perf`` reads it as one of its
+surfaces; ``/forge-report-to-forge`` quotes it as evidence.
 
 Usage:
 
 - ``forge-agent-profile`` — report from the workspace ledger.
-- ``forge-agent-profile --agent-type forge:precommit-fixer --last 20``
+- ``forge-agent-profile --agent-type forge-precommit-fixer --last 20``
 - ``forge-agent-profile --transcripts ~/.claude/projects/<proj>``
 - ``forge-agent-profile --vibe-sessions ~/.vibe/logs/session/unified``
 - ``forge-agent-profile --json`` — machine-readable runs + summary.
@@ -101,6 +101,7 @@ from forge.git_utils import (
     github_slug,
     repo_root,
 )
+from forge.instruction_files import generated_name
 from forge.ledger import append_jsonl_record, append_ledger_line, parse_ledger
 from forge.text_clip import truncate
 from forge.vibe_metadata import default_sessions_dir
@@ -131,7 +132,9 @@ IDLE_GAP_S = 300.0
 LOOP_REPEAT_THRESHOLD = 4
 #: ``agents/precommit-fixer.md`` caps full ``forge-precommit`` runs.
 PRECOMMIT_RUN_CAP = 3
-PRECOMMIT_FIXER_AGENT = "forge:precommit-fixer"
+#: Derived, never spelled: the generated name follows the shipped
+#: prefix, so a rename cannot leave this comparison matching nothing.
+PRECOMMIT_FIXER_AGENT = generated_name("precommit-fixer")
 MAIN_SESSION_TYPE = "(main session)"
 
 _PRECOMMIT_FULL_RUN_RE = re.compile(r"\bforge-precommit\b(?![^\n]*--only)")
@@ -2164,7 +2167,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--agent-type",
-        help="Only runs of this agent type (e.g. forge:precommit-fixer).",
+        help="Only runs of this agent type (e.g. forge-precommit-fixer).",
     )
     parser.add_argument(
         "--since", help="Only runs starting at or after this ISO-8601 instant."

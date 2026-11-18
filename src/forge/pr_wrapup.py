@@ -640,7 +640,7 @@ def _conflict_refusal(base: str, rerun: str) -> str:
 
     Args:
         base: The base branch name.
-        rerun: The re-verification command to name (``/pr`` or ``/pr <N>``).
+        rerun: The re-verification command to name (``/forge-pr`` or ``/forge-pr <N>``).
 
     Returns:
         The refusal text.
@@ -660,7 +660,7 @@ def _behind_refusal(behind: int, base: str, rerun: str) -> str:
     Args:
         behind: Commits the branch is behind ``origin/<base>``.
         base: The base branch name.
-        rerun: The re-verification command to name (``/pr`` or ``/pr <N>``).
+        rerun: The re-verification command to name (``/forge-pr`` or ``/forge-pr <N>``).
 
     Returns:
         The refusal text.
@@ -694,7 +694,7 @@ def base_sync_verdict(
         behind: Commits behind ``origin/<base>``; ``None`` when unknown.
         emergency: Whether this is an emergency publication.
         base: The base branch name.
-        rerun: The re-verification command to name (``/pr`` or ``/pr <N>``).
+        rerun: The re-verification command to name (``/forge-pr`` or ``/forge-pr <N>``).
 
     Returns:
         ``(refusals, notes)``.
@@ -744,7 +744,7 @@ def post_gates(
     notes: list[str] = []
     head = str(view.get("headRefOid") or "")
     base = str(view.get("baseRefName") or "main")
-    rerun = f"/pr {view.get('number') or '<N>'}"
+    rerun = f"/forge-pr {view.get('number') or '<N>'}"
     if not head.startswith(verified_sha):
         refusals.append(
             f"the wrap-up verifies {verified_sha} but the PR head is "
@@ -1234,7 +1234,7 @@ def _build_parser() -> argparse.ArgumentParser:
     for flag, name in _REPORT_FLAGS:
         comp.add_argument(f"--{flag}", type=Path, metavar="FILE", help=f"{name} report")
     comp.add_argument(
-        "--prior-art", type=Path, metavar="FILE", help="forge:prior-art report"
+        "--prior-art", type=Path, metavar="FILE", help="forge-prior-art report"
     )
     val = sub.add_parser(
         "validate", help="check a wrap-up body; exit 2 listing violations"

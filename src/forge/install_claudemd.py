@@ -429,7 +429,7 @@ def foundation_matches_installed(foundation_path: Path) -> bool:
     """Return whether *foundation_path* reproduces the installed foundation.
 
     The provenance seam for ``forge-precommit --only foundation_md_check``
-    (the ``/pr`` regen-verified light path): ``True`` only when the file
+    (the ``/forge-pr`` regen-verified light path): ``True`` only when the file
     exists, carries the managed START/END markers, and its content equals
     a fresh render from the installed package byte for byte — the same
     rule :func:`sync_foundation` uses, so the two can never disagree about

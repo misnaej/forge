@@ -143,6 +143,13 @@ def is_forge_group(group: object, scripts: frozenset[str]) -> bool:
 def forge_hook_groups() -> dict[str, list[dict[str, object]]]:
     """Build forge's hook registrations in Claude settings shape.
 
+    An agent-scoped group arrives carrying the resolved agent name. That
+    name is not a Claude settings key, so it is spent here: each command
+    in the group gains a leading ``FORGE_HOOK_AGENT=`` assignment, which
+    works because Claude runs a hook command through a shell. The guard
+    then compares against that value instead of spelling a name of its
+    own, so no rename can strand it.
+
     Returns:
         Event name to its groups, each carrying the matcher (when the
         event has one) and its commands in declaration order.
@@ -150,7 +157,15 @@ def forge_hook_groups() -> dict[str, list[dict[str, object]]]:
     Raises:
         HookWiringError: Propagated from :func:`read_wiring`.
     """
-    return rendered_hooks(hook_command)
+    groups = rendered_hooks(hook_command)
+    for blocks in groups.values():
+        for block in blocks:
+            agent = block.pop("agent", None)
+            if not isinstance(agent, str):
+                continue
+            for hook in block["hooks"]:  # type: ignore[union-attr]
+                hook["command"] = f"FORGE_HOOK_AGENT={agent} {hook['command']}"
+    return groups
 
 
 def _drop_plugin_era_keys(settings: dict[str, object]) -> None:

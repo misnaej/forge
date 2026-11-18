@@ -15,7 +15,7 @@ The step is non-blocking by design (``step_docstring_coverage``
 returns ``StepResult(non_blocking=True)``). Blocking here would
 duplicate ruff's gate and mostly fire on nested-function edge cases
 ruff already considers acceptable. The MISSING list in the log is
-the dispatch contract: ``forge:precommit-fixer`` reads it and adds
+the dispatch contract: ``forge-precommit-fixer`` reads it and adds
 docstrings per entry.
 
 Reads ``[tool.interrogate]`` (the tool's own native section — forge
@@ -143,7 +143,7 @@ def _emit_missing_list(results: object) -> None:
 
     The format is one ``MISSING: <path>:<line>:<name>`` line per
     undocumented node, prefixed by a ``## Missing docstrings (N)``
-    header. ``forge:precommit-fixer`` greps the section to dispatch
+    header. ``forge-precommit-fixer`` greps the section to dispatch
     docstring additions per symbol.
 
     Args:

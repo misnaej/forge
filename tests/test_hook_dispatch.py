@@ -372,6 +372,50 @@ def test_claude_project_dir_exported_from_payload_cwd(roster_repo: Path) -> None
     assert (workdir / "captured_env.txt").read_text(encoding="utf-8") == str(workdir)
 
 
+@pytest.mark.parametrize(
+    ("guard_agent", "expected"),
+    [
+        pytest.param("some-agent", "some-agent", id="scoped-guard-receives-agent"),
+        pytest.param(None, "", id="unscoped-guard-gets-no-variable"),
+    ],
+)
+def test_run_guard_hands_the_scoped_agent_over_in_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    guard_agent: str | None,
+    expected: str,
+) -> None:
+    """Behavior: the guard's `agent` reaches it as `FORGE_HOOK_AGENT`, never otherwise.
+
+    Args:
+        monkeypatch: Clears any ambient `FORGE_HOOK_AGENT`.
+        tmp_path: Holds the capturing guard script.
+        guard_agent: The roster guard's `agent`, or ``None`` for no scope.
+        expected: What the guard should have seen in the variable.
+
+    SCENARIO: `_run_guard` execs the command with no shell, so a
+    `VAR=value` prefix cannot carry the scope; the environment must.
+    EXPECTED BEHAVIOR: a scoped guard sees its agent; an unscoped one sees
+    the variable absent (the file is written empty).
+    """
+    monkeypatch.delenv("FORGE_HOOK_AGENT", raising=False)
+    script = tmp_path / "capture_agent.sh"
+    out = tmp_path / "agent.txt"
+    script.write_text(
+        f'#!/bin/sh\nprintf "%s" "${{FORGE_HOOK_AGENT-}}" > "{out}"\nexit 0\n',
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    guard: dict[str, object] = {"command": str(script), "timeout": 5}
+    if guard_agent is not None:
+        guard["agent"] = guard_agent
+
+    is_blocked, _reason = hook_dispatch._run_guard(guard, b"{}", str(tmp_path), 5.0)
+
+    assert is_blocked is False
+    assert out.read_text(encoding="utf-8") == expected
+
+
 def test_claude_project_dir_falls_back_to_roster_project_root(
     roster_repo: Path,
 ) -> None:

@@ -32,6 +32,8 @@ from forge.agent_profile_tokens import (
 )
 from forge.git_utils import code_health_dir
 from tests.test_agent_profile import (
+    _AGENT,
+    _OTHER_AGENT,
     BASE_DT,
     _digest_line,
     _iso,
@@ -506,7 +508,7 @@ def test_meta_agent_type_beats_session_pairing(tmp_path: Path) -> None:
                             "t1",
                             "Agent",
                             {
-                                "subagent_type": "forge:paired",
+                                "subagent_type": _OTHER_AGENT,
                                 "description": "from session",
                             },
                         )
@@ -522,7 +524,7 @@ def test_meta_agent_type_beats_session_pairing(tmp_path: Path) -> None:
             [_request(0, f"m-{agent_id}", usage=(1, 0, 0, 0))],
         )
     (root / "sess9" / "subagents" / "agent-a1.meta.json").write_text(
-        json.dumps({"agentType": "forge:meta", "description": "ignored"}),
+        json.dumps({"agentType": _AGENT, "description": "ignored"}),
         encoding="utf-8",
     )
     (root / "sess9" / "subagents" / "agent-a2.meta.json").write_text(
@@ -531,7 +533,7 @@ def test_meta_agent_type_beats_session_pairing(tmp_path: Path) -> None:
 
     runs = runs_from_transcripts(root)
 
-    assert runs["a1"].agent_type == "forge:meta"
+    assert runs["a1"].agent_type == _AGENT
     assert runs["a1"].description == "from session"
     assert runs["a1"].session_id == "sess9"
     assert runs["a2"].agent_type == "?"
@@ -616,7 +618,7 @@ def test_waste_flags(
         largest_result="Bash: cat",
         repeated_reads=reads,
     )
-    run = AgentRun(agent_id="a1", agent_type="forge:x", stats=stats)
+    run = AgentRun(agent_id="a1", agent_type=_AGENT, stats=stats)
 
     assert [flag.kind for flag in waste_flags(run)] == expected
 
@@ -638,7 +640,7 @@ def test_waste_flags_long_report(handback: int, expected: list[str]) -> None:
     usage = TokenUsage(input_tokens=_PROMPT, fixed_tokens=1, requests=2)
     stats = TranscriptStats(tool_calls=FEW_TOOL_CALLS + 1, tokens=usage)
     run = AgentRun(
-        agent_id="a1", agent_type="forge:x", stats=stats, handback_chars=handback
+        agent_id="a1", agent_type=_AGENT, stats=stats, handback_chars=handback
     )
 
     assert [flag.kind for flag in waste_flags(run)] == expected
@@ -652,8 +654,8 @@ def test_waste_flags_empty_without_token_data() -> None:
         repeated_reads={"/a": 400},
     )
 
-    assert waste_flags(AgentRun("a1", "forge:x", stats=stats)) == []
-    assert waste_flags(AgentRun("a2", "forge:x", stats=None)) == []
+    assert waste_flags(AgentRun("a1", _AGENT, stats=stats)) == []
+    assert waste_flags(AgentRun("a2", _AGENT, stats=None)) == []
 
 
 # ---------------------------------------------------------------------------
@@ -668,11 +670,11 @@ def test_render_tokens_sections_unknown_run_count_and_delegation_line() -> None:
     )
     known = AgentRun(
         "a1",
-        "forge:x",
+        _AGENT,
         stats=TranscriptStats(tool_calls=9, tokens=usage),
         caller_skill="perf",
     )
-    unknown = AgentRun("a2", "forge:y", stats=None)
+    unknown = AgentRun("a2", _OTHER_AGENT, stats=None)
     session = SessionTokens(
         by_skill={"perf": TokenUsage(input_tokens=900, requests=2)},
         brief_chars={"t1": 40},
@@ -682,7 +684,7 @@ def test_render_tokens_sections_unknown_run_count_and_delegation_line() -> None:
     report = render_tokens([known, unknown], {"s1": session})
 
     assert "Subagents, per agent type:" in report
-    assert "forge:x" in report
+    assert _AGENT in report
     assert "Subagents, per skill that launched them:" in report
     assert "Main session, per active skill:" in report
     assert "1 run(s) without token data left out." in report
@@ -717,7 +719,7 @@ def test_main_tokens_end_to_end(
                 usage=(50, 0, 0, 0),
                 blocks=[
                     _tool_use(
-                        "t1", "Agent", {"prompt": "do it", "subagent_type": "forge:x"}
+                        "t1", "Agent", {"prompt": "do it", "subagent_type": _AGENT}
                     )
                 ],
                 skill="perf",
@@ -805,17 +807,15 @@ def test_branch_usage_charges_requests_to_branch_and_agent_type(
     )
     sub = tmp_path / "s1" / "subagents" / "agent-abc.jsonl"
     _write_jsonl(sub, [on_branch("feat/a", _request(90, "m5", blocks=[smart]))])
-    sub.with_name("agent-abc.meta.json").write_text(
-        json.dumps({"agentType": "forge:design-checker"})
-    )
+    sub.with_name("agent-abc.meta.json").write_text(json.dumps({"agentType": _AGENT}))
 
     tally = agent_profile.branch_usage([tmp_path])
 
     summary = tally.summary("feat/a")
     assert summary is not None
     usage = {t: (u.requests, u.input_tokens) for t, u in summary.tokens.items()}
-    assert usage == {"main": (2, 10), "forge:design-checker": (1, 0)}
-    assert summary.runs == {"main": 1, "forge:design-checker": 1}
+    assert usage == {"main": (2, 10), _AGENT: (1, 0)}
+    assert summary.runs == {"main": 1, _AGENT: 1}
     assert (summary.precommit_runs, summary.test_runs) == (1, 1)
     assert agent_profile.active_and_wall(summary.timestamps) == (90.0, 90.0)
     daily = {k: (u.requests, u.input_tokens) for k, u in tally.daily("main").items()}

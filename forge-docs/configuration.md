@@ -209,7 +209,7 @@ different scope. `forge-config --list` shows the resolved keys.
 
 | Key | What it does | Set it when |
 |---|---|---|
-| `docs_only_globs` | Extra globs a PR diff may consist entirely of and still take the `/pr` docs-only light path (skip design/security reporters + strict whole-tree pre-commit; run path-relevant gates only). Additive to the built-in `*.md` / `*.rst` / `*.txt` set; high-blast-radius paths (`agents/`, `skills/`, `claude-hooks/`, `.claude/`, `.github/workflows/`, configs) always force the full round. | Your repo keeps prose in another doc format (e.g. `*.adoc`). |
+| `docs_only_globs` | Extra globs a PR diff may consist entirely of and still take the `/forge-pr` docs-only light path (skip design/security reporters + strict whole-tree pre-commit; run path-relevant gates only). Additive to the built-in `*.md` / `*.rst` / `*.txt` set; high-blast-radius paths (`agents/`, `skills/`, `claude-hooks/`, `.claude/`, `.github/workflows/`, configs) always force the full round. | Your repo keeps prose in another doc format (e.g. `*.adoc`). |
 
 Glob semantics: matching is `fnmatch`, where `*` crosses `/` — so
 `*.md` already covers nested paths, but a directory glob like
@@ -415,7 +415,7 @@ regenerate-before-commit step to routine work. Self-skips when
 `docs/api-digest.md` is absent.
 
 Two sibling **provenance gates** (enabled the same way, no config
-tables) back the `/pr` regen-verified light path for `forge-resync`
+tables) back the `/forge-pr` regen-verified light path for `forge-resync`
 PRs (see the shipped `pr` skill's "Regen-verified light path" section)
 — all three gates must pass before a resync diff may skip the reporter
 round, and each also works standalone:
@@ -432,11 +432,11 @@ round, and each also works standalone:
   a byte-compare that would approve any edit proves nothing. Self-skips
   when no `FOUNDATION.md` exists.
 
-## `[tool.forge.memory_audit]` — when `/memory-audit` is offered
+## `[tool.forge.memory_audit]` — when `/forge-memory-audit` is offered
 
 ```toml
 [tool.forge.memory_audit]
-threshold = 5   # new memories since the last audit before /next offers it
+threshold = 5   # new memories since the last audit before /forge-next offers it
 ```
 
 `forge-memory-audit status --memory-dir <dir>` reports the new-memory
@@ -472,7 +472,7 @@ Drives the optional `smart_test` pre-commit step, which runs
 [`forge-smart-test`](../docs/cli-reference.md#forge-smart-test) at a fixed depth on
 every commit so only the tests your change set affects run. **Off by
 default** — the step self-skips entirely unless `precommit_depth` is set.
-The CLI itself (and the `/forge:smart-test` skill) work without any config;
+The CLI itself (and the `/forge-smart-test` skill) work without any config;
 this table only governs the pre-commit integration. Depth model and the
 speed/coverage trade-off: [`forge-docs/smart-test.md`](smart-test.md).
 
@@ -658,7 +658,7 @@ overlap on purpose, each catching what the others miss:
 **Why interrogate is non-blocking:** ruff D100–D107 are the actual gate — a
 missing docstring on a public symbol is refused there. Interrogate measures
 **aggregate coverage across the full tree** (ruff only sees the diff) and
-surfaces a `MISSING:` list `forge:precommit-fixer` acts on. Trivial nested
+surfaces a `MISSING:` list `forge-precommit-fixer` acts on. Trivial nested
 functions / closures are exempt (`ignore-nested-functions`), so blocking
 here is redundant. `[tool.interrogate]` is the single source of truth for
 the gate config (default threshold `fail-under = 90`, tighten per

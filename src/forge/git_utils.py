@@ -1016,8 +1016,8 @@ def run_gate_evidence(
     """Run ``forge-precommit --only`` gates and format PR-body evidence.
 
     The shared evidence seam for automation-opened PRs (``forge-resync``,
-    ``forge-changelog release-pr``) and the ``/pr`` light-regen wrap-up:
-    a PR opened outside the ``/pr`` wrap-up flow — possibly with a token
+    ``forge-changelog release-pr``) and the ``/forge-pr`` light-regen wrap-up:
+    a PR opened outside the ``/forge-pr`` wrap-up flow — possibly with a token
     whose events trigger no CI — must carry its verification evidence in
     its own body. A gate failure never blocks the PR; the body flags it
     loudly and the reviewer takes over.

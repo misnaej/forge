@@ -10,7 +10,7 @@ Usage:
 - ``verify-forge-docstrings <path>`` — check a specific file.
 
 Called by ``forge-precommit``; may also be invoked standalone by the
-``forge:precommit-fixer`` agent to refresh just the docstring log.
+``forge-precommit-fixer`` agent to refresh just the docstring log.
 
 
 Validation Rules

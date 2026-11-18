@@ -1,8 +1,8 @@
 """forge-memory-audit — count new agent memories since the last audit.
 
-The ``/memory-audit`` skill reconciles an agent's persistent memory with
+The ``/forge-memory-audit`` skill reconciles an agent's persistent memory with
 the repo's rule surface (FOUNDATION §12). Deciding *when* to offer it is
-mechanical, so it lives here rather than in skill prose: ``/next`` runs
+mechanical, so it lives here rather than in skill prose: ``/forge-next`` runs
 ``status`` and offers the audit once enough new memories have built up,
 and the audit's last step runs ``stamp`` so the count restarts.
 
@@ -269,7 +269,7 @@ def _build_parser() -> argparse.ArgumentParser:
     """Build the ``forge-memory-audit`` argument parser."""
     parser = argparse.ArgumentParser(
         prog="forge-memory-audit",
-        description="Count agent memories added since the last /memory-audit.",
+        description="Count agent memories added since the last /forge-memory-audit.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
     for name, help_text in (

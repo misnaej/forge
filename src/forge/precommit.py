@@ -831,7 +831,7 @@ def step_docstring_coverage(repo_root: Path) -> StepResult:
     enforcement layer for any repo using the foundation ruff config.
     This step adds aggregate % reporting, per-file table, badge
     generation, and catches the cases ruff misses (notably nested
-    functions and closures). ``forge:precommit-fixer`` reads the log
+    functions and closures). ``forge-precommit-fixer`` reads the log
     and addresses listed missing-docstring entries.
 
     When ``[tool.forge.docstring_coverage].badge = true`` the CLI
@@ -1159,7 +1159,7 @@ def step_cli_reference_check(repo_root: Path) -> StepResult:
 
     Mirrors :func:`step_api_digest_check` for ``docs/cli-reference.md``,
     closing the "no drift gate of its own" gap. One of the provenance
-    gates the ``/pr`` regen-verified light path runs (``forge-precommit --only
+    gates the ``/forge-pr`` regen-verified light path runs (``forge-precommit --only
     foundation_md_check,cli_reference_check,api_digest_check``)
     before letting a resync PR skip the reporter round.
 
@@ -1191,7 +1191,7 @@ def step_cli_reference_check(repo_root: Path) -> StepResult:
 def step_foundation_md_check(repo_root: Path) -> StepResult:
     """Verify ``FOUNDATION.md`` reproduces the installed foundation (opt-in).
 
-    The provenance gate behind the ``/pr`` regen-verified light path: a
+    The provenance gate behind the ``/forge-pr`` regen-verified light path: a
     resync PR's ``FOUNDATION.md`` must byte-reproduce the shipped
     ``forge/data/FOUNDATION.md`` (the same byte-for-byte rule
     ``install-forge-claude-md`` syncs by; the banner carries no version).
@@ -1597,7 +1597,7 @@ def step_cve_usage(repo_root: Path) -> StepResult:
 
     **Non-blocking** (advisory), mirroring ``pip_audit``: a finding sets
     ``passed=False`` + ``non_blocking=True`` so ``run_all`` renders ``WARN``,
-    not ``FAIL``. ``forge:precommit-fixer`` escalates findings at PR
+    not ``FAIL``. ``forge-precommit-fixer`` escalates findings at PR
     finalization (strict), same as ``pip_audit``.
 
     Reuses ``step_pip_audit``'s scan: when the ``code_health/pip_audit.json``

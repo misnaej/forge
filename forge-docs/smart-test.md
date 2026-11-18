@@ -1,6 +1,6 @@
 # Smart-test — change-scoped test selection by import depth
 
-`forge-smart-test` (skill `/forge:smart-test`) selects the tests a change set
+`forge-smart-test` (skill `/forge-smart-test`) selects the tests a change set
 affects — `forge.import_graph` reverse reachability from changed source
 modules, unioned with directly-changed test files — and runs them in
 escalating **depth tiers**: fast local feedback, then a CI ladder before a

@@ -559,7 +559,7 @@ def render_digest(digests: list[ModuleDigest]) -> str:
 def query_symbols(digests: list[ModuleDigest], pattern: str) -> list[str]:
     """Return digest lines whose symbol or module matches *pattern*.
 
-    The cheap exact-query surface for the ``forge:prior-art`` agent —
+    The cheap exact-query surface for the ``forge-prior-art`` agent —
     one regex against live source instead of scanning the whole
     committed digest. Matching is case-insensitive over the module's
     dotted path, each symbol's signature, and its summary.

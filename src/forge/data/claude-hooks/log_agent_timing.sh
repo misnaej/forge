@@ -5,8 +5,8 @@
 # ledger (one `precommit_full_run` line per allowed full run).
 #
 # Forge times pre-commit steps, tests, and wrapped subprocesses, but
-# nothing timed the agents themselves: how long forge:design-checker
-# takes, whether forge:precommit-fixer honours its three-run cap, or
+# nothing timed the agents themselves: how long forge-design-checker
+# takes, whether forge-precommit-fixer honours its three-run cap, or
 # whether a subagent is re-running the same command. The hook payloads
 # are the documented, stable source for that: agent_id / agent_type on
 # the subagent events, tool_name / duration_ms / file_path on

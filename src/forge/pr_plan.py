@@ -1,6 +1,6 @@
-"""forge-pr-plan — deterministic finalization-path decision for the ``/pr`` skill.
+"""forge-pr-plan — deterministic finalization-path decision for the ``/forge-pr`` skill.
 
-The ``/pr`` skill used to carry the finalization-path decision (docs-only
+The ``/forge-pr`` skill used to carry the finalization-path decision (docs-only
 light path vs regen-verified light path vs release-assembly light path vs
 delta mode vs full round) as a
 prose decision tree the agent re-derived every run. This CLI makes that
@@ -32,7 +32,7 @@ classification trail.
 ``classified_at`` is HEAD at classification time; ``pr-manager`` warns when
 posting at a different HEAD. ``rule_surface`` is ``true`` when any changed
 path is on the rule surface (``CLAUDE.md``, ``FOUNDATION.md``, skills or
-agents), in every mode — the ``/pr`` skill then offers a memory audit.
+agents), in every mode — the ``/forge-pr`` skill then offers a memory audit.
 
 A second, read-only mode — ``--freshness --pr N`` — answers the
 post-publication question the classifier's ``verified-at:`` baseline makes
@@ -128,7 +128,7 @@ FULL_REPORTERS = ("design-checker", "security-checker", "docs-types-checker")
 DOCS_ONLY_REPORTERS = ("docs-types-checker",)
 
 # Pre-commit steps for the docs-only light path (`forge-precommit --only ...`).
-# Mirrors the /pr skill's docs-only narrowing: path-relevant gates only.
+# Mirrors the /forge-pr skill's docs-only narrowing: path-relevant gates only.
 DOCS_ONLY_PRECOMMIT_STEPS = (
     "changelog_version",
     "changelog_updated",
@@ -155,7 +155,7 @@ class PrPlan:
             rejected).
         classified_at: Short ``HEAD`` SHA at classification time.
         rule_surface: Whether the diff touches the rule surface
-            (:data:`forge.pr_delta.RULE_SURFACE_PATHS`) — the ``/pr``
+            (:data:`forge.pr_delta.RULE_SURFACE_PATHS`) — the ``/forge-pr``
             skill's cue to offer a memory audit. Independent of ``mode``.
     """
 
@@ -409,7 +409,7 @@ def wrapup_freshness(pr_number: int, *, repo: str | None = None) -> WrapupFreshn
     stale — a stacked child retargeted after its parent merged no
     longer shows the diff the wrap-up describes. The verdict is
     read-only by design: the §6 monitor surfaces a ``False``, and only
-    a fresh ``/pr`` run (delta mode) clears it by posting a newer
+    a fresh ``/forge-pr`` run (delta mode) clears it by posting a newer
     ``verified-at:``. The comment bodies are untrusted — anyone can
     comment on a public PR — so the verdict is advisory only and never
     authorizes anything.
@@ -472,7 +472,7 @@ def wrapup_freshness(pr_number: int, *, repo: str | None = None) -> WrapupFreshn
             reason=(
                 f"wrap-up verified against base {verified_base} but the PR "
                 f"now targets {current_base} (retargeted); "
-                "re-run /pr <N> to post a refreshed wrap-up"
+                "re-run /forge-pr <N> to post a refreshed wrap-up"
             ),
             cause="ok",
         )
@@ -494,7 +494,7 @@ def wrapup_freshness(pr_number: int, *, repo: str | None = None) -> WrapupFreshn
         current_base=current_base,
         reason=(
             f"wrap-up verified at {latest} but PR head is {head}; "
-            "re-run /pr <N> to post a refreshed wrap-up"
+            "re-run /forge-pr <N> to post a refreshed wrap-up"
         ),
         cause="ok",
     )
@@ -594,7 +594,7 @@ _RAW_FIELDS = 5
 def classify(root: Path, base: str, pr_number: int | None) -> PrPlan:
     """Classify the current branch's finalization path.
 
-    Reproduces the ``/pr`` skill's decision order exactly: docs-only
+    Reproduces the ``/forge-pr`` skill's decision order exactly: docs-only
     first, then regen-only eligibility, then release assembly, then delta
     (only with an existing PR — the cheapest path for an already-verified
     PR's follow-up), then light-code, else the full round. Release

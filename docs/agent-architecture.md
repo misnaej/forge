@@ -125,7 +125,7 @@ graph LR
   token_optimizer["forge-token-optimizer<br/>AI agent"]
   prior_art["forge-prior-art<br/>AI agent"]
   precommit_fixer["⚖️ forge-precommit-fixer<br/>AI agent"]
-  sk_smart_test(["/smart-test<br/>skill"])
+  sk_smart_test(["/forge-smart-test<br/>skill"])
   sk_perf(["/forge-perf<br/>skill"])
   cli_forge_slow_tests_report[("forge-slow-tests-report<br/>CLI")]
   cli_forge_telemetry[("forge-telemetry<br/>CLI")]
@@ -444,7 +444,7 @@ graph LR
   class cli_forge_agent_profile cli
 ```
 
-`/report-to-forge` turns an observed defect in a shipped forge process
+`/forge-report-to-forge` turns an observed defect in a shipped forge process
 into a filed upstream issue: versions captured via `forge-doctor`,
 evidence preserved verbatim, consumer specifics redacted with explicit
 user confirmation before `gh issue create` targets the canonical
@@ -452,7 +452,7 @@ upstream. User-invoked only — no proactive detection. For an agent or
 skill defect it also quotes the `forge-agent-profile` summary for that
 agent as timing evidence.
 
-The `/caveman`, `/ultracave` and `/megacave` skills are vendored from
+The `/forge-caveman`, `/forge-ultracave` and `/forge-megacave` skills are vendored from
 JuliusBrussee/caveman v4.0.1 (Apache-2.0, attribution in
 `src/forge/data/VENDORED.md`). They set a terse output voice for the
 session; in Claude Code the `caveman_mode` hook activates them

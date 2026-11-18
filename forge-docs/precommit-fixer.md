@@ -1,6 +1,6 @@
 # precommit-fixer — why its rules are shaped the way they are
 
-`forge:precommit-fixer` clears pre-commit failures before every commit. Its
+`forge-precommit-fixer` clears pre-commit failures before every commit. Its
 agent doc (`agents/precommit-fixer.md`) carries every rule it must follow;
 this page carries the reasoning behind them, so the doc stays inside the
 agent length budget and a reader who wants to change a rule can see what

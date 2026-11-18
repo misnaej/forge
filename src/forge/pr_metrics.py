@@ -30,7 +30,7 @@ Tables:
 Tokens are attributed by the ``gitBranch`` Claude Code stamps on every
 transcript record, up to the PR's merge (and after any earlier merge of a
 PR with the same branch name). Transcripts are purged after about 30
-days, so a PR is recorded at merge (``record``, wired into ``/next`` and
+days, so a PR is recorded at merge (``record``, wired into ``/forge-next`` and
 the PR monitor) and older ones while their transcripts last
 (``backfill``). Reading back — ``report`` and ``export`` — lives in
 :mod:`forge.pr_metrics_report`. Per-repo databases of earlier versions are
@@ -76,6 +76,7 @@ from forge.git_utils import (
     require_cli,
     run_git,
 )
+from forge.instruction_files import AGENT_NAME_PREFIX, generated_name
 from forge.plugin_roster import shipped_agent_names
 from forge.pr_metrics_bench import (
     BenchError,
@@ -136,7 +137,10 @@ _PLAIN_KEY_VERSION: Final = 2
 _REKEY_MAX_PR: Final = 1_000_000
 #: The agent harness whose transcripts the figures come from.
 TOOL: Final = "claude-code"
-_SHARED_PREFIX: Final = "forge:"
+#: The prefix every forge-shipped agent is generated under. Imported,
+#: never re-spelled: a copy here is how the forge- rename silently
+#: folded every forge agent into OTHER.
+_SHARED_PREFIX: Final = AGENT_NAME_PREFIX
 #: Claude Code's own subagent types: public names, kept as they are.
 BUILTIN_AGENT_TYPES: Final = frozenset(
     {"Explore", "Plan", "general-purpose", "claude-code-guide"}
@@ -162,9 +166,9 @@ PRE_PR_SLACK: Final = timedelta(days=1)
 #: Reporters every finalization pass runs once; their run counts give
 #: the review rounds.
 REPORTER_TYPES: Final = (
-    "forge:design-checker",
-    "forge:security-checker",
-    "forge:docs-types-checker",
+    generated_name("design-checker"),
+    generated_name("security-checker"),
+    generated_name("docs-types-checker"),
 )
 
 _SCHEMA = """
@@ -450,8 +454,8 @@ def open_db(path: Path, secret: str) -> sqlite3.Connection:
 def fold_agent_types(tokens: dict[str, TokenUsage]) -> dict[str, TokenUsage]:
     """Per-type usage, every type nobody public ships summed under ``other``.
 
-    A ``forge:`` prefix alone is not enough: anyone can name a local agent
-    ``forge:<repo>-reviewer``, so only names on the shipped roster pass.
+    A ``forge-`` prefix alone is not enough: anyone can name a local agent
+    ``forge-<repo>-reviewer``, so only names on the shipped roster pass.
 
     Args:
         tokens: Agent type → usage.

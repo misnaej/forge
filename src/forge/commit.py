@@ -235,7 +235,7 @@ def check_verdict(root: Path) -> None:
         return
     detail = "\n".join(lines[-6:])
     msg = (
-        "pre-commit verdict did not pass; run forge:precommit-fixer first, then "
+        "pre-commit verdict did not pass; run forge-precommit-fixer first, then "
         "rerun forge-commit (the named files are left staged; it stages them "
         f"again).\n{detail}"
     )
@@ -427,7 +427,7 @@ def commit_and_push(root: Path, request: Request) -> int:
     except subprocess.CalledProcessError as exc:
         msg = (
             "the commit was blocked (pre-commit hook or git); nothing committed. "
-            f"Fix the failing step with forge:precommit-fixer. Detail: {exc}"
+            f"Fix the failing step with forge-precommit-fixer. Detail: {exc}"
         )
         raise CommitRefusedError(msg) from exc
     committed = committed_paths(root)
