@@ -11,8 +11,8 @@ session improvises a detached process whose only record is a pid:
   loud non-zero exit, never a silent start.
 - ``list`` reads the registry and reports each monitor's state.
 - ``stop`` kills a monitor by PR identity, verifying the process's
-  command line matches before signalling; a stale record is reported,
-  never killed by pid alone.
+  command line matches before signalling; a stale record is removed
+  without signalling, never killed by pid alone.
 
 The command self-skips under :func:`forge.run_context.is_ci` — CI has
 no human to receive alerts.
@@ -168,9 +168,10 @@ def monitor_log_path(root: Path, pr: int) -> Path:
     """Return the log a PR's monitor writes its output to.
 
     One file per PR, because several monitors run at once and a shared
-    file interleaves them. This is a runtime log, not step evidence: it
-    carries no ``# produced-at:`` stamp and nothing in ``forge-precommit``
-    writes or reads it.
+    file interleaves them. This is a runtime log, not step evidence: no
+    step produces it and it carries no ``# produced-at:`` stamp, so
+    ``forge-precommit``'s freshness check skips it by name rather than
+    reporting a stamp it could never have.
 
     Args:
         root: Git repo root.
@@ -695,14 +696,39 @@ def _pid_cmdline(pid: int) -> str:
         return ""
 
 
+def _is_monitor(pid: int) -> bool:
+    """Return whether *pid* is one of this module's monitor processes.
+
+    The single identity test, so ``stop`` never signals a process that
+    ``list`` would not have called a monitor. It matches the child's own
+    subcommand rather than the module name alone: a bare ``pr_watch``
+    also matches a test run or an editor, and once the operating system
+    reuses a pid that would make an unrelated process look like ours —
+    reported as ``alive``, and in ``stop``'s case sent a signal.
+
+    Args:
+        pid: Process id from a registry record.
+
+    Returns:
+        True when the process is a monitor started by this module.
+    """
+    cmdline = _pid_cmdline(pid)
+    return MONITOR_SUBCOMMAND in cmdline and "forge.pr_watch" in cmdline
+
+
 def cmd_stop(args: argparse.Namespace) -> int:
     """Stop one or all monitors, verifying process identity before signalling.
+
+    A record whose pid is gone or is not a monitor is pruned without a
+    signal, and counts as success: after a merge that is the usual case.
 
     Args:
         args: Parsed CLI arguments.
 
     Returns:
-        Exit code.
+        ``EXIT_OK`` when a monitor was stopped, a stale record was removed,
+        or none was registered; ``EXIT_REFUSED`` when no monitor matches
+        ``--pr`` or none of the targets could be stopped or pruned.
     """
     root = repo_root()
     reg = Registry.load(_registry_path(root))
@@ -715,18 +741,15 @@ def cmd_stop(args: argparse.Namespace) -> int:
         return EXIT_REFUSED
     stopped = 0
     pruned = 0
+    kept: list[MonitorRecord] = []
     for m in targets:
-        cmdline = _pid_cmdline(m.pid)
-        # Match the monitor's own subcommand token, not the module name: a
-        # bare "pr_watch" also matches a test run or an editor, and with pid
-        # reuse that would send SIGTERM to an unrelated process.
-        if MONITOR_SUBCOMMAND not in cmdline or "forge.pr_watch" not in cmdline:
+        if not _is_monitor(m.pid):
             logger.warning(
                 "pr-watch: pid %d (PR #%s) command line %r is not a pr-watch "
                 "monitor — stale record, removing it without signalling.",
                 m.pid,
                 m.pr,
-                cmdline[:80],
+                _pid_cmdline(m.pid)[:80],
             )
             pruned += 1
             continue
@@ -738,16 +761,21 @@ def cmd_stop(args: argparse.Namespace) -> int:
             logger.warning("pr-watch: pid %d (PR #%s) already gone.", m.pid, m.pr)
             pruned += 1
         except PermissionError:
+            # Keep the record: the monitor is alive and we failed to stop it,
+            # so dropping it would leave a running process nothing tracks.
             logger.exception("pr-watch: cannot signal pid %d (PR #%s).", m.pid, m.pr)
-    reg.monitors = [m for m in reg.monitors if m not in targets]
+            kept.append(m)
+    reg.monitors = [m for m in reg.monitors if m not in targets or m in kept]
     reg.save(_registry_path(root))
-    # Report both numbers: clearing stale records is the common case after a
+    # Report every number: clearing stale records is the common case after a
     # merge, and reporting it as "0 stopped" with a refusal exit code read as
     # "nothing happened" while the registry had in fact been pruned.
+    tail = f", {len(kept)} kept (could not signal)" if kept else ""
     logger.info(
-        "pr-watch: %d monitor(s) stopped, %d stale record(s) removed.",
+        "pr-watch: %d monitor(s) stopped, %d stale record(s) removed%s.",
         stopped,
         pruned,
+        tail,
     )
     return EXIT_OK if stopped or pruned or not targets else EXIT_REFUSED
 
@@ -762,7 +790,9 @@ def _monitor_state(record: MonitorRecord, *, alive: bool) -> str:
 
     Args:
         record: The registry record to read.
-        alive: Whether the recorded pid is still a monitor process.
+        alive: Whether the recorded pid is still a monitor process, as
+            :func:`_is_monitor` decides — occupancy alone is not enough,
+            since a reused pid would otherwise read as ``alive``.
 
     Returns:
         ``alive``, ``dead`` or ``died-before-first-poll``.
@@ -787,7 +817,7 @@ def cmd_list(_args: argparse.Namespace) -> int:
         sys.stdout.write("no monitors registered\n")
         return EXIT_OK
     for m in reg.monitors:
-        state = _monitor_state(m, alive=_pid_cmdline(m.pid) != "")
+        state = _monitor_state(m, alive=_is_monitor(m.pid))
         sys.stdout.write(
             f"PR #{m.pr}  pid={m.pid}  repo={m.repo}  "
             f"started={m.started_at}  last_poll={m.last_poll or '-'}  "
@@ -903,7 +933,7 @@ def cmd_stack(args: argparse.Namespace) -> int:
         m = monitors.get(number)
         if m is None:
             monitor_text = "no-monitor"
-        elif _pid_cmdline(m.pid) != "":
+        elif _is_monitor(m.pid):
             monitor_text = f"alive(pid {m.pid})"
         else:
             monitor_text = _monitor_state(m, alive=False)

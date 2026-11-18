@@ -1863,6 +1863,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `cmd_monitor(args: argparse.Namespace) -> int` — Run the poll loop in the foreground (the spawned child's entry point).
 - `cmd_start(args: argparse.Namespace) -> int` — Start a bounded monitor for a PR.
 - `_pid_cmdline(pid: int) -> str` _(internal)_ — Return the command line of *pid*, or empty when unreadable.
+- `_is_monitor(pid: int) -> bool` _(internal)_ — Return whether *pid* is one of this module's monitor processes.
 - `cmd_stop(args: argparse.Namespace) -> int` — Stop one or all monitors, verifying process identity before signalling.
 - `_monitor_state(record: MonitorRecord, *, alive: bool) -> str` _(internal)_ — Return a one-word reading of a monitor's state, for display.
 - `cmd_list(_args: argparse.Namespace) -> int` — List registered monitors.

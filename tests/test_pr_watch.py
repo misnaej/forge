@@ -234,6 +234,61 @@ def test_stop_kills_matching_pid(
     assert Registry.load(reg_path).monitors == []
 
 
+def test_stop_keeps_record_it_could_not_signal(
+    watch_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A live monitor refusing the signal stays registered and is reported kept.
+
+    BEHAVIOR: dropping the record would leave a running process nothing
+    tracks, and the message would read "0 stopped, 0 removed".
+    """
+    reg_path = watch_repo / ".plan" / "pr_monitors.json"
+    Registry(
+        monitors=[
+            MonitorRecord(pid=999996, pr=993, repo="o/r", started_at="2026-01-01")
+        ]
+    ).save(reg_path)
+    monkeypatch.setattr(
+        pr_watch,
+        "_pid_cmdline",
+        lambda _pid: "python -m forge.pr_watch _monitor --pr 993",
+    )
+
+    def deny(_pid: int, _sig: int) -> None:
+        raise PermissionError
+
+    monkeypatch.setattr(pr_watch.os, "kill", deny)
+    with caplog.at_level(logging.INFO, logger=pr_watch.logger.name):
+        code = pr_watch.cmd_stop(argparse.Namespace(pr=993, all=False))
+    assert code == pr_watch.EXIT_REFUSED
+    assert [m.pid for m in Registry.load(reg_path).monitors] == [999996]
+    assert "kept (could not signal)" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("cmdline", "expected"),
+    [
+        ("python -m forge.pr_watch _monitor --pr 993", True),
+        ("python -m pytest tests/test_pr_watch.py", False),
+        ("", False),
+    ],
+    ids=["real-monitor", "reused-pid-unrelated-process", "no-such-process"],
+)
+def test_is_monitor_requires_monitor_subcommand_and_module(
+    monkeypatch: pytest.MonkeyPatch, cmdline: str, *, expected: bool
+) -> None:
+    """Only a real monitor cmdline counts; a reused pid does not read as alive.
+
+    Args:
+        cmdline: Command line the faked process lookup returns.
+        expected: Whether the pid should be treated as a monitor.
+    """
+    monkeypatch.setattr(pr_watch, "_pid_cmdline", lambda _pid: cmdline)
+    assert pr_watch._is_monitor(4242) is expected
+
+
 def test_stop_stale_only_record_is_removed_and_ok(
     watch_repo: Path,
     monkeypatch: pytest.MonkeyPatch,
