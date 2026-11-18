@@ -88,8 +88,10 @@ from forge.pr_delta import (
 from forge.pr_plan import added_paths, classify, gh_pr_view, wrapup_freshness
 from forge.pr_squash_comment import SQUASH_MARKER, ensure_last
 from forge.pr_wrapup_compose import (
+    FINDING_ALLOWANCE,
     PENDING_CI,
     REPORTER_SECTIONS,
+    WORD_BUDGET,
     ComposeError,
     ComposeInputs,
     evidence_fence,
@@ -134,13 +136,6 @@ STATUS_SECTIONS: Final[tuple[str, ...]] = (
     "CI Status",
     "Recommendation",
 )
-
-# Report by exception, made numeric: an all-clean wrap-up is header + one
-# summary line + one line per section — 120 words is generous for that;
-# every findings section (a reporter that did not simply PASS) earns 40
-# more for what/where/disposition prose.
-WORD_BUDGET: Final[int] = 120
-FINDING_ALLOWANCE: Final[int] = 40
 
 # Status a judgment slot must not assert, because `compose` renders it
 # mechanically into `## Code Quality` and `## CI Status` of the same
@@ -494,8 +489,9 @@ def _warn_if_long(head: list[str], sections: list[tuple[str, list[str]]]) -> Non
     if words > ceiling(budget):
         logger.warning(
             "wrap-up is %d words, over the %d-word target (%d + %d x %d "
-            "findings) — posting anyway; shorten the next one by dropping "
-            "process state, not findings.",
+            "findings) — posting anyway. Cut this one before you post it: "
+            "process state and bookkeeping first, then compress each "
+            "disposition to its slot's allowance. Drop no disposition.",
             words,
             budget,
             WORD_BUDGET,
@@ -1198,8 +1194,12 @@ def _cmd_compose(args: argparse.Namespace) -> int:
     path.write_text(text, encoding="utf-8")
     (code_health_dir(root) / STALE_WRAPUP_NAME).unlink(missing_ok=True)
     slots = unfilled_slots(text)
+    findings = sum(1 for name in slots if name.startswith("findings: "))
     todo = (
-        f"{len(slots)} slot(s) to fill: {', '.join(slots)}"
+        f"{len(slots)} slot(s) to fill: {', '.join(slots)} — "
+        f"{WORD_BUDGET + FINDING_ALLOWANCE * findings} words for the lot "
+        f"({WORD_BUDGET} + {FINDING_ALLOWANCE} per findings slot); each "
+        "marker states its own share"
         if slots
         else "no slots to fill"
     )

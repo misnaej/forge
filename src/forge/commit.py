@@ -173,8 +173,8 @@ def check_budget_and_attribution(message: str) -> None:
     if words > ceiling(COMMIT_MAX_WORDS):
         logger.warning(
             "forge-commit: message is %d words, over the %d-word target — "
-            "committing anyway; shorten the next one by dropping process "
-            "state (test counts, green checks), not prose.",
+            "committing anyway. The words to lose are process state (test "
+            "counts, green checks), never what changed or why.",
             words,
             COMMIT_MAX_WORDS,
         )

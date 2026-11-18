@@ -1683,6 +1683,7 @@ def test_main_compose_writes_the_wrapup_file_and_prints_the_slot_count(
     assert rc == 0
     out = capsys.readouterr().out
     assert "1 slot(s) to fill: summary" in out
+    assert str(mod.WORD_BUDGET) in out
     written = (code_health_dir(tmp_path) / "pr_wrapup.md").read_text(encoding="utf-8")
     assert "wrapup-mode: light" in written
     # The reasons go to stdout, not into the (word-budgeted) wrap-up.
