@@ -131,11 +131,16 @@ version.
 - The assembly files each fragment **under the tag that already shipped
   it**, and mints a heading only for fragments no tag has reached yet. So
   the headings match the tags rather than renaming history.
+- `release-pr` **is dedup-guarded by the assembly branch prefix**: with
+  an assembly PR already open it reports that one instead of opening a
+  second. An assembly committed onto any other branch is invisible to
+  that check, so the scheduled job opens a second PR beside it.
 - `forge-changelog release` is the staging half of the same work and
-  stops before committing — for inspecting an assembly before it is
-  opened.
-- It is dedup-guarded: with an assembly PR already open it reports that
-  PR instead of opening a second.
+  stops before committing. It is **not** a dry run: it assembles and
+  stages, consuming the pending fragments, so a later `release-pr` finds
+  nothing pending until that assembly lands. Reach for it only to commit
+  the assembly yourself — on the branch its own output names, so the
+  guard above still sees it — and for `release-pr` otherwise.
 
 **Invariant.** Assembly writes prose only — it declares no version
 anywhere in the tree. **Enforced by**

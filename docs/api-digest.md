@@ -471,6 +471,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_validate_auto_tag_fragments(new_paths: list[Path]) -> tuple[list[Fragment], list[str]]` _(internal)_ — Validate fragments and separate valid ones from errors.
 - `_create_and_push_tag(root: Path, version: str, level: str, n_fragments: int) -> int` _(internal)_ — Create and push an annotated tag, handling concurrent-runner races.
 - `_cmd_auto_tag(root: Path) -> int` _(internal)_ — Tag the current commit from its newly merged fragments (CI seam).
+- `assembly_branch(version: str) -> str` — Return the branch name an assembly for *version* belongs on.
 - `_assembly_pr_body(plan: AssemblyPlan) -> str` _(internal)_ — Render the assembly PR body.
 - `_gate_evidence(root: Path) -> tuple[bool, str]` _(internal)_ — Run the versioning gates and format PR-body evidence.
 - `_computed_next_version(root: Path, cmd: str, *, none_pending_rc: int) -> tuple[int | None, AssemblyPlan | None]` _(internal)_ — Run the shared version-computation guard for a subcommand.
