@@ -342,7 +342,9 @@ positional arguments:
                         fragments already in a tag's tree assemble under that
                         tag and never bump again
     release             assemble CHANGELOG.md under the computed next version
-                        and stage everything — never commits
+                        and stage everything — never commits; consumes the
+                        pending fragments, so prefer `release-pr` unless you
+                        mean to commit it yourself
     assemble            collate fragments into CHANGELOG.md under a version
     auto-tag            tag HEAD from fragments merged since the last tag
                         (tag-per-merge CI seam; pushes the tag only; never

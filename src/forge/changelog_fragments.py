@@ -1123,6 +1123,18 @@ def _cmd_release(root: Path, date: str) -> int:
             f"Assembly for v{plan.version} prepared — commit, PR, merge; "
             "the tag for it is cut on that merge."
         )
+    emit(
+        f"Commit it on `{assembly_branch(plan.version)}` — "
+        "`release-pr` and the scheduled job recognise an open assembly "
+        "only by that branch prefix, so an assembly committed elsewhere "
+        "gets a second one opened alongside it."
+    )
+    emit(
+        "These fragments are now staged for deletion and CHANGELOG.md is "
+        "already rewritten, so `release-pr` reports nothing pending until "
+        "this lands. Abandoning it means restoring the tree, which "
+        "discards that work — ask first, and never reset."
+    )
     return 0
 
 
@@ -1350,6 +1362,26 @@ def _cmd_auto_tag(root: Path) -> int:
 
 ASSEMBLY_BRANCH_PREFIX = "chore/assemble-"
 
+
+def assembly_branch(version: str) -> str:
+    """Return the branch name an assembly for *version* belongs on.
+
+    The one place the name is built, because two callers depend on it
+    agreeing: :func:`_cmd_release_pr` creates it, and
+    :func:`find_open_pr_by_head_prefix` recognises an open assembly PR by
+    that prefix alone. An assembly committed onto any other branch is
+    invisible to that check, so the scheduled job opens a second one.
+
+    Args:
+        version: Release version, with or without its leading ``v``.
+
+    Returns:
+        The branch name, e.g. ``chore/assemble-v1.2.3``.
+    """
+    tag = version if version.startswith("v") else f"v{version}"
+    return f"{ASSEMBLY_BRANCH_PREFIX}{tag}"
+
+
 # The PR body carries what the merger must know about the release it
 # cuts — whoever opened it, the body is the record that outlives the run.
 _ASSEMBLY_PR_BODY = """\
@@ -1549,7 +1581,7 @@ def _publish_assembly_pr(
     """
     base_branch = load_config(root).base_branch
     version = f"v{plan.version}"
-    branch = f"{ASSEMBLY_BRANCH_PREFIX}{version}"
+    branch = assembly_branch(version)
     start_branch = run_git("branch", "--show-current", cwd=root, check=False)
     run_git("switch", "-c", branch, cwd=root)
     try:
@@ -1745,7 +1777,8 @@ def main(argv: list[str] | None = None) -> int:
     rel = sub.add_parser(
         "release",
         help="assemble CHANGELOG.md under the computed next version and "
-        "stage everything — never commits",
+        "stage everything — never commits; consumes the pending fragments, "
+        "so prefer `release-pr` unless you mean to commit it yourself",
     )
     rel.add_argument("--date", default="", help="heading date (default: today, UTC)")
     asm = sub.add_parser(

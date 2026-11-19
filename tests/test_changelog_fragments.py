@@ -987,6 +987,43 @@ def test_main_release_prints_the_version_it_assembled(
     assert "Assembly for v1.0.1 prepared" in capsys.readouterr().out
 
 
+def test_main_release_names_the_branch_release_pr_dedups_on(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`release` tells the reader which branch to commit on.
+
+    `release-pr` finds an open assembly PR only by branch name, so an
+    assembly committed on any other branch gets a second PR opened beside
+    it. Asserts the branch name only, built from `assembly_branch`; the
+    advice wording around it is deliberately not pinned.
+    """
+    _init_tagged_repo(tmp_path)
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
+    _write_fragment(tmp_path / "changelog.d", "a.added.md", "bump: patch\n- x\n")
+    commit_all(tmp_path, "fragments")
+    monkeypatch.setattr(changelog_fragments, "repo_root", lambda: tmp_path)
+
+    assert main(["release"]) == 0
+
+    out = capsys.readouterr().out
+    assert changelog_fragments.assembly_branch("1.0.1") in out
+
+
+@pytest.mark.parametrize("version", ["14.5.2", "v14.5.2"])
+def test_assembly_branch_is_the_same_with_or_without_v_prefix(version: str) -> None:
+    """Callers pass the bare version or the tag; both land on one branch.
+
+    Args:
+        version: Release version, bare or `v`-prefixed.
+    """
+    branch = changelog_fragments.assembly_branch(version)
+
+    assert branch == "chore/assemble-v14.5.2"
+    assert branch.startswith(changelog_fragments.ASSEMBLY_BRANCH_PREFIX)
+
+
 def test_main_release_exit_two_on_invalid_fragment_touches_nothing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
