@@ -139,8 +139,8 @@ version.
   stops before committing. It is **not** a dry run: it assembles and
   stages, consuming the pending fragments, so a later `release-pr` finds
   nothing pending until that assembly lands. Reach for it only to commit
-  the assembly yourself — on the branch its own output names, so the
-  guard above still sees it — and for `release-pr` otherwise.
+  the assembly yourself, on a `chore/assemble-` branch; `release-pr`
+  otherwise.
 
 **Invariant.** Assembly writes prose only — it declares no version
 anywhere in the tree. **Enforced by**

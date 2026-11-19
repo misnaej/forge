@@ -1124,7 +1124,7 @@ def _cmd_release(root: Path, date: str) -> int:
             "the tag for it is cut on that merge."
         )
     emit(
-        f"Commit it on `{assembly_branch(plan.version or 'X.Y.Z')}` — "
+        f"Commit it on `{assembly_branch(plan.version)}` — "
         "`release-pr` and the scheduled job recognise an open assembly "
         "only by that branch prefix, so an assembly committed elsewhere "
         "gets a second one opened alongside it."
@@ -1132,7 +1132,8 @@ def _cmd_release(root: Path, date: str) -> int:
     emit(
         "These fragments are now staged for deletion and CHANGELOG.md is "
         "already rewritten, so `release-pr` reports nothing pending until "
-        "this lands. Abandoning it means restoring the tree by hand."
+        "this lands. Abandoning it means restoring the tree, which "
+        "discards that work — ask first, and never reset."
     )
     return 0
 
@@ -1370,8 +1371,6 @@ def assembly_branch(version: str) -> str:
     :func:`find_open_pr_by_head_prefix` recognises an open assembly PR by
     that prefix alone. An assembly committed onto any other branch is
     invisible to that check, so the scheduled job opens a second one.
-    That is why ``release`` names this branch in its own output rather
-    than leaving the reader to infer it.
 
     Args:
         version: Release version, with or without its leading ``v``.
