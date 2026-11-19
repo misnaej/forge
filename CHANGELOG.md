@@ -83,6 +83,11 @@ versions follow forge's rolling-next convention.
 
 ## v14.0.3 — 2026-11-18
 
+### ⚠️ Upgrade notes
+
+A background PR monitor started before this release never ran. Re-start
+monitors on any pull request you still rely on being watched.
+
 ### Fixes
 - **Every background PR monitor died before its first poll, so nothing forge promises to watch was ever watched.** The monitor is the piece that surfaces new review comments, runs the local cleanup when a PR merges, warns that a branch has started conflicting with its base, reports a CI run that failed, and notices that a wrap-up no longer describes the commit it names. None of it has ever run. The command reported a started monitor and registered it, and the process was already gone: it was launched by interpolating its arguments into a line of Python source, which handed a path to the loop as text where the loop expected a path object, and the first thing it did with that argument failed. Three things kept it quiet — the child's output was discarded, the one place that would have noticed the damage caught a different class of error, and no type checker reads inside a generated source string. Found because five monitors registered over two days had all recorded no poll. **Action required:** none, but a monitor started before this release was never doing anything, so a PR you believed was being watched was not. Re-start monitors on PRs you still care about.
 - **The monitor's alerts had nowhere to go even if it had lived.** Its alerts are log lines on standard error, and standard error was discarded. Each monitor now writes to `code_health/pr_watch_<pr>.log`, truncated when that PR's monitor starts, and the start command names the file. Because the monitor runs detached from the session that started it, that file is the only channel — nothing reads it for you yet.
@@ -91,6 +96,14 @@ versions follow forge's rolling-next convention.
 - **Stopping a monitor could signal an unrelated process, and listing one could call it alive.** The check that confirmed a recorded process was really a monitor matched anything whose command line merely mentioned the module — a test run, an editor — so once the operating system reused that process id, stopping a monitor could terminate something else. Listing was looser still: it asked only whether some process held that id, so a reused id read as a healthy monitor. Both now use one check, which matches the monitor's own subcommand. Clearing records left behind by merged pull requests reports what it removed, instead of saying nothing was stopped and returning a failure code while having pruned them; and a monitor that is alive but refuses to be signalled now stays in the registry and is reported, rather than being dropped and leaving a running process nothing tracks. Such a monitor also fails the command, even alongside one that stopped: you asked for them all, and a script that reads only the exit code must not be told otherwise.
 
 ## v14.0.2 — 2026-11-18
+
+### ⚠️ Upgrade notes
+
+Four checks, three of them guards, had stopped matching after the agent
+rename. Run `install-forge-claude` (or `install-forge-vibe`) and
+**restart the session** to arm the restored guards. If you maintain your
+own wiring that matches an agent by the old `forge:<name>` form, rename
+it.
 
 ### Fixes
 - **The gate that refuses a version number in a changelog fragment now says which string it found and where.** It rejected a fragment that mentioned a *past* release in its prose — correctly, since the assembler is the only writer of version numbers — but the message named neither the line nor the string, and read as "do not name the version you are releasing", so a sentence like "renamed in the agent-prefix release" looked allowed. Two fragments were refused that way in a row, and because `auto-tag` runs the same validation, the merges they rode went untagged until the prose was rewritten. The message now quotes the offending string with its line number and states that a past release in prose counts; the release documentation says so too.
@@ -108,6 +121,33 @@ versions follow forge's rolling-next convention.
 - `install-forge-vibe` now fails closed when a guard script is missing from the installed package: exit 2, nothing written, message names the script and `Reinstall forge-scripts.` — previously the roster sidecar still named the missing script and the guard was silently disarmed at runtime (a missing hook command exits 127, which does not block the tool call); validation covers wired scripts, sourced helpers (discovered from script text, so a missing helper is still caught), and the Vibe-only extras; also runs under `--verify`, and a test pins that a consumer file at a forge-owned hook path is overwritten by the shipped guard
 
 ## v14.0.0 — 2026-11-17
+
+### ⚠️ Upgrade notes
+
+Breaking. Adopting this release needs all of the following, in order.
+
+1. Uninstall the old Claude Code plugin:
+   `claude plugin uninstall forge@forge --scope user`, and again with
+   `--scope local` in any checkout that had its own.
+2. Run `install-forge-claude` (or `install-forge-vibe`), then **restart
+   the session** — a running session keeps the agents and hooks it
+   loaded at startup.
+3. Rename the forge references you own, from `forge:<name>` to
+   `forge-<name>`: wrapper agents, `Task(subagent_type=…)` and
+   `Skill(skill=…)` calls, your `CLAUDE.md`, docs and scripts. Slash
+   commands move with it — `/pr` is now `/forge-pr`, `/commit` is
+   `/forge-commit`, and so on for every shipped skill. Rename any file
+   of your own beginning with `forge-`; that prefix is forge's now.
+4. Remove any CI step or config that names a retired CLI:
+   `forge-plugin-sync`, `install-forge-claude-settings`,
+   `verify-forge-manifest`, the `plugin_sync` and `manifest_json`
+   pre-commit steps, `[tool.forge.plugin_sync]`, or
+   `forge-doctor --plugin-name`. Each breaks until removed.
+5. Optional: to have a release tag cut on every merge, set
+   `[tool.forge.release].auto = "merge"`. Without it the tag job warns
+   and cuts nothing.
+
+Your own unprefixed agents and skills need no change.
 
 ### Changes
 - **The Claude Code plugin is gone. Forge's agents, skills and guards are now generated into your repo**, the same way the Mistral Vibe integration already was. `install-forge-claude` writes them into `.claude/` — agents, skills, the guard scripts, their registration in `.claude/settings.json`, and a `.claude/.gitignore` naming which files are forge's. The bootstrap runs it, and the managed `post-merge` / `post-checkout` hooks re-run it, so the version you have installed is the version you run. There is no marketplace, no per-checkout install, and no cache that can go stale. **Action required:** uninstall the old plugin once — `claude plugin uninstall forge@forge --scope user`, plus `--scope local` in any checkout that had its own — then run `install-forge-claude` and restart the session. It clears the settings keys that named the plugin. Retired with it: `forge-plugin-sync`, `install-forge-claude-settings`, `verify-forge-manifest`, the `plugin_sync` and `manifest_json` pre-commit steps, the `[tool.forge.plugin_sync]` config table, and `forge-doctor --plugin-name`. Any CI step or config of yours that names one of these breaks until it is removed.
