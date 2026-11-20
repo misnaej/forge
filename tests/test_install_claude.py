@@ -516,6 +516,39 @@ def test_prune_removes_retired_hook_recorded_in_ledger(bare_repo: Path) -> None:
     assert (hooks / "my_own_guard.sh").is_file()
 
 
+def test_prune_removes_retired_nested_helper_keeps_a_wanted_one(
+    bare_repo: Path,
+) -> None:
+    """A retired `hooks/lib/` helper goes by its relative path; a wanted one stays.
+
+    SCENARIO: after a real install, the ledger also records a nested helper
+    forge no longer ships, beside a consumer file in the same directory.
+    EXPECTED BEHAVIOR: the retired helper is removed, the shipped helper and
+    the consumer file stay. The ledger entry is `hooks/lib/<name>.sh`, never
+    a bare basename, so a non-recursive scan could not see it.
+    """
+    install_claude(bare_repo)
+    lib = bare_repo / ".claude" / "hooks" / "lib"
+    wanted = sorted(lib.glob("*.sh"))
+    assert wanted, "no nested helper is installed; scenario stale"
+    retired = lib / "zz_retired_helper.sh"
+    retired.write_text("# old\n", encoding="utf-8")
+    mine = lib / "zz_my_own_helper.sh"
+    mine.write_text("# mine\n", encoding="utf-8")
+    ignore = bare_repo / ".claude" / ".gitignore"
+    ignore.write_text(
+        ignore.read_text(encoding="utf-8") + "hooks/lib/zz_retired_helper.sh\n",
+        encoding="utf-8",
+    )
+
+    _, error = install_claude(bare_repo)
+
+    assert error is None
+    assert not retired.exists()
+    assert mine.is_file()
+    assert all(p.is_file() for p in wanted)
+
+
 # --- 16. gitignore semantics ------------------------------------------------
 
 

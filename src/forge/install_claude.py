@@ -501,8 +501,12 @@ def _prune_stale(
                 path.unlink()
 
     hook_dir = repo_root / CLAUDE_DIR / HOOKS_SUBDIR
-    for path in sorted(hook_dir.glob("*.sh")) if hook_dir.is_dir() else []:
-        entry = f"{HOOKS_SUBDIR}/{path.name}"
+    # Recursive: a sourced helper may live in a subdirectory
+    # (``lib/command_utils.sh``), and the ledger records it by that path.
+    # A non-recursive scan never sees one, so a retired helper would
+    # linger in the consumer's checkout with nothing left to source it.
+    for path in sorted(hook_dir.rglob("*.sh")) if hook_dir.is_dir() else []:
+        entry = f"{HOOKS_SUBDIR}/{path.relative_to(hook_dir).as_posix()}"
         if entry in owned and entry not in wanted:
             removed.append(str(path.relative_to(repo_root)))
             if not check:
