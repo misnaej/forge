@@ -75,7 +75,7 @@ Rules (sections, word cap, plain-English `## Summary` lead): [FOUNDATION §6 "PR
        --bullet "<key change 1>" --bullet "<key change 2>" --bullet "<key change 3>"
    ```
 
-   3–5 `--bullet`s; validation failure exits non-zero naming every broken rule — fix until it passes. Length is not one: 45 words is an advisory target, over it warns and still posts (FOUNDATION §6). Spend the words on behaviour changes, never on test counts, green checks, a changelog fragment or forge's own word counts.
+   3–5 `--bullet`s; validation failure exits non-zero naming every broken rule — fix until it passes. Length is one only far past the 45-word ceiling; just over it warns and still posts (FOUNDATION §6). Never write toward the ceiling. Spend the words on behaviour changes, never on test counts, green checks, a changelog fragment or forge's own word counts.
 
 3. **Never set the PR title by hand here** — the CLI forces the PR title to match the `--title` it posts (FOUNDATION §6), so the squash title is authored in one place. A non-zero exit naming a rejected title sync means the prefill is stale: report it, do not paper over it.
 

@@ -448,8 +448,8 @@ def _warn_if_restating(head: list[str], sections: list[tuple[str, list[str]]]) -
     by ``compose`` itself (the light and emergency modes) is skipped, since
     the author did not write it.
 
-    Warns; never refuses. Length and content are review lenses, not gates
-    (FOUNDATION §18).
+    Warns; never refuses. Wrap-up length is checked separately by
+    :func:`_length_problems`.
 
     Args:
         head: Lines before the first ``## `` section.

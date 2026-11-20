@@ -22,8 +22,8 @@ git commands is enforced here (FOUNDATION §7: a CLI performing a
   an open PR for the branch (review-fix pushes), or an armed
   ``forge-emergency`` — see :func:`check_publication_evidence`;
   ``FORGE_SKIP_WRAPUP_GATE=1`` is the recorded user bypass;
-- the message is conventional, with a 45-word advisory target (well over
-  it warns, nothing is refused on length), and no AI attribution;
+- the message is conventional, under a 45-word ceiling (over it warns,
+  far past it is refused), and carries no AI attribution;
 - the index must equal the named files before the commit, and the commit
   may add only what the hook regenerates (generated docs, the cadence stamp);
 - the pre-commit hook runs on the commit (git's per-process overrides

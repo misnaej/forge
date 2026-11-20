@@ -35,13 +35,14 @@ Rules (FOUNDATION §6 "Squash-merge messages"):
 
 - title matches conventional-commit ``<type>(...)?: <subject>``
 - 3-5 ``--bullet`` entries
-- total whitespace-split word count (title + bullets): advisory target
-  of 45; well past it warns and still posts, nothing is refused on length
+- total whitespace-split word count (title + bullets): 45-word ceiling;
+  over it warns and still posts, far past it is refused
 - no Claude / AI attribution patterns
 
-A failing run names every broken rule at once. Length is never one of
-them: a message well past the 45-word target prints a per-part
-breakdown as a warning (also under ``--dry-run``) and posts.
+A failing run names every broken rule at once. Length is one only far
+past the 45-word ceiling (see :func:`~forge.text_budget.length_verdict`);
+a message just over prints a per-part breakdown as a warning (also under
+``--dry-run``) and posts.
 
 Only a comment whose body starts with :data:`SQUASH_MARKER` is treated
 as a squash comment, so a wrap-up that quotes the marker is never
