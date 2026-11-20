@@ -33,7 +33,10 @@ from forge.plugin_roster import shipped_plugin_names
 from tests.conftest import init_git_repo
 
 
-_SOURCE_LINE = re.compile(r'^source "\$\(dirname "\$0"\)/([\w.-]+\.sh)"', re.MULTILINE)
+_SOURCE_LINE = re.compile(
+    r'^(?:source |[A-Z_]+=)"\$\(dirname "\$0"\)/((?:[\w.-]+/)*[\w.-]+\.sh)"',
+    re.MULTILINE,
+)
 
 _CONSUMER_GROUP = {
     "matcher": "Bash",
@@ -256,18 +259,24 @@ def test_required_scripts_follows_sourced_helpers_transitively(tmp_path: Path) -
 def test_every_sourced_helper_is_installed_and_executable(installed_repo: Path) -> None:
     """A guard that cannot source its helper refuses every call it protects.
 
-    SCENARIO: scan the installed guard scripts for top-level `source` lines.
-    EXPECTED BEHAVIOR: each sourced helper is present and executable beside
-    the guards. A precondition requires at least one such line, so the test
-    cannot pass vacuously if the pattern stops matching.
+    SCENARIO: scan every installed guard script, subdirectories included,
+    for line-leading `source` lines or `VAR=` assignments naming a helper by
+    path (the nested `lib/` helper is assigned, then sourced).
+    EXPECTED BEHAVIOR: each sourced helper is present and executable at that
+    path under the hooks dir. Preconditions require at least one such line
+    and one in a subdirectory, so the test cannot pass vacuously if the
+    pattern stops matching nested paths.
     """
     hooks_dir = installed_repo / ".claude" / "hooks"
     sourced = {
         helper
-        for script in hooks_dir.glob("*.sh")
+        for script in hooks_dir.rglob("*.sh")
         for helper in _SOURCE_LINE.findall(script.read_text(encoding="utf-8"))
     }
     assert sourced, 'no `source "$(dirname "$0")/x.sh"` line found; pattern stale'
+    assert any("/" in helper for helper in sourced), (
+        "no nested helper found; pattern stale"
+    )
     for helper in sorted(sourced):
         path = hooks_dir / helper
         assert path.is_file(), helper

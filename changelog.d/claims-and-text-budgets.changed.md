@@ -8,3 +8,5 @@ bump: minor
 - Text far past its ceiling is now refused, not just warned.
 - A long pull request description earns an advisory.
 - Skill instructions are measured against the agent length cap.
+- A regenerated integration installs the shared guard library too.
+- Guards no longer all refuse every command after an upgrade.

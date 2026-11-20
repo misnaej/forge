@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import re
 import tomllib
 from pathlib import Path
 
@@ -444,6 +445,31 @@ def test_validate_shipped_scripts_passes_on_real_package() -> None:
     assert hook_registry.script_names() <= needed
 
 
+def test_every_script_reference_in_shipped_guards_is_validated_and_on_disk() -> None:
+    """Every helper a shipped guard names ships, whatever directory it sits in.
+
+    Behavior: the reference scan uses its own loose pattern, never the
+    registry's, so a registry pattern that stops matching a path shape is
+    caught instead of agreeing with itself. A guard sourcing a helper the
+    installer never copies fails closed on every call it protects.
+    """
+    loose = re.compile(r'dirname "\$0"\)/(\S+?\.sh)')
+    hooks_root = shipped_path(hook_registry.HOOKS_DIR)
+    references: set[str] = set()
+    for script in hooks_root.rglob("*.sh"):
+        for line in script.read_text(encoding="utf-8").splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            references.update(loose.findall(line))
+    assert any("/" in ref for ref in references), (
+        "no sourced helper in a subdirectory found; scan is blind to nested paths"
+    )
+    validated = hook_registry.validate_shipped_scripts()
+    for ref in sorted(references):
+        assert ref in validated, ref
+        assert (hooks_root / ref).is_file(), ref
+
+
 def test_validate_shipped_scripts_raises_on_missing_wired_script(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -477,11 +503,11 @@ def test_install_fails_closed_and_writes_nothing_when_guard_missing(
     mirror.mkdir()
     victim = "block_force_push.sh"
     assert victim in hook_registry.script_names()
-    for p in real.glob("*.sh"):
+    for p in real.rglob("*.sh"):
         if p.name != victim:
-            (mirror / p.name).write_text(
-                p.read_text(encoding="utf-8"), encoding="utf-8"
-            )
+            target = mirror / p.relative_to(real)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(p.read_text(encoding="utf-8"), encoding="utf-8")
     monkeypatch.setattr(
         hook_registry,
         "shipped_path",
@@ -509,11 +535,11 @@ def _mirror_without(tmp_path: Path, victim: str) -> Path:
     real = shipped_path(hook_registry.HOOKS_DIR)
     mirror = tmp_path / "mirror"
     mirror.mkdir()
-    for p in real.glob("*.sh"):
+    for p in real.rglob("*.sh"):
         if p.name != victim:
-            (mirror / p.name).write_text(
-                p.read_text(encoding="utf-8"), encoding="utf-8"
-            )
+            target = mirror / p.relative_to(real)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(p.read_text(encoding="utf-8"), encoding="utf-8")
     return mirror
 
 

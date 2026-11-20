@@ -40,10 +40,12 @@ VIBE_EXTRA_RESOURCE: Final = "data/vibe-extra-hooks.toml"
 # ``source "$(dirname "$0")/x.sh"`` or ``ANCHOR_LIB="$(dirname "$0")/x.sh"``.
 # Deliberately not any ``*.sh`` token: comments name scripts that are not
 # sourced, and requiring those would fail validation on a missing mention.
-_SH_REF: Final = re.compile(r'\$\(dirname "\$0"\)/([\w.-]+\.sh)')
-
-
-HOOKS_RESOURCE: Final = "data/hooks.toml"
+# The name may carry directory segments (``lib/command_utils.sh``): the
+# shared readers live in a subdirectory, and a pattern that stopped at the
+# basename matched no reference at all — so the helper never entered the
+# required set, the installer never copied it, and every guard that sources
+# it failed closed with no file to blame.
+_SH_REF: Final = re.compile(r'\$\(dirname "\$0"\)/((?:[\w.-]+/)*[\w.-]+\.sh)')
 
 #: A generated agent name safe to interpolate into a harness matcher
 #: without escaping. Deliberately narrow: anything outside this set is
