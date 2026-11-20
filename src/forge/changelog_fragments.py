@@ -93,7 +93,7 @@ from forge.git_utils import (
     tag_on_remote,
     v_tags,
 )
-from forge.text_budget import ceiling
+from forge.text_budget import length_verdict
 
 
 if TYPE_CHECKING:
@@ -334,14 +334,19 @@ def _check_bullets(name: str, body: str) -> list[str]:
 #: and none of which they are made to read first. Not a line budget and
 #: not scaled to the diff: a one-line fix and a rewrite each earn one
 #: bullet per thing that changed, and the bullet is short either way.
-BULLET_WORD_TARGET: Final[int] = 12
+#:
+#: A ceiling, never a length to write toward, and warn-only here: the
+#: refusal band that guards the message surfaces is three words wide at
+#: this size, and a commit blocked over three words in one bullet buys
+#: nothing (:mod:`forge.text_budget`).
+BULLET_WORD_CEILING: Final[int] = 12
 
 #: Longest bullet excerpt quoted in the advisory, in characters.
 _NOTE_QUOTE_MAX: Final[int] = 80
 
 
 def long_bullets(body: str) -> list[tuple[str, int]]:
-    """Return the fragment's bullets that run past the word target.
+    """Return the fragment's bullets that run past the word ceiling.
 
     One bullet per thing that changed is the rule the author applies;
     this checks only the part a program can see — that each bullet is as
@@ -354,14 +359,14 @@ def long_bullets(body: str) -> list[tuple[str, int]]:
 
     Returns:
         ``(bullet, word count)`` for each bullet over
-        :data:`BULLET_WORD_TARGET`, in document order.
+        :data:`BULLET_WORD_CEILING`, in document order.
     """
     long: list[tuple[str, int]] = []
     for line in body.splitlines():
         if not line.startswith("- "):
             continue
         words = len(line[2:].split())
-        if words > ceiling(BULLET_WORD_TARGET):
+        if length_verdict(words, BULLET_WORD_CEILING) != "ok":
             long.append((line.strip(), words))
     return long
 
@@ -369,10 +374,10 @@ def long_bullets(body: str) -> list[tuple[str, int]]:
 def verbose_entry_note(body: str) -> str | None:
     """Return an advisory when a fragment's bullets are longer than needed.
 
-    Advisory, never a refusal: forge refuses nothing on length
-    (:mod:`forge.text_budget`), and a gate that blocked a commit over
-    prose would cost more than the prose does. What it buys is the
-    question being asked while the entry is still cheap to cut.
+    Advisory, never a refusal at this size: the refusal band for a
+    12-word ceiling is three words wide, and blocking a commit over that
+    costs more than the prose does (:mod:`forge.text_budget`). What it
+    buys is the question being asked while the entry is cheap to cut.
 
     Args:
         body: The fragment body, as validated.
@@ -389,7 +394,7 @@ def verbose_entry_note(body: str) -> str | None:
         worst = worst[:_NOTE_QUOTE_MAX] + "…"
     return (
         f"ADVISORY: {len(long)} bullet(s) run long, worst at {words} words "
-        f"against about {BULLET_WORD_TARGET}. Say what changed in as few "
+        f"against a ceiling of {BULLET_WORD_CEILING}. Say what changed in as few "
         f"words as it takes and stop — the why belongs in the commit, not "
         f"here. Longest: {worst}. Nothing refuses this."
     )

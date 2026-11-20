@@ -22,8 +22,8 @@ git commands is enforced here (FOUNDATION §7: a CLI performing a
   an open PR for the branch (review-fix pushes), or an armed
   ``forge-emergency`` — see :func:`check_publication_evidence`;
   ``FORGE_SKIP_WRAPUP_GATE=1`` is the recorded user bypass;
-- the message is conventional, with a 45-word advisory target (well over
-  it warns, nothing is refused on length), and no AI attribution;
+- the message is conventional, under a 45-word ceiling (over it warns,
+  far past it is refused), and carries no AI attribution;
 - the index must equal the named files before the commit, and the commit
   may add only what the hook regenerates (generated docs, the cadence stamp);
 - the pre-commit hook runs on the commit (git's per-process overrides
@@ -80,7 +80,7 @@ from forge.pr_wrapup import WRAPUP_NAME, wrapup_names_head
 from forge.precommit import verdict
 from forge.regen_docs import API_DIGEST_DOC, CLI_REFERENCE_DOC
 from forge.smart_test.lifecycle import STAMP_RELPATH
-from forge.text_budget import ceiling
+from forge.text_budget import length_verdict, refusal_threshold
 
 
 if TYPE_CHECKING:
@@ -158,23 +158,37 @@ def check_budget_and_attribution(message: str) -> None:
     its title is a marker, not a conventional type, but the length and
     attribution rules still hold.
 
-    Length refuses nothing. A message over target commits with one
-    warning, because sending the author back to re-cut a written message
-    costs more than the words, and what makes a message quick to read is
-    the process state it omits (FOUNDATION §6) rather than its count.
+    The word count is a **ceiling, not a target** — the shortest message
+    that carries what changed and why, never one written toward the
+    number. Over it commits with one warning, because sending the author
+    back to re-cut a written message costs more than the words. Far over
+    it is refused: what makes a message quick to read is the process
+    state it omits (FOUNDATION §6) rather than its count, and text that
+    long is carrying exactly that.
 
     Args:
         message: The full commit message.
 
     Raises:
-        CommitRefusedError: When the message carries AI attribution.
+        CommitRefusedError: When the message carries AI attribution, or
+            runs past the refusal threshold for its ceiling.
     """
     words = len(message.split())
-    if words > ceiling(COMMIT_MAX_WORDS):
+    verdict = length_verdict(words, COMMIT_MAX_WORDS)
+    if verdict == "refuse":
+        msg = (
+            f"forge-commit: message is {words} words, past the "
+            f"{refusal_threshold(COMMIT_MAX_WORDS)} allowed for a "
+            f"{COMMIT_MAX_WORDS}-word ceiling. Cut process state (test counts, "
+            "green checks) and bookkeeping, never what changed or why."
+        )
+        raise CommitRefusedError(msg)
+    if verdict == "warn":
         logger.warning(
-            "forge-commit: message is %d words, over the %d-word target — "
+            "forge-commit: message is %d words, over the %d-word ceiling — "
             "committing anyway. The words to lose are process state (test "
-            "counts, green checks), never what changed or why.",
+            "counts, green checks), never what changed or why. The ceiling is "
+            "a limit, not a length to aim for.",
             words,
             COMMIT_MAX_WORDS,
         )

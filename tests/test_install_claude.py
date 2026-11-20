@@ -33,7 +33,10 @@ from forge.plugin_roster import shipped_plugin_names
 from tests.conftest import init_git_repo
 
 
-_SOURCE_LINE = re.compile(r'^source "\$\(dirname "\$0"\)/([\w.-]+\.sh)"', re.MULTILINE)
+_SOURCE_LINE = re.compile(
+    r'^(?:source |[A-Z_]+=)"\$\(dirname "\$0"\)/((?:[\w.-]+/)*[\w.-]+\.sh)"',
+    re.MULTILINE,
+)
 
 _CONSUMER_GROUP = {
     "matcher": "Bash",
@@ -256,18 +259,24 @@ def test_required_scripts_follows_sourced_helpers_transitively(tmp_path: Path) -
 def test_every_sourced_helper_is_installed_and_executable(installed_repo: Path) -> None:
     """A guard that cannot source its helper refuses every call it protects.
 
-    SCENARIO: scan the installed guard scripts for top-level `source` lines.
-    EXPECTED BEHAVIOR: each sourced helper is present and executable beside
-    the guards. A precondition requires at least one such line, so the test
-    cannot pass vacuously if the pattern stops matching.
+    SCENARIO: scan every installed guard script, subdirectories included,
+    for line-leading `source` lines or `VAR=` assignments naming a helper by
+    path (the nested `lib/` helper is assigned, then sourced).
+    EXPECTED BEHAVIOR: each sourced helper is present and executable at that
+    path under the hooks dir. Preconditions require at least one such line
+    and one in a subdirectory, so the test cannot pass vacuously if the
+    pattern stops matching nested paths.
     """
     hooks_dir = installed_repo / ".claude" / "hooks"
     sourced = {
         helper
-        for script in hooks_dir.glob("*.sh")
+        for script in hooks_dir.rglob("*.sh")
         for helper in _SOURCE_LINE.findall(script.read_text(encoding="utf-8"))
     }
     assert sourced, 'no `source "$(dirname "$0")/x.sh"` line found; pattern stale'
+    assert any("/" in helper for helper in sourced), (
+        "no nested helper found; pattern stale"
+    )
     for helper in sorted(sourced):
         path = hooks_dir / helper
         assert path.is_file(), helper
@@ -505,6 +514,39 @@ def test_prune_removes_retired_hook_recorded_in_ledger(bare_repo: Path) -> None:
     assert error is None
     assert not (hooks / "retired_guard.sh").exists()
     assert (hooks / "my_own_guard.sh").is_file()
+
+
+def test_prune_removes_retired_nested_helper_keeps_a_wanted_one(
+    bare_repo: Path,
+) -> None:
+    """A retired `hooks/lib/` helper goes by its relative path; a wanted one stays.
+
+    SCENARIO: after a real install, the ledger also records a nested helper
+    forge no longer ships, beside a consumer file in the same directory.
+    EXPECTED BEHAVIOR: the retired helper is removed, the shipped helper and
+    the consumer file stay. The ledger entry is `hooks/lib/<name>.sh`, never
+    a bare basename, so a non-recursive scan could not see it.
+    """
+    install_claude(bare_repo)
+    lib = bare_repo / ".claude" / "hooks" / "lib"
+    wanted = sorted(lib.glob("*.sh"))
+    assert wanted, "no nested helper is installed; scenario stale"
+    retired = lib / "zz_retired_helper.sh"
+    retired.write_text("# old\n", encoding="utf-8")
+    mine = lib / "zz_my_own_helper.sh"
+    mine.write_text("# mine\n", encoding="utf-8")
+    ignore = bare_repo / ".claude" / ".gitignore"
+    ignore.write_text(
+        ignore.read_text(encoding="utf-8") + "hooks/lib/zz_retired_helper.sh\n",
+        encoding="utf-8",
+    )
+
+    _, error = install_claude(bare_repo)
+
+    assert error is None
+    assert not retired.exists()
+    assert mine.is_file()
+    assert all(p.is_file() for p in wanted)
 
 
 # --- 16. gitignore semantics ------------------------------------------------

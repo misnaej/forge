@@ -17,7 +17,6 @@ import pytest
 
 from forge import commit
 from forge.commit import CommitRefusedError, Request
-from forge.text_budget import ceiling
 from tests.conftest import (
     GIT_ENV,
     commit_all,
@@ -113,27 +112,32 @@ def _message_of_words(total: int, *, tail: str = "") -> str:
 
 
 @pytest.mark.parametrize(
-    "total",
-    [
-        commit.COMMIT_MAX_WORDS + 1,
-        ceiling(commit.COMMIT_MAX_WORDS),
-        ceiling(commit.COMMIT_MAX_WORDS) + 1,
-        200,
-    ],
+    ("total", "warns"),
+    [(45, False), (46, True), (54, True)],
 )
-def test_check_budget_never_refuses_and_warns_only_above_the_ceiling(
-    total: int, caplog: pytest.LogCaptureFixture
+def test_check_budget_warns_above_the_ceiling_and_passes_up_to_the_threshold(
+    total: int, caplog: pytest.LogCaptureFixture, *, warns: bool
 ) -> None:
-    """Behavior: length never refuses a commit; only past the ceiling does it warn.
+    """Behavior: 45 words is silent, 46 through 54 warn and still pass.
+
+    Args:
+        total: Whole-message word count under test.
+        warns: Whether a length warning is expected.
+    """
+    with caplog.at_level(logging.WARNING):
+        commit.check_budget_and_attribution(_message_of_words(total))
+    assert (f"{total} words" in caplog.text) is warns
+
+
+@pytest.mark.parametrize("total", [55, 200])
+def test_check_budget_refuses_past_the_refusal_threshold(total: int) -> None:
+    """Behavior: a message past 54 words is refused, naming both numbers.
 
     Args:
         total: Whole-message word count under test.
     """
-    with caplog.at_level(logging.WARNING):
+    with pytest.raises(CommitRefusedError, match=rf"{total} words.*54.*45"):
         commit.check_budget_and_attribution(_message_of_words(total))
-    assert (f"{total} words" in caplog.text) is (
-        total > ceiling(commit.COMMIT_MAX_WORDS)
-    )
 
 
 def test_a_long_message_with_ai_attribution_is_still_refused() -> None:

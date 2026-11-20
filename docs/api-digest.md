@@ -185,9 +185,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 - `class AgentDoc` — Parsed view of one ``agents/*.md`` file.
 - `_split_frontmatter(text: str) -> tuple[dict[str, str | tuple[str, ...]], str]` _(internal)_ — Split YAML-ish frontmatter from the rest of an agent file.
-- `_strip_code_blocks(body: str) -> str` _(internal)_ — Remove fenced code blocks (``` ... ```) from *body*.
 - `_parse_agent(path: Path, repo_root_path: Path) -> AgentDoc` _(internal)_ — Read and parse one agent file.
-- `_word_count(body_no_code: str) -> int` _(internal)_ — Return the whitespace-split token count of *body_no_code*.
 - `_check_word_count(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag agent bodies above the length budget.
 - `_check_frontmatter(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag missing required frontmatter keys.
 - `_check_description_shape(agent: AgentDoc) -> list[Finding]` _(internal)_ — Flag descriptions that read as role labels rather than routing triggers.
@@ -210,6 +208,9 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_exclude_patterns(repo_root_path: Path) -> list[str]` _(internal)_ — Return the ``[tool.forge.audit_agents].exclude`` patterns.
 - `_effective_reporter_sets(repo_root_path: Path) -> tuple[frozenset[str], frozenset[str]]` _(internal)_ — Return the effective reporter / reporter-with-artifact name sets.
 - `_per_agent_findings(agent: AgentDoc, foundation_ngrams: set[str], reporters: frozenset[str], artifact_reporters: frozenset[str]) -> list[Finding]` _(internal)_ — Run every per-agent check and return the combined finding list.
+- `_iter_skill_files(root: Path) -> list[Path]` _(internal)_ — Return every skill instruction file to measure, repo-relative order.
+- `_check_skill_word_count(path: str, body: str) -> list[Finding]` _(internal)_ — Flag a skill whose instruction text runs past the length budget.
+- `_skill_findings(root: Path) -> tuple[list[Finding], str]` _(internal)_ — Measure every skill file and render its summary block.
 - `_render_summary(agents: list[AgentDoc], findings: list[Finding]) -> str` _(internal)_ — Render the per-agent summary table for the log header.
 - `run(scope: Scope, roots: list[Path], config: AgentsConfig) -> int` — Walk every agent file and emit findings to ``code_health/audit_agents.log``.
 - `main() -> int` — CLI entry point for ``forge-audit-agents``.
@@ -249,6 +250,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `sanitize_log_text(text: str) -> str` — Escape non-printable characters so a value cannot forge log lines.
 - `class Finding` — One audit observation with provenance.
   - `render(self) -> str` — Render this finding as a single block in the log file.
+- `strip_code_blocks(body: str) -> str` — Remove fenced code blocks (``` ... ```) from *body*.
+- `instruction_word_count(body: str) -> int` — Return the measured length of always-loaded instruction text.
 - `under_module_prefix(module: str, prefix: str) -> bool` — Return whether *module* equals *prefix* or is a dotted child of it.
 - `make_audit_parser(prog: str, description: str, *, honours_scope: bool = True) -> argparse.ArgumentParser` — Build the shared CLI surface for an audit script.
 - `resolve_roots(roots: list[str] | None) -> list[Path]` — Resolve the effective scan roots.
@@ -439,7 +442,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_parse_bump_line_and_body(path: Path, lines: list[str]) -> tuple[str, str, int, list[str]]` _(internal)_ — Validate bump line and extract level, body and the body's file line.
 - `_check_no_versions_or_headings(name: str, body: str, body_line: int) -> list[str]` _(internal)_ — Check for version-shaped strings and embedded headings.
 - `_check_bullets(name: str, body: str) -> list[str]` _(internal)_ — Check the body starts with a ``- `` bullet and every line continues one.
-- `long_bullets(body: str) -> list[tuple[str, int]]` — Return the fragment's bullets that run past the word target.
+- `long_bullets(body: str) -> list[tuple[str, int]]` — Return the fragment's bullets that run past the word ceiling.
 - `verbose_entry_note(body: str) -> str | None` — Return an advisory when a fragment's bullets are longer than needed.
 - `_check_major_carries_upgrade_notes(name: str, ftype: str, level: str) -> list[str]` _(internal)_ — Require a ``major`` fragment to be the ``upgrade`` lane itself.
 - `validate_fragment(path: Path) -> tuple[Fragment | None, list[str]]` — Parse *path* into a :class:`Fragment`, collecting every violation.
@@ -1512,9 +1515,13 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_cve_scan_refusal(root: Path, base: str) -> str | None` _(internal)_ — Refuse a branch with no trustworthy CVE scan since it left *base*.
 - `_base_sync_refusal(root: Path, base: str, *, emergency: bool) -> str | None` _(internal)_ — Refuse a branch that is behind or conflicting with ``origin/<base>``.
 - `_gate(root: Path, branch: str, base: str) -> tuple[str | None, bool]` _(internal)_ — Return why publication is refused, and whether it is an emergency.
-- `_warn_unlisted_closes(body_file: str) -> None` _(internal)_ — Warn when the body would close an issue forge's summary does not list.
+- `_read_body(body_file: str) -> str | None` _(internal)_ — Return the PR body's text, or ``None`` when it cannot be read here.
+- `_body_length_refusal(body: str) -> str | None` _(internal)_ — Return the refusal for a description far past its ceiling, or ``None``.
+- `_warn_unlisted_closes(body: str) -> None` _(internal)_ — Warn when the body would close an issue forge's summary does not list.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Build the argument parser.
 - `main() -> int` — Entry point for ``forge-pr-create``.
+- `_body_refusal(body_file: str) -> str | None` _(internal)_ — Return why the PR body is refused, warning about unlisted closes when it passes.
+- `_publish(root: Path, branch: str, cmd: list[str], *, is_emergency: bool) -> int` _(internal)_ — Publish through the emergency path or the normal ``gh pr create`` path.
 - `_run_create(cmd: list[str]) -> int` _(internal)_ — Run the ``gh pr create`` command and map its outcome to an exit code.
 
 ## `forge.pr_delta`
@@ -1844,7 +1851,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_word_total(title: str, bullets: list[str]) -> int` _(internal)_ — Count whitespace-split words across the title and every bullet.
 - `_preview(text: str) -> str` _(internal)_ — Shorten one message part to a printable first line for the breakdown.
 - `_word_breakdown(title: str, bullets: list[str]) -> list[str]` _(internal)_ — Render one indented line per message part: label, word count, preview.
-- `word_cap_warning(title: str, bullets: list[str]) -> str | None` — Return the warning for a message well past its target, or ``None``.
+- `word_cap_warning(title: str, bullets: list[str]) -> str | None` — Return the warning for a message over its ceiling, or ``None``.
+- `_check_length(title: str, bullets: list[str]) -> list[str]` _(internal)_ — Refuse a message so far over its ceiling that it is carrying bloat.
 - `_check_attribution(title: str, bullets: list[str]) -> list[str]` _(internal)_ — Return the Claude / AI attribution problem per FOUNDATION §2 (shared gate).
 - `build_body(title: str, bullets: list[str]) -> str` — Build the GitHub comment body around a validated message.
 - `validate(title: str, bullets: list[str]) -> list[str]` — Return every FOUNDATION §6 rule the message breaks.
@@ -1910,7 +1918,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_check_sections(sections: list[tuple[str, list[str]]]) -> list[str]` _(internal)_ — Validate presence and one-line shape of the required sections.
 - `_count_words(head: list[str], sections: list[tuple[str, list[str]]]) -> int` _(internal)_ — Count the words the budget applies to (prose, not headers or evidence).
 - `_warn_if_restating(head: list[str], sections: list[tuple[str, list[str]]]) -> None` _(internal)_ — Warn when a judgment slot asserts status a sibling section renders.
-- `_warn_if_long(head: list[str], sections: list[tuple[str, list[str]]]) -> None` _(internal)_ — Warn about a long wrap-up, scaled by the number of findings sections.
+- `_length_problems(head: list[str], sections: list[tuple[str, list[str]]]) -> list[str]` _(internal)_ — Warn about a long wrap-up, or refuse one far past its ceiling.
 - `_check_attribution(text: str) -> list[str]` _(internal)_ — Wrap the shared FOUNDATION §2 attribution gate as a violation list.
 - `_warn_if_unlabelled(head: list[str]) -> None` _(internal)_ — Warn when a summary bullet opens with no outcome label.
 - `validate_wrapup(text: str) -> list[str]` — Return every rule the wrap-up *text* breaks (empty means valid).
@@ -2312,9 +2320,10 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 ## `forge.text_budget`
 
-> _The one margin forge allows over a text-length target._
+> _The one length convention for text an agent writes._
 
-- `ceiling(target: int) -> int` — Return the word count past which a budget with *target* warns.
+- `refusal_threshold(ceiling: int) -> int` — Return the word count past which text of this kind is refused.
+- `length_verdict(words: int, ceiling: int) -> Literal['ok', 'warn', 'refuse']` — Return which band *words* falls in for its *ceiling*.
 
 ## `forge.text_clip`
 

@@ -250,6 +250,52 @@ def test_pr_create_publishes_quietly_when_the_body_file_is_unreadable(
     assert not [r for r in caplog.records if r.levelname == "WARNING"]
 
 
+@pytest.mark.parametrize(
+    ("words", "warns"),
+    [(300, False), (301, True), (360, True)],
+)
+def test_pr_create_publishes_a_body_up_to_the_refusal_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    *,
+    words: int,
+    warns: bool,
+) -> None:
+    """Behavior: 300 words is silent, 301 through 360 warn and still publish.
+
+    Args:
+        words: Body word count under test.
+        warns: Whether the over-ceiling warning is expected.
+    """
+    repo = _publishable_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    (repo / "body.md").write_text(" ".join(["w"] * words) + "\n")
+    calls = _stub_gh(monkeypatch)
+
+    with caplog.at_level("WARNING", logger=pr_create.__name__):
+        assert _run_main(monkeypatch, repo) == 0
+
+    assert len(calls) == 1
+    assert (f"is {words} words, over the 300-word ceiling" in caplog.text) is warns
+
+
+def test_pr_create_refuses_a_body_past_the_refusal_threshold(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Behavior: 361 words exits 2, REFUSED names both numbers, gh never called."""
+    repo = _publishable_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    (repo / "body.md").write_text(" ".join(["w"] * 361) + "\n")
+    calls = _stub_gh(monkeypatch)
+
+    with caplog.at_level("ERROR", logger=pr_create.__name__):
+        assert _run_main(monkeypatch, repo) == 2
+
+    assert calls == []
+    assert "REFUSED: PR description is 361 words, past the 360" in caplog.text
+
+
 def test_pr_create_refuses_without_a_wrapup(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -108,7 +108,7 @@ from forge.pr_wrapup_compose import (
     word_budget,
 )
 from forge.precommit import freshness_verdicts, resolve_steps
-from forge.text_budget import ceiling
+from forge.text_budget import length_verdict, refusal_threshold
 
 
 if TYPE_CHECKING:
@@ -448,8 +448,8 @@ def _warn_if_restating(head: list[str], sections: list[tuple[str, list[str]]]) -
     by ``compose`` itself (the light and emergency modes) is skipped, since
     the author did not write it.
 
-    Warns; never refuses. Length and content are review lenses, not gates
-    (FOUNDATION §18).
+    Warns; never refuses. Wrap-up length is checked separately by
+    :func:`_length_problems`.
 
     Args:
         head: Lines before the first ``## `` section.
@@ -474,23 +474,26 @@ def _warn_if_restating(head: list[str], sections: list[tuple[str, list[str]]]) -
                     )
 
 
-def _warn_if_long(head: list[str], sections: list[tuple[str, list[str]]]) -> None:
-    """Warn about a long wrap-up, scaled by the number of findings sections.
+def _length_problems(
+    head: list[str], sections: list[tuple[str, list[str]]]
+) -> list[str]:
+    """Warn about a long wrap-up, or refuse one far past its ceiling.
 
-    Length refuses nothing, here as everywhere (see
-    :mod:`forge.text_budget`): a wrap-up over its target posts with one
-    warning. Refusing it sent the author back to re-cut text already
-    written, and the words worth cutting are the ones a reader does not
-    need — process state and bookkeeping — which is a content rule, not
-    a count.
-
-    The budget is :func:`~forge.pr_wrapup_compose.word_budget` of the count
-    of required non-clean, non-status sections, and the warning fires above
-    :func:`forge.text_budget.ceiling` of it.
+    The ceiling is :func:`~forge.pr_wrapup_compose.word_budget` of the
+    count of required non-clean, non-status sections — a limit, never a
+    length to write toward. Over it the wrap-up posts with one warning,
+    because re-cutting written text costs more than the words. Past
+    :func:`~forge.text_budget.refusal_threshold` it is refused: the words
+    worth cutting are the ones a reader does not need, and text that far
+    over is carrying them.
 
     Args:
         head: Lines before the first section.
         sections: ``(title, body_lines)`` pairs in document order.
+
+    Returns:
+        One problem when the wrap-up is refused, else none; the warning
+        band logs instead.
     """
     titles = {title.casefold(): body for title, body in sections}
     findings = sum(
@@ -500,21 +503,33 @@ def _warn_if_long(head: list[str], sections: list[tuple[str, list[str]]]) -> Non
         and (body := titles.get(required.casefold())) is not None
         and not _is_clean(body)
     )
-    budget = word_budget(findings)
+    ceiling = word_budget(findings)
     words = _count_words(head, sections)
-    if words > ceiling(budget):
+    verdict = length_verdict(words, ceiling)
+    if verdict == "refuse":
+        return [
+            (
+                f"wrap-up is {words} words, past the {refusal_threshold(ceiling)} "
+                f"allowed for a {ceiling}-word ceiling ({WORD_BUDGET} + "
+                f"{FINDING_ALLOWANCE} x {findings} findings). Cut process state "
+                "and bookkeeping first, then compress each findings section. "
+                "Drop no disposition."
+            )
+        ]
+    if verdict == "warn":
         logger.warning(
-            "wrap-up is %d words, over the %d-word target (%d + %d x %d "
-            "findings) — nothing refuses it. Cut it in the file and re-run: "
+            "wrap-up is %d words, over the %d-word ceiling (%d + %d x %d "
+            "findings) — posting anyway. Cut it in the file and re-run: "
             "process state and bookkeeping first, then compress each "
-            "findings section to about %d words. Drop no disposition.",
+            "findings section. Drop no disposition. The ceiling is a limit, "
+            "not a length to aim for.",
             words,
-            budget,
+            ceiling,
             WORD_BUDGET,
             FINDING_ALLOWANCE,
             findings,
-            FINDING_ALLOWANCE,
         )
+    return []
 
 
 def _check_attribution(text: str) -> list[str]:
@@ -605,7 +620,7 @@ def validate_wrapup(text: str) -> list[str]:
         for name in unfilled_slots(text)
     ]
     head, sections = _split(text)
-    _warn_if_long(head, sections)
+    length_problems = _length_problems(head, sections)
     _warn_if_restating(head, sections)
     _warn_if_unlabelled(head)
     return (
@@ -614,6 +629,7 @@ def validate_wrapup(text: str) -> list[str]:
         + _check_sections(sections)
         + _check_attribution(text)
         + _check_no_squash_section(text)
+        + length_problems
     )
 
 

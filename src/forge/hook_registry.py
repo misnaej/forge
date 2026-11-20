@@ -40,10 +40,12 @@ VIBE_EXTRA_RESOURCE: Final = "data/vibe-extra-hooks.toml"
 # ``source "$(dirname "$0")/x.sh"`` or ``ANCHOR_LIB="$(dirname "$0")/x.sh"``.
 # Deliberately not any ``*.sh`` token: comments name scripts that are not
 # sourced, and requiring those would fail validation on a missing mention.
-_SH_REF: Final = re.compile(r'\$\(dirname "\$0"\)/([\w.-]+\.sh)')
-
-
-HOOKS_RESOURCE: Final = "data/hooks.toml"
+# The name may carry directory segments (``lib/command_utils.sh``): the
+# shared readers live in a subdirectory. A basename-only pattern matches
+# none of those references, so the helper would never enter the required
+# set, the installer would not copy it, and every guard sourcing it would
+# fail closed with no missing file to blame.
+_SH_REF: Final = re.compile(r'\$\(dirname "\$0"\)/((?:[\w.-]+/)*[\w.-]+\.sh)')
 
 #: A generated agent name safe to interpolate into a harness matcher
 #: without escaping. Deliberately narrow: anything outside this set is
@@ -365,8 +367,9 @@ def required_scripts(source: Path, wired: frozenset[str]) -> frozenset[str]:
     """Return every script needed for the wired ones to run.
 
     A wired guard may ``source`` a shipped helper — the git-command
-    anchor, the once-marker, the wrap-up anchor — which the wiring never
-    names because nothing fires it directly. References are discovered
+    anchor, the once-marker, the wrap-up anchor, the shared
+    command-segment reader under ``lib/`` — which the wiring never names
+    because nothing fires it directly. References are discovered
     from the scripts' **text**, not by intersecting with what is on disk:
     a helper that failed to arrive is still referenced, so it still
     enters the required set and fails validation — discovering by glob

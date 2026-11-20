@@ -2737,11 +2737,17 @@ def _bullet_of(words: int) -> str:
     return "- " + " ".join(f"w{i}" for i in range(words)) + "\n"
 
 
-def test_long_bullets_boundary_fourteen_ok_fifteen_flagged() -> None:
-    """BEHAVIOR: 14 words is within the ceiling, 15 is returned with its count."""
-    assert long_bullets(_bullet_of(14)) == []
+def test_long_bullets_boundary_twelve_ok_thirteen_flagged() -> None:
+    """BEHAVIOR: 12 words is within the ceiling, 13 is returned with its count."""
+    assert long_bullets(_bullet_of(12)) == []
+    found = long_bullets(_bullet_of(12) + _bullet_of(13))
+    assert [count for _bullet, count in found] == [13]
+
+
+def test_long_bullets_flags_past_the_refusal_threshold_too() -> None:
+    """BEHAVIOR: 15 words (past 14) is flagged like 13 is; bullets never refuse."""
     found = long_bullets(_bullet_of(14) + _bullet_of(15))
-    assert [count for _bullet, count in found] == [15]
+    assert [count for _bullet, count in found] == [14, 15]
 
 
 def test_long_bullets_ignores_non_bullet_lines() -> None:
@@ -2751,7 +2757,7 @@ def test_long_bullets_ignores_non_bullet_lines() -> None:
 
 def test_verbose_entry_note_silent_for_short_or_bulletless_body() -> None:
     """BEHAVIOR: all-short bullets and a bullet-less body draw no advisory."""
-    assert verbose_entry_note(_bullet_of(5) + _bullet_of(14)) is None
+    assert verbose_entry_note(_bullet_of(5) + _bullet_of(12)) is None
     assert verbose_entry_note("") is None
     assert verbose_entry_note("prose, no bullets at all\n") is None
 

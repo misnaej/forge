@@ -77,13 +77,18 @@ commands, paths, numbers, errors stay verbatim. One idea per sentence.
 FOUNDATION §8 "Write terse" applies; the `/caveman` skill has the full
 rules. Reports come back into the parent's context — every word costs twice.
 
-## Length budget
+## Length ceiling
 
-- **Target**: 400–800 words body (incl. frontmatter, excl. code fences).
+A ceiling, never a length to write toward: the shortest text carrying the
+protocol is the right one (FOUNDATION §6, `forge.text_budget`).
+
+- **Ceiling**: 800 words body (incl. frontmatter, excl. code fences).
+  Above → `forge-audit-agents` flags MEDIUM (trim candidate).
+- **Hard cap**: 1500 words. Above → HIGH.
 - **Anthropic reference**: 150–400 words. Forge gets headroom for
   repo-specific protocols but stays ≤ 2× the reference.
-- **Hard cap**: 1500 words. Above → `forge-audit-agents` flags HIGH.
-- **Target threshold**: 800 words. Above → audit flags MEDIUM (trim candidate).
+- The same ceiling covers a skill's instructions — same audit, same
+  numbers, because both load in full every time they are read.
 
 ## Tool sets per role
 
@@ -194,6 +199,12 @@ substring. Missing it fails the audit step.
 hard-wrapped**: GitHub comments render each newline as `<br>` (files
 collapse them), so wrapped prose posts as a ragged column. One line per
 paragraph; breaks only for lists, headings, fences, tables.
+
+**A report is not a turn end.** Hand back when the work is done or
+blocked, never to narrate progress: inside an authorized flow a status
+report ends no turn unless something is blocked or belongs to the human
+(FOUNDATION §1). A turn feels finished precisely while background work
+runs, which is when it is not.
 
 **Report by exception.** A clean check is ONE line — `PASS` after the
 `verified-at:` header, plus at most a scope note — never a narrative of

@@ -24,7 +24,7 @@ Run the standard commit workflow:
    forge-commit -m "<type>: <description>" <file> [<file> ...]
    ```
    Message: `$ARGUMENTS` if given, else write one (conventional, 45-word
-   target — advisory, never refused — what + why, no AI attribution, and
+   ceiling — over it warns, far past it refuses — what + why, no AI attribution, and
    no process state: not that tests passed or checks were green, not a
    changelog fragment, not counts of tests or files). It stages exactly the named
    files, commits locally (the default — `--push` opts in), prints

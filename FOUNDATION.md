@@ -139,6 +139,17 @@ question per `AskUserQuestion` call. Batch only where nobody answers live
 or say what blocks it. Turn ending on an announcement of unstarted work =
 null turn; started, bounded background job (§6) is not one.
 
+**The ask bounds the work, and the flow bounds the turn.** Instruction
+carried out → stop. "One reading strongly favoured" governs how to do
+what was asked, never whether to do more: scope is not a reading to
+favour. Adjacent work worth doing → one line that it exists; not
+started, not planned, not a branch. Stating an assumption makes an
+overreach legible, never authorised. Inside an authorized flow the
+converse holds: a status report is not a turn end unless something is
+blocked or belongs to the human — a turn feels finished precisely while
+background agents run, which is when it is not. Finishing early and
+reporting is complete; announcing unstarted work is not.
+
 **A question ends a turn only when its answer is owed before any work.**
 Test, in order: a read or search settles it → settle it; one reading
 strongly favoured → take it, state assumption, continue; wrong reading
@@ -421,7 +432,7 @@ Pin change (floor, cap, new pin — advisory or not) never rides a feature/fix P
 
 ### PR descriptions
 
-- Max 300 words. Sections: Summary / Changes / Testing / Breaking Changes (omit if none). Update if scope shifts.
+- **300-word ceiling** (same bands as the squash message below). Sections: Summary / Changes / Testing / Breaking Changes (omit if none). Update if scope shifts.
 - **Summary and Changes carry the change, never the release bookkeeping.** No word counts for the repo's own documents, no note that a changelog entry exists, no check status outside `Testing`.
 - **The `## Summary` lead is plain English** for product user, not codebase reader: no class/function names or internals; consequence before mechanism; say plainly when results stop being comparable. Technical detail → `Changes`.
 - **A close keyword closes the whole issue.** GitHub acts on `Closes`/`Fixes`/`Resolves #N` anywhere in description (mid-sentence too), closing on merge to default branch however little PR delivers. Partial delivery → `Part of #N`; only completing PR closes. Forge style: one bare `Closes #N` per line; publishing warns (best effort) when description seems to close an issue not listed that way.
@@ -452,9 +463,12 @@ Mechanics (modes, commands, templates): the `/forge-pr` skill. Rules:
 ### Squash-merge messages (mandatory at PR finalization)
 
 Rules (mechanics: the `/forge-pr` skill Step 4; enforcement: `forge-pr-squash-comment`, never hand-built):
-- **45-word target, advisory.** Over it warns once and still posts;
-  length refuses nothing. Once written, not rewritten — re-cutting a
-  written message costs more than the words.
+- **45-word ceiling.** Over it warns once and still posts; far past it
+  is refused. A ceiling is never a length to write toward: the shortest
+  text carrying the information is the right one, and how much changed
+  decides what that is. Once written, not rewritten — re-cutting a
+  written message costs more than the words. Bands and thresholds:
+  [`forge.text_budget`](src/forge/text_budget.py).
 - **A bullet states a behaviour change or its consequence.** Never that
   tests passed or pre-commit was green (CI proves it), never that a
   changelog fragment exists (enforced), never forge's own document word
@@ -693,7 +707,8 @@ Every forge-shipped agent follows `agents/_TEMPLATE.md`. Invariants:
 
 - **Ownership split.** FOUNDATION owns policy, numbers, principles; agents own
   enforcement protocol, cookbook, recipes. Neither duplicates; both link.
-- **Length budget.** 400–800 words body (target); 1500 hard cap.
+- **Length ceiling.** 800 words body, 1500 hard cap — the same ceiling
+  covers a skill's instructions, both measured by `forge-audit-agents`.
 - **Description = routing trigger**, not a role label ("Use proactively when X").
 - **Reporters do not have `Write` or `Edit`.** Exception: reporter-with-artifact
   agents may hold the single mutating tool their artifact needs — see
@@ -712,22 +727,26 @@ over hand-rolled worktrees; keep the scratch repo for the branch's lifetime,
 delete it when the branch work lands. Guard-blocked probe → report as finding,
 never route around (§2).
 
-### Generated-integration staleness — symptoms and recovery
+### Generated-integration staleness — what a session may claim
 
-Forge reaches a harness through files **generated into the repo**, never
-an installed plugin: `install-forge-claude` writes `.claude/`,
-`install-forge-vibe` Vibe's equivalents. Both regenerate on merge and
+Forge reaches a harness through files generated into the repo
+(`install-forge-claude`, `install-forge-vibe`), regenerated on merge and
 branch switch. Rules:
 
-- **A running session keeps what it loaded at startup.** Regenerating
-  moves the files; the session does not follow. An agent that
-  regenerated them stops there (§2 "On deviation") — report, ask for a
-  restart.
-- **No check confirms a restart.** `forge-doctor`'s `claude:integration`
-  line compares disk against what forge ships: filesystem evidence,
-  never session proof (§1).
-- **Drift is one command away** either way: `--check` reports,
-  `install-forge-claude` repairs. Nothing to install or pin.
+- **Claim per surface, never for the session.** Forbidden: "the session
+  still runs the previous set", "the session is stale", "the session
+  reloaded". A file count and `forge-doctor`'s `claude:integration` line
+  are filesystem facts, never session proof (§1).
+- **Regenerated guard wiring stops the run.** §2's protections are the
+  one surface no probe reads, and a release may have changed a rule
+  under them: report, ask for a restart, say it settles guard wiring
+  alone and shows no visible change. Never narrow the stop by guessing
+  which files a sync touched — guard state is exactly what cannot be
+  read.
+- **Drift is one command away**: `--check` reports,
+  `install-forge-claude` repairs. Which surface reloads live, Vibe's
+  untested status, recovery:
+  [`forge-docs/integration-staleness.md`](forge-docs/integration-staleness.md).
 
 ### Claude Code hook path convention
 
