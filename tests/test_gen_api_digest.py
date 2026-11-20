@@ -332,7 +332,11 @@ def test_summary_whitespace_normalized(tmp_path: Path) -> None:
     pkg.mkdir(parents=True)
     (pkg / "__init__.py").write_text("")
     (pkg / "wrapped.py").write_text(
-        '"""Summary: First line."""\n        """Details follow."""'
+        '"""First line of the\n'
+        "summary paragraph continues\n"
+        "here.\n"
+        "\n"
+        'Details follow."""\n'
     )
     (pkg / "rewrapped.py").write_text(
         '"""First line of the summary\nparagraph continues here."""\n'
