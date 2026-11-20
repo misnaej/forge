@@ -1174,3 +1174,31 @@ def test_workflow_gates_pytest_steps_on_tree_gate_and_tolerates_its_crash() -> N
     assert gate["continue-on-error"] is True
     assert unverified in pytest_step["if"]
     assert unverified in report["if"]
+
+
+def test_main_ci_runs_are_never_cancelled_and_never_queue() -> None:
+    """SCENARIO: ``tag-release.yml`` fires on CI *success* for a push to main.
+
+    That makes the cancel policy a release invariant rather than a CI-cost
+    tweak: a ``main`` run that is cancelled, or evicted while pending, cuts
+    no tag, and the merge's release is lost with nothing reporting it. The
+    group must be per *commit*, not one shared group with cancellation
+    turned off, because a concurrency group holds one running run plus only
+    one pending run — a third arrival replaces the pending one and the
+    middle merge of a burst still disappears.
+
+    Both halves name ``refs/heads/main`` literally on purpose, so the
+    expression text is what is asserted:
+    ``github.event.repository.default_branch`` is absent on some events,
+    where it reads falsy and silently restores cancellation on ``main``.
+
+    EXPECTED BEHAVIOR: Pushes to ``main`` group per commit and are not
+    cancellable; every other ref groups per ref and stays cancellable.
+    """
+    yaml = pytest.importorskip("yaml")  # see the workflow test above
+    concurrency = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["concurrency"]
+
+    assert concurrency["group"] == (
+        "ci-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}"
+    )
+    assert concurrency["cancel-in-progress"] == "${{ github.ref != 'refs/heads/main' }}"

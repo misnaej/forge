@@ -70,15 +70,48 @@ strongest `bump:` level among the fragments the merge brought.
   `auto-tag`, including when `auto-tag` itself failed.
   - **What that wiring does not reach**: the job is gated on CI
     succeeding on a push to the default branch, so a merge whose CI went
-    red, whose run never fired, or whose runner died skips the job
-    entirely — the step never runs, and the next merge's `HEAD` window
-    cannot see backwards to the orphan. Those cases need `tag-gaps
-    --since <rev>` run deliberately, over a window that reaches back
-    past the suspect merge.
+    red, whose run never fired, whose runner died, or whose tag job was
+    evicted while queued behind two others in the single
+    `tag-release-main` concurrency group skips the job entirely — the
+    step never runs, and the next merge's `HEAD` window cannot see
+    backwards to the orphan. Those cases need `tag-gaps --since <rev>`
+    run deliberately, over a window that reaches back past the suspect
+    merge.
 - **One refusal is worth naming**: a remote applies its workflow-permission
   rule to tag pushes, so tagging a commit whose `.github/workflows/` state
   is not the one the branch tips hold is refused. `auto-tag` reports that
   cause and its remedy; the wording lives there, not here.
+
+### Why a push to the default branch gets its own concurrency group
+
+A pull request's runs are cancellable: only its newest head matters. A
+push to the default branch is not, because the job above fires on CI
+*success* — a cancelled `main` run cuts no tag, and that merge's release
+is lost with nothing reporting it.
+
+The group is keyed per **commit**, not shared with
+`cancel-in-progress: false`, because a concurrency group holds one
+running run plus only **one pending** run: a third arrival replaces the
+pending one, so a shared group still drops the middle merge of a
+three-merge burst. Per-commit groups never queue, so nothing can be
+evicted.
+
+`refs/heads/main` is written out in both halves of the expression, to
+match the `head_branch == 'main'` check in `tag-release.yml` — the
+default branch is named in both files and renaming it means changing
+both. Deliberately not `github.event.repository.default_branch`: that
+context is absent on some events, where it reads falsy and silently
+restores cancellation on `main`.
+
+`tag-release.yml` keeps its single `tag-release-main` group, so tag jobs
+stay serialized and each merge gets its own correctly-levelled tag. The
+burst case that can still evict a queued tag job is the one named under
+"What that wiring does not reach" above.
+
+**Invariant.** A push to the default branch is never cancelled and never
+left queueing: `ci.yml` groups those runs per commit. **Enforced by**
+`test_main_ci_runs_are_never_cancelled_and_never_queue` in
+`tests/test_ci_tree_gate.py`.
 
 **Invariant.** The increment is the strongest level among fragments new
 since the latest tag; an already-tagged fragment never bumps again.
@@ -90,6 +123,17 @@ since the latest tag; an already-tagged fragment never bumps again.
 **Invariant.** An invalid pending fragment blocks the tag rather than
 guessing the level. **Enforced by**
 `test_main_auto_tag_invalid_new_fragment_blocks`.
+
+**Invariant.** A `major` fragment carries type `upgrade`, so the release a
+consumer cannot adopt without acting always ships the notes saying what to
+do — a PR carries one fragment, so no sibling could hold them. **Enforced
+by** `test_validate_fragment_rejects_major_outside_upgrade_lane`,
+`test_validate_fragment_accepts_minor_upgrade` and
+`test_validate_fragment_bad_filename_skips_major_lane_check` in
+`tests/test_changelog_fragments.py`. A version whose notes are missing
+anyway is reported as a gap rather than as nothing owed —
+`test_print_upgrade_notes_warns_when_a_major_documents_no_lane` in
+`tests/test_upgrade.py`.
 
 **Invariant.** A tag that already exists, or appears mid-push, defers to
 the winner instead of failing. **Enforced by**

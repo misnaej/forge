@@ -66,7 +66,7 @@ import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from forge.changelog import restrand_changelog, top_release_heading
 from forge.config import is_fragments_mode, load_config, read_tool_forge_section
@@ -93,6 +93,7 @@ from forge.git_utils import (
     tag_on_remote,
     v_tags,
 )
+from forge.text_budget import ceiling
 
 
 if TYPE_CHECKING:
@@ -326,12 +327,111 @@ def _check_bullets(name: str, body: str) -> list[str]:
     ]
 
 
+#: Words a changelog bullet aims at. Deliberately small: the entry says
+#: what changed, and the reader decides from it whether a release affects
+#: them. Everything beyond that — why, how, what it supersedes — belongs
+#: in the commit, the PR or the code, each of which the reader can reach
+#: and none of which they are made to read first. Not a line budget and
+#: not scaled to the diff: a one-line fix and a rewrite each earn one
+#: bullet per thing that changed, and the bullet is short either way.
+BULLET_WORD_TARGET: Final[int] = 12
+
+#: Longest bullet excerpt quoted in the advisory, in characters.
+_NOTE_QUOTE_MAX: Final[int] = 80
+
+
+def long_bullets(body: str) -> list[tuple[str, int]]:
+    """Return the fragment's bullets that run past the word target.
+
+    One bullet per thing that changed is the rule the author applies;
+    this checks only the part a program can see — that each bullet is as
+    short as it can be. A count of bullets is deliberately not checked:
+    how many things changed is not derivable from a diff, and guessing it
+    from one would nag the entries that are right.
+
+    Args:
+        body: The fragment body, as validated.
+
+    Returns:
+        ``(bullet, word count)`` for each bullet over
+        :data:`BULLET_WORD_TARGET`, in document order.
+    """
+    long: list[tuple[str, int]] = []
+    for line in body.splitlines():
+        if not line.startswith("- "):
+            continue
+        words = len(line[2:].split())
+        if words > ceiling(BULLET_WORD_TARGET):
+            long.append((line.strip(), words))
+    return long
+
+
+def verbose_entry_note(body: str) -> str | None:
+    """Return an advisory when a fragment's bullets are longer than needed.
+
+    Advisory, never a refusal: forge refuses nothing on length
+    (:mod:`forge.text_budget`), and a gate that blocked a commit over
+    prose would cost more than the prose does. What it buys is the
+    question being asked while the entry is still cheap to cut.
+
+    Args:
+        body: The fragment body, as validated.
+
+    Returns:
+        One advisory line, or ``None`` when every bullet is short.
+    """
+    long = long_bullets(body)
+    if not long:
+        return None
+
+    worst, words = max(long, key=lambda pair: pair[1])
+    if len(worst) > _NOTE_QUOTE_MAX:
+        worst = worst[:_NOTE_QUOTE_MAX] + "…"
+    return (
+        f"ADVISORY: {len(long)} bullet(s) run long, worst at {words} words "
+        f"against about {BULLET_WORD_TARGET}. Say what changed in as few "
+        f"words as it takes and stop — the why belongs in the commit, not "
+        f"here. Longest: {worst}. Nothing refuses this."
+    )
+
+
+def _check_major_carries_upgrade_notes(name: str, ftype: str, level: str) -> list[str]:
+    """Require a ``major`` fragment to be the ``upgrade`` lane itself.
+
+    A major release is the one a consumer cannot take without acting, and
+    ``forge-upgrade`` reads exactly one lane to tell them what to do.
+    Nothing else can carry it: the gate admits **one** fragment per PR,
+    so a sibling ``<slug>.upgrade.md`` is not an option the author has —
+    the single fragment is either the upgrade note or there is none.
+
+    Args:
+        name: Fragment filename (for error messages).
+        ftype: The parsed type token.
+        level: The parsed bump level.
+
+    Returns:
+        One error when a major fragment sits in another lane, else none.
+    """
+    if level != "major" or ftype == "upgrade":
+        return []
+    return [
+        (
+            f"{name}: 'bump: major' requires type 'upgrade', not '{ftype}' — a "
+            f"major is what a consumer must act on, and `forge-upgrade` reads "
+            f"the upgrade lane to tell them how. A PR carries one fragment, so "
+            f"rename this to <slug>.upgrade.md and write the action in it; if "
+            f"nothing is owed on upgrade, the bump is not major."
+        )
+    ]
+
+
 def validate_fragment(path: Path) -> tuple[Fragment | None, list[str]]:
     """Parse *path* into a :class:`Fragment`, collecting every violation.
 
     The gate contract: filename must match ``<slug>.<type>.md`` with a
     known type; the body's first line must be ``bump: <level>`` with a
-    known level; no version-shaped string may appear in the filename or
+    known level; a ``major`` level must carry type ``upgrade``; no
+    version-shaped string may appear in the filename or
     body (level-only rule); no embedded ``## `` heading may appear in
     the body (assembly-structure injection); every body line is a ``- ``
     bullet or an indented continuation.
@@ -368,6 +468,11 @@ def _validate_fragment_text(path: Path, text: str) -> tuple[Fragment | None, lis
     content_errors = _check_no_versions_or_headings(name, body, body_line)
     if body:
         content_errors += _check_bullets(name, body)
+    # Only once both halves parsed: a filename or bump error already told
+    # the author what to fix, and a cross-check over an unparsed token
+    # would name a lane that is not what they wrote.
+    if not filename_errors and not bump_errors:
+        content_errors += _check_major_carries_upgrade_notes(name, ftype, level)
     errors = filename_errors + bump_errors + content_errors
     if errors:
         return None, errors

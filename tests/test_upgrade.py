@@ -1153,6 +1153,40 @@ def test_consumer_upgrade_notes_none_when_no_lanes() -> None:
     assert upgrade._consumer_upgrade_notes(text) is None
 
 
+_MAJOR_LANE = "### ⚠️ Upgrade notes\n- Breaking: do X.\n"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        pytest.param(
+            "## v2.0.0 — x\n\n- a\n\n## v1.9.0 — y\n\n- b\n",
+            ["v2.0.0"],
+            id="major-without-lane",
+        ),
+        pytest.param(
+            f"## v2.0.0 — x\n\n{_MAJOR_LANE}\n## v1.9.0 — y\n\n- b\n",
+            [],
+            id="major-with-lane",
+        ),
+        pytest.param(
+            "## v1.10.0 — x\n\n- a\n\n## v1.9.0 — y\n\n- b\n",
+            [],
+            id="minor-without-lane",
+        ),
+        pytest.param("## v2.0.0 — x\n\n- a\n", [], id="first-release-only-heading"),
+    ],
+)
+def test_majors_missing_upgrade_notes(text: str, expected: list[str]) -> None:
+    """Only a major heading with no lane is a gap; a first release has no baseline.
+
+    Args:
+        text: Inline changelog contents.
+        expected: Headings reported as missing a lane.
+    """
+    assert upgrade._majors_missing_upgrade_notes(text) == expected
+
+
 def test_read_changelog_returns_packaged_text() -> None:
     """The changelog ships as package data and reads back as the real file."""
     text = upgrade._read_changelog()
@@ -1544,6 +1578,26 @@ def test_print_upgrade_notes_omits_action_section_when_none(
     msgs = " ".join(r.getMessage() for r in caplog.records)
     assert "do X" in msgs
     assert "Action required" not in msgs
+
+
+def test_print_upgrade_notes_warns_when_a_major_documents_no_lane(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A notes-less, action-less changelog still warns about an undocumented major.
+
+    MOCK SETUP: `_read_changelog` returns a changelog whose newest heading is
+    a major with no upgrade lane and no action marker, so only the gap
+    check has anything to say.
+    EXPECTED BEHAVIOR: a WARNING names the version; silence here would let
+    the reader infer nothing is owed.
+    """
+    text = "# Changelog\n\n## v2.0.0 — x\n\n- a\n\n## v1.9.0 — y\n\n- b\n"
+    monkeypatch.setattr(upgrade, "_read_changelog", lambda: text)
+    with caplog.at_level("INFO"):
+        upgrade._print_upgrade_notes()
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("No upgrade notes are documented for v2.0.0" in m for m in warnings)
 
 
 _TWO_RELEASE_CHANGELOG = """# Changelog

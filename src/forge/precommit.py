@@ -94,7 +94,12 @@ from forge.changelog import (
     stranded_added_versions,
     wants_no_version,
 )
-from forge.changelog_fragments import FRAGMENTS_DIR, branch_added_fragments
+from forge.changelog_fragments import (
+    FRAGMENTS_DIR,
+    branch_added_fragments,
+    validate_fragment,
+    verbose_entry_note,
+)
 from forge.changelog_fragments import check_pending as check_pending_fragments
 from forge.changelog_fragments import check_staged as check_staged_fragments
 from forge.config import installed_console_scripts, resolve_model_section
@@ -2507,6 +2512,31 @@ def _tag_only_on_base(repo_root: Path, tag: str, base_branch: str) -> bool:
     )
 
 
+def _fragment_brevity_advisory(repo_root: Path, added: list[str]) -> str:
+    """Return a brevity advisory for this branch's fragment, or "".
+
+    Appended to the gate's own output rather than failing it: how short a
+    sentence can be is a judgement, and the gate's refusals are reserved
+    for what is checkable. Silent unless the branch adds exactly one
+    valid fragment — an advisory about an entry that does not parse would
+    bury the error that matters.
+
+    Args:
+        repo_root: Repository root directory.
+        added: Fragment paths the branch adds, relative to the root.
+
+    Returns:
+        A newline-prefixed advisory, or an empty string.
+    """
+    if len(added) != 1:
+        return ""
+    fragment, errors = validate_fragment(repo_root / added[0])
+    if fragment is None or errors:
+        return ""
+    note = verbose_entry_note(fragment.body)
+    return f"\n{note}" if note else ""
+
+
 def _changelog_version_skip_gate(repo_root: Path) -> StepResult | None:
     """Check all skip conditions for changelog_version step.
 
@@ -2560,6 +2590,7 @@ def _changelog_version_skip_gate(repo_root: Path) -> StepResult | None:
                 "the slug names the change, not the category — "
                 "`fixes.fixed.md` collides with another PR's)."
             )
+        advisory = _fragment_brevity_advisory(repo_root, added)
         return StepResult(
             name=name,
             passed=not errors,
@@ -2568,7 +2599,7 @@ def _changelog_version_skip_gate(repo_root: Path) -> StepResult | None:
                 f"against base {base_ref or 'unresolved'}; branch adds "
                 f"{len(added)} ({', '.join(added) or 'none'}) "
                 "(CHANGELOG.md is assembled at release, never read as a "
-                "version signal)."
+                "version signal)." + advisory
                 if not errors
                 else "Fragment mode — invalid changelog.d/ fragment(s):\n"
                 + "\n".join(errors)

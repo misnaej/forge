@@ -23,10 +23,12 @@ from forge.changelog_fragments import (
     branch_added_fragments,
     check_pending,
     discover_fragments,
+    long_bullets,
     main,
     max_level,
     plan_assembly,
     validate_fragment,
+    verbose_entry_note,
 )
 from forge.upgrade import _consumer_upgrade_notes
 from tests.conftest import (
@@ -437,6 +439,35 @@ def test_validate_fragment_accepts_upgrade_type(tmp_path: Path) -> None:
     assert fragment.type == "upgrade"
 
 
+def test_validate_fragment_rejects_major_outside_upgrade_lane(
+    tmp_path: Path,
+) -> None:
+    """A major in any lane but ``upgrade`` is refused, naming the file."""
+    path = _write_fragment(tmp_path, "big.added.md", "bump: major\n- breaking\n")
+    fragment, errors = validate_fragment(path)
+    assert fragment is None
+    assert any("requires type 'upgrade'" in e and "big.added.md" in e for e in errors)
+
+
+def test_validate_fragment_accepts_minor_upgrade(tmp_path: Path) -> None:
+    """The rule keys on the level: an ``upgrade`` fragment need not be major."""
+    path = _write_fragment(tmp_path, "tweak.upgrade.md", "bump: minor\n- run x\n")
+    fragment, errors = validate_fragment(path)
+    assert errors == []
+    assert fragment is not None
+
+
+def test_validate_fragment_bad_filename_skips_major_lane_check(
+    tmp_path: Path,
+) -> None:
+    """An unparseable filename reports only itself, not a lane complaint too."""
+    path = _write_fragment(tmp_path, "x.bogus.md", "bump: major\n- breaking\n")
+    fragment, errors = validate_fragment(path)
+    assert fragment is None
+    assert errors
+    assert not any("requires type" in e for e in errors)
+
+
 def test_assemble_changelog_renders_upgrade_notes_before_features() -> None:
     """The upgrade lane leads the entry, ahead of every other group."""
     fragments = [
@@ -570,7 +601,8 @@ def test_plan_assembly_uses_max_level_of_untagged(
     """
     directory = tmp_path / "changelog.d"
     for i, level in enumerate(levels):
-        _write_fragment(directory, f"f{i}.added.md", f"bump: {level}\n- x\n")
+        ftype = "upgrade" if level == "major" else "added"
+        _write_fragment(directory, f"f{i}.{ftype}.md", f"bump: {level}\n- x\n")
     plan = plan_assembly(tmp_path, "v1.2.3")
     assert plan is not None
     assert (plan.version, plan.level) == expected
@@ -1384,7 +1416,7 @@ def test_main_auto_tag_takes_strongest_new_level(
     init_autotag_repo(repo, origin)
     monkeypatch.setattr(changelog_fragments, "repo_root", lambda: repo)
     assert main(["auto-tag"]) == 0
-    (repo / "changelog.d" / "big.added.md").write_text("bump: major\n- breaking\n")
+    (repo / "changelog.d" / "big.upgrade.md").write_text("bump: major\n- breaking\n")
     commit_all(repo, "feat: breaking")
     capsys.readouterr()
 
@@ -2686,3 +2718,56 @@ def test_branch_added_fragments_excludes_parent_prs_fragment_on_stacked_branch(
     )
 
     assert branch_added_fragments(work) == ["changelog.d/child.added.md"]
+
+
+# ---------------------------------------------------------------------------
+# Bullet brevity advisory
+# ---------------------------------------------------------------------------
+
+
+def _bullet_of(words: int) -> str:
+    """Return one ``- `` bullet line of exactly *words* words.
+
+    Args:
+        words: Word count of the bullet text.
+
+    Returns:
+        The bullet line, newline-terminated.
+    """
+    return "- " + " ".join(f"w{i}" for i in range(words)) + "\n"
+
+
+def test_long_bullets_boundary_fourteen_ok_fifteen_flagged() -> None:
+    """BEHAVIOR: 14 words is within the ceiling, 15 is returned with its count."""
+    assert long_bullets(_bullet_of(14)) == []
+    found = long_bullets(_bullet_of(14) + _bullet_of(15))
+    assert [count for _bullet, count in found] == [15]
+
+
+def test_long_bullets_ignores_non_bullet_lines() -> None:
+    """BEHAVIOR: long prose that is not a ``- `` bullet is not counted."""
+    assert long_bullets("bump: minor\n" + "word " * 40 + "\n") == []
+
+
+def test_verbose_entry_note_silent_for_short_or_bulletless_body() -> None:
+    """BEHAVIOR: all-short bullets and a bullet-less body draw no advisory."""
+    assert verbose_entry_note(_bullet_of(5) + _bullet_of(14)) is None
+    assert verbose_entry_note("") is None
+    assert verbose_entry_note("prose, no bullets at all\n") is None
+
+
+def test_verbose_entry_note_names_worst_count_and_truncates() -> None:
+    """BEHAVIOR: advisory carries the worst word count and a truncated bullet."""
+    body = _bullet_of(15) + _bullet_of(40)
+    note = verbose_entry_note(body)
+    assert note is not None
+    assert "2 bullet(s)" in note
+    assert "40 words" in note
+    full_bullet = body.splitlines()[1]
+    assert full_bullet not in note
+    assert full_bullet[:80] in note
+
+
+def test_verbose_entry_note_accepts_many_short_bullets() -> None:
+    """BEHAVIOR: a long entry of short bullets is fine; only long bullets nag."""
+    assert verbose_entry_note(_bullet_of(9) * 15) is None

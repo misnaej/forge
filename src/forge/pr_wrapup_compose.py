@@ -71,6 +71,72 @@ _SLOT_RE: Final[re.Pattern[str]] = re.compile(
 # them, and that module imports this one.
 WORD_BUDGET: Final[int] = 120
 FINDING_ALLOWANCE: Final[int] = 40
+
+
+#: The labels a summary bullet may open with, in reading order.
+#:
+#: The first three are outcomes, the last two are what the reader may have
+#: to act on, so good and bad news separate at a glance instead of having
+#: to be read out of prose. `verified` is deliberately distinct from
+#: `fixed`: a claim that was checked and a change that was made send a
+#: reviewer to different places.
+SUMMARY_LABELS: Final[tuple[str, ...]] = (
+    "shipped",
+    "fixed",
+    "verified",
+    "deferred",
+    "blocked",
+)
+
+
+def unlabelled_summary_bullets(body: list[str]) -> list[str]:
+    """Return summary bullets that open with no known label.
+
+    A bullet is labelled when its text begins with one of
+    :data:`SUMMARY_LABELS` in bold, as ``- **shipped:** …``. Lines that
+    are not bullets are not judged here: a short lead line above the
+    bullets is allowed, and the word budget already discourages prose.
+
+    Args:
+        body: The summary section's lines.
+
+    Returns:
+        The offending bullet lines, trimmed; empty when every bullet
+        carries a label.
+    """
+    allowed = {f"**{label}:**" for label in SUMMARY_LABELS}
+    bad: list[str] = []
+    for raw in body:
+        line = raw.strip()
+        if not line.startswith("- "):
+            continue
+        first = line[2:].strip().split(" ", 1)[0]
+        if first.casefold() not in allowed:
+            bad.append(line)
+    return bad
+
+
+def word_budget(findings: int) -> int:
+    """Return the wrap-up's word target for *findings* findings sections.
+
+    The one place the arithmetic lives, because two callers must agree:
+    ``compose`` quotes it when it writes the slots, and ``validate``
+    measures the finished file against it. They count *findings*
+    differently and unavoidably — ``compose`` counts the slots it wrote,
+    before anyone fills them, while ``validate`` counts the sections that
+    ended up reporting findings — so ``compose``'s figure is the upper
+    bound and says so. Were the formula duplicated instead, the two would
+    also be free to drift.
+
+    Args:
+        findings: Number of sections carrying findings prose.
+
+    Returns:
+        The target word count.
+    """
+    return WORD_BUDGET + FINDING_ALLOWANCE * findings
+
+
 _BACKTICK_RUN_RE: Final[re.Pattern[str]] = re.compile(r"`+")
 _NAME_MAX: Final[int] = 60
 _NAMES_SHOWN: Final[int] = 5
@@ -291,7 +357,11 @@ def render_wrapup(inputs: ComposeInputs) -> str:
             msg = "the prior-art report has no `prior-art-searched:` line"
             raise ComposeError(msg)
         out.append(prior)
-    out += ["", slot("summary", "one line"), ""]
+    out += [
+        "",
+        slot("summary", f"labelled bullets — {', '.join(SUMMARY_LABELS)}"),
+        "",
+    ]
     for title, reporter in REPORTER_SECTIONS:
         out += [f"## {title}", "", *_reporter_body(reporter, inputs), ""]
     out += ["## Issue Management", "", inputs.issue_management, ""]
