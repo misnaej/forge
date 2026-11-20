@@ -78,6 +78,7 @@ from forge.pr_delta import (
     PROVENANCE_GATE_STEPS,
     VERIFIED_AT_RE,
     VERIFIED_BASE_RE,
+    extract_verified_bases,
     extract_verified_shas,
     fenced_line_indexes,
     find_closing_refs,
@@ -850,6 +851,7 @@ def post_gates(
     *,
     behind: int | None,
     emergency: bool,
+    verified_base: str | None = None,
 ) -> tuple[list[str], list[str]]:
     """Decide whether a wrap-up may be published on the PR as it is now.
 
@@ -865,6 +867,10 @@ def post_gates(
             when that could not be determined.
         emergency: Whether the wrap-up is the recorded emergency PR's,
             which may be behind base (never conflicting).
+        verified_base: The wrap-up's ``verified-base:`` header, ``None``
+            when it carries none (older wrap-ups predate the header). A
+            mismatch with the PR's current base refuses, mirroring
+            :func:`forge.pr_plan.wrapup_freshness`'s retarget verdict.
 
     Returns:
         ``(refusals, notes)`` — any refusal blocks the post; notes only inform.
@@ -878,6 +884,11 @@ def post_gates(
         refusals.append(
             f"the wrap-up verifies {verified_sha} but the PR head is "
             f"{head[:12] or 'unknown'} — re-verify with {rerun} (delta)"
+        )
+    if verified_base and verified_base != base:
+        refusals.append(
+            f"the wrap-up verifies against base {verified_base} but the PR "
+            f"targets {base} — re-verify with {rerun} (delta)"
         )
     sync = base_sync(str(view.get("mergeable") or ""), behind)
     if sync.mergeable_unknown:
@@ -1326,11 +1337,13 @@ def _gate_post(root: Path, view: dict[str, object], text: str, pr: int) -> list[
         if fetch_quietly(root, "origin", base)
         else None
     )
+    verified_bases = extract_verified_bases(text)
     refusals, notes = post_gates(
         view,
         extract_verified_shas(text)[0],
         behind=counts[0] if counts is not None else None,
         emergency=_is_emergency_post(root, text, pr),
+        verified_base=verified_bases[0] if verified_bases else None,
     )
     for note in notes:
         emit(f"pr-wrapup: note: {note}")
