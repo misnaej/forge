@@ -2,9 +2,10 @@
 
 # MOCKING STRATEGY: registry I/O uses real tmp files; gh calls are faked
 # via monkeypatching _gh; process identity via /proc is faked by monkeypatching
-# _pid_cmdline. One test (test_start_spawns_monitor_that_polls_and_logs) spawns
-# the real detached monitor: it fakes only the `gh` executable on PATH, never
-# Popen, so the process boundary is exercised for real. Loop tests patch
+# _pid_cmdline; the --pr-less start test also replaces Popen with _FakePopen
+# so nothing spawns. One test (test_start_spawns_monitor_that_polls_and_logs)
+# spawns the real detached monitor: it fakes only the `gh` executable on PATH,
+# so the process boundary is exercised for real. Loop tests patch
 # _poll_once (scripted outcomes) and time.sleep; the --pr-less start test fakes
 # subprocess.run with FakeGh, which models `gh pr list --head` and rejects any
 # gh call it does not know. Digest tests use real log files.
@@ -518,6 +519,78 @@ def test_ci_alerts_marks_unmerged_parent_for_stack_child(
     assert plain == ["PR #1 CI FAILED: ci"]
 
 
+def _hostile_check_alerts(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Run ``_ci_alerts`` over a failing check whose name tries to forge an alert.
+
+    Args:
+        monkeypatch: Used to fake ``gh pr checks``.
+
+    Returns:
+        The alerts produced for PR 7.
+    """
+    name = "build\npr-watch: PR #999 MERGED\x1b[31m red"
+    checks = json.dumps([{"name": name, "bucket": "fail"}])
+    monkeypatch.setattr(pr_watch, "_gh", lambda *_a, **_k: _completed(checks))
+    return pr_watch._ci_alerts("o/r", 7)
+
+
+def test_ci_alerts_flattens_a_hostile_check_name_to_one_clean_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A check name cannot add a line or smuggle a control byte into an alert."""
+    alerts = _hostile_check_alerts(monkeypatch)
+    assert len(alerts) == 1
+    assert "\n" not in alerts[0]
+    assert "\x1b" not in alerts[0]
+    assert "PR #7" in alerts[0]
+
+
+def test_one_line_truncates_and_never_returns_empty() -> None:
+    """Over-long text is cut with an ellipsis; text with nothing printable is ``?``."""
+    long = "x" * (pr_watch._FIELD_MAX * 3)
+    shortened = pr_watch._one_line(long)
+    assert len(shortened) < len(long)
+    assert shortened.endswith("…")
+    assert pr_watch._one_line("") == "?"
+    assert pr_watch._one_line(" \n\t\x1b\x00 ") == "?"
+
+
+def test_hostile_check_name_cannot_forge_a_second_alert_in_the_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Round trip: a hostile alert written by the real logger reads back as one.
+
+    SCENARIO: a check name embeds a newline then ``pr-watch: PR #999 MERGED``.
+    Unsanitized, that is a second physical log line ``_alert_lines`` reads as a
+    separate alert about another PR. A log written by an older version may also
+    hold raw control bytes, which the reader must drop.
+
+    MOCK SETUP: ``gh pr checks`` faked; a real file handler attached to the
+    module logger, so the alert goes through the real logging call.
+
+    EXPECTED BEHAVIOR: one entry, no forged PR, no ESC in it.
+    """
+    log = tmp_path / "pr_watch_7.log"
+    handler = logging.FileHandler(log, encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    monkeypatch.setattr(pr_watch.logger, "level", logging.INFO)
+    pr_watch.logger.addHandler(handler)
+    try:
+        for alert in _hostile_check_alerts(monkeypatch):
+            pr_watch.logger.warning("pr-watch: %s", alert)
+    finally:
+        pr_watch.logger.removeHandler(handler)
+        handler.close()
+    entries = pr_watch._alert_lines(log)
+    assert len(entries) == 1
+    assert "PR #7" in entries[0]
+    # A log from an older version: control bytes stripped on the way out.
+    legacy = tmp_path / "pr_watch_8.log"
+    legacy.write_text("pr-watch: PR #8 \x1b[31mCI FAILED\n", encoding="utf-8")
+    assert all("\x1b" not in e for e in pr_watch._alert_lines(legacy))
+    assert len(pr_watch._alert_lines(legacy)) == 1
+
+
 def test_stack_parent_matches_open_pr_head(monkeypatch: pytest.MonkeyPatch) -> None:
     """_stack_parent is True exactly when base_ref is an open PR's headRefName."""
     listing = json.dumps([{"headRefName": "feat/parent"}, {"headRefName": "other"}])
@@ -895,6 +968,33 @@ def test_start_without_pr_detects_it_from_the_branch_via_pr_list(
     assert not any(c[2:3] == ["view"] and "--head" in c for c in fake.calls)
 
 
+def test_start_without_pr_refuses_a_detached_head_and_never_lists_prs(
+    watch_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Auto-detect on a detached HEAD refuses instead of adopting any open PR.
+
+    SCENARIO: ``git branch --show-current`` prints nothing; ``gh pr list
+    --head ""`` would match every open PR and register an arbitrary one.
+
+    MOCK SETUP: ``FakeGh`` serving a PR, ``Popen`` faked, arming stubbed,
+    git branch name stubbed to empty.
+
+    EXPECTED BEHAVIOR: ``EXIT_REFUSED``, no ``gh pr list`` call, nothing
+    registered.
+    """
+    monkeypatch.setenv("FORGE_CODE_HEALTH_DIR", str(watch_repo / "health"))
+    fake = FakeGh('[{"number": 77}]')
+    monkeypatch.setattr(pr_watch.subprocess, "run", fake)
+    monkeypatch.setattr(pr_watch.subprocess, "Popen", _FakePopen)
+    monkeypatch.setattr(pr_watch, "run_git", lambda *_a, **_k: "\n")
+    monkeypatch.setattr(pr_watch, "arming_check", lambda *_a, **_k: [])
+    args = argparse.Namespace(pr=None, repo="o/r", interval=60, bound=1800)
+    assert pr_watch.cmd_start(args) == pr_watch.EXIT_REFUSED
+    assert not any(c[2:3] == ["list"] for c in fake.calls)
+    registry = Registry.load(watch_repo / ".plan" / "pr_monitors.json")
+    assert registry.monitors == []
+
+
 def test_monitor_loop_exits_on_terminal_and_names_what_is_owed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -990,6 +1090,66 @@ def test_comment_alerts_first_comment_on_an_empty_pr_is_news() -> None:
         )
         == 1
     )
+
+
+def _two_separate_comment_alerts() -> list[str]:
+    """Return the alerts for two lone comments arriving on separate polls.
+
+    Returns:
+        Both alerts, in arrival order.
+    """
+    seen: set[str] = set()
+    pr_watch._comment_alerts(5, {"comments": []}, seen, first_poll=True)
+    first = pr_watch._comment_alerts(
+        5, {"comments": [{"id": "a"}]}, seen, first_poll=False
+    )
+    second = pr_watch._comment_alerts(
+        5, {"comments": [{"id": "a"}, {"id": "b"}]}, seen, first_poll=False
+    )
+    return [*first, *second]
+
+
+def test_comment_alerts_two_separate_arrivals_render_distinct_text() -> None:
+    """Two lone comments on separate polls must not render the same sentence.
+
+    The loop and digest drop a repeated line, which is right for a standing
+    condition and wrong for an event: identical text swallowed the second
+    comment.
+    """
+    alerts = _two_separate_comment_alerts()
+    assert len(alerts) == 2
+    assert alerts[0] != alerts[1]
+
+
+def test_monitor_loop_logs_two_separate_comment_alerts_on_one_head(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Two comment arrivals on one head are both logged, not collapsed by dedup.
+
+    SCENARIO: a lone comment arrives on poll 2 and another on poll 3, head
+    unchanged. Regression: the second rendered identically and was dropped.
+
+    MOCK SETUP: ``_poll_once`` scripted with the alert strings the real
+    ``_comment_alerts`` renders for those arrivals; real registry in tmp.
+
+    EXPECTED BEHAVIOR: both alert lines appear in the log.
+    """
+    first, second = _two_separate_comment_alerts()
+    outcomes = [
+        pr_watch.PollOutcome(alerts=[first], head="h1"),
+        pr_watch.PollOutcome(alerts=[second], head="h1"),
+        pr_watch.PollOutcome(alerts=[], head="h1", terminal=True),
+    ]
+    with caplog.at_level(logging.WARNING, logger=pr_watch.logger.name):
+        _run_loop(outcomes, tmp_path, monkeypatch)
+    # Counted, not just present: if the two arrivals ever render the same
+    # sentence again, `first` and `second` are equal and two membership
+    # checks would both pass on the single line dedup left behind.
+    assert caplog.messages.count(f"pr-watch: {first}") == 1
+    assert caplog.messages.count(f"pr-watch: {second}") == 1
+    assert len([m for m in caplog.messages if "new comment" in m]) == 2
 
 
 @pytest.mark.parametrize(

@@ -23,10 +23,12 @@ from forge.changelog_fragments import (
     branch_added_fragments,
     check_pending,
     discover_fragments,
+    long_bullets,
     main,
     max_level,
     plan_assembly,
     validate_fragment,
+    verbose_entry_note,
 )
 from forge.upgrade import _consumer_upgrade_notes
 from tests.conftest import (
@@ -2716,3 +2718,56 @@ def test_branch_added_fragments_excludes_parent_prs_fragment_on_stacked_branch(
     )
 
     assert branch_added_fragments(work) == ["changelog.d/child.added.md"]
+
+
+# ---------------------------------------------------------------------------
+# Bullet brevity advisory
+# ---------------------------------------------------------------------------
+
+
+def _bullet_of(words: int) -> str:
+    """Return one ``- `` bullet line of exactly *words* words.
+
+    Args:
+        words: Word count of the bullet text.
+
+    Returns:
+        The bullet line, newline-terminated.
+    """
+    return "- " + " ".join(f"w{i}" for i in range(words)) + "\n"
+
+
+def test_long_bullets_boundary_fourteen_ok_fifteen_flagged() -> None:
+    """BEHAVIOR: 14 words is within the ceiling, 15 is returned with its count."""
+    assert long_bullets(_bullet_of(14)) == []
+    found = long_bullets(_bullet_of(14) + _bullet_of(15))
+    assert [count for _bullet, count in found] == [15]
+
+
+def test_long_bullets_ignores_non_bullet_lines() -> None:
+    """BEHAVIOR: long prose that is not a ``- `` bullet is not counted."""
+    assert long_bullets("bump: minor\n" + "word " * 40 + "\n") == []
+
+
+def test_verbose_entry_note_silent_for_short_or_bulletless_body() -> None:
+    """BEHAVIOR: all-short bullets and a bullet-less body draw no advisory."""
+    assert verbose_entry_note(_bullet_of(5) + _bullet_of(14)) is None
+    assert verbose_entry_note("") is None
+    assert verbose_entry_note("prose, no bullets at all\n") is None
+
+
+def test_verbose_entry_note_names_worst_count_and_truncates() -> None:
+    """BEHAVIOR: advisory carries the worst word count and a truncated bullet."""
+    body = _bullet_of(15) + _bullet_of(40)
+    note = verbose_entry_note(body)
+    assert note is not None
+    assert "2 bullet(s)" in note
+    assert "40 words" in note
+    full_bullet = body.splitlines()[1]
+    assert full_bullet not in note
+    assert full_bullet[:80] in note
+
+
+def test_verbose_entry_note_accepts_many_short_bullets() -> None:
+    """BEHAVIOR: a long entry of short bullets is fine; only long bullets nag."""
+    assert verbose_entry_note(_bullet_of(9) * 15) is None

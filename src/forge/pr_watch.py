@@ -14,6 +14,9 @@ session improvises a detached process whose only record is a pid:
   command line matches before signalling; a stale record is removed
   without signalling, never killed by pid alone. A live monitor that
   refuses the signal stays registered and is reported as kept.
+- ``digest`` prints the distinct alerts in every monitor log, which is
+  how a detached monitor's findings reach a session.
+- ``stack`` lists open PRs in stack (dependency) order with state.
 
 The command self-skips under :func:`forge.run_context.is_ci` — CI has
 no human to receive alerts.
@@ -36,7 +39,8 @@ Registry format (``.plan/pr_monitors.json``)::
 Each monitor's own output — the alerts it raises and any crash — goes to
 ``code_health/pr_watch_<pr>.log``, truncated when that PR's monitor starts.
 That file is the only channel: the monitor runs detached, so nothing it
-writes reaches the session that started it.
+writes reaches a session unless something reads the file — ``digest`` does.
+A monitor exits on its own once its PR is merged or closed.
 """
 
 from __future__ import annotations
@@ -329,6 +333,8 @@ class PollOutcome:
             "once per new head" is decidable without a second call.
         terminal: Whether the PR is merged or closed, so there is
             nothing left to watch.
+        ok: Whether the poll read the PR; ``False`` when ``gh`` failed, so
+            the loop does not take a blind poll as the comment baseline.
     """
 
     alerts: list[str]
@@ -374,10 +380,15 @@ def _comment_alerts(
     seen.update(identities)
     if first_poll or not fresh:
         return []
+    # The running total is what makes two separate arrivals distinguishable.
+    # The loop and `digest` both drop an alert whose text repeats, which is
+    # right for a standing condition and wrong for an event: without the
+    # total, a second lone comment renders the same sentence as the first,
+    # and that second comment is never reported at all.
     return [
         (
-            f"PR #{pr}: {len(fresh)} new comment(s) — review and reply via "
-            "/forge-pr-comments"
+            f"PR #{pr}: {len(fresh)} new comment(s), {len(seen)} total — "
+            "review and reply via /forge-pr-comments"
         )
     ]
 
@@ -503,6 +514,38 @@ def _state_alerts(
     return alerts
 
 
+#: Longest a GitHub-supplied string may be inside an alert line.
+_FIELD_MAX: Final = 120
+
+
+def _one_line(text: str) -> str:
+    """Flatten a GitHub-supplied string to one printable line.
+
+    Alert lines are written to a log that ``digest`` reads back and an
+    agent is told to act on, so a field GitHub lets anyone choose — a
+    check's name comes from a workflow or job ``name:`` — must not be
+    able to shape that log. A newline would end the line and start one
+    that looks like a second alert, able to name another PR or to read
+    as an instruction; a control byte would reach the reader's terminal
+    as an escape sequence.
+
+    Collapses whitespace (newlines included), drops anything
+    unprintable, and truncates: a long name is worth less than a
+    readable log.
+
+    Args:
+        text: The GitHub-supplied value.
+
+    Returns:
+        A single-line printable rendering, never empty.
+    """
+    flat = " ".join(str(text).split())
+    printable = "".join(c for c in flat if c.isprintable())
+    if len(printable) > _FIELD_MAX:
+        printable = printable[:_FIELD_MAX] + "…"
+    return printable or "?"
+
+
 def _ci_alerts(
     repo: str, pr: int, *, stack_child: bool = False, base_ref: str = ""
 ) -> list[str]:
@@ -531,9 +574,13 @@ def _ci_alerts(
         return []
     if not isinstance(checks, list):
         return []
-    marker = f" (CI run against unmerged parent base {base_ref})" if stack_child else ""
+    marker = (
+        f" (CI run against unmerged parent base {_one_line(base_ref)})"
+        if stack_child
+        else ""
+    )
     return [
-        f"PR #{pr} CI FAILED: {c.get('name', '?')}{marker}"
+        f"PR #{pr} CI FAILED: {_one_line(str(c.get('name', '?')))}{marker}"
         for c in checks
         if isinstance(c, dict) and c.get("bucket") == "fail"
     ]
@@ -581,7 +628,12 @@ def _staleness_alerts(repo: str, pr: int) -> list[str]:
 def _monitor_loop(
     repo: str, pr: int, interval: int, bound: int, registry_path: Path
 ) -> None:
-    """The bounded poll loop (runs in the spawned child process).
+    """Poll until the bound expires or the PR reaches a terminal state.
+
+    Runs in the spawned child process. Each distinct alert is logged once
+    per head SHA, so a standing condition is not restated every poll. The
+    comment baseline is set by the first poll that read the PR, and the loop
+    returns early, logging the cleanup owed, when the PR is merged or closed.
 
     Takes the registry as an absolute path and resolves nothing itself, so
     the child needs no checkout of its own: it runs detached and may
@@ -649,7 +701,7 @@ def _monitor_loop(
         "what remains is unwatched. Restart with forge-pr-watch start --pr %d.",
         bound,
         pr,
-        int((bound) / max(interval, 1)),
+        polls,
         pr,
     )
 
@@ -671,6 +723,64 @@ def cmd_monitor(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _auto_detect_pr(root: Path, repo: str) -> int | None:
+    """Find the open PR for the current branch.
+
+    Args:
+        root: Repository root; its checked-out branch is queried.
+        repo: ``owner/repo`` slug for the GitHub lookup.
+
+    Returns:
+        The PR number, or ``None`` when HEAD is detached or no open PR matches.
+    """
+    # `gh pr list --head` is the branch-scoped query; `gh pr view` has no
+    # `--head` flag, so the form this used to send always exited non-zero and
+    # every `--pr`-less start refused with "no PR found".
+    try:
+        branch = run_git("branch", "--show-current", cwd=root).strip()
+        if not branch:
+            # Detached HEAD. An empty --head matches every open PR, so
+            # auto-detect would adopt an arbitrary one.
+            logger.error(
+                "pr-watch: HEAD is detached, so no branch names a PR; pass --pr N."
+            )
+            return None
+        proc = subprocess.run(
+            [
+                "gh",
+                "pr",
+                "list",
+                "--head",
+                branch,
+                "--state",
+                "open",
+                "--repo",
+                repo,
+                "--json",
+                "number",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=GH_TIMEOUT_S,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return None
+        found = json.loads(proc.stdout)
+        if isinstance(found, list) and found:
+            return int(found[0]["number"])
+    except (
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        json.JSONDecodeError,
+        KeyError,
+        IndexError,
+        TypeError,
+    ):
+        return None
+    return None
+
+
 def cmd_start(args: argparse.Namespace) -> int:
     """Start a bounded monitor for a PR.
 
@@ -690,52 +800,43 @@ def cmd_start(args: argparse.Namespace) -> int:
         return EXIT_REFUSED
     pr = args.pr
     if pr is None:
-        # Auto-detect from the current branch. `gh pr list --head` is the
-        # branch-scoped query; `gh pr view` has no `--head` flag, so the
-        # form this used to send always exited non-zero and every
-        # `--pr`-less start refused with "no PR found".
-        try:
-            branch = run_git("branch", "--show-current", cwd=root).strip()
-            proc = subprocess.run(
-                [
-                    "gh",
-                    "pr",
-                    "list",
-                    "--head",
-                    branch,
-                    "--state",
-                    "open",
-                    "--repo",
-                    repo,
-                    "--json",
-                    "number",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=GH_TIMEOUT_S,
-                check=False,
-            )
-            if proc.returncode == 0:
-                found = json.loads(proc.stdout)
-                if isinstance(found, list) and found:
-                    pr = int(found[0]["number"])
-        except (
-            subprocess.CalledProcessError,
-            subprocess.TimeoutExpired,
-            json.JSONDecodeError,
-            KeyError,
-            IndexError,
-            TypeError,
-        ):
-            pass
-        if pr is None:
-            logger.error("pr-watch: no PR found for the current branch; pass --pr N.")
-            return EXIT_REFUSED
+        pr = _auto_detect_pr(root, repo)
+    if pr is None:
+        logger.error("pr-watch: no PR found for the current branch; pass --pr N.")
+        return EXIT_REFUSED
     failures = arming_check(repo, pr)
     if failures:
         for f in failures:
             logger.error("pr-watch: arming check failed — %s", f)
         return EXIT_ARMING_FAILED
+    pid, log_path = _spawn_monitor(root, repo, pr, args)
+    logger.info(
+        "pr-watch: started monitor pid %d for PR #%d (%s), interval %ds, bound %ds. "
+        "Alerts and any crash go to %s.",
+        pid,
+        pr,
+        repo,
+        args.interval,
+        args.bound,
+        log_path,
+    )
+    return EXIT_OK
+
+
+def _spawn_monitor(
+    root: Path, repo: str, pr: int, args: argparse.Namespace
+) -> tuple[int, Path]:
+    """Spawn the detached poll loop for a PR and record it in the registry.
+
+    Args:
+        root: Repository root; holds the registry and the monitor log.
+        repo: ``owner/repo`` slug the monitor polls.
+        pr: PR number to watch.
+        args: Parsed CLI arguments; ``interval`` and ``bound`` are passed on.
+
+    Returns:
+        The child's pid and the path of the log file it writes to.
+    """
     # Spawn the detached monitor process. Run it as a subcommand, never as a
     # `python -c` string: argparse converts each argument inside code a type
     # checker reads, and interpolating values into source text is what let a
@@ -782,17 +883,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         )
     )
     reg.save(reg_path)
-    logger.info(
-        "pr-watch: started monitor pid %d for PR #%d (%s), interval %ds, bound %ds. "
-        "Alerts and any crash go to %s.",
-        proc.pid,
-        pr,
-        repo,
-        args.interval,
-        args.bound,
-        log_path,
-    )
-    return EXIT_OK
+    return proc.pid, log_path
 
 
 def _pid_cmdline(pid: int) -> str:
@@ -944,6 +1035,7 @@ def cmd_list(_args: argparse.Namespace) -> int:
         sys.stdout.write(
             f"PR #{m.pr}  pid={m.pid}  repo={m.repo}  "
             f"started={m.started_at}  last_poll={m.last_poll or '-'}  "
+            f"last_alerted_head={m.last_alerted_head or '-'}  "
             f"{state}\n"
         )
         if state == "died-before-first-poll":
@@ -976,7 +1068,10 @@ def _alert_lines(path: Path) -> list[str]:
     lines: list[str] = []
     for line in raw:
         _, marker, rest = line.partition(_ALERT_PREFIX)
-        text = rest.strip()
+        # Strip control bytes on the way out as well as on the way in: a
+        # log written by an older forge holds whatever GitHub supplied,
+        # and this text is printed to a terminal and read by an agent.
+        text = "".join(c for c in rest.strip() if c.isprintable())
         if not marker or not text or text in seen:
             continue
         seen.add(text)
@@ -1011,7 +1106,23 @@ def cmd_digest(_args: argparse.Namespace) -> int:
         if not lines:
             continue
         reported += 1
-        sys.stdout.write(f"{path.stem.removeprefix('pr_watch_')}: {path}\n")
+        # The age matters as much as the text. A log is truncated only when
+        # that PR's monitor next starts, so the same alerts are reported at
+        # every task start until then — including a merge whose cleanup is
+        # long done. Without the age a reader cannot tell today's conflict
+        # from last week's, and an unaged repeat is how a channel nobody
+        # trusts goes quiet again.
+        try:
+            age = datetime.now(UTC) - datetime.fromtimestamp(
+                path.stat().st_mtime, tz=UTC
+            )
+            hours = age.total_seconds() / 3600
+            when = f"{hours:.0f}h ago" if hours >= 1 else "under an hour ago"
+        except OSError:
+            when = "age unknown"
+        sys.stdout.write(
+            f"PR #{path.stem.removeprefix('pr_watch_')} (last written {when}): {path}\n"
+        )
         for line in lines:
             sys.stdout.write(f"  - {line}\n")
     if not reported:

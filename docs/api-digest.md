@@ -439,6 +439,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_parse_bump_line_and_body(path: Path, lines: list[str]) -> tuple[str, str, int, list[str]]` _(internal)_ — Validate bump line and extract level, body and the body's file line.
 - `_check_no_versions_or_headings(name: str, body: str, body_line: int) -> list[str]` _(internal)_ — Check for version-shaped strings and embedded headings.
 - `_check_bullets(name: str, body: str) -> list[str]` _(internal)_ — Check the body starts with a ``- `` bullet and every line continues one.
+- `long_bullets(body: str) -> list[tuple[str, int]]` — Return the fragment's bullets that run past the word target.
+- `verbose_entry_note(body: str) -> str | None` — Return an advisory when a fragment's bullets are longer than needed.
 - `_check_major_carries_upgrade_notes(name: str, ftype: str, level: str) -> list[str]` _(internal)_ — Require a ``major`` fragment to be the ``upgrade`` lane itself.
 - `validate_fragment(path: Path) -> tuple[Fragment | None, list[str]]` — Parse *path* into a :class:`Fragment`, collecting every violation.
 - `_validate_fragment_text(path: Path, text: str) -> tuple[Fragment | None, list[str]]` _(internal)_ — Apply :func:`validate_fragment`'s contract to *text* as *path*'s content.
@@ -1875,11 +1877,14 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_poll_once(repo: str, pr: int, seen_comments: set[str], *, first_poll: bool) -> PollOutcome` _(internal)_ — Run one poll cycle over all five signals.
 - `_stack_parent(repo: str, base_ref: str) -> bool` _(internal)_ — Return whether *base_ref* is another open PR's head branch.
 - `_state_alerts(pr: int, view: dict[str, object], *, stack_child: bool = False) -> list[str]` _(internal)_ — Return alerts for the PR's state and mergeable fields.
+- `_one_line(text: str) -> str` _(internal)_ — Flatten a GitHub-supplied string to one printable line.
 - `_ci_alerts(repo: str, pr: int, *, stack_child: bool = False, base_ref: str = '') -> list[str]` _(internal)_ — Return CI-failure alerts from ``gh pr checks``.
 - `_staleness_alerts(repo: str, pr: int) -> list[str]` _(internal)_ — Return a wrap-up-staleness alert when the freshness verdict is stale.
-- `_monitor_loop(repo: str, pr: int, interval: int, bound: int, registry_path: Path) -> None` _(internal)_ — The bounded poll loop (runs in the spawned child process).
+- `_monitor_loop(repo: str, pr: int, interval: int, bound: int, registry_path: Path) -> None` _(internal)_ — Poll until the bound expires or the PR reaches a terminal state.
 - `cmd_monitor(args: argparse.Namespace) -> int` — Run the poll loop in the foreground (the spawned child's entry point).
+- `_auto_detect_pr(root: Path, repo: str) -> int | None` _(internal)_ — Find the open PR for the current branch.
 - `cmd_start(args: argparse.Namespace) -> int` — Start a bounded monitor for a PR.
+- `_spawn_monitor(root: Path, repo: str, pr: int, args: argparse.Namespace) -> tuple[int, Path]` _(internal)_ — Spawn the detached poll loop for a PR and record it in the registry.
 - `_pid_cmdline(pid: int) -> str` _(internal)_ — Return the command line of *pid*, or empty when unreadable.
 - `_is_monitor(pid: int) -> bool` _(internal)_ — Return whether *pid* is one of this module's monitor processes.
 - `cmd_stop(args: argparse.Namespace) -> int` — Stop one or all monitors, verifying process identity before signalling.
@@ -2028,6 +2033,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `step_vendored_integrity(repo_root: Path) -> StepResult` — Verify each vendored ``data/*.js`` blob matches its ``VENDORED.md`` hash.
 - `_changelog_blocking(repo_root: Path) -> bool` _(internal)_ — Return whether the changelog steps block the commit (default yes).
 - `_tag_only_on_base(repo_root: Path, tag: str, base_branch: str) -> bool` _(internal)_ — Return whether *tag* is reachable from the base branch but not HEAD.
+- `_fragment_brevity_advisory(repo_root: Path, added: list[str]) -> str` _(internal)_ — Return a brevity advisory for this branch's fragment, or "".
 - `_changelog_version_skip_gate(repo_root: Path) -> StepResult | None` _(internal)_ — Check all skip conditions for changelog_version step.
 - `step_changelog_version(repo_root: Path) -> StepResult` — Gate ``CHANGELOG.md`` release headings against git tags (opt-in).
 - `_changelog_updated_skip_gate(repo_root: Path, cfg: config.ForgeConfig) -> StepResult | None` _(internal)_ — Check all skip conditions for changelog_updated step.

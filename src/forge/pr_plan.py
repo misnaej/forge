@@ -136,7 +136,6 @@ DOCS_ONLY_PRECOMMIT_STEPS = (
 )
 
 # Minimum number of parts in a numstat line (insertions and deletions counts).
-_NUMSTAT_MIN_PARTS = 2
 
 
 @dataclass(frozen=True)
@@ -248,6 +247,9 @@ def added_paths(root: Path, diff_range: str) -> list[str]:
     return diff_names_z(
         root, "--diff-filter=ACR", "--find-renames", diff_range, check=True
     )
+
+
+_NUMSTAT_MIN_PARTS = 2
 
 
 def _line_count(root: Path, diff_range: str, pathspec: list[str] | None = None) -> int:

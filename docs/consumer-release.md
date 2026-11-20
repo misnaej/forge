@@ -248,6 +248,18 @@ more than one, so writing a fragment means deciding these:
   nothing is owed on upgrade, the level was not major. A version whose
   notes are missing is reported as a gap by `forge-upgrade`, never as
   nothing to do.
+- **One bullet per thing that changed, each as short as it can be.** The
+  count follows what changed in the repo, never the size of the diff — a
+  one-line fix and a rewrite each earn one bullet per change. What the
+  gate checks is the half a program can see: a bullet past about
+  `forge.changelog_fragments.BULLET_WORD_TARGET` words earns an advisory
+  naming the longest. Say what changed and stop; the why belongs in the
+  commit, the PR or the code, each of which the reader can reach and none
+  of which they should have to read first. **Advisory only** — forge
+  refuses nothing on length, and a commit blocked over prose costs more
+  than the prose does. The bullet count is deliberately unchecked: how
+  many things changed is not derivable from a diff, and guessing it from
+  one would nag the entries that are already right.
 - **Bodies carry no headings.** The assembler writes every heading; a
   heading line inside a body is refused, since it could forge or end a
   group.

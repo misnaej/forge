@@ -7855,6 +7855,31 @@ def test_fragment_gate_passes_single_branch_added_fragment(tmp_path: Path) -> No
     assert result.passed
 
 
+def test_fragment_gate_advises_on_overlong_bullet_but_passes(
+    tmp_path: Path,
+) -> None:
+    """BEHAVIOR: one very long bullet is advised, never failed."""
+    work = _init_fragments_mode_repo(tmp_path)
+    (work / "changelog.d").mkdir()
+    bullet = "- " + " ".join(f"word{i}" for i in range(40)) + "\n"
+    (work / "changelog.d" / "a.added.md").write_text(f"bump: minor\n{bullet}")
+    commit_all(work, "feat: one long bullet")
+    result = precommit.step_changelog_version(work)
+    assert result.passed
+    assert "ADVISORY" in result.output
+
+
+def test_fragment_gate_no_advisory_for_short_bullets(tmp_path: Path) -> None:
+    """BEHAVIOR: a short-bullet fragment draws no advisory."""
+    work = _init_fragments_mode_repo(tmp_path)
+    (work / "changelog.d").mkdir()
+    (work / "changelog.d" / "a.added.md").write_text("bump: minor\n- a\n")
+    commit_all(work, "feat: short entry")
+    result = precommit.step_changelog_version(work)
+    assert result.passed
+    assert "ADVISORY" not in result.output
+
+
 def test_fragment_gate_refusal_names_forge_commit_base(tmp_path: Path) -> None:
     """Refusal text for >1 fragments names the forge-commit --base remedy.
 
