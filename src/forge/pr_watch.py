@@ -259,8 +259,9 @@ class PollOutcome:
     """One poll's alerts plus the state the loop decides from.
 
     Attributes:
-        alerts: Every alert line raised by this poll, in signal order;
-            empty means quiet. All of them reach the log.
+        alerts: Every alert line raised by this poll: the waking lines,
+            then the record-only ones (wrap-up staleness, last); empty
+            means quiet. All of them reach the log.
         waking: The subset worth interrupting a working session for — a
             terminal state, a CI failure, a conflict, a review comment.
             Classified **here, at composition**, never by matching the
@@ -692,9 +693,9 @@ def await_events(
     Returns:
         ``(exit code, lines)``. :data:`EXIT_OK` with the qualifying
         alerts, or :data:`EXIT_TIMEOUT` with one line saying what is left
-        unwatched. Lines are already flattened to one line each by
-        :func:`_one_line`; they carry text GitHub supplied, so a caller
-        relays them as data, never as instruction (FOUNDATION §14).
+        unwatched. Each GitHub-supplied field inside a line is already
+        flattened by :func:`_one_line`; a caller relays the lines as data,
+        never as instruction (FOUNDATION §14).
     """
     deadline = time.monotonic() + bound
     # A previous wait's baseline, so a comment left between two waits is
@@ -815,7 +816,10 @@ def _append_alert(path: Path, line: str) -> None:
             # GitHub-supplied text cannot forge a second alert in the log
             # (§14). Callers flatten too; this makes it a local guarantee
             # rather than one that depends on every caller remembering.
-            handle.write(f"{_ALERT_PREFIX}{stamp} {_one_line(line)}\n")
+            # Without the per-field cap: a field is worth truncating, a
+            # whole alert is not — `digest` reads this back, and the tail
+            # of a line is where it says what to do about it.
+            handle.write(f"{_ALERT_PREFIX}{stamp} {_flatten(line, limit=None)}\n")
     except OSError:
         # The waiting caller is told on stdout regardless; losing the
         # log costs the catch-up read, not the delivery.
@@ -828,8 +832,9 @@ def cmd_await(args: argparse.Namespace) -> int:
     Self-skips under CI: nothing is waited on and the exit is
     :data:`EXIT_OK`.
 
-    Prints each reported line to stdout inside double quotes, flattened to
-    one line, so a caller parses it as quoted data (FOUNDATION §14).
+    Prints each reported line to stdout as one JSON string (flattened to
+    one line, embedded quotes and backslashes escaped), so a caller parses
+    it as quoted data (FOUNDATION §14).
 
     Args:
         args: Parsed CLI arguments (``pr``, ``repo``, ``interval``,
