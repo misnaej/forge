@@ -23,6 +23,7 @@ from forge.changelog_fragments import (
     branch_added_fragments,
     check_pending,
     discover_fragments,
+    fragment_bullets,
     long_bullets,
     main,
     max_level,
@@ -2753,6 +2754,29 @@ def test_long_bullets_flags_past_the_refusal_threshold_too() -> None:
 def test_long_bullets_ignores_non_bullet_lines() -> None:
     """BEHAVIOR: long prose that is not a ``- `` bullet is not counted."""
     assert long_bullets("bump: minor\n" + "word " * 40 + "\n") == []
+
+
+def test_fragment_bullets_folds_indented_continuation_into_the_bullet() -> None:
+    """BEHAVIOR: a wrapped bullet is one item, lines joined by single spaces."""
+    body = "- first line\n    second line\n\tthird line\n- other\n"
+    assert fragment_bullets(body) == ["first line second line third line", "other"]
+
+
+def test_fragment_bullets_ignores_orphan_indented_line_and_prose() -> None:
+    """BEHAVIOR: indented line with no bullet above, blanks and prose add nothing."""
+    body = "  orphan indented\n\nloose prose\n- real\n\nmore prose\n- last\n"
+    assert fragment_bullets(body) == ["real", "last"]
+
+
+def test_long_bullets_counts_the_whole_wrapped_bullet() -> None:
+    """BEHAVIOR: wrapped bullet is measured whole, not by its first line.
+
+    Pins the deliberate change: ``long_bullets`` once counted only the
+    first line, so a bullet wrapped into short lines escaped the advisory.
+    """
+    body = "- " + " ".join(["a"] * 8) + "\n  " + " ".join(["b"] * 8) + "\n"
+    found = long_bullets(body)
+    assert [count for _bullet, count in found] == [16]
 
 
 def test_verbose_entry_note_silent_for_short_or_bulletless_body() -> None:
