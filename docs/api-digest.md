@@ -1923,7 +1923,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_conflict_refusal(base: str, rerun: str) -> str` _(internal)_ — Return the refusal for a branch that conflicts with its base.
 - `_behind_refusal(behind: int, base: str, rerun: str) -> str` _(internal)_ — Return the refusal for a branch that is behind its base.
 - `base_sync_verdict(*, conflicting: bool, behind: int | None, emergency: bool, base: str, rerun: str) -> tuple[list[str], list[str]]` — Judge a branch against its base: the one rule create and post share.
-- `post_gates(view: Mapping[str, object], verified_sha: str, *, behind: int | None, emergency: bool) -> tuple[list[str], list[str]]` — Decide whether a wrap-up may be published on the PR as it is now.
+- `post_gates(view: Mapping[str, object], verified_sha: str, *, behind: int | None, emergency: bool, verified_base: str | None = None) -> tuple[list[str], list[str]]` — Decide whether a wrap-up may be published on the PR as it is now.
 - `_read_optional(path: Path | None) -> str | None` _(internal)_ — Read *path* when given.
 - `_load_plan(root: Path, args: argparse.Namespace) -> tuple[str, tuple[str, ...], tuple[str, ...]]` _(internal)_ — Return the plan's ``(mode, reporters, reasons)``.
 - `_code_quality(root: Path) -> str` _(internal)_ — Render Code Quality from the timing log and each log's freshness.
@@ -2344,6 +2344,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_conflicted_and_automerge(root: Path) -> tuple[set[str], str]` _(internal)_ — Return the paths the merge conflicts on and git's automatic merge tree.
 - `_check_resolution(root: Path, done: Resolution) -> list[str]` _(internal)_ — Check the staged result and return the paths edited by hand.
 - `_commit(root: Path, message: str, *, gated: bool) -> None` _(internal)_ — Commit the merge, with or without the pre-commit gate.
+- `_open_pr_number(root: Path, branch: str) -> int | None` _(internal)_ — Return the open PR whose head branch is *branch*, or ``None``.
+- `_report_wrapup_staleness(root: Path, branch: str) -> None` _(internal)_ — Log when the branch's open PR has a posted wrap-up that no longer names its head.
 - `_finish(root: Path, base_ref: str, done: Resolution) -> int` _(internal)_ — Check and commit a fully resolved merge.
 - `_stop(root: Path, base_ref: str, done: Resolution) -> int` _(internal)_ — Report the conflicts that need judgment and leave the merge in progress.
 - `_fast_forwardable(root: Path, base_ref: str) -> bool` _(internal)_ — Return whether the sync is a fast-forward rather than a merge.

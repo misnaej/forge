@@ -15,6 +15,7 @@ import pytest
 
 from forge import update_branch
 from forge.git_utils import unmerged_paths
+from forge.pr_plan import WrapupFreshness
 from forge.update_branch import UpdateRefusedError
 from tests.conftest import GIT_ENV, commit_all, git_stdout, init_git_repo
 
@@ -196,6 +197,67 @@ def test_start_fast_forwards_a_branch_with_no_commits_of_its_own(
 
     assert update_branch.start(repo, None) == 0
     assert git_stdout(repo, "rev-parse", "HEAD").strip() == head
+
+
+def test_finish_reports_staleness_when_wrapup_stale(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """SCENARIO: base advanced; the branch's open PR has a stale posted wrap-up.
+
+    MOCK SETUP: `_open_pr_number` fakes PR #42; `wrapup_freshness` fakes a
+    stale verdict naming the old and new SHAs.
+
+    EXPECTED BEHAVIOR: the merge still commits and exits 0, and the log
+    warns that PR #42's wrap-up is stale after the merge, with the reason.
+    """
+    repo, origin = _repo_with_origin(tmp_path)
+    _advance_origin(tmp_path, origin, {"unrelated.txt": "moved\n"})
+    verdict = WrapupFreshness(
+        fresh=False,
+        head_oid="abc123def",
+        latest_verified_at="old456",
+        reason=(
+            "wrap-up verified at old456 but PR head is abc123def; "
+            "re-run /forge-pr 42 to post a refreshed wrap-up"
+        ),
+    )
+    monkeypatch.setattr(update_branch, "_open_pr_number", lambda _root, _branch: 42)
+    monkeypatch.setattr(update_branch, "wrapup_freshness", lambda _pr: verdict)
+
+    with caplog.at_level("INFO"):
+        assert update_branch.start(repo, None) == 0
+
+    assert "PR #42" in caplog.text
+    assert "stale" in caplog.text
+    assert "old456" in caplog.text
+
+
+def test_finish_skips_staleness_report_without_an_open_pr(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """SCENARIO: base advanced; no PR is open for the branch.
+
+    EXPECTED BEHAVIOR: the merge exits 0 and `wrapup_freshness` is never
+    consulted — no PR means there is no wrap-up to report on.
+    """
+    repo, origin = _repo_with_origin(tmp_path)
+    _advance_origin(tmp_path, origin, {"unrelated.txt": "moved\n"})
+    monkeypatch.setattr(update_branch, "_open_pr_number", lambda _root, _branch: None)
+
+    def _must_not_be_called(_pr: int) -> WrapupFreshness:
+        error_msg = "wrapup_freshness called without an open PR"
+        raise AssertionError(error_msg)
+
+    monkeypatch.setattr(update_branch, "wrapup_freshness", _must_not_be_called)
+
+    with caplog.at_level("INFO"):
+        assert update_branch.start(repo, None) == 0
+
+    assert "stale" not in caplog.text
 
 
 def test_start_does_not_take_a_base_revert_as_already_seen(tmp_path: Path) -> None:

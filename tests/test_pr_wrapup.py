@@ -1166,6 +1166,40 @@ def test_post_gates_head_mismatch_refuses_naming_both_shas() -> None:
     assert notes == []
 
 
+def test_post_gates_refuses_retarget_or_stale_head() -> None:
+    """A wrap-up verified against a base the PR no longer targets refuses.
+
+    Mirrors wrapup_freshness's retarget verdict at the post gate: the posted
+    wrap-up would describe a diff against a base the PR does not have.
+    """
+    view = {
+        "number": 61,
+        "headRefOid": "7ab3e4e999",
+        "baseRefName": "release/14.x",
+        "mergeable": "MERGEABLE",
+    }
+    refusals, _notes = mod.post_gates(
+        view, "7ab3e4e", behind=0, emergency=False, verified_base="main"
+    )
+    assert any(
+        "main" in r and "release/14.x" in r and "/forge-pr 61" in r for r in refusals
+    )
+
+
+def test_post_gates_matching_verified_base_passes() -> None:
+    """A wrap-up whose verified-base matches the PR's current base adds no refusal."""
+    view = {
+        "number": 61,
+        "headRefOid": "7ab3e4e999",
+        "baseRefName": "main",
+        "mergeable": "MERGEABLE",
+    }
+    refusals, _notes = mod.post_gates(
+        view, "7ab3e4e", behind=0, emergency=False, verified_base="main"
+    )
+    assert refusals == []
+
+
 def test_post_gates_conflicting_refuses_naming_the_remedy() -> None:
     """A CONFLICTING branch refuses, naming forge-update-branch and its `--continue`."""
     view = {

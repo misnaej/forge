@@ -47,6 +47,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import re
 import subprocess
@@ -64,6 +65,7 @@ from forge.commit import (
 from forge.config import load_config
 from forge.gh_comments import ValidationError, validate_no_ai_attribution
 from forge.git_utils import (
+    GH_TIMEOUT_S,
     configure_cli_logging,
     create_commit,
     fetch_quietly,
@@ -76,6 +78,7 @@ from forge.git_utils import (
 )
 from forge.intake import configured_dir, new_entry
 from forge.pr_delta import regen_commands
+from forge.pr_plan import wrapup_freshness
 from forge.resync import regenerate_artifact
 
 
@@ -538,6 +541,76 @@ def _commit(root: Path, message: str, *, gated: bool) -> None:
         raise UpdateRefusedError(msg) from exc
 
 
+def _open_pr_number(root: Path, branch: str) -> int | None:
+    """Return the open PR whose head branch is *branch*, or ``None``.
+
+    Best-effort: any ``gh`` failure collapses to ``None``. "Could not ask"
+    is not "no PR", but the staleness report is informational and must
+    never fail the merge, so an unreadable listing just skips the report.
+
+    Args:
+        root: Repository root (working directory for the ``gh`` call).
+        branch: Head branch name to match.
+
+    Returns:
+        The PR number, or ``None`` when none is open or ``gh`` failed.
+    """
+    try:
+        proc = subprocess.run(
+            [
+                "gh",
+                "pr",
+                "list",
+                f"--head={branch}",
+                "--state",
+                "open",
+                "--json",
+                "number",
+                "--limit",
+                "1",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=root,
+            timeout=GH_TIMEOUT_S,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        rows = json.loads(proc.stdout or "[]")
+        return int(rows[0]["number"])
+    except (KeyError, IndexError, TypeError, ValueError):
+        return None
+
+
+def _report_wrapup_staleness(root: Path, branch: str) -> None:
+    """Log when the branch's open PR has a posted wrap-up that no longer names its head.
+
+    A base merge moves HEAD by construction, so a posted wrap-up is stale
+    the moment the merge commits; say so here instead of leaving the author
+    to meet the refusal at the next gate. Informational only — never changes
+    the exit code; no open PR or an unreadable ``gh`` means no report.
+
+    Args:
+        root: Repository root.
+        branch: The branch that was just merged into.
+    """
+    pr = _open_pr_number(root, branch)
+    if pr is None:
+        return
+    verdict = wrapup_freshness(pr)
+    if verdict.fresh is False:
+        logger.warning(
+            "forge-update-branch: PR #%d's posted wrap-up is stale after this "
+            "merge: %s",
+            pr,
+            verdict.reason,
+        )
+
+
 def _finish(root: Path, base_ref: str, done: Resolution) -> int:
     """Check and commit a fully resolved merge.
 
@@ -565,6 +638,7 @@ def _finish(root: Path, base_ref: str, done: Resolution) -> int:
         branch,
         sha,
     )
+    _report_wrapup_staleness(root, branch)
     return EXIT_OK
 
 
