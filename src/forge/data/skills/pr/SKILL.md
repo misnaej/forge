@@ -461,7 +461,7 @@ Verification is done, fixes are committed, and the wrap-up is authored
     ```bash
     forge-pr-wrapup post --pr <PR#>
     forge-pr-squash-comment --pr <PR#> --title "<title>" \
-        --bullet "<b1>" --bullet "<b2>" --bullet "<b3>"
+        --bullet "[1,2] <b1>" --bullet "[3] <b2>" --bullet "[4] <b3>"
     ```
 
     `forge-pr-wrapup post` validates the wrap-up and **refuses (exit 3)**
@@ -487,7 +487,8 @@ Verification is done, fixes are committed, and the wrap-up is authored
   exists, forge's own document word counts, or a count of tests,
   suppressions, rows or files. This is what keeps a message short; the
   word count never was (FOUNDATION §6).
-- **3–5 bullet points.** Not 6, not 2.
+- **3–5 bullet points**, each opening with the changelog bullets it
+  covers (`[1,2]`); an unclaimed changelog bullet refuses.
 - **Conventional commit format** for the title line: `<type>: <brief description>`
 - **No prose paragraphs.** Title + bullets only, in two separate fences —
   one per field of the squash dialog. Posting forces the **PR title** to
@@ -499,7 +500,7 @@ Verification is done, fixes are committed, and the wrap-up is authored
   (no bullets) re-posts the existing one at the bottom; no-op when it
   is already newest.
 - **Own comment** — `forge-pr-wrapup validate` refuses a wrap-up that
-  embeds it. `--dry-run` previews the word count without posting.
+  embeds it. `--dry-run` numbers the changelog bullets, previews the word count.
 - **Once per repo:** `squash_merge_commit_title = PR_TITLE` (needs
   admin) — under the `COMMIT_OR_PR_TITLE` default a single-commit PR
   prefills from its commit subject, which no title sync controls.
@@ -558,7 +559,7 @@ Skip when `forge.run_context.is_ci()` — nobody is there to answer them
     concludes in failure, the base moves under it, or somebody comments,
     then prints that event and exits. **The exit is the delivery**: it
     re-invokes this session, which reads the event as its next input, so
-    do not poll for it and do not wait on it in the foreground.
+    never poll or wait in the foreground.
     Call-site delta: new review comments route to `/pr-comments`.
     Report what it says when it arrives; resolution stays with whoever
     picks up the work.

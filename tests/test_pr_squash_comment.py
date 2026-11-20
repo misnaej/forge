@@ -1040,6 +1040,11 @@ FRAGMENT_ITEMS = ["first delivered thing", "second delivered thing", "third one"
         pytest.param("plain text", set(), "plain text", id="no-claim"),
         pytest.param("[abc] text", set(), "[abc] text", id="malformed-stays-text"),
         pytest.param("[1]", {1}, "", id="claim-only"),
+        pytest.param("[1][2] text", {1, 2}, "text", id="adjacent-groups"),
+        pytest.param("[1] [3] more", {1, 3}, "more", id="spaced-groups"),
+        pytest.param("[1-99999999999] x", set(), "x", id="oversized-range"),
+        pytest.param("[1-102] x", set(), "x", id="range-just-over-the-cap"),
+        pytest.param("[1-102,2] x", {2}, "x", id="oversized-piece-spares-others"),
     ],
 )
 def test_parse_coverage_forms(bullet: str, claimed: set[int], text: str) -> None:
@@ -1210,6 +1215,63 @@ def test_main_dry_run_prints_numbered_fragment_bullets_to_stderr(
     assert "changelog bullets to cover:" in err
     for i, item in enumerate(FRAGMENT_ITEMS, start=1):
         assert f"  {i}. {item}" in err
+
+
+@pytest.mark.usefixtures("_cli_argv")
+def test_main_dry_run_with_no_claims_still_prints_the_numbering_and_refuses(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Behavior: the call an author makes to learn the numbering shows it.
+
+    A dry run with no claims fails the coverage rule; the listing must
+    come out before that refusal, or the one caller who needs it never
+    sees it.
+    """
+    _use_fragment_items(monkeypatch, FRAGMENT_ITEMS)
+    raw = ["bullet alpha description", "bullet beta description", "bullet gamma"]
+    sys.argv.extend(["--dry-run", "--title", VALID_TITLE, *_bullet_args(raw)])
+    assert mod.main() == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.count("changelog bullets to cover:") == 1
+    for i, item in enumerate(FRAGMENT_ITEMS, start=1):
+        assert f"  {i}. {item}" in captured.err
+    assert "covered by no squash bullet" in captured.err
+
+
+@pytest.mark.usefixtures("_cli_argv")
+def test_main_dry_run_prints_the_numbering_once_when_it_succeeds(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Behavior: moving the listing ahead of validation did not duplicate it."""
+    _use_fragment_items(monkeypatch, FRAGMENT_ITEMS)
+    raw = ["[1] bullet alpha", "[2] bullet beta", "[3] bullet gamma"]
+    sys.argv.extend(["--dry-run", "--title", VALID_TITLE, *_bullet_args(raw)])
+    assert mod.main() == 0
+    assert capsys.readouterr().err.count("changelog bullets to cover:") == 1
+
+
+@pytest.mark.usefixtures("_cli_argv")
+def test_main_never_posts_claim_residue_from_stacked_groups(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Behavior: `[1][2]` and `[1] [3]` leave no bracket in the posted body.
+
+    The body becomes the permanent ``main`` commit, so a surviving second
+    claim group would corrupt it.
+    """
+    _use_fragment_items(monkeypatch, FRAGMENT_ITEMS)
+    raw = [
+        "[1][2] bullet alpha description",
+        "[3] [1] bullet beta description",
+        "bullet gamma description",
+    ]
+    sys.argv.extend(["--dry-run", "--title", VALID_TITLE, *_bullet_args(raw)])
+    assert mod.main() == 0
+    out = capsys.readouterr().out
+    assert "[" not in out
+    assert "bullet alpha description" in out
+    assert "bullet beta description" in out
 
 
 @pytest.mark.usefixtures("_cli_argv")

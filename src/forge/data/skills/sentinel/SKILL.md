@@ -189,7 +189,7 @@ Freeze, never guess:
 2. Open a **draft PR** (FOUNDATION §6's early-visibility escape hatch).
 3. Post PR comment(s) framing each open question, with the options
    considered and a recommendation.
-4. Hand the PR to a background monitor (below) and return to the watch
+4. Hand the PR to a background wait (below) and return to the watch
    loop for the next candidate.
 5. When the user replies: resume on that branch, apply the decisions,
    and finalize through the normal flow (`gh pr ready`, full `/pr`).
@@ -205,7 +205,7 @@ Sentinel delta: question replies route back into the frozen branch's
 resume flow. The waits need no exemption — §6 skips only under
 `is_ci()`, which no sentinel run satisfies, so they start by default
 here as everywhere. The main loop never blocks on an open PR: the wait
-is a background job, never a foreground one. Where a monitor's alerts land, and who has
+is a background job, never a foreground one. Where an alert lands, and who has
 to read them: `/forge-pr` Step 7.
 
 ## After each PR
@@ -218,7 +218,7 @@ the watch loop.
 
 - Never merge, force-push, or rebase; never touch protected branches.
 - One issue or track in execution at a time — parallelism lives in
-  the background monitors, not in concurrent builds.
+  the background waits, not in concurrent builds.
 - Every skip or deferral leaves a `[forge-issue-triage]` comment trail.
 - A plan that stops matching reality goes back through `/plan-issue`;
   sentinel never improvises past its spec.

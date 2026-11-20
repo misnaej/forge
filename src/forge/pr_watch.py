@@ -2,13 +2,8 @@
 
 FOUNDATION §6 mandates watching every open PR for five signals (new
 review comments, merged/closed, CONFLICTING, CI failure, wrap-up
-staleness). Watching was never the hard part; **delivery** was.
-
-This command used to spawn a detached monitor that appended alerts to a
-log. Nothing read the log until somebody thought to, so a PR could merge
-and its author not know, and a CI failure could sit unseen for an hour
-while the session that caused it worked on. A report that waits is not a
-report.
+staleness). Watching is easy; **delivery** is the point: a report left in
+a log nobody opens is not a report.
 
 So the wait runs in the foreground and **exits** on the first event worth
 hearing, because a process finishing is what a harness notices:
@@ -33,7 +28,7 @@ it has to work (FOUNDATION §15).
 
 Every alert, qualifying or not, is appended to
 ``code_health/pr_watch_<pr>.log`` so ``digest`` keeps its source. The log
-is a record, no longer the delivery channel.
+is a record, not the delivery channel.
 """
 
 from __future__ import annotations
@@ -45,7 +40,7 @@ import re
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
 
@@ -67,8 +62,6 @@ if TYPE_CHECKING:
 configure_cli_logging()
 logger = logging.getLogger(__name__)
 
-# The argv[1] of the spawned child. `cmd_stop` matches on it to identify a
-# monitor process, so it must be a token no unrelated command carries.
 DEFAULT_INTERVAL_S: Final = 60
 DEFAULT_BOUND_S: Final = 1800
 GH_TIMEOUT_S: Final = 30
@@ -90,26 +83,28 @@ EXIT_ARMING_FAILED: Final = 2
 #: happened" as an event.
 EXIT_TIMEOUT: Final = 3
 
-#: What a wrap-up-staleness alert says. One constant, read by the alert
-#: that writes it and by the filter that declines to wake a session for
-#: it, so the two cannot drift into disagreeing.
+#: What a wrap-up-staleness alert says. Wording only: whether a line
+#: ends a wait is decided by which signal produced it
+#: (:class:`PollOutcome`), never by reading this out of rendered text —
+#: the text carries GitHub-supplied strings, so a check could spell it.
 _STALENESS_MARKER: Final = "stale wrap-up:"
 
 #: The ISO stamp :func:`_append_alert` writes before an alert, matched so
 #: :func:`_alert_lines` can drop it before deduplicating.
 _STAMP_RE: Final = re.compile(r"^\d{4}-\d{2}-\d{2}T[\d:.+\-Z]+\s+")
 
-#: What a failed poll says. Also not worth waking a session: a `gh` call
-#: that timed out is not news about the PR, and a flaky network would
-#: otherwise fire the wake-up again and again while nothing changed. The
-#: line still reaches the log, so `digest` shows a wait that was blind.
+#: What a failed poll says. It wakes nobody — a `gh` call that timed out
+#: is not news about the PR, and a flaky network would otherwise fire the
+#: wake-up again and again while nothing changed — but that follows from
+#: the empty ``waking`` on its outcome, not from this wording. The line
+#: still reaches the log, so `digest` shows a wait that was blind.
 _POLL_FAILED_MARKER: Final = ": poll failed ("
 
 
 def monitor_log_path(root: Path, pr: int) -> Path:
-    """Return the log a PR's monitor writes its output to.
+    """Return the log a PR's waits append their alerts to.
 
-    One file per PR, because several monitors run at once and a shared
+    One file per PR, because several waits can run at once and a shared
     file interleaves them. This is a runtime log, not step evidence: no
     step produces it and it carries no ``# produced-at:`` stamp, so
     ``forge-precommit``'s freshness check skips it by name rather than
@@ -120,7 +115,7 @@ def monitor_log_path(root: Path, pr: int) -> Path:
         pr: PR number.
 
     Returns:
-        Path to the monitor's log file.
+        Path to the PR's log file.
     """
     return code_health_dir(root) / f"pr_watch_{pr}.log"
 
@@ -173,7 +168,7 @@ def _gh(*args: str, timeout: int = GH_TIMEOUT_S) -> subprocess.CompletedProcess[
 
 
 def arming_check(repo: str, pr: int) -> list[str]:
-    """Verify every signal the monitor needs is parseable.
+    """Verify every signal the wait needs is parseable.
 
     Args:
         repo: ``owner/repo`` slug.
@@ -264,7 +259,16 @@ class PollOutcome:
     """One poll's alerts plus the state the loop decides from.
 
     Attributes:
-        alerts: Alert lines raised by this poll; empty means quiet.
+        alerts: Every alert line raised by this poll, in signal order;
+            empty means quiet. All of them reach the log.
+        waking: The subset worth interrupting a working session for — a
+            terminal state, a CI failure, a conflict, a review comment.
+            Classified **here, at composition**, never by matching the
+            rendered text later: an alert line embeds GitHub-supplied
+            strings, so a check named ``stale wrap-up:`` would have made
+            its own CI-failure line read as record-only and the failure
+            would never have been delivered. Which signal produced a
+            line is a fact this function knows and prose cannot carry.
         head: The PR's head SHA, empty when the poll could not read it.
             The loop keys alert de-duplication on it, so FOUNDATION §6's
             "once per new head" is decidable without a second call.
@@ -275,6 +279,7 @@ class PollOutcome:
     """
 
     alerts: list[str]
+    waking: list[str] = field(default_factory=list)
     head: str = ""
     terminal: bool = False
     ok: bool = True
@@ -372,13 +377,17 @@ def _poll_once(
         return PollOutcome(alerts=[f"PR #{pr}{_POLL_FAILED_MARKER}{exc})"], ok=False)
     base_ref = str(view.get("baseRefName", ""))
     stack_child = _stack_parent(repo, base_ref) if base_ref else False
-    alerts.extend(_state_alerts(pr, view, stack_child=stack_child))
-    alerts.extend(_ci_alerts(repo, pr, stack_child=stack_child, base_ref=base_ref))
-    alerts.extend(_staleness_alerts(repo, pr))
-    alerts.extend(_comment_alerts(pr, view, seen_comments, first_poll=first_poll))
+    state_lines = _state_alerts(pr, view, stack_child=stack_child)
+    ci_lines = _ci_alerts(repo, pr, stack_child=stack_child, base_ref=base_ref)
+    stale_lines = _staleness_alerts(repo, pr)
+    comment_lines = _comment_alerts(pr, view, seen_comments, first_poll=first_poll)
+    alerts.extend(state_lines + ci_lines + stale_lines + comment_lines)
     state = str(view.get("state", ""))
     return PollOutcome(
         alerts=alerts,
+        # Staleness is the one signal that ends no wait, and it is left
+        # out here rather than filtered out of the text downstream.
+        waking=state_lines + ci_lines + comment_lines,
         head=str(view.get("headRefOid", "")),
         terminal=state in {"MERGED", "CLOSED"},
     )
@@ -628,40 +637,15 @@ def _auto_detect_pr(root: Path, repo: str) -> int | None:
 _ALERT_PREFIX: Final = "pr-watch: "
 
 
-def _wakes_a_session(alert: str) -> bool:
-    """Report whether *alert* is worth interrupting a working session for.
-
-    An alert that changes what the session should do next qualifies: the
-    PR reached a terminal state, CI concluded in failure, the base moved
-    under it, or somebody left a review comment.
-
-    Two lines do not. Wrap-up staleness is a condition the next
-    picker-up resolves, not news. A failed poll is not news about the PR
-    at all, and waking on it would let a flaky network interrupt a
-    session repeatedly while nothing changed. Both still reach the log,
-    so :func:`cmd_digest` shows them — including a wait that spent its
-    whole bound blind.
-
-    Args:
-        alert: One alert line from :func:`_poll_once`.
-
-    Returns:
-        ``True`` when the line should end the wait.
-    """
-    return _STALENESS_MARKER not in alert and _POLL_FAILED_MARKER not in alert
-
-
 def await_events(
     repo: str, pr: int, interval: int, bound: int, log_path: Path
 ) -> tuple[int, list[str]]:
     """Poll until something happens that a session must hear, then stop.
 
-    The delivery half of FOUNDATION §6's monitor. A detached monitor
-    cannot tell a session anything: it writes to a log, and the log is
-    read only when somebody thinks to read it — so a CI failure sat
-    unseen for an hour while its own author worked on. This runs as a
-    background job instead and **exits** on the first qualifying event,
-    because a finishing process is what a harness notices.
+    The delivery half of FOUNDATION §6's PR wait. Meant to run as a
+    background job: it **exits** on the first qualifying event, because
+    a finishing process is what a harness notices and a log is read only
+    when somebody thinks to.
 
     Every alert is still appended to the log, qualifying or not, so
     ``digest`` keeps working as the catch-up read for whatever happened
@@ -689,9 +673,13 @@ def await_events(
     """
     deadline = time.monotonic() + bound
     # A previous wait's baseline, so a comment left between two waits is
-    # still news rather than history (:func:`_load_seen`).
-    seen_comments = _load_seen(log_path)
-    baselined = bool(seen_comments)
+    # still news rather than history (:func:`_load_seen`). Keyed on the
+    # sidecar EXISTING, never on it holding anything: a PR with no
+    # comments yet records an empty one, and reading that as "never
+    # waited" is what swallowed the first comment to arrive.
+    loaded = _load_seen(log_path)
+    seen_comments = set() if loaded is None else loaded
+    baselined = loaded is not None
     polls = 0
     while time.monotonic() < deadline:
         outcome = _poll_once(repo, pr, seen_comments, first_poll=not baselined)
@@ -701,7 +689,7 @@ def await_events(
             _save_seen(log_path, seen_comments)
         for line in outcome.alerts:
             _append_alert(log_path, line)
-        waking = [line for line in outcome.alerts if _wakes_a_session(line)]
+        waking = list(outcome.waking)
         if outcome.terminal:
             # Terminal is itself the event, even if the poll that saw it
             # produced no alert line of its own.
@@ -730,7 +718,7 @@ def _seen_path(log_path: Path) -> Path:
     return log_path.with_suffix(".seen")
 
 
-def _load_seen(log_path: Path) -> set[str]:
+def _load_seen(log_path: Path) -> set[str] | None:
     """Return the comment identities an earlier wait already accounted for.
 
     Each wait is its own process, so without this the baseline restarts
@@ -740,21 +728,27 @@ def _load_seen(log_path: Path) -> set[str]:
     ``digest``. Losing a report that way is the exact failure this
     command exists to fix, so the baseline outlives the process.
 
+    Absence and emptiness are **different answers**, which is why
+    ``None`` exists here: a PR with no comments yet saves an empty
+    sidecar, so an empty set read as "no wait has run" would make every
+    later wait a first poll again and swallow the first comment to
+    arrive — the one case the signal exists for, and the common one on a
+    fresh PR. :func:`_comment_alerts` documents the same trap for a
+    single process; this is its cross-process twin.
+
     Args:
         log_path: The PR's monitor log; the sidecar sits beside it.
 
     Returns:
-        The identities, empty when no wait has run for this PR yet —
-        which is what makes the next poll a genuine first poll.
+        The identities a previous wait recorded, which may legitimately
+        be an empty set, or ``None`` when no wait has run for this PR —
+        and only that makes the next poll a genuine first poll.
     """
     try:
-        return {
-            line.strip()
-            for line in _seen_path(log_path).read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        }
+        text = _seen_path(log_path).read_text(encoding="utf-8")
     except OSError:
-        return set()
+        return None
+    return {line.strip() for line in text.splitlines() if line.strip()}
 
 
 def _save_seen(log_path: Path, seen: set[str]) -> None:
@@ -767,7 +761,13 @@ def _save_seen(log_path: Path, seen: set[str]) -> None:
     try:
         path = _seen_path(log_path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("\n".join(sorted(seen)) + "\n", encoding="utf-8")
+        # Written whole then renamed: two waits on one PR (a sentinel run
+        # and a session, say) would otherwise interleave and leave a
+        # half-written cursor, which reads as a shorter history and
+        # re-announces comments.
+        tmp = path.with_suffix(".seen.tmp")
+        tmp.write_text("\n".join(sorted(seen)) + "\n", encoding="utf-8")
+        tmp.replace(path)
     except OSError:
         # Costs the next wait its baseline, which re-announces the
         # conversation once. Never worth failing a wait over.
@@ -800,12 +800,16 @@ def _append_alert(path: Path, line: str) -> None:
 def cmd_await(args: argparse.Namespace) -> int:
     """Wait for the first event on a PR worth telling a session about.
 
+    Self-skips under CI: nothing is waited on and the exit is
+    :data:`EXIT_OK`.
+
     Args:
         args: Parsed CLI arguments (``pr``, ``repo``, ``interval``,
             ``bound``).
 
     Returns:
-        :data:`EXIT_OK` when an event is reported, :data:`EXIT_TIMEOUT`
+        :data:`EXIT_OK` when an event is reported (or under CI, where
+        nothing is waited on), :data:`EXIT_TIMEOUT`
         when the bound expires first, :data:`EXIT_REFUSED` when no repo
         or PR resolves, :data:`EXIT_ARMING_FAILED` when the PR cannot be
         read at all.
@@ -836,21 +840,27 @@ def cmd_await(args: argparse.Namespace) -> int:
         repo, pr, args.interval, args.bound, monitor_log_path(root, pr)
     )
     # stdout, not the logger: this text is the delivery, and it is what a
-    # re-invoked session reads.
+    # re-invoked session reads. Flattened again at the boundary — the
+    # producers flatten, but this is the line that becomes a session's
+    # input, so the guarantee is made where it matters rather than
+    # inherited from every caller remembering. Quoted for the same
+    # reason: a check name is GitHub-supplied text, so the reader is told
+    # which part is data (§14).
     for line in lines:
-        sys.stdout.write(f"{line}\n")
+        sys.stdout.write(f'"{_one_line(line)}"\n')
     return code
 
 
 def _alert_lines(path: Path) -> list[str]:
-    """Return a monitor log's alert lines, in order, without repeats.
+    """Return a log's alert lines, in order, without repeats.
 
     Args:
         path: A ``pr_watch_<pr>.log`` path.
 
     Returns:
-        The alert text of each distinct alert line; empty when the log is
-        absent or holds none.
+        The alert text of each distinct alert line, timestamp stripped so
+        a repeated condition collapses; empty when the log is absent or
+        holds none.
     """
     try:
         raw = path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -877,16 +887,14 @@ def _alert_lines(path: Path) -> list[str]:
 
 
 def cmd_digest(_args: argparse.Namespace) -> int:
-    """Report what the monitors saw, so their alerts reach a session.
+    """Report what past waits logged, including what never woke a session.
 
-    The monitor runs detached and can reach nobody directly, so its only
-    channel is ``code_health/pr_watch_<pr>.log``. This is the read end of
-    that channel: without it the alerts sit in a gitignored file nothing
-    opens, which is how a PR merged and conflicted with no one told.
+    ``await`` delivers qualifying events by exiting; this is the catch-up
+    read of ``code_health/pr_watch_<pr>.log`` for the rest: events with
+    no session waiting, and the ones that end no wait (a green run,
+    wrap-up staleness, a failed poll).
 
-    Reads every monitor log present, not only the registered ones — a
-    registry record can be lost while its log survives, and the alerts
-    are worth more than the bookkeeping.
+    Reads every ``pr_watch_*.log`` present.
 
     Args:
         _args: Parsed CLI arguments (unused).
@@ -903,12 +911,11 @@ def cmd_digest(_args: argparse.Namespace) -> int:
         if not lines:
             continue
         reported += 1
-        # The age matters as much as the text. A log is truncated only when
-        # that PR's monitor next starts, so the same alerts are reported at
-        # every task start until then — including a merge whose cleanup is
-        # long done. Without the age a reader cannot tell today's conflict
-        # from last week's, and an unaged repeat is how a channel nobody
-        # trusts goes quiet again.
+        # The age matters as much as the text. A log is only appended to,
+        # so the same alerts are reported at every task start — including
+        # a merge whose cleanup is long done. Without the age a reader cannot
+        # tell today's conflict from last week's, and an unaged repeat is how
+        # a channel nobody trusts goes quiet again.
         try:
             age = datetime.now(UTC) - datetime.fromtimestamp(
                 path.stat().st_mtime, tz=UTC
@@ -976,8 +983,8 @@ def _stack_order(prs: list[dict[str, object]]) -> list[dict[str, object]]:
 def cmd_stack(args: argparse.Namespace) -> int:
     """List the open-PR stack in dependency order with per-PR state.
 
-    Each line carries the PR's base, mergeability, wrap-up freshness and
-    monitor state, so a stack can be read top-down: parent first, each
+    Each line carries the PR's base, mergeability and wrap-up freshness,
+    so a stack can be read top-down: parent first, each
     child against its parent's branch.
 
     Args:

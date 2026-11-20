@@ -87,12 +87,12 @@ Stop immediately and report if any step fails.
 
 7. **Verify cross-references** after deletions — no remaining file should reference a deleted one.
 
-8. **Read what the PR monitors saw while nobody was watching**
+8. **Read what the PR waits saw while nobody was watching**
    ```bash
    forge-pr-watch digest
    ```
    A wait that nothing was there to receive — no session open, or an
-   event that ends no wait, like a green CI run or a stale wrap-up —
+   alert that ends no wait, like a stale wrap-up or a failed poll —
    leaves its alerts in `code_health/pr_watch_<pr>.log`. This is that
    read, and task start is when it pays: whatever happened while nothing
    was waiting is reported here or not at all. Nothing to report is a silent pass. A **merged or

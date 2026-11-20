@@ -34,15 +34,17 @@ Usage:
 Rules (FOUNDATION §6 "Squash-merge messages"):
 
 - title matches conventional-commit ``<type>(...)?: <subject>``
-- 3-5 ``--bullet`` entries
+- 3-5 ``--bullet`` entries, each optionally opening with the changelog
+  bullets it covers (``[1,4-6] text``); every changelog bullet must be
+  claimed by some entry
 - total whitespace-split word count (title + bullets): 45-word ceiling;
-  over it warns and still posts, far past it is refused
+  over it warns and still posts, however far over
 - no Claude / AI attribution patterns
 
-A failing run names every broken rule at once. Length is one only far
-past the 45-word ceiling (see :func:`~forge.text_budget.length_verdict`);
-a message just over prints a per-part breakdown as a warning (also under
-``--dry-run``) and posts.
+A failing run names every broken rule at once. Length is never one; a
+message over the ceiling prints a per-part breakdown as a warning (also
+under ``--dry-run``) and posts (see
+:func:`~forge.text_budget.length_verdict`).
 
 Only a comment whose body starts with :data:`SQUASH_MARKER` is treated
 as a squash comment, so a wrap-up that quotes the marker is never
@@ -269,12 +271,9 @@ def word_cap_warning(title: str, bullets: list[str]) -> str | None:
     """Return the warning for a message over its ceiling, or ``None``.
 
     Fires at the first word over, and never refuses however far over it
-    runs: :data:`MAX_WORDS` is a ceiling, not a length to write toward,
-    and a long message is a worse message, not an invalid one. What
-    makes a message invalid is leaving part of the merge undescribed —
-    :func:`_check_coverage`. A padded message that covers everything
-    still posts, carrying this warning; a short one that covers half the
-    PR does not post at all.
+    runs: a long message is a worse message, not an invalid one. What
+    makes one invalid is leaving part of the merge undescribed
+    (:func:`_check_coverage`).
 
     Args:
         title: Squash title.
@@ -304,6 +303,12 @@ _COVERAGE_RE: Final = re.compile(
     r"^\s*\[(?P<spec>[\d,\s-]+)\]\s*(?P<text>.*)$", re.DOTALL
 )
 
+#: Widest range a single claim may span. A fragment carries a handful of
+#: bullets, so anything beyond this is a typo'd bound rather than an
+#: intent — and expanding one would build a set large enough to exhaust
+#: memory.
+_MAX_CLAIM_SPAN: Final = 100
+
 
 def parse_coverage(bullet: str) -> tuple[frozenset[int], str]:
     """Split a bullet into the fragment items it claims and its own text.
@@ -322,22 +327,49 @@ def parse_coverage(bullet: str) -> tuple[frozenset[int], str]:
         bullet may describe a consequence no fragment line states, as
         long as every fragment line is claimed somewhere.
     """
-    match = _COVERAGE_RE.match(bullet)
-    if not match:
-        return frozenset(), bullet.strip()
     claimed: set[int] = set()
-    for part in match["spec"].split(","):
+    text = bullet
+    # Every leading group, not just the first: `[1][2] text` and
+    # `[1] [2] text` are things an author writes, and stripping one left
+    # the other in the body — which becomes the permanent `main` commit.
+    while match := _COVERAGE_RE.match(text):
+        claimed |= _parse_spec(match["spec"])
+        text = match["text"]
+    return frozenset(claimed), text.strip()
+
+
+def _parse_spec(spec: str) -> set[int]:
+    """Return the indices a claim's ``1,4-6`` body names.
+
+    Args:
+        spec: The text between the claim's brackets.
+
+    Returns:
+        The indices named. A malformed piece contributes nothing and so
+        surfaces as an unclaimed item, which the refusal names — better
+        than guessing what was meant. A range wider than
+        :data:`_MAX_CLAIM_SPAN` is malformed by the same rule: a typo'd
+        bound (``[1-99999999999]``) would otherwise build a set large
+        enough to exhaust memory.
+    """
+    claimed: set[int] = set()
+    for part in spec.split(","):
         piece = part.strip()
         if not piece:
             continue
         if "-" in piece:
             lo, _, hi = piece.partition("-")
-            if lo.strip().isdigit() and hi.strip().isdigit():
-                claimed.update(range(int(lo), int(hi) + 1))
+            low, high = lo.strip(), hi.strip()
+            if (
+                low.isdigit()
+                and high.isdigit()
+                and int(high) - int(low) <= _MAX_CLAIM_SPAN
+            ):
+                claimed.update(range(int(low), int(high) + 1))
             continue
         if piece.isdigit():
             claimed.add(int(piece))
-    return frozenset(claimed), match["text"].strip()
+    return claimed
 
 
 def _pr_fragment_items() -> tuple[list[str], str | None]:
@@ -384,9 +416,8 @@ def _check_coverage(claims: list[frozenset[int]], items: list[str]) -> list[str]
     The squash comment becomes the permanent ``main`` commit, and the
     fragment is the list of what the merge delivers. A message that
     describes some of it reads, forever after, as though that was all
-    that shipped — which no word count detects: the miss that prompted
-    this rule was a message well under its ceiling that covered two of
-    four deliverables.
+    that shipped — which no word count detects: a message well under its
+    ceiling can cover two of four deliverables.
 
     Grouping is free. A fragment is fine-grained and a message takes
     three to five bullets, so one bullet routinely covers several items;
@@ -771,6 +802,16 @@ def main() -> int:
     fragment_items, fragment_note = _pr_fragment_items()
     if fragment_note:
         sys.stderr.write(f"forge-pr-squash-comment: {fragment_note}\n")
+    # Before validation, not after: a dry run is how an author learns the
+    # numbering a claim refers to, and a dry run with no claims yet is
+    # exactly the call that fails the coverage rule. Printing this only
+    # on the way to success would withhold it from the one caller who
+    # needs it.
+    if args.dry_run and fragment_items:
+        numbered = "\n".join(
+            f"  {i}. {item}" for i, item in enumerate(fragment_items, start=1)
+        )
+        sys.stderr.write(f"changelog bullets to cover:\n{numbered}\n")
 
     problems = validate(
         args.title, bullets, claims=claims, fragment_items=fragment_items
@@ -792,13 +833,6 @@ def main() -> int:
         breakdown = "\n".join(_word_breakdown(args.title, bullets))
         total = _word_total(args.title, bullets)
         sys.stderr.write(f"{total}/{MAX_WORDS} words\n{breakdown}\n")
-        # The numbering a claim refers to, so the author reads it here
-        # instead of counting the fragment's lines by hand.
-        if fragment_items:
-            numbered = "\n".join(
-                f"  {i}. {item}" for i, item in enumerate(fragment_items, start=1)
-            )
-            sys.stderr.write(f"changelog bullets to cover:\n{numbered}\n")
         return 0
 
     title_synced = sync_pr_title(args.pr, args.title)

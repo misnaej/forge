@@ -298,10 +298,9 @@ def fragment_bullets(body: str) -> list[str]:
     """Return the body's bullets, one string each, continuations folded in.
 
     The one bullet grammar every reader of a fragment shares: a ``- ``
-    line opens a bullet and an indented line continues the one above it.
-    Each caller used to re-read that grammar for itself, which is how a
-    bullet could be one thing to the length advisory and another to the
-    coverage check — the two disagreeing silently about what a bullet is.
+    line opens a bullet and an indented line continues the one above it,
+    so the length advisory and the coverage check cannot disagree about
+    what a bullet is.
 
     A continuation is folded into its bullet rather than dropped, so a
     bullet wrapped across lines is one item with its whole text: the
@@ -389,7 +388,8 @@ def long_bullets(body: str) -> list[tuple[str, int]]:
 
     Returns:
         ``(bullet, word count)`` for each bullet over
-        :data:`BULLET_WORD_CEILING`, in document order.
+        :data:`BULLET_WORD_CEILING`, in document order; a wrapped bullet
+        counts whole.
     """
     long: list[tuple[str, int]] = []
     for bullet in fragment_bullets(body):

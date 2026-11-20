@@ -1854,6 +1854,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_word_breakdown(title: str, bullets: list[str]) -> list[str]` _(internal)_ — Render one indented line per message part: label, word count, preview.
 - `word_cap_warning(title: str, bullets: list[str]) -> str | None` — Return the warning for a message over its ceiling, or ``None``.
 - `parse_coverage(bullet: str) -> tuple[frozenset[int], str]` — Split a bullet into the fragment items it claims and its own text.
+- `_parse_spec(spec: str) -> set[int]` _(internal)_ — Return the indices a claim's ``1,4-6`` body names.
 - `_pr_fragment_items() -> tuple[list[str], str | None]` _(internal)_ — Return the bullets this branch's changelog fragment delivers.
 - `_check_coverage(claims: list[frozenset[int]], items: list[str]) -> list[str]` _(internal)_ — Refuse a message that leaves part of the merge undescribed.
 - `_check_attribution(title: str, bullets: list[str]) -> list[str]` _(internal)_ — Return the Claude / AI attribution problem per FOUNDATION §2 (shared gate).
@@ -1871,10 +1872,10 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _forge-pr-watch — wait for a PR event a session must act on._
 
-- `monitor_log_path(root: Path, pr: int) -> Path` — Return the log a PR's monitor writes its output to.
+- `monitor_log_path(root: Path, pr: int) -> Path` — Return the log a PR's waits append their alerts to.
 - `_resolve_repo(root: Path, repo_arg: str | None) -> str | None` _(internal)_ — Return ``owner/repo``, from *repo_arg* or the checkout's origin remote.
 - `_gh(*args: str, timeout: int = GH_TIMEOUT_S) -> subprocess.CompletedProcess[str]` _(internal)_ — Run a ``gh`` command, raising on failure.
-- `arming_check(repo: str, pr: int) -> list[str]` — Verify every signal the monitor needs is parseable.
+- `arming_check(repo: str, pr: int) -> list[str]` — Verify every signal the wait needs is parseable.
 - `_check_gh_present(failures: list[str]) -> bool` _(internal)_ — Append a failure when gh is missing; return whether gh is usable.
 - `_check_gh_auth(failures: list[str]) -> None` _(internal)_ — Append a failure when gh auth is not logged in.
 - `_check_pr_view(repo: str, pr: int, failures: list[str]) -> None` _(internal)_ — Parse one full gh pr view and append failures for missing signals.
@@ -1887,15 +1888,14 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_ci_alerts(repo: str, pr: int, *, stack_child: bool = False, base_ref: str = '') -> list[str]` _(internal)_ — Return CI-failure alerts from ``gh pr checks``.
 - `_staleness_alerts(repo: str, pr: int) -> list[str]` _(internal)_ — Return a wrap-up-staleness alert when the freshness verdict is stale.
 - `_auto_detect_pr(root: Path, repo: str) -> int | None` _(internal)_ — Find the open PR for the current branch.
-- `_wakes_a_session(alert: str) -> bool` _(internal)_ — Report whether *alert* is worth interrupting a working session for.
 - `await_events(repo: str, pr: int, interval: int, bound: int, log_path: Path) -> tuple[int, list[str]]` — Poll until something happens that a session must hear, then stop.
 - `_seen_path(log_path: Path) -> Path` _(internal)_ — Return the file holding the comment identities already accounted for.
-- `_load_seen(log_path: Path) -> set[str]` _(internal)_ — Return the comment identities an earlier wait already accounted for.
+- `_load_seen(log_path: Path) -> set[str] | None` _(internal)_ — Return the comment identities an earlier wait already accounted for.
 - `_save_seen(log_path: Path, seen: set[str]) -> None` _(internal)_ — Record the comment identities accounted for, for the next wait.
 - `_append_alert(path: Path, line: str) -> None` _(internal)_ — Append one alert to the PR's log, so ``digest`` can still read it.
 - `cmd_await(args: argparse.Namespace) -> int` — Wait for the first event on a PR worth telling a session about.
-- `_alert_lines(path: Path) -> list[str]` _(internal)_ — Return a monitor log's alert lines, in order, without repeats.
-- `cmd_digest(_args: argparse.Namespace) -> int` — Report what the monitors saw, so their alerts reach a session.
+- `_alert_lines(path: Path) -> list[str]` _(internal)_ — Return a log's alert lines, in order, without repeats.
+- `cmd_digest(_args: argparse.Namespace) -> int` — Report what past waits logged, including what never woke a session.
 - `_stack_order(prs: list[dict[str, object]]) -> list[dict[str, object]]` _(internal)_ — Order open PRs so every parent precedes its stacked children.
 - `cmd_stack(args: argparse.Namespace) -> int` — List the open-PR stack in dependency order with per-PR state.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — The CLI surface.
