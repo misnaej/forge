@@ -704,6 +704,12 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_staging_snapshot(repo_root: Path, roots: list[str]) -> tuple[list[str], dict[str, bytes]] | None` _(internal)_ — Record what is staged under *roots* before ruff rewrites anything.
 - `_restage_or_refuse(repo_root: Path, snapshot: tuple[list[str], dict[str, bytes]] | None) -> tuple[list[str], str | None]` _(internal)_ — Fold ruff's fixes into the files that were staged, or refuse.
 - `_validate_paths(repo_root: Path, paths: list[str]) -> list[str]` _(internal)_ — Ensure every entry in *paths* resolves inside *repo_root*.
+- `_repo_ruff_pin(repo_root: Path) -> str | None` _(internal)_ — Return the repo's own ruff requirement string from ``pyproject.toml``.
+- `_version_tuple(version: str) -> tuple[int, ...]` _(internal)_ — Parse a dotted version string into a comparable tuple of ints.
+- `_pin_bounds_allow(pin: str, version: str) -> bool` _(internal)_ — Check *version* against *pin* without the ``packaging`` dependency.
+- `_specifier_allows(pin: str, version: str) -> bool` _(internal)_ — Evaluate requirement *pin* against *version*.
+- `_ruff_version_mismatch(repo_root: Path) -> str | None` _(internal)_ — Return a loud error string when the ruff on PATH fails the repo pin.
+- `_require_pinned_ruff(repo_root: Path) -> None` _(internal)_ — Abort unless the ruff on PATH satisfies the repo's pyproject pin.
 - `main() -> int` — Apply ruff fixes and write ``code_health/ruff.log``.
 
 ## `forge.forge_config`
