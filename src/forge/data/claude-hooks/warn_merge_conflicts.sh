@@ -14,7 +14,15 @@
 set -uo pipefail
 
 INPUT=$(cat)
-COMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.command // empty')
+# Shared command-parsing lib (fail closed when missing — exit 2 is the
+# only block signal in the PreToolUse contract).
+CMD_LIB="$(dirname "$0")/lib/command_utils.sh"
+if [ ! -r "$CMD_LIB" ]; then
+    echo "BLOCKED: command-utils lib missing at $CMD_LIB — refusing the command rather than running unguarded." >&2
+    exit 2
+fi
+source "$CMD_LIB"
+COMMAND=$(parse_command_segment)
 [ -n "$COMMAND" ] || exit 0
 
 ANCHOR_LIB="$(dirname "$0")/git_anchor.sh"

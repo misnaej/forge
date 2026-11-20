@@ -28,11 +28,19 @@
 # recon value is nil; revisit if that changes.
 set -e
 INPUT=$(cat)
+# Shared command-parsing lib (fail closed when missing — exit 2 is the
+# only block signal in the PreToolUse contract).
+CMD_LIB="$(dirname "$0")/lib/command_utils.sh"
+if [ ! -r "$CMD_LIB" ]; then
+    echo "BLOCKED: command-utils lib missing at $CMD_LIB — refusing the command rather than running unguarded." >&2
+    exit 2
+fi
+source "$CMD_LIB"
 # The command keeps its own jq pass: the segment splitter below relies on
 # its real newlines. The identifiers share one pass, one value per line —
 # not @tsv, because bash treats tab as IFS whitespace and collapses the
 # empty fields, silently shifting a missing agent_id onto the next value.
-COMMAND=$(jq -r '.tool_input.command // empty' <<< "$INPUT")
+COMMAND=$(parse_command_segment)
 {
     IFS= read -r AGENT_TYPE
     IFS= read -r AGENT_ID

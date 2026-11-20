@@ -104,6 +104,11 @@ BLOCKED_COMMANDS = [
         "python3 -c \"open('.vibe'+'/forge-roster.json','w')\"",
         id="python-constructed-path",
     ),
+    pytest.param("echo x | tee .vibe/hooks.toml", id="tee-verb"),
+    pytest.param("bash <<EOF\nrm -rf .vibe\nEOF", id="heredoc-body-rmrf"),
+    pytest.param(
+        "bash <<EOF\necho hello > .vibe/protected\nEOF", id="heredoc-redirect-target"
+    ),
 ]
 
 
@@ -177,6 +182,11 @@ ALLOWED_COMMANDS = [
     pytest.param("forge-precommit", id="forge-precommit"),
     pytest.param("install-forge-vibe", id="regenerator-cli"),
     pytest.param("python3 -m pytest tests/ -q", id="pytest"),
+    pytest.param("cat .vibe/hooks.toml && ls", id="cat-and-ls"),
+    pytest.param("grep -r AGENTS.md docs/ | wc -l", id="grep-wc"),
+    pytest.param('echo "see .vibe" && git status', id="echo-git"),
+    pytest.param("ls .agents/ && cat .vibe/forge-roster.json", id="ls-and-cat"),
+    pytest.param("cat <<EOF\nsee .vibe for details\nEOF", id="heredoc-data-mention"),
 ]
 
 

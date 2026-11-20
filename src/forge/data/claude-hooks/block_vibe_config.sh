@@ -15,14 +15,26 @@
 #   - Edit / Write tools whose file_path (resolved through symlinks) lands
 #     under .vibe/, .agents/, or is the repo-root AGENTS.md — including
 #     edits[] array entries
-#   - Bash commands combining a destructive verb or redirect with any
-#     mention of .vibe / .agents / the root AGENTS.md (substring match, so
-#     quoted, semicolon-terminated and variable-indirected forms are caught)
+#   - Bash commands that MUTATE a protected path: a destructive verb with a
+#     protected path as an argument, or a redirection whose target is a
+#     protected path. Merely mentioning the paths passes — `cat
+#     .vibe/hooks.toml`, `grep AGENTS.md docs/`, `echo "see .vibe"` are
+#     reads, and the command-positions views from the shared lib tell a
+#     command from a quoted mention of one.
 set -e
 INPUT=$(cat)
 
+# Shared command-parsing lib (fail closed when missing — exit 2 is the
+# only block signal in the PreToolUse contract).
+CMD_LIB="$(dirname "$0")/lib/command_utils.sh"
+if [ ! -r "$CMD_LIB" ]; then
+    echo "BLOCKED: command-utils lib missing at $CMD_LIB — refusing the command rather than running unguarded." >&2
+    exit 2
+fi
+source "$CMD_LIB"
+
 # Extract COMMAND early: guard_begin enforces GUARD_MAX_CHARS on it.
-COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null || true)
+COMMAND=$(parse_command_segment)
 
 # Shared anchor lib: oversize-command refusal (GUARD_MAX_CHARS) + watchdog,
 # same prologue as every other block_*.sh guard. Fail CLOSED when missing.
@@ -34,14 +46,8 @@ fi
 source "$ANCHOR_LIB"
 guard_begin
 
-# jq parse failure must be a block (exit 2), not a crash exit code — the
-# script's contract is exit 2 = deny.
-parse_or_block() {
-    jq -r "$1" <<< "$INPUT" 2>/dev/null || { echo "BLOCKED: unparseable hook payload" >&2; exit 2; }
-}
-
 block() {
-    echo "BLOCKED: $1 is forge-generated Vibe guard config / instruction surface. Regenerate with 'install-forge-vibe' (or 'forge-gen-vibe-hooks'); do not edit, delete, or overwrite it by hand or by agent." >&2
+    echo "BLOCKED: $1 — that is forge-generated Vibe guard config / instruction surface. Regenerate with 'install-forge-vibe' (or 'forge-gen-vibe-hooks'); do not edit, delete, or overwrite it by hand or by agent." >&2
     exit 2
 }
 
@@ -76,25 +82,87 @@ if [ -n "$FILE_PATHS" ]; then
 fi
 
 # --- Bash branch ---------------------------------------------------------
-COMMAND=$(parse_or_block '.tool_input.command // empty')
+# Path-based: a textual mention is not a mutation. The views come from the
+# shared lib — command_positions blanks quoted spans (a commit message or
+# echo argument naming .vibe is data), keeps $(…) as (…) so a substitution
+# is scanned as a command, and --no-redir blanks redirections so segments
+# split cleanly at ; & | ( ) and redirect targets stay readable separately.
 [ -z "$COMMAND" ] && exit 0
 
-# Substring match on the protected names: quoted (".vibe"), semicolon-
-# terminated, parenthesized and variable-indirected forms all contain the
-# literal. Combined with any destructive verb, in-place editor, interpreter
-# that could write, or a redirect.
-# Substring match on all three protected names: quoted, /-prefixed,
-# semicolon-terminated, parenthesized and variable-indirected forms all
-# contain the literal. Nested docs/AGENTS.md over-blocks in Bash — safe
-# direction; the Edit branch narrows AGENTS.md to the repo root.
-PATH_HIT=$(printf '%s' "$COMMAND" | grep -cE '\.vibe|\.agents|AGENTS\.md') || true
-if [ "$PATH_HIT" -gt 0 ]; then
-    # Block on a destructive verb/redirect OR on command construction
-    # (compound commands, substitution, variables) — verb indirection like
-    # `S=sed; $S -i ...` must not slip past the verb list. Over-blocking a
-    # read pipeline over a protected path is the safe direction.
-    if printf '%s' "$COMMAND" | grep -qE '(rm|mv|cp|ln|unlink|shred|dd|truncate|install|find|sed|perl|tee|python[0-9.]*|node|ruby|php)([[:space:]]|-[a-zA-Z]*[[:space:]])|>|>>|[;&|]|\$\(|`'; then
-        block "shell command touching .vibe/, .agents/ or AGENTS.md"
+# Cheap prefilter: no mention of a protected name anywhere, nothing to judge.
+printf '%s' "$COMMAND" | grep -qE '\.vibe|\.agents|AGENTS\.md' || exit 0
+
+# A word naming a protected path: .vibe / .agents as a path component
+# (delimited by non-identifier characters, so `foo.vibe` does not match),
+# or an AGENTS.md file name. Nested docs/AGENTS.md over-blocks here — the
+# safe direction; the Edit branch narrows AGENTS.md to the repo root.
+protected_word() {
+    printf '%s' "$1" | grep -qE '(^|[^[:alnum:]_])\.vibe([^[:alnum:]_]|$)|(^|[^[:alnum:]_])\.agents([^[:alnum:]_]|$)|(^|/)AGENTS\.md$'
+}
+
+# 1. A redirection whose target is a protected path. The default view keeps
+#    redirect targets visible; extract operator+target and test the target.
+#    The raw command is scanned too: when the awk scanner is unavailable the
+#    views fall back to raw text, and the guard must still hold.
+POS=$(command_positions "$COMMAND")
+while IFS= read -r tgt; do
+    [ -z "$tgt" ] && continue
+    if protected_word "$tgt"; then
+        block "redirect into a protected path ($tgt)"
     fi
-fi
+done <<< "$( { printf '%s\n' "$POS"; printf '%s\n' "$COMMAND"; } \
+    | grep -oE '([0-9]+|[{][[:alnum:]_]+[}])?(>>>|<<-|<<<|<>|>>|>[|]|>&|&>>|&>|<|>)[[:space:]]*[^[:space:]]+' \
+    | sed -E 's/^([0-9]+|[{][[:alnum:]_]+[}]|[>]|[<]|[&])*[[:space:]]*//')"
+
+# 2. A mutating verb (or an unknowable $-held verb) whose segment carries a
+#    protected path. Three segmentations are scanned: the --words --no-redir
+#    view (quoted paths readable, redirections blanked, every ; & | ( ) a
+#    separator) and the raw command split both with and without ( ) — the
+#    paren-split exposes $(…) substitutions, the looser split keeps a quoted
+#    `open('.vibe/…')` payload in its verb's segment when the awk scanner is
+#    unavailable and the views fall back to raw text.
+WORDS=$(command_positions --words --no-redir "$COMMAND")
+scan_segments() {
+    # $1 = text, $2 = "parens" to also split at ( ), "noparens" for ; & | only,
+    # "whole" to not split at all (a quoted `;` must not end the segment)
+    local text="$1" pat
+    case "$2" in
+        parens) pat='[;&|()]' ;;
+        whole) pat='a^' ;;
+        *) pat='[;&|]' ;;
+    esac
+    while IFS= read -r seg; do
+        [ -z "$seg" ] && continue
+        # Strip leading blanks and a VAR=val run so the first word is the command.
+        seg=$(printf '%s' "$seg" | sed -E 's/^[[:space:]]+//; s/^([[:alnum:]_]+=[^[:space:]]+[[:space:]]+)*//')
+        [ -z "$seg" ] && continue
+        verb=${seg%%[[:space:]]*}
+        case "$verb" in
+            rm|mv|cp|ln|unlink|shred|dd|truncate|install|find|sed|perl|tee|python*|node|ruby|php) mutating=1 ;;
+            *) mutating=0 ;;
+        esac
+        case "$verb" in
+            *'$'*) unknown=1 ;;
+            *) unknown=0 ;;
+        esac
+        [ "$mutating" = 1 ] || [ "$unknown" = 1 ] || continue
+        for w in $seg; do
+            if protected_word "$w"; then
+                block "command mutating a protected path ($w)"
+            fi
+        done
+        # Indirection: a mutating verb with a $-held argument cannot be
+        # judged from the segment alone — block when the raw command text
+        # names a protected path (the assignment `D=.vibe; rm -rf "$D"`).
+        if [ "$mutating" = 1 ] && printf '%s' "$seg" | grep -q '\$' \
+            && printf '%s' "$COMMAND" | grep -qE '(^|[^[:alnum:]_])\.vibe([^[:alnum:]_]|$)|(^|[^[:alnum:]_])\.agents([^[:alnum:]_]|$)|(^|/)AGENTS\.md$'; then
+            block "indirected command naming a protected path"
+        fi
+    done <<< "$(printf '%s\n' "$text" | sed -E "s/$pat/\n/g")"
+}
+scan_segments "$WORDS" parens
+scan_segments "$COMMAND" parens
+scan_segments "$COMMAND" noparens
+scan_segments "$COMMAND" whole
+
 exit 0

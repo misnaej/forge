@@ -17,6 +17,14 @@ set -uo pipefail
 
 command -v jq >/dev/null 2>&1 || exit 0
 INPUT=$(cat)
+# Shared command-parsing lib (fail closed when missing — exit 2 is the
+# only block signal in the PreToolUse contract).
+CMD_LIB="$(dirname "$0")/lib/command_utils.sh"
+if [ ! -r "$CMD_LIB" ]; then
+    echo "BLOCKED: command-utils lib missing at $CMD_LIB — refusing the command rather than running unguarded." >&2
+    exit 2
+fi
+source "$CMD_LIB"
 FILE_PATH=$(jq -r '.tool_input.file_path // empty' <<< "$INPUT")
 if [ -n "$FILE_PATH" ]; then
     case "$FILE_PATH" in
@@ -25,7 +33,7 @@ if [ -n "$FILE_PATH" ]; then
     esac
 else
     # Bash: no file_path to match on, so look for the note in the command.
-    COMMAND=$(jq -r '.tool_input.command // empty' <<< "$INPUT")
+    COMMAND=$(parse_command_segment)
     case "$COMMAND" in
         *CONTINUATION.md*) ;;
         *) exit 0 ;;
