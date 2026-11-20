@@ -857,23 +857,30 @@ options:
                  to stderr; do not call gh.
   --title TITLE  Squash title (conventional-commit format). Required with
                  --bullet; the PR title is forced to match it.
-  --bullet TEXT  Bullet line. Repeat 3-5 times.
+  --bullet TEXT  Bullet line, optionally opening with the changelog bullets it
+                 covers: '[1,4-6] text'. Repeat 3-5 times. Every changelog
+                 bullet must be claimed by some bullet or the post is refused;
+                 run --dry-run to see them numbered. The claim never appears
+                 in the posted message.
 ```
 
 ## forge-pr-watch
 
 ```text
-usage: forge-pr-watch [-h] {start,list,stop,stack} ...
+usage: forge-pr-watch [-h] {await,digest,stack} ...
 
-Start, list and stop bounded background PR monitors.
+Wait for a PR event worth acting on, and report what the waiting already
+caught.
 
 positional arguments:
-  {start,list,stop,stack}
-    start               Start a monitor for a PR.
-    list                List registered monitors.
-    digest              Report what the monitors alerted on (the log's read
+  {await,digest,stack}
+    await               Wait for the first event on a PR that a session must
+                        hear (merge, close, CI failure, conflict, review
+                        comment), print it and exit. Run it as a background
+                        job: the exit is the delivery.
+    digest              Report what waiting already alerted on, including the
+                        events that do not interrupt a session (the log's read
                         end).
-    stop                Stop a monitor.
     stack               List open PRs in stack (dependency) order with state.
 
 options:

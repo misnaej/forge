@@ -196,14 +196,16 @@ Freeze, never guess:
 
 ## Background PR monitors
 
-For **every** PR this loop opens — draft or final — start one background
-monitor with `forge-pr-watch start --pr <N>` per FOUNDATION §6 "PR
+For **every** PR this loop opens — draft or final — wait on it as a
+background job: `forge-pr-watch await --pr <N>` per FOUNDATION §6 "PR
 finalization" (the canonical description — the five watched signals and
-their actions are enumerated there). Sentinel delta: question replies
-route back into the frozen branch's resume flow. The monitors need no
-exemption — §6 skips only under `is_ci()`, which no sentinel run
-satisfies, so they start by default here as everywhere. The main loop
-never blocks on an open PR. Where a monitor's alerts land, and who has
+their actions are enumerated there). It exits on the first event worth
+acting on, and that exit is what brings the news back into a session.
+Sentinel delta: question replies route back into the frozen branch's
+resume flow. The waits need no exemption — §6 skips only under
+`is_ci()`, which no sentinel run satisfies, so they start by default
+here as everywhere. The main loop never blocks on an open PR: the wait
+is a background job, never a foreground one. Where a monitor's alerts land, and who has
 to read them: `/forge-pr` Step 7.
 
 ## After each PR

@@ -80,6 +80,13 @@ import subprocess
 import sys
 from typing import Final
 
+from forge.changelog_fragments import (
+    branch_added_fragments,
+    fragment_bullets,
+    is_fragments_mode,
+    validate_fragment,
+)
+from forge.config import load_config
 from forge.gh_comments import (
     GH_LIST_TIMEOUT,
     ValidationError,
@@ -89,8 +96,13 @@ from forge.gh_comments import (
     post_new_comment,
     validate_no_ai_attribution,
 )
-from forge.git_utils import configure_cli_logging, gh_api
-from forge.text_budget import length_verdict, refusal_threshold
+from forge.git_utils import (
+    configure_cli_logging,
+    gh_api,
+    repo_root,
+    resolve_pr_base_ref,
+)
+from forge.text_budget import length_verdict
 
 
 configure_cli_logging()
@@ -126,13 +138,13 @@ TITLE_RE: Final[re.Pattern[str]] = re.compile(
 MIN_BULLETS: Final[int] = 3
 MAX_BULLETS: Final[int] = 5
 # The ceiling, never a length to write toward, and what "cut N" is
-# measured against. Over it the message posts with one warning; far past
-# it it is refused, because text that long is carrying the bloat the
-# content rules forbid. Length alone was the wrong lever anyway
-# — across the last 60 merged messages, 26% carried a bullet reporting
-# process state or bookkeeping (tests passed, a fragment exists, forge's
-# own word counts), 9% of all bullet words. The content rules in
-# FOUNDATION §6 cut that; a counter never could.
+# measured against. Over it the message posts with a warning, and that is
+# all length ever does here: what a message must not do is leave part of
+# the merge undescribed, which coverage refuses. Length was the wrong
+# lever to block on — across the last 60 merged messages, 26% carried a
+# bullet reporting process state or bookkeeping (tests passed, a fragment
+# exists, forge's own word counts), 9% of all bullet words. The content
+# rules in FOUNDATION §6 cut that; a counter never could.
 MAX_WORDS: Final[int] = 45
 # A breakdown line only has to identify the part to shorten, not show it.
 PREVIEW_CHARS: Final[int] = 40
@@ -256,20 +268,24 @@ def _word_breakdown(title: str, bullets: list[str]) -> list[str]:
 def word_cap_warning(title: str, bullets: list[str]) -> str | None:
     """Return the warning for a message over its ceiling, or ``None``.
 
-    Fires at the first word over: :data:`MAX_WORDS` is a ceiling, not a
-    length to write toward. Far past it the message is refused instead,
-    by :func:`_check_length` inside :func:`validate`.
+    Fires at the first word over, and never refuses however far over it
+    runs: :data:`MAX_WORDS` is a ceiling, not a length to write toward,
+    and a long message is a worse message, not an invalid one. What
+    makes a message invalid is leaving part of the merge undescribed —
+    :func:`_check_coverage`. A padded message that covers everything
+    still posts, carrying this warning; a short one that covers half the
+    PR does not post at all.
 
     Args:
         title: Squash title.
         bullets: Bullet strings.
 
     Returns:
-        The warning (total, ceiling, per-part breakdown) when the message
-        is over but not refused, else ``None``.
+        The warning (total, ceiling, per-part breakdown) when the
+        message is over the ceiling, else ``None``.
     """
     total = _word_total(title, bullets)
-    if length_verdict(total, MAX_WORDS) != "warn":
+    if length_verdict(total, MAX_WORDS) == "ok":
         return None
     header = (
         f"squash-merge message is {total} words — over the {MAX_WORDS}-word "
@@ -279,27 +295,140 @@ def word_cap_warning(title: str, bullets: list[str]) -> str | None:
     return "\n".join([header, *_word_breakdown(title, bullets)])
 
 
-def _check_length(title: str, bullets: list[str]) -> list[str]:
-    """Refuse a message so far over its ceiling that it is carrying bloat.
+#: A bullet's coverage claim: the fragment bullets it describes, written
+#: as a leading ``[1,4-6]`` before the bullet text. One token per bullet,
+#: not a paired ``--covers`` flag: argparse pairs two appended options by
+#: position, so a caller that passed them out of order would be read
+#: wrongly in silence, and both callers here are generated command lines.
+_COVERAGE_RE: Final = re.compile(
+    r"^\s*\[(?P<spec>[\d,\s-]+)\]\s*(?P<text>.*)$", re.DOTALL
+)
+
+
+def parse_coverage(bullet: str) -> tuple[frozenset[int], str]:
+    """Split a bullet into the fragment items it claims and its own text.
+
+    The claim is authoring input, never message content: a reader of
+    ``main`` must not meet the indices, so the text returned here is what
+    gets posted.
 
     Args:
-        title: Squash title.
-        bullets: Bullet strings.
+        bullet: One ``--bullet`` value, with or without a leading
+            ``[1,4-6]`` claim.
 
     Returns:
-        One problem past :func:`~forge.text_budget.refusal_threshold` of
-        :data:`MAX_WORDS`, else none.
+        ``(claimed indices, bullet text)``. A bullet with no claim
+        returns an empty set and its text unchanged — allowed, since a
+        bullet may describe a consequence no fragment line states, as
+        long as every fragment line is claimed somewhere.
     """
-    total = _word_total(title, bullets)
-    if length_verdict(total, MAX_WORDS) != "refuse":
-        return []
-    return [
-        (
-            f"message is {total} words, past the {refusal_threshold(MAX_WORDS)} "
-            f"allowed for a {MAX_WORDS}-word ceiling — drop the bullets reporting "
-            "process state and bookkeeping, never what changed"
+    match = _COVERAGE_RE.match(bullet)
+    if not match:
+        return frozenset(), bullet.strip()
+    claimed: set[int] = set()
+    for part in match["spec"].split(","):
+        piece = part.strip()
+        if not piece:
+            continue
+        if "-" in piece:
+            lo, _, hi = piece.partition("-")
+            if lo.strip().isdigit() and hi.strip().isdigit():
+                claimed.update(range(int(lo), int(hi) + 1))
+            continue
+        if piece.isdigit():
+            claimed.add(int(piece))
+    return frozenset(claimed), match["text"].strip()
+
+
+def _pr_fragment_items() -> tuple[list[str], str | None]:
+    """Return the bullets this branch's changelog fragment delivers.
+
+    Reads the repository, so it is kept out of :func:`validate`. The
+    fragment is found exactly as the one-fragment pre-commit gate finds
+    it — whatever the branch adds against its PR base — so the two
+    cannot disagree about which fragment belongs to this merge.
+
+    Returns:
+        ``(items, note)``. *items* is empty when the repo runs no
+        fragments, when the branch adds none, or when the one it adds
+        cannot be read; coverage is then not checked, and *note* says
+        why. Several fragments is not this gate's error to raise —
+        pre-commit already refuses that — so it reports and skips rather
+        than guessing which one the message must cover.
+    """
+    root = repo_root()
+    if root is None:
+        return [], "not in a repository — coverage not checked"
+    if not is_fragments_mode(root):
+        return [], None
+    base = load_config(root).base_branch
+    added = branch_added_fragments(root, base_ref=resolve_pr_base_ref(root, base))
+    if not added:
+        return [], "branch adds no changelog fragment — coverage not checked"
+    if len(added) > 1:
+        names = ", ".join(sorted(added))
+        return [], (
+            f"branch adds {len(added)} changelog fragments ({names}) — coverage "
+            "not checked; pre-commit refuses more than one"
         )
-    ]
+    fragment, errors = validate_fragment(root / added[0])
+    if fragment is None:
+        detail = errors[0] if errors else "unreadable"
+        return [], f"{added[0]} could not be read ({detail}) — coverage not checked"
+    return fragment_bullets(fragment.body), None
+
+
+def _check_coverage(claims: list[frozenset[int]], items: list[str]) -> list[str]:
+    """Refuse a message that leaves part of the merge undescribed.
+
+    The squash comment becomes the permanent ``main`` commit, and the
+    fragment is the list of what the merge delivers. A message that
+    describes some of it reads, forever after, as though that was all
+    that shipped — which no word count detects: the miss that prompted
+    this rule was a message well under its ceiling that covered two of
+    four deliverables.
+
+    Grouping is free. A fragment is fine-grained and a message takes
+    three to five bullets, so one bullet routinely covers several items;
+    what is checked is that no item is left unclaimed.
+
+    The check proves a claim was **made**, never that it is true: one
+    bullet claiming every item passes. It catches forgetting, which is
+    the failure that happens, not misrepresentation, which a reader of
+    the diff catches.
+
+    Args:
+        claims: Each bullet's claimed indices, in bullet order.
+        items: The fragment's bullets, 1-based by position.
+
+    Returns:
+        One problem naming every unclaimed item verbatim, and one naming
+        any index claimed that the fragment does not have; empty when
+        every item is claimed.
+    """
+    if not items:
+        return []
+    claimed: set[int] = set().union(*claims) if claims else set()
+    problems: list[str] = []
+
+    missing = [i for i in range(1, len(items) + 1) if i not in claimed]
+    if missing:
+        unclaimed = "\n".join(f"    {i}. {items[i - 1]}" for i in missing)
+        problems.append(
+            f"{len(missing)} changelog bullet(s) are covered by no squash "
+            f"bullet — every line the merge delivers must be described:\n"
+            f"{unclaimed}\n"
+            f"  claim them with a leading [N] or [N-M] on the bullet that "
+            f"describes them; one bullet may claim several"
+        )
+
+    unknown = sorted(i for i in claimed if i < 1 or i > len(items))
+    if unknown:
+        problems.append(
+            f"coverage claims {unknown} but the fragment has "
+            f"{len(items)} bullet(s) — renumber against --dry-run output"
+        )
+    return problems
 
 
 def _check_attribution(title: str, bullets: list[str]) -> list[str]:
@@ -351,28 +480,45 @@ def build_body(title: str, bullets: list[str]) -> str:
     )
 
 
-def validate(title: str, bullets: list[str]) -> list[str]:
+def validate(
+    title: str,
+    bullets: list[str],
+    *,
+    claims: list[frozenset[int]] | None = None,
+    fragment_items: list[str] | None = None,
+) -> list[str]:
     """Return every FOUNDATION §6 rule the message breaks.
 
     Every rule runs, so one failing run names all problems and the author
     fixes them in a single retry instead of one rule per round trip.
 
+    Takes the fragment's bullets rather than reading them, so the rules
+    stay testable without a checkout: resolving which fragment belongs to
+    the PR reads the repository, and that happens in :func:`main`.
+
     Args:
         title: Squash title.
-        bullets: Bullet strings.
+        bullets: Bullet strings, claims already stripped.
+        claims: Each bullet's claimed fragment indices, in bullet order.
+            ``None`` skips the coverage rule.
+        fragment_items: The PR's fragment bullets, 1-based by position.
+            ``None`` or empty skips the coverage rule — a repo with no
+            fragment has nothing to cover.
 
     Returns:
         Problem messages in rule order (title, bullets, attribution,
-        length); empty when the message is valid. Length over the ceiling
-        only warns, through :func:`word_cap_warning`; far past it it is
-        refused here.
+        coverage); empty when the message is valid. Length never appears
+        here: over its ceiling the message warns through
+        :func:`word_cap_warning` and still posts.
     """
-    return (
+    problems = (
         _check_title(title)
         + _check_bullets(bullets)
         + _check_attribution(title, bullets)
-        + _check_length(title, bullets)
     )
+    if claims is not None and fragment_items:
+        problems += _check_coverage(claims, fragment_items)
+    return problems
 
 
 def _list_squash_comments(pr_number: int) -> list[dict[str, object]] | None:
@@ -602,7 +748,13 @@ def main() -> int:
         action="append",
         default=[],
         metavar="TEXT",
-        help="Bullet line. Repeat 3-5 times.",
+        help=(
+            "Bullet line, optionally opening with the changelog bullets it "
+            "covers: '[1,4-6] text'. Repeat 3-5 times. Every changelog "
+            "bullet must be claimed by some bullet or the post is refused; "
+            "run --dry-run to see them numbered. The claim never appears in "
+            "the posted message."
+        ),
     )
     args = parser.parse_args()
 
@@ -611,7 +763,18 @@ def main() -> int:
     if args.pr is not None and not args.bullet:
         return ensure_last(args.pr)
 
-    problems = validate(args.title, args.bullet)
+    # The claim is authoring input; strip it before anything renders, so
+    # no index can reach the comment that becomes the `main` commit.
+    parsed = [parse_coverage(raw) for raw in args.bullet]
+    claims = [claimed for claimed, _ in parsed]
+    bullets = [text for _, text in parsed]
+    fragment_items, fragment_note = _pr_fragment_items()
+    if fragment_note:
+        sys.stderr.write(f"forge-pr-squash-comment: {fragment_note}\n")
+
+    problems = validate(
+        args.title, bullets, claims=claims, fragment_items=fragment_items
+    )
     if problems:
         # A multi-line problem keeps the prefix on its first line only, so
         # the rest reads as one indented block.
@@ -619,16 +782,23 @@ def main() -> int:
             sys.stderr.write(f"forge-pr-squash-comment: {problem}\n")
         return 1
 
-    body = build_body(args.title, args.bullet)
-    if warning := word_cap_warning(args.title, args.bullet):
+    body = build_body(args.title, bullets)
+    if warning := word_cap_warning(args.title, bullets):
         sys.stderr.write(f"forge-pr-squash-comment: warning: {warning}\n")
 
     if args.dry_run:
         # stdout stays exactly the body; the counts go to stderr beside it.
         sys.stdout.write(body)
-        breakdown = "\n".join(_word_breakdown(args.title, args.bullet))
-        total = _word_total(args.title, args.bullet)
+        breakdown = "\n".join(_word_breakdown(args.title, bullets))
+        total = _word_total(args.title, bullets)
         sys.stderr.write(f"{total}/{MAX_WORDS} words\n{breakdown}\n")
+        # The numbering a claim refers to, so the author reads it here
+        # instead of counting the fragment's lines by hand.
+        if fragment_items:
+            numbered = "\n".join(
+                f"  {i}. {item}" for i, item in enumerate(fragment_items, start=1)
+            )
+            sys.stderr.write(f"changelog bullets to cover:\n{numbered}\n")
         return 0
 
     title_synced = sync_pr_title(args.pr, args.title)

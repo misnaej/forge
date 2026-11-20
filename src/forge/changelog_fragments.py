@@ -294,6 +294,36 @@ def _check_no_versions_or_headings(name: str, body: str, body_line: int) -> list
     return errors
 
 
+def fragment_bullets(body: str) -> list[str]:
+    """Return the body's bullets, one string each, continuations folded in.
+
+    The one bullet grammar every reader of a fragment shares: a ``- ``
+    line opens a bullet and an indented line continues the one above it.
+    Each caller used to re-read that grammar for itself, which is how a
+    bullet could be one thing to the length advisory and another to the
+    coverage check — the two disagreeing silently about what a bullet is.
+
+    A continuation is folded into its bullet rather than dropped, so a
+    bullet wrapped across lines is one item with its whole text: the
+    numbering a refusal prints, and the word count the advisory reads,
+    both describe what the author wrote.
+
+    Args:
+        body: The fragment body, as validated.
+
+    Returns:
+        Each bullet's text without its ``- `` marker, in document order,
+        with any continuation lines joined by single spaces.
+    """
+    bullets: list[str] = []
+    for line in body.splitlines():
+        if line.startswith("- "):
+            bullets.append(line[2:].strip())
+        elif bullets and line.startswith((" ", "\t")) and line.strip():
+            bullets[-1] = f"{bullets[-1]} {line.strip()}"
+    return bullets
+
+
 def _check_bullets(name: str, body: str) -> list[str]:
     """Check the body starts with a ``- `` bullet and every line continues one.
 
@@ -362,12 +392,10 @@ def long_bullets(body: str) -> list[tuple[str, int]]:
         :data:`BULLET_WORD_CEILING`, in document order.
     """
     long: list[tuple[str, int]] = []
-    for line in body.splitlines():
-        if not line.startswith("- "):
-            continue
-        words = len(line[2:].split())
+    for bullet in fragment_bullets(body):
+        words = len(bullet.split())
         if length_verdict(words, BULLET_WORD_CEILING) != "ok":
-            long.append((line.strip(), words))
+            long.append((f"- {bullet}", words))
     return long
 
 

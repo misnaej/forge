@@ -441,6 +441,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_parse_and_validate_filename(name: str) -> tuple[str, str, list[str]]` _(internal)_ — Validate filename and extract slug and type.
 - `_parse_bump_line_and_body(path: Path, lines: list[str]) -> tuple[str, str, int, list[str]]` _(internal)_ — Validate bump line and extract level, body and the body's file line.
 - `_check_no_versions_or_headings(name: str, body: str, body_line: int) -> list[str]` _(internal)_ — Check for version-shaped strings and embedded headings.
+- `fragment_bullets(body: str) -> list[str]` — Return the body's bullets, one string each, continuations folded in.
 - `_check_bullets(name: str, body: str) -> list[str]` _(internal)_ — Check the body starts with a ``- `` bullet and every line continues one.
 - `long_bullets(body: str) -> list[tuple[str, int]]` — Return the fragment's bullets that run past the word ceiling.
 - `verbose_entry_note(body: str) -> str | None` — Return an advisory when a fragment's bullets are longer than needed.
@@ -1852,10 +1853,12 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_preview(text: str) -> str` _(internal)_ — Shorten one message part to a printable first line for the breakdown.
 - `_word_breakdown(title: str, bullets: list[str]) -> list[str]` _(internal)_ — Render one indented line per message part: label, word count, preview.
 - `word_cap_warning(title: str, bullets: list[str]) -> str | None` — Return the warning for a message over its ceiling, or ``None``.
-- `_check_length(title: str, bullets: list[str]) -> list[str]` _(internal)_ — Refuse a message so far over its ceiling that it is carrying bloat.
+- `parse_coverage(bullet: str) -> tuple[frozenset[int], str]` — Split a bullet into the fragment items it claims and its own text.
+- `_pr_fragment_items() -> tuple[list[str], str | None]` _(internal)_ — Return the bullets this branch's changelog fragment delivers.
+- `_check_coverage(claims: list[frozenset[int]], items: list[str]) -> list[str]` _(internal)_ — Refuse a message that leaves part of the merge undescribed.
 - `_check_attribution(title: str, bullets: list[str]) -> list[str]` _(internal)_ — Return the Claude / AI attribution problem per FOUNDATION §2 (shared gate).
 - `build_body(title: str, bullets: list[str]) -> str` — Build the GitHub comment body around a validated message.
-- `validate(title: str, bullets: list[str]) -> list[str]` — Return every FOUNDATION §6 rule the message breaks.
+- `validate(title: str, bullets: list[str], *, claims: list[frozenset[int]] | None = None, fragment_items: list[str] | None = None) -> list[str]` — Return every FOUNDATION §6 rule the message breaks.
 - `_list_squash_comments(pr_number: int) -> list[dict[str, object]] | None` _(internal)_ — Return this CLI's own comments on *pr_number*, oldest first.
 - `_latest_activity_at(pr_number: int) -> str | None` _(internal)_ — Return the newest timestamp across every comment surface of a PR.
 - `sync_pr_title(pr_number: int, title: str) -> bool` — Force the PR title to match the squash title.
@@ -1866,13 +1869,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 ## `forge.pr_watch`
 
-> _forge-pr-watch — start, list and stop background PR monitors._
+> _forge-pr-watch — wait for a PR event a session must act on._
 
-- `class MonitorRecord` — One registered monitor.
-- `class Registry` — The on-disk registry of monitors.
-  - `load(cls, path: Path) -> Registry` — Read the registry, tolerating a missing or corrupt file.
-  - `save(self, path: Path) -> None` — Write the registry atomically.
-- `_registry_path(root: Path) -> Path` _(internal)_ — Return the monitor registry file for *root*.
 - `monitor_log_path(root: Path, pr: int) -> Path` — Return the log a PR's monitor writes its output to.
 - `_resolve_repo(root: Path, repo_arg: str | None) -> str | None` _(internal)_ — Return ``owner/repo``, from *repo_arg* or the checkout's origin remote.
 - `_gh(*args: str, timeout: int = GH_TIMEOUT_S) -> subprocess.CompletedProcess[str]` _(internal)_ — Run a ``gh`` command, raising on failure.
@@ -1888,16 +1886,14 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_one_line(text: str) -> str` _(internal)_ — Flatten a GitHub-supplied string to one printable line.
 - `_ci_alerts(repo: str, pr: int, *, stack_child: bool = False, base_ref: str = '') -> list[str]` _(internal)_ — Return CI-failure alerts from ``gh pr checks``.
 - `_staleness_alerts(repo: str, pr: int) -> list[str]` _(internal)_ — Return a wrap-up-staleness alert when the freshness verdict is stale.
-- `_monitor_loop(repo: str, pr: int, interval: int, bound: int, registry_path: Path) -> None` _(internal)_ — Poll until the bound expires or the PR reaches a terminal state.
-- `cmd_monitor(args: argparse.Namespace) -> int` — Run the poll loop in the foreground (the spawned child's entry point).
 - `_auto_detect_pr(root: Path, repo: str) -> int | None` _(internal)_ — Find the open PR for the current branch.
-- `cmd_start(args: argparse.Namespace) -> int` — Start a bounded monitor for a PR.
-- `_spawn_monitor(root: Path, repo: str, pr: int, args: argparse.Namespace) -> tuple[int, Path]` _(internal)_ — Spawn the detached poll loop for a PR and record it in the registry.
-- `_pid_cmdline(pid: int) -> str` _(internal)_ — Return the command line of *pid*, or empty when unreadable.
-- `_is_monitor(pid: int) -> bool` _(internal)_ — Return whether *pid* is one of this module's monitor processes.
-- `cmd_stop(args: argparse.Namespace) -> int` — Stop one or all monitors, verifying process identity before signalling.
-- `_monitor_state(record: MonitorRecord, *, alive: bool) -> str` _(internal)_ — Return a one-word reading of a monitor's state, for display.
-- `cmd_list(_args: argparse.Namespace) -> int` — List registered monitors.
+- `_wakes_a_session(alert: str) -> bool` _(internal)_ — Report whether *alert* is worth interrupting a working session for.
+- `await_events(repo: str, pr: int, interval: int, bound: int, log_path: Path) -> tuple[int, list[str]]` — Poll until something happens that a session must hear, then stop.
+- `_seen_path(log_path: Path) -> Path` _(internal)_ — Return the file holding the comment identities already accounted for.
+- `_load_seen(log_path: Path) -> set[str]` _(internal)_ — Return the comment identities an earlier wait already accounted for.
+- `_save_seen(log_path: Path, seen: set[str]) -> None` _(internal)_ — Record the comment identities accounted for, for the next wait.
+- `_append_alert(path: Path, line: str) -> None` _(internal)_ — Append one alert to the PR's log, so ``digest`` can still read it.
+- `cmd_await(args: argparse.Namespace) -> int` — Wait for the first event on a PR worth telling a session about.
 - `_alert_lines(path: Path) -> list[str]` _(internal)_ — Return a monitor log's alert lines, in order, without repeats.
 - `cmd_digest(_args: argparse.Namespace) -> int` — Report what the monitors saw, so their alerts reach a session.
 - `_stack_order(prs: list[dict[str, object]]) -> list[dict[str, object]]` _(internal)_ — Order open PRs so every parent precedes its stacked children.

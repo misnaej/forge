@@ -18,6 +18,8 @@
 from __future__ import annotations
 
 import sys
+import types
+from typing import TYPE_CHECKING, TypeAlias, cast
 
 import pytest
 
@@ -25,6 +27,14 @@ from forge import git_utils
 from forge import pr_squash_comment as mod
 from tests.conftest import FakeProc, page_json
 
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+
+# Captured before the autouse fixture replaces it, so the function's own
+# tests still exercise the real one.
+_REAL_PR_FRAGMENT_ITEMS = mod._pr_fragment_items
 
 VALID_TITLE = "feat(#42): example squash title"
 VALID_BULLETS = [
@@ -58,6 +68,15 @@ def _own_login(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     git_utils.own_login.cache_clear()
     monkeypatch.setattr("forge.gh_comments.own_login", lambda: "octocat")
+
+
+@pytest.fixture(autouse=True)
+def _no_repository_fragment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make ``main`` see no fragment, so it never reads the real repository.
+
+    Coverage tests override this with a lambda returning real items.
+    """
+    monkeypatch.setattr(mod, "_pr_fragment_items", lambda: ([], ""))
 
 
 @pytest.mark.parametrize(
@@ -485,12 +504,12 @@ def _message_of(total_words: int) -> tuple[str, list[str]]:
 
 @pytest.mark.parametrize(
     ("total_words", "warns"),
-    [(45, False), (46, True), (54, True)],
+    [(45, False), (46, True), (54, True), (55, True), (200, True)],
 )
-def test_length_up_to_the_refusal_threshold_validates_and_warns_above_the_ceiling(
+def test_length_warns_above_the_ceiling_and_never_refuses(
     total_words: int, *, warns: bool
 ) -> None:
-    """Behavior: the ceiling (45) is silent, one over it warns, 54 still validates.
+    """Behavior: the ceiling (45) is silent; any length over it warns, none refuses.
 
     Args:
         total_words: Whole-message word count under test.
@@ -505,23 +524,6 @@ def test_length_up_to_the_refusal_threshold_validates_and_warns_above_the_ceilin
         assert str(total_words) in warning
     else:
         assert warning is None
-
-
-@pytest.mark.parametrize("total_words", [55, 200])
-def test_length_past_the_refusal_threshold_is_a_validate_problem(
-    total_words: int,
-) -> None:
-    """Behavior: a message past 54 words fails ``validate`` and no longer warns.
-
-    Args:
-        total_words: Whole-message word count under test.
-    """
-    title, bullets = _message_of(total_words)
-    problems = mod.validate(title, bullets)
-    assert len(problems) == 1
-    assert str(total_words) in problems[0]
-    assert "54" in problems[0]
-    assert mod.word_cap_warning(title, bullets) is None
 
 
 # ---------------------------------------------------------------------------
@@ -623,25 +625,20 @@ def test_main_validation_failure_returns_one(
 def test_main_reports_every_failing_rule_prefixed_on_its_own_stderr_line(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Three broken rules all reach stderr, each on its own prefixed line.
+    """Two broken rules both reach stderr, each on its own prefixed line.
 
-    SCENARIO: title, bullet count and length are all broken (a 55-word
-    bullet puts the message past the 54-word refusal threshold).
-    EXPECTED BEHAVIOR: all three problems are visible in one run, each
+    SCENARIO: title and bullet count are both broken.
+    EXPECTED BEHAVIOR: both problems are visible in one run, each
     opened by the ``forge-pr-squash-comment: `` prefix.
     """
-    long_bullet = " ".join(["word"] * 55)
-    sys.argv.extend(
-        ["--dry-run", "--title", "not conventional", "--bullet", long_bullet]
-    )
+    sys.argv.extend(["--dry-run", "--title", "not conventional", "--bullet", "one"])
     assert mod.main() == 1
     err = capsys.readouterr().err
     prefix = "forge-pr-squash-comment: "
     prefixed_lines = [line for line in err.splitlines() if line.startswith(prefix)]
-    assert len(prefixed_lines) == 3
+    assert len(prefixed_lines) == 2
     assert any("conventional-commit" in line for line in prefixed_lines)
     assert any("requires 3-5" in line for line in prefixed_lines)
-    assert any("message is 57 words" in line for line in prefixed_lines)
 
 
 @pytest.mark.usefixtures("_cli_argv")
@@ -996,12 +993,14 @@ def test_main_ensure_last_errors_without_an_existing_comment(
 @pytest.mark.usefixtures("_cli_argv")
 @pytest.mark.parametrize(
     ("total_words", "warns"),
-    [(45, False), (52, True)],
+    [(45, False), (52, True), (62, True)],
 )
 def test_main_dry_run_warns_on_stderr_only_over_the_ceiling(
     capsys: pytest.CaptureFixture[str], *, total_words: int, warns: bool
 ) -> None:
     """Behavior: dry run exits 0 with the body on stdout; warns only past 45 words.
+
+    Far past the ceiling (62) still exits 0 — length never refuses.
 
     Args:
         total_words: Whole-message word count under test.
@@ -1025,21 +1024,353 @@ def test_main_dry_run_warns_on_stderr_only_over_the_ceiling(
         assert f"is {total_words} words" in captured.err
 
 
-@pytest.mark.usefixtures("_cli_argv")
-def test_main_dry_run_refuses_a_message_past_the_threshold(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """Behavior: 62 words exits 1 with the problem on stderr and no body on stdout."""
-    title, bullets = _message_of(62)
-    sys.argv.extend(
-        [
-            "--dry-run",
-            "--title",
-            title,
-            *(item for b in bullets for item in ("--bullet", b)),
-        ]
+# ---------------------------------------------------------------------------
+# Coverage claims
+# ---------------------------------------------------------------------------
+
+FRAGMENT_ITEMS = ["first delivered thing", "second delivered thing", "third one"]
+
+
+@pytest.mark.parametrize(
+    ("bullet", "claimed", "text"),
+    [
+        pytest.param("[1] text", {1}, "text", id="single"),
+        pytest.param("[1,4-6] text", {1, 4, 5, 6}, "text", id="list-and-range"),
+        pytest.param("[ 1 , 4-6 ] text", {1, 4, 5, 6}, "text", id="spaced"),
+        pytest.param("plain text", set(), "plain text", id="no-claim"),
+        pytest.param("[abc] text", set(), "[abc] text", id="malformed-stays-text"),
+        pytest.param("[1]", {1}, "", id="claim-only"),
+    ],
+)
+def test_parse_coverage_forms(bullet: str, claimed: set[int], text: str) -> None:
+    """Behavior: every claim shape yields its index set and the stripped text.
+
+    Args:
+        bullet: Raw ``--bullet`` value.
+        claimed: Indices expected to be claimed.
+        text: Bullet text expected to remain.
+    """
+    assert mod.parse_coverage(bullet) == (frozenset(claimed), text)
+
+
+def test_check_coverage_names_every_unclaimed_item() -> None:
+    """Behavior: each unclaimed item appears verbatim, claimed ones do not."""
+    items = ["alpha item", "beta item", "gamma item", "delta item"]
+    problems = mod._check_coverage([frozenset({2})], items)
+    assert len(problems) == 1
+    for item in (items[0], items[2], items[3]):
+        assert item in problems[0]
+    assert items[1] not in problems[0]
+
+
+def test_check_coverage_passes_when_all_claimed_with_shared_claims() -> None:
+    """Behavior: one index claimed by two bullets is allowed."""
+    claims = [frozenset({1, 2}), frozenset({2, 3})]
+    assert mod._check_coverage(claims, FRAGMENT_ITEMS) == []
+
+
+def test_check_coverage_reports_out_of_range_claim() -> None:
+    """Behavior: index 0 (1-based rule) and one past the end are both reported."""
+    claims = [frozenset({0, 1, 2, 3, 4})]
+    problems = mod._check_coverage(claims, FRAGMENT_ITEMS)
+    assert len(problems) == 1
+    assert "[0, 4]" in problems[0]
+
+
+def test_check_coverage_skips_empty_items() -> None:
+    """Behavior: a repo with no fragment items has nothing to cover."""
+    assert mod._check_coverage([frozenset()], []) == []
+
+
+def test_validate_skips_coverage_when_claims_is_none() -> None:
+    """Behavior: programmatic callers passing no claims skip the rule."""
+    assert mod.validate(VALID_TITLE, VALID_BULLETS, fragment_items=FRAGMENT_ITEMS) == []
+
+
+def test_validate_refuses_empty_claims_against_fragment_items() -> None:
+    """Behavior: claims all empty with items present still refuses.
+
+    This is the CLI enforcement: ``main`` always passes a list, so bullets
+    with no claims cannot dodge the check the way ``claims=None`` does.
+    """
+    claims = [frozenset()] * len(VALID_BULLETS)
+    problems = mod.validate(
+        VALID_TITLE, VALID_BULLETS, claims=claims, fragment_items=FRAGMENT_ITEMS
     )
+    assert len(problems) == 1
+    assert "covered by no squash bullet" in problems[0]
+
+
+def _use_fragment_items(
+    monkeypatch: pytest.MonkeyPatch, items: list[str], note: str = ""
+) -> None:
+    """Make ``main`` see *items* as the PR fragment's bullets.
+
+    Args:
+        monkeypatch: The test's monkeypatch fixture.
+        items: Fragment bullets to serve.
+        note: Skip note to serve alongside them.
+    """
+    monkeypatch.setattr(mod, "_pr_fragment_items", lambda: (items, note))
+
+
+def _bullet_args(bullets: list[str]) -> list[str]:
+    """Interleave ``--bullet`` flags with *bullets*.
+
+    Args:
+        bullets: Raw bullet values.
+
+    Returns:
+        A flat argv fragment.
+    """
+    return [item for b in bullets for item in ("--bullet", b)]
+
+
+@pytest.mark.usefixtures("_cli_argv")
+def test_main_refuses_naming_unclaimed_fragment_bullets(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Behavior: a message leaving a fragment bullet unclaimed exits 1, naming it."""
+    _use_fragment_items(monkeypatch, FRAGMENT_ITEMS)
+    bullets = ["[1] bullet alpha", "[2] bullet beta", "bullet gamma"]
+    sys.argv.extend(["--dry-run", "--title", VALID_TITLE, *_bullet_args(bullets)])
     assert mod.main() == 1
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert "62 words" in captured.err
+    assert "forge-pr-squash-comment: 1 changelog bullet(s)" in captured.err
+    assert FRAGMENT_ITEMS[2] in captured.err
+
+
+@pytest.mark.usefixtures("_cli_argv")
+def test_main_dry_run_never_posts_the_coverage_claim(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Behavior: the claim is stripped before rendering and before counting.
+
+    The body becomes the permanent ``main`` commit, so a leaked ``[1``
+    would corrupt it. Words are counted from the stripped text too.
+    """
+    _use_fragment_items(monkeypatch, FRAGMENT_ITEMS)
+    raw = [
+        "[1] bullet alpha description",
+        "[2] bullet beta description",
+        "[3] bullet gamma description",
+    ]
+    sys.argv.extend(["--dry-run", "--title", VALID_TITLE, *_bullet_args(raw)])
+    assert mod.main() == 0
+    captured = capsys.readouterr()
+    assert captured.out == mod.build_body(VALID_TITLE, VALID_BULLETS)
+    assert "[1" not in captured.out
+    assert f"13/{mod.MAX_WORDS} words" in captured.err
+    breakdown = [ln for ln in captured.err.splitlines() if ln.startswith("  bullet")]
+    assert all("[" not in ln for ln in breakdown)
+
+
+@pytest.mark.usefixtures("_cli_argv")
+def test_main_pr_mode_never_posts_the_coverage_claim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Behavior: the body handed to ``gh pr comment`` carries no claim."""
+    bodies: list[str] = []
+
+    def _fake_run(cmd: list[str], **kw: object) -> FakeProc:
+        if cmd[:3] == ["gh", "pr", "comment"]:
+            bodies.append(str(kw["input"]))
+        return FakeProc()
+
+    _use_fragment_items(monkeypatch, FRAGMENT_ITEMS)
+    monkeypatch.setattr(mod, "gh_api", _fake_api_with_title(VALID_TITLE))
+    monkeypatch.setattr("forge.gh_comments.gh_api", _fake_api_with_title(VALID_TITLE))
+    monkeypatch.setattr("forge.pr_squash_comment.subprocess.run", _fake_run)
+    raw = [
+        "[1] bullet alpha description",
+        "[2] bullet beta description",
+        "[3] bullet gamma description",
+    ]
+    sys.argv.extend(["--pr", "61", "--title", VALID_TITLE, *_bullet_args(raw)])
+    assert mod.main() == 0
+    assert bodies == [mod.build_body(VALID_TITLE, VALID_BULLETS)]
+    assert "[1" not in bodies[0]
+
+
+@pytest.mark.usefixtures("_cli_argv")
+def test_main_dry_run_prints_numbered_fragment_bullets_to_stderr(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Behavior: dry run shows the numbering a claim refers to; a post does not."""
+    _use_fragment_items(monkeypatch, FRAGMENT_ITEMS)
+    raw = [
+        "[1] bullet alpha description",
+        "[2] bullet beta description",
+        "[3] bullet gamma description",
+    ]
+    sys.argv.extend(["--dry-run", "--title", VALID_TITLE, *_bullet_args(raw)])
+    assert mod.main() == 0
+    err = capsys.readouterr().err
+    assert "changelog bullets to cover:" in err
+    for i, item in enumerate(FRAGMENT_ITEMS, start=1):
+        assert f"  {i}. {item}" in err
+
+
+@pytest.mark.usefixtures("_cli_argv")
+def test_main_pr_mode_omits_numbered_fragment_bullets(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Behavior: the numbered listing is a dry-run aid, absent without --dry-run."""
+    _use_fragment_items(monkeypatch, FRAGMENT_ITEMS)
+    monkeypatch.setattr(mod, "gh_api", _fake_api_with_title(VALID_TITLE))
+    monkeypatch.setattr("forge.gh_comments.gh_api", _fake_api_with_title(VALID_TITLE))
+    monkeypatch.setattr(
+        "forge.pr_squash_comment.subprocess.run", lambda *_a, **_kw: FakeProc()
+    )
+    raw = [
+        "[1] bullet alpha description",
+        "[2] bullet beta description",
+        "[3] bullet gamma description",
+    ]
+    sys.argv.extend(["--pr", "61", "--title", VALID_TITLE, *_bullet_args(raw)])
+    assert mod.main() == 0
+    assert "changelog bullets to cover" not in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# _pr_fragment_items — which fragment belongs to the PR
+# ---------------------------------------------------------------------------
+
+
+class _FakeFragment:
+    """Stand-in for a parsed fragment: only ``body`` is read."""
+
+    def __init__(self, body: str) -> None:
+        """Hold *body*.
+
+        Args:
+            body: The fragment body text.
+        """
+        self.body = body
+
+
+#: One `_pr_fragment_items` scenario, as each parametrized row carries it.
+_FragmentSetup: TypeAlias = "dict[str, object]"
+
+
+def _wire_fragment_collaborators(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    setup: _FragmentSetup,
+) -> None:
+    """Replace ``_pr_fragment_items``' collaborators with fakes.
+
+    The scenario arrives as one mapping rather than six parameters
+    because each parametrized row already carries it as one: spreading
+    it over a signature only to re-assemble it at the call site buys
+    nothing and needs a type-ignore to pass a dict through.
+
+    Args:
+        monkeypatch: The test's monkeypatch fixture.
+        tmp_path: Stand-in repository root.
+        setup: The scenario — ``root_is_none`` (make ``repo_root`` report
+            no repository), ``fragments_mode`` (what ``is_fragments_mode``
+            answers), ``added`` (paths ``branch_added_fragments``
+            reports), ``fragment`` (what ``validate_fragment`` parses,
+            ``None`` for unreadable) and ``errors``.
+    """
+    root_is_none = bool(setup.get("root_is_none", False))
+    fragments_mode = bool(setup.get("fragments_mode", True))
+    added = cast("list[str]", setup.get("added", []))
+    fragment = cast("_FakeFragment | None", setup.get("fragment"))
+    errors = cast("list[str]", setup.get("errors", []))
+
+    monkeypatch.setattr(mod, "repo_root", lambda: None if root_is_none else tmp_path)
+    monkeypatch.setattr(mod, "is_fragments_mode", lambda _root: fragments_mode)
+    monkeypatch.setattr(
+        mod, "load_config", lambda _root: types.SimpleNamespace(base_branch="main")
+    )
+    monkeypatch.setattr(mod, "resolve_pr_base_ref", lambda _root, _base: "origin/main")
+    # The real one takes base_ref keyword-only; the double accepts and
+    # ignores it, so the production call site stays exercised as written.
+    monkeypatch.setattr(
+        mod, "branch_added_fragments", lambda _root, **_kwargs: list(added)
+    )
+    monkeypatch.setattr(mod, "validate_fragment", lambda _path: (fragment, errors))
+
+
+@pytest.mark.parametrize(
+    ("setup", "items", "note_part"),
+    [
+        pytest.param(
+            {"root_is_none": True, "added": [], "fragment": None, "errors": []},
+            [],
+            "not in a repository",
+            id="not-a-repo",
+        ),
+        pytest.param(
+            {"fragments_mode": False, "added": [], "fragment": None, "errors": []},
+            [],
+            None,
+            id="fragments-mode-off-no-note",
+        ),
+        pytest.param(
+            {"added": [], "fragment": None, "errors": []},
+            [],
+            "adds no changelog fragment",
+            id="no-fragment-added",
+        ),
+        pytest.param(
+            {
+                "added": ["changelog.d/b.fixed.md", "changelog.d/a.added.md"],
+                "fragment": None,
+                "errors": [],
+            },
+            [],
+            "adds 2 changelog fragments "
+            "(changelog.d/a.added.md, changelog.d/b.fixed.md)",
+            id="several-fragments",
+        ),
+        pytest.param(
+            {
+                "added": ["changelog.d/a.added.md"],
+                "fragment": None,
+                "errors": ["a.added.md: empty entry body"],
+            },
+            [],
+            "could not be read (a.added.md: empty entry body)",
+            id="unreadable-fragment",
+        ),
+        pytest.param(
+            {
+                "added": ["changelog.d/a.added.md"],
+                "fragment": _FakeFragment("- one\n  wrapped\n- two\n"),
+                "errors": [],
+            },
+            ["one wrapped", "two"],
+            None,
+            id="happy-path",
+        ),
+    ],
+)
+def test_pr_fragment_items_skip_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    setup: dict[str, object],
+    items: list[str],
+    note_part: str | None,
+) -> None:
+    """Behavior: every skip path returns no items and says why; happy path returns them.
+
+    Fragments mode off is the odd one out: no items and no note, since a
+    repo without fragments has nothing to explain.
+
+    Args:
+        setup: Keyword arguments for the collaborator fakes.
+        items: Expected fragment items.
+        note_part: Substring expected in the note, or ``None`` for no note.
+    """
+    _wire_fragment_collaborators(monkeypatch, tmp_path, setup)
+    got_items, note = _REAL_PR_FRAGMENT_ITEMS()
+    assert got_items == items
+    if note_part is None:
+        assert note is None
+    else:
+        assert note is not None
+        assert note_part in note

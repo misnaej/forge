@@ -1,38 +1,34 @@
-"""Tests for forge.pr_watch — background PR monitor lifecycle CLI.
+"""Tests for forge.pr_watch — foreground PR wait, digest and stack listing.
 
-# MOCKING STRATEGY: registry I/O uses real tmp files; gh calls are faked
-# via monkeypatching _gh; process identity via /proc is faked by monkeypatching
-# _pid_cmdline; the --pr-less start test also replaces Popen with _FakePopen
-# so nothing spawns. One test (test_start_spawns_monitor_that_polls_and_logs)
-# spawns the real detached monitor: it fakes only the `gh` executable on PATH,
-# so the process boundary is exercised for real. Loop tests patch
-# _poll_once (scripted outcomes) and time.sleep; the --pr-less start test fakes
-# subprocess.run with FakeGh, which models `gh pr list --head` and rejects any
-# gh call it does not know. Digest tests use real log files.
+# MOCKING STRATEGY: gh calls are faked by monkeypatching ``_gh`` (or
+# ``subprocess.run`` for ``FakeGh``, which models ``gh pr list --head`` and
+# rejects any call it does not know). The wait loop tests script
+# ``_poll_once`` (outcomes in order, AssertionError when the script runs
+# out, so a loop that fails to stop is caught) and swap ``pr_watch.time``
+# for ``_FakeTime``, whose clock advances only when the loop sleeps:
+# ``bound = N * interval`` then gives exactly N polls and ``bound = 0`` none.
+# Log and sidecar files are real files in tmp; digest tests use real logs.
 """
 
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
 import logging
-import os
-import signal
 import subprocess
-import time
-from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
 
 from forge import pr_watch
-from forge.pr_watch import MonitorRecord, Registry
 
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+_INTERVAL = 10
 
 
 @pytest.fixture
@@ -49,29 +45,154 @@ def watch_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def test_registry_round_trip(tmp_path: Path) -> None:
-    """A saved registry loads back with the same records."""
-    path = tmp_path / ".plan" / "pr_monitors.json"
-    reg = Registry(
-        monitors=[
-            MonitorRecord(
-                pid=123, pr=993, repo="o/r", started_at="2026-01-01T00:00:00+00:00"
-            )
-        ]
+class _FakeTime:
+    """A clock that moves only when the loop sleeps, and remembers each sleep.
+
+    Attributes:
+        now: Current fake monotonic time.
+        sleeps: Every sleep requested, in order.
+    """
+
+    def __init__(self) -> None:
+        """Start the clock at zero with no sleeps recorded."""
+        self.now = 0.0
+        self.sleeps: list[float] = []
+
+    def monotonic(self) -> float:
+        """Return the fake time.
+
+        Returns:
+            Current fake monotonic seconds.
+        """
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        """Advance the clock instead of waiting.
+
+        Args:
+            seconds: How long the loop asked to sleep.
+        """
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+@pytest.fixture
+def fake_clock(monkeypatch: pytest.MonkeyPatch) -> _FakeTime:
+    """Replace ``pr_watch.time`` so the wait loop never really sleeps.
+
+    Returns:
+        The fake clock, for reading the sleeps the loop asked for.
+    """
+    clock = _FakeTime()
+    monkeypatch.setattr(pr_watch, "time", clock)
+    return clock
+
+
+class _ScriptedPolls:
+    """Stand-in for ``_poll_once`` that replays outcomes in order.
+
+    Attributes:
+        first_polls: The ``first_poll`` keyword of each call, in order.
+    """
+
+    def __init__(self, outcomes: list[pr_watch.PollOutcome]) -> None:
+        """Hold the outcomes to replay.
+
+        Args:
+            outcomes: What each successive poll returns.
+        """
+        self._outcomes = iter(outcomes)
+        self.first_polls: list[bool] = []
+
+    def __call__(
+        self, _repo: str, _pr: int, _seen: set[str], *, first_poll: bool
+    ) -> pr_watch.PollOutcome:
+        """Return the next scripted outcome.
+
+        Args:
+            _repo: ``owner/repo`` slug, ignored.
+            _pr: PR number, ignored.
+            _seen: Comment identities, ignored.
+            first_poll: Recorded for the test to read.
+
+        Returns:
+            The next outcome.
+
+        Raises:
+            AssertionError: The script ran out, so the loop failed to stop.
+        """
+        self.first_polls.append(first_poll)
+        try:
+            return next(self._outcomes)
+        except StopIteration:
+            msg = "polled past the end of the script"
+            raise AssertionError(msg) from None
+
+
+def _script(
+    monkeypatch: pytest.MonkeyPatch, outcomes: list[pr_watch.PollOutcome]
+) -> _ScriptedPolls:
+    """Install a scripted ``_poll_once``.
+
+    Args:
+        monkeypatch: Used to replace ``_poll_once``.
+        outcomes: What each successive poll returns.
+
+    Returns:
+        The script, for reading the recorded ``first_poll`` flags.
+    """
+    polls = _ScriptedPolls(outcomes)
+    monkeypatch.setattr(pr_watch, "_poll_once", polls)
+    return polls
+
+
+def _quiet(*, terminal: bool = False) -> pr_watch.PollOutcome:
+    """A successful poll with nothing to report.
+
+    Args:
+        terminal: Whether the PR is merged or closed.
+
+    Returns:
+        The outcome.
+    """
+    return pr_watch.PollOutcome(alerts=[], head="h1", terminal=terminal)
+
+
+def _failed_poll_line(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Return the line the real ``_poll_once`` writes for a failed ``gh`` call.
+
+    Args:
+        monkeypatch: Used to make ``_gh`` fail.
+
+    Returns:
+        The poll-failed alert.
+    """
+
+    def failing_gh(*_a: object, **_k: object) -> object:
+        raise subprocess.CalledProcessError(1, "gh")
+
+    monkeypatch.setattr(pr_watch, "_gh", failing_gh)
+    return pr_watch._poll_once("o/r", 9, set(), first_poll=False).alerts[0]
+
+
+def _staleness_line(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Return the line the real ``_staleness_alerts`` writes for a stale wrap-up.
+
+    Args:
+        monkeypatch: Used to fake the freshness subprocess.
+
+    Returns:
+        The staleness alert.
+    """
+    payload = {"fresh": False, "latest_verified_at": "t0", "head_oid": "h1"}
+    monkeypatch.setattr(
+        pr_watch.subprocess,
+        "run",
+        lambda *_a, **_k: subprocess.CompletedProcess(
+            [], 0, stdout=json.dumps(payload), stderr=""
+        ),
     )
-    reg.save(path)
-    loaded = Registry.load(path)
-    assert len(loaded.monitors) == 1
-    assert loaded.monitors[0].pid == 123
-    assert loaded.monitors[0].pr == 993
-
-
-def test_registry_load_missing_or_corrupt(tmp_path: Path) -> None:
-    """A missing or corrupt registry loads as empty."""
-    assert Registry.load(tmp_path / "nope.json").monitors == []
-    bad = tmp_path / "bad.json"
-    bad.write_text("not json")
-    assert Registry.load(bad).monitors == []
+    return pr_watch._staleness_alerts("o/r", 9)[0]
 
 
 def test_arming_check_all_signals_pass(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -85,25 +206,25 @@ def test_arming_check_all_signals_pass(monkeypatch: pytest.MonkeyPatch) -> None:
     assert pr_watch.arming_check("o/r", 993) == []
 
 
+def _missing_gh(*_a: object, **_k: object) -> object:
+    """Simulate a missing gh executable.
+
+    Args:
+        *_a: Ignored positional arguments.
+        **_k: Ignored keyword arguments.
+
+    Raises:
+        FileNotFoundError: Always.
+    """
+    msg = "gh"
+    raise FileNotFoundError(msg)
+
+
 def test_arming_check_fails_loudly_on_missing_gh(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """When gh is missing, arming_check names the signal."""
-
-    def fake_gh(*a: object, **k: object) -> object:
-        """Simulate a missing gh executable.
-
-        Args:
-            *a: Positional gh arguments, ignored.
-            **k: Keyword gh arguments, ignored.
-
-        Returns:
-            Never returns; always raises FileNotFoundError.
-        """
-        msg = "gh"
-        raise FileNotFoundError(msg)
-
-    monkeypatch.setattr(pr_watch, "_gh", fake_gh)
+    monkeypatch.setattr(pr_watch, "_gh", _missing_gh)
     failures = pr_watch.arming_check("o/r", 993)
     assert any("gh-present" in f for f in failures)
 
@@ -144,318 +265,6 @@ def test_arming_check_fails_on_unparseable_pr_view(
     monkeypatch.setattr(pr_watch, "_gh", fake_gh)
     failures = pr_watch.arming_check("o/r", 993)
     assert any("pr-view-json" in f or "comments-json" in f for f in failures)
-
-
-def test_start_refuses_when_arming_fails(
-    watch_repo: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Start exits 2 when the arming check finds a blind signal."""
-
-    def fake_gh(*a: object, **k: object) -> object:
-        """Simulate a missing gh executable.
-
-        Args:
-            *a: Positional gh arguments, ignored.
-            **k: Keyword gh arguments, ignored.
-
-        Returns:
-            Never returns; always raises FileNotFoundError.
-        """
-        msg = "gh"
-        raise FileNotFoundError(msg)
-
-    monkeypatch.setattr(pr_watch, "_gh", fake_gh)
-    args = argparse.Namespace(pr=993, repo="o/r", interval=60, bound=1800)
-    assert pr_watch.cmd_start(args) == pr_watch.EXIT_ARMING_FAILED
-
-
-def test_start_self_skips_in_ci(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """In CI the command exits 0 without starting anything."""
-    monkeypatch.setattr(pr_watch, "repo_root", lambda: tmp_path)
-    monkeypatch.setenv("GITHUB_ACTIONS", "true")
-    args = argparse.Namespace(pr=993, repo="o/r", interval=60, bound=1800)
-    assert pr_watch.cmd_start(args) == pr_watch.EXIT_OK
-    assert not (tmp_path / ".plan" / "pr_monitors.json").exists()
-
-
-@pytest.mark.parametrize(
-    "cmdline",
-    [
-        "/usr/bin/something-else",
-        # The false positive the old bare "pr_watch" match allowed: with pid
-        # reuse it could SIGTERM an unrelated test run.
-        "python -m pytest tests/test_pr_watch.py",
-    ],
-)
-def test_stop_refuses_to_kill_unmatched_pid(
-    watch_repo: Path, monkeypatch: pytest.MonkeyPatch, cmdline: str
-) -> None:
-    """Stop does not signal a pid whose command line is not a pr-watch monitor.
-
-    Args:
-        watch_repo: Temporary repo holding the monitor registry.
-        monkeypatch: Pytest fixture used to stub the pid lookup and kill.
-        cmdline: Command line reported for the recorded pid.
-    """
-    reg_path = watch_repo / ".plan" / "pr_monitors.json"
-    reg = Registry(
-        monitors=[
-            MonitorRecord(pid=999999, pr=993, repo="o/r", started_at="2026-01-01")
-        ]
-    )
-    reg.save(reg_path)
-    monkeypatch.setattr(pr_watch, "_pid_cmdline", lambda _pid: cmdline)
-    killed: list[int] = []
-    monkeypatch.setattr(pr_watch.os, "kill", lambda pid, _sig: killed.append(pid))
-    args = argparse.Namespace(pr=993, all=False)
-    pr_watch.cmd_stop(args)
-    assert killed == []
-
-
-def test_stop_kills_matching_pid(
-    watch_repo: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Stop signals a pid whose command line is a pr-watch monitor."""
-    reg_path = watch_repo / ".plan" / "pr_monitors.json"
-    reg = Registry(
-        monitors=[
-            MonitorRecord(pid=999998, pr=993, repo="o/r", started_at="2026-01-01")
-        ]
-    )
-    reg.save(reg_path)
-    monkeypatch.setattr(
-        pr_watch,
-        "_pid_cmdline",
-        lambda _pid: "python -m forge.pr_watch _monitor --pr 993",
-    )
-    killed: list[int] = []
-    monkeypatch.setattr(pr_watch.os, "kill", lambda pid, _sig: killed.append(pid))
-    args = argparse.Namespace(pr=993, all=False)
-    code = pr_watch.cmd_stop(args)
-    assert code == pr_watch.EXIT_OK
-    assert killed == [999998]
-    assert Registry.load(reg_path).monitors == []
-
-
-def test_stop_keeps_record_it_could_not_signal(
-    watch_repo: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """A live monitor refusing the signal stays registered and is reported kept.
-
-    BEHAVIOR: dropping the record would leave a running process nothing
-    tracks, and the message would read "0 stopped, 0 removed".
-    """
-    reg_path = watch_repo / ".plan" / "pr_monitors.json"
-    Registry(
-        monitors=[
-            MonitorRecord(pid=999996, pr=993, repo="o/r", started_at="2026-01-01")
-        ]
-    ).save(reg_path)
-    monkeypatch.setattr(
-        pr_watch,
-        "_pid_cmdline",
-        lambda _pid: "python -m forge.pr_watch _monitor --pr 993",
-    )
-
-    def deny(_pid: int, _sig: int) -> None:
-        raise PermissionError
-
-    monkeypatch.setattr(pr_watch.os, "kill", deny)
-    with caplog.at_level(logging.INFO, logger=pr_watch.logger.name):
-        code = pr_watch.cmd_stop(argparse.Namespace(pr=993, all=False))
-    assert code == pr_watch.EXIT_REFUSED
-    assert [m.pid for m in Registry.load(reg_path).monitors] == [999996]
-    assert "kept (could not signal)" in caplog.text
-
-
-def test_stop_mixed_outcome_fails_when_one_cannot_be_signalled(
-    watch_repo: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """One target stopping must not mask another that could not be signalled.
-
-    BEHAVIOR: the all-kept case (test above) cannot reach this branch. Only
-    a mixed run detects an exit code computed from "something stopped"
-    returning OK while the message says "1 kept": a script reading only the
-    exit code was told every monitor stopped.
-    """
-    reg_path = watch_repo / ".plan" / "pr_monitors.json"
-    Registry(
-        monitors=[
-            MonitorRecord(pid=999991, pr=991, repo="o/r", started_at="2026-01-01"),
-            MonitorRecord(pid=999992, pr=992, repo="o/r", started_at="2026-01-01"),
-        ]
-    ).save(reg_path)
-    monkeypatch.setattr(
-        pr_watch,
-        "_pid_cmdline",
-        lambda _pid: "python -m forge.pr_watch _monitor --pr 991",
-    )
-
-    def kill_first_only(pid: int, _sig: int) -> None:
-        if pid == 999992:
-            raise PermissionError
-
-    monkeypatch.setattr(pr_watch.os, "kill", kill_first_only)
-    with caplog.at_level(logging.INFO, logger=pr_watch.logger.name):
-        code = pr_watch.cmd_stop(argparse.Namespace(pr=None, all=True))
-    assert code == pr_watch.EXIT_REFUSED
-    assert [m.pid for m in Registry.load(reg_path).monitors] == [999992]
-    assert "1 monitor(s) stopped, 0 stale record(s) removed, 1 kept" in caplog.text
-
-
-@pytest.mark.parametrize(
-    ("cmdline", "expected"),
-    [
-        ("python -m forge.pr_watch _monitor --pr 993", True),
-        ("python -m pytest tests/test_pr_watch.py", False),
-        ("", False),
-    ],
-    ids=["real-monitor", "reused-pid-unrelated-process", "no-such-process"],
-)
-def test_is_monitor_requires_monitor_subcommand_and_module(
-    monkeypatch: pytest.MonkeyPatch, cmdline: str, *, expected: bool
-) -> None:
-    """Only a real monitor cmdline counts; a reused pid does not read as alive.
-
-    Args:
-        cmdline: Command line the faked process lookup returns.
-        expected: Whether the pid should be treated as a monitor.
-    """
-    monkeypatch.setattr(pr_watch, "_pid_cmdline", lambda _pid: cmdline)
-    assert pr_watch._is_monitor(4242) is expected
-
-
-def test_stop_stale_only_record_is_removed_and_ok(
-    watch_repo: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """A record whose process is gone is pruned, exit OK, reported as stale."""
-    reg_path = watch_repo / ".plan" / "pr_monitors.json"
-    Registry(
-        monitors=[
-            MonitorRecord(pid=999997, pr=993, repo="o/r", started_at="2026-01-01")
-        ]
-    ).save(reg_path)
-    monkeypatch.setattr(pr_watch, "_pid_cmdline", lambda _pid: "")
-    with caplog.at_level(logging.INFO, logger=pr_watch.logger.name):
-        code = pr_watch.cmd_stop(argparse.Namespace(pr=993, all=False))
-    assert code == pr_watch.EXIT_OK
-    assert Registry.load(reg_path).monitors == []
-    assert "0 monitor(s) stopped, 1 stale record(s) removed." in caplog.text
-
-
-@pytest.mark.parametrize(
-    ("alive", "last_poll", "expected"),
-    [
-        (True, "", "alive"),
-        (True, "2026-01-01T00:00:00+00:00", "alive"),
-        (False, "2026-01-01T00:00:00+00:00", "dead"),
-        (False, "", "died-before-first-poll"),
-    ],
-)
-def test_monitor_state_reading(*, alive: bool, last_poll: str, expected: str) -> None:
-    """Liveness is tested first; an empty last_poll only damns a dead monitor.
-
-    Args:
-        alive: Whether the monitor process is running.
-        last_poll: ISO timestamp of the last poll, or empty if none happened.
-        expected: Expected state label from ``_monitor_state``.
-    """
-    record = MonitorRecord(
-        pid=1, pr=1, repo="o/r", started_at="2026-01-01", last_poll=last_poll
-    )
-    assert pr_watch._monitor_state(record, alive=alive) == expected
-
-
-def test_list_reports_monitor_that_never_polled(
-    watch_repo: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """List names the log to read and the restart command for an unpolled monitor."""
-    monkeypatch.setenv("FORGE_CODE_HEALTH_DIR", str(watch_repo / "health"))
-    Registry(
-        monitors=[
-            MonitorRecord(pid=999996, pr=993, repo="o/r", started_at="2026-01-01")
-        ]
-    ).save(watch_repo / ".plan" / "pr_monitors.json")
-    monkeypatch.setattr(pr_watch, "_pid_cmdline", lambda _pid: "")
-    pr_watch.cmd_list(argparse.Namespace())
-    out = capsys.readouterr().out
-    assert "died-before-first-poll" in out
-    assert str(pr_watch.monitor_log_path(watch_repo, 993)) in out
-    assert "forge-pr-watch start --pr 993" in out
-
-
-_FAKE_GH = """#!/bin/sh
-# Answers every gh call _poll_once makes; reports the PR MERGED.
-case "$1 $2" in
-  "pr view") echo '{"number": 993, "state": "MERGED", "mergeable": "MERGEABLE", \
-"headRefOid": "abc", "baseRefName": "main", "comments": []}' ;;
-  "pr list") echo '[]' ;;
-  "pr checks") echo '[]' ;;
-  "auth status") echo 'Logged in to github.com' ;;
-  *) echo 'gh version 2.0' ;;
-esac
-"""
-
-
-def test_start_spawns_monitor_that_polls_and_logs(
-    watch_repo: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The detached monitor really starts, completes a poll, and logs its alert.
-
-    Regression test for a real bug: every monitor died before its first poll
-    (a str reached a Path parameter) and its stderr went to DEVNULL, so
-    nothing showed it. This is the only test crossing the process boundary;
-    ``cmd_start`` and ``Popen`` are real, only the ``gh`` executable is fake.
-    """
-    bin_dir = watch_repo / "bin"
-    bin_dir.mkdir()
-    fake_gh = bin_dir / "gh"
-    fake_gh.write_text(_FAKE_GH)
-    fake_gh.chmod(0o755)
-    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
-    monkeypatch.setenv("FORGE_CODE_HEALTH_DIR", str(watch_repo / "health"))
-    monkeypatch.setattr(pr_watch, "arming_check", lambda *_a, **_k: [])
-    reg_path = watch_repo / ".plan" / "pr_monitors.json"
-    log_path = pr_watch.monitor_log_path(watch_repo, 993)
-    args = argparse.Namespace(pr=993, repo="o/r", interval=1, bound=3)
-    assert pr_watch.cmd_start(args) == pr_watch.EXIT_OK
-    pid = Registry.load(reg_path).monitors[0].pid
-    try:
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            if Registry.load(reg_path).monitors[0].last_poll:
-                break
-            # A monitor that died reports now rather than at the deadline:
-            # that is the regression this test exists for, and waiting ten
-            # seconds to say so buys nothing. Read /proc rather than signal
-            # 0, which succeeds on a zombie.
-            if pr_watch._pid_cmdline(pid) == "":
-                break
-            time.sleep(0.1)
-        log_text = log_path.read_text() if log_path.exists() else "<no log file>"
-        assert Registry.load(reg_path).monitors[0].last_poll != "", log_text
-        assert "Traceback" not in log_text, log_text
-        assert "PR #993 MERGED" in log_text, log_text
-    finally:
-        with contextlib.suppress(ProcessLookupError):
-            os.kill(pid, signal.SIGKILL)
-
-
-def test_list_empty(watch_repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    """List prints 'no monitors registered' when the registry is empty."""
-    pr_watch.cmd_list(argparse.Namespace())
-    captured = capsys.readouterr()
-    assert "no monitors registered" in captured.out
 
 
 def test_resolve_repo_from_origin(
@@ -558,37 +367,60 @@ def test_one_line_truncates_and_never_returns_empty() -> None:
 def test_hostile_check_name_cannot_forge_a_second_alert_in_the_log(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Round trip: a hostile alert written by the real logger reads back as one.
+    """Round trip: a hostile alert written by ``_append_alert`` reads back as one.
 
     SCENARIO: a check name embeds a newline then ``pr-watch: PR #999 MERGED``.
-    Unsanitized, that is a second physical log line ``_alert_lines`` reads as a
-    separate alert about another PR. A log written by an older version may also
-    hold raw control bytes, which the reader must drop.
+    ``_append_alert`` writes its line raw, so it is ``_one_line`` upstream
+    (inside ``_ci_alerts``) that keeps the log to one physical line. Without
+    it, ``_alert_lines`` would read a forged second alert about another PR.
+    A log written by an older version may also hold raw control bytes, which
+    the reader must drop.
 
-    MOCK SETUP: ``gh pr checks`` faked; a real file handler attached to the
-    module logger, so the alert goes through the real logging call.
+    MOCK SETUP: ``gh pr checks`` faked; the log is a real file in tmp.
 
-    EXPECTED BEHAVIOR: one entry, no forged PR, no ESC in it.
+    EXPECTED BEHAVIOR: one physical line, one entry, no forged PR, no ESC.
     """
     log = tmp_path / "pr_watch_7.log"
-    handler = logging.FileHandler(log, encoding="utf-8")
-    handler.setFormatter(logging.Formatter("%(message)s"))
-    monkeypatch.setattr(pr_watch.logger, "level", logging.INFO)
-    pr_watch.logger.addHandler(handler)
-    try:
-        for alert in _hostile_check_alerts(monkeypatch):
-            pr_watch.logger.warning("pr-watch: %s", alert)
-    finally:
-        pr_watch.logger.removeHandler(handler)
-        handler.close()
+    for alert in _hostile_check_alerts(monkeypatch):
+        pr_watch._append_alert(log, alert)
+    assert len(log.read_text(encoding="utf-8").splitlines()) == 1
     entries = pr_watch._alert_lines(log)
     assert len(entries) == 1
     assert "PR #7" in entries[0]
+    assert "PR #999" not in entries[0].split("PR #7")[0]
     # A log from an older version: control bytes stripped on the way out.
     legacy = tmp_path / "pr_watch_8.log"
     legacy.write_text("pr-watch: PR #8 \x1b[31mCI FAILED\n", encoding="utf-8")
     assert all("\x1b" not in e for e in pr_watch._alert_lines(legacy))
     assert len(pr_watch._alert_lines(legacy)) == 1
+
+
+def test_append_alert_writes_one_stamped_line_whatever_it_is_handed(
+    tmp_path: Path,
+) -> None:
+    """One call writes one physical line and reads back as one entry.
+
+    SCENARIO: a line holding a newline and a forged ``pr-watch:`` prefix is
+    handed straight to ``_append_alert``, with no ``_ci_alerts`` upstream.
+    The stamp must be written (for a human reader) yet never reach the text
+    ``_alert_lines`` returns, so the same alert in two different seconds is
+    one entry.
+
+    EXPECTED BEHAVIOR: one physical line matching ``_STAMP_RE``; one entry
+    with no newline and no stamp; a repeat in a later second adds none.
+    """
+    log = tmp_path / "pr_watch_7.log"
+    pr_watch._append_alert(log, "PR #7 CI FAILED\npr-watch: PR #999 MERGED")
+    raw = log.read_text(encoding="utf-8").splitlines()
+    assert len(raw) == 1
+    assert pr_watch._STAMP_RE.match(raw[0].removeprefix("pr-watch: "))
+    entries = pr_watch._alert_lines(log)
+    assert len(entries) == 1
+    assert entries[0].startswith("PR #7 CI FAILED")
+    assert not pr_watch._STAMP_RE.match(entries[0])
+    with log.open("a", encoding="utf-8") as handle:
+        handle.write("pr-watch: 2030-01-01T00:00:00+00:00 " + entries[0] + "\n")
+    assert pr_watch._alert_lines(log) == entries
 
 
 def test_stack_parent_matches_open_pr_head(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -659,7 +491,7 @@ def test_cmd_stack_prints_prs_in_dependency_order(
     assert "fresh=fresh" in lines[0]
     assert "base=a" in lines[1]
     assert "base=b" in lines[2]
-    assert "monitor=no-monitor" in lines[0]
+    assert all("monitor=" not in line for line in lines)
 
 
 def test_cmd_stack_empty_list_prints_no_open_prs(
@@ -675,7 +507,7 @@ def test_cmd_stack_empty_list_prints_no_open_prs(
 
 
 # ---------------------------------------------------------------------------
-# Poll loop, auto-detect, comment baseline, poll producer, digest
+# Auto-detect, comment baseline, poll producer
 # ---------------------------------------------------------------------------
 
 
@@ -722,305 +554,63 @@ class FakeGh:
         raise AssertionError(msg)
 
 
-class _FakePopen:
-    """A spawned monitor that never ran; carries only a pid."""
-
-    pid = 4321
-
-    def __init__(self, *_a: object, **_k: object) -> None:
-        """Accept and ignore the real ``Popen`` arguments.
-
-        Args:
-            *_a: Positional ``Popen`` arguments, ignored.
-            **_k: Keyword ``Popen`` arguments, ignored.
-        """
-
-
-@dataclass(frozen=True)
-class _LoopRun:
-    """What one scripted ``_monitor_loop`` run observed.
-
-    Attributes:
-        registry: The registry file the loop stamped.
-        sleeps: Every sleep the loop asked for, so a test can prove it
-            stopped without waiting.
-        first_polls: The ``first_poll`` keyword the loop passed on each
-            poll, in order — the comment baseline's wiring.
-    """
-
-    registry: Path
-    sleeps: list[float]
-    first_polls: list[bool]
-
-
-def _run_loop(
-    outcomes: list[pr_watch.PollOutcome],
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    bound: int = 1000,
-    interval: int = 0,
-) -> _LoopRun:
-    """Run ``_monitor_loop`` against scripted polls with a registered PR 9.
-
-    Args:
-        outcomes: What each successive ``_poll_once`` returns; polling past
-            the end raises, so a loop that fails to stop is caught.
-        tmp_path: Directory holding the registry.
-        monkeypatch: Used to script ``_poll_once`` and ``time.sleep``.
-        bound: Loop bound in seconds.
-        interval: Poll interval in seconds.
-
-    Returns:
-        What the run observed — see :class:`_LoopRun`.
-    """
-    reg_path = tmp_path / ".plan" / "pr_monitors.json"
-    Registry(
-        monitors=[MonitorRecord(pid=1, pr=9, repo="o/r", started_at="2026-01-01")]
-    ).save(reg_path)
-    scripted = iter(outcomes)
-    sleeps: list[float] = []
-    first_polls: list[bool] = []
-
-    def scripted_poll(*_a: object, **kwargs: object) -> pr_watch.PollOutcome:
-        first_polls.append(bool(kwargs["first_poll"]))
-        return next(scripted)
-
-    monkeypatch.setattr(pr_watch, "_poll_once", scripted_poll)
-    monkeypatch.setattr(pr_watch.time, "sleep", sleeps.append)
-    pr_watch._monitor_loop("o/r", 9, interval, bound, reg_path)
-    return _LoopRun(registry=reg_path, sleeps=sleeps, first_polls=first_polls)
-
-
-def test_monitor_loop_logs_a_standing_alert_once_per_head(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """A standing alert is logged once per head; a new head alerts again.
-
-    SCENARIO: a PR stays CONFLICTING over three polls on head h1, then the
-    head moves to h2 and stays conflicting. Regression: one real log held 19
-    copies of one line, so a reader could not tell news from a standing fact.
-
-    MOCK SETUP: ``_poll_once`` scripted to five outcomes; ``time.sleep``
-    recorded, not slept; real registry file in tmp.
-
-    EXPECTED BEHAVIOR: the alert line is logged exactly twice (once per head)
-    and the registry's ``last_alerted_head`` is h2.
-    """
-    alert = "PR #9 CONFLICTING"
-    outcomes = [pr_watch.PollOutcome(alerts=[alert], head="h1") for _ in range(3)]
-    outcomes += [
-        pr_watch.PollOutcome(alerts=[alert], head="h2"),
-        pr_watch.PollOutcome(alerts=[], head="h2", terminal=True),
-    ]
-    with caplog.at_level(logging.WARNING, logger=pr_watch.logger.name):
-        reg_path = _run_loop(outcomes, tmp_path, monkeypatch).registry
-    assert caplog.messages.count(f"pr-watch: {alert}") == 2
-    assert Registry.load(reg_path).monitors[0].last_alerted_head == "h2"
-
-
-def test_monitor_loop_marks_only_the_first_successful_poll_as_first(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The loop passes ``first_poll=True`` to poll 1 only.
-
-    SCENARIO: the comment baseline is whatever the first poll reads; every
-    later poll must treat new comments as news. A loop passing a constant, or
-    deriving the flag wrongly, silently swallows or floods comments.
-
-    MOCK SETUP: ``_poll_once`` scripted to three successful outcomes, the
-    last terminal, recording the ``first_poll`` keyword of each call.
-
-    EXPECTED BEHAVIOR: recorded flags are ``[True, False, False]``.
-    """
-    outcomes = [
-        pr_watch.PollOutcome(alerts=[], head="h1"),
-        pr_watch.PollOutcome(alerts=[], head="h1"),
-        pr_watch.PollOutcome(alerts=[], head="h1", terminal=True),
-    ]
-    first_polls = _run_loop(outcomes, tmp_path, monkeypatch).first_polls
-    assert first_polls == [True, False, False]
-
-
-def test_monitor_loop_does_not_spend_the_comment_baseline_on_a_failed_poll(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A failed first poll leaves the baseline owed to the next successful one.
-
-    SCENARIO: poll 1 fails (gh error) and reads no comments; poll 2 succeeds.
-    Regression: the poll counter advanced on failure, so poll 2 got
-    ``first_poll=False`` and announced every comment the PR already had.
-
-    MOCK SETUP: ``_poll_once`` scripted to a failed outcome, a successful
-    one, then a terminal one, recording each call's ``first_poll``.
-
-    EXPECTED BEHAVIOR: recorded flags are ``[True, True, False]``.
-    """
-    failed = pr_watch.PollOutcome(alerts=["PR #9: poll failed (boom)"], ok=False)
-    outcomes = [
-        failed,
-        pr_watch.PollOutcome(alerts=[], head="h1"),
-        pr_watch.PollOutcome(alerts=[], head="h1", terminal=True),
-    ]
-    first_polls = _run_loop(outcomes, tmp_path, monkeypatch).first_polls
-    assert first_polls == [True, True, False]
-
-
-def test_monitor_loop_logs_a_repeating_headless_failure_once_and_never_stamps_it(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """An identical ``poll failed`` line is logged once and stamps no head.
-
-    SCENARIO: gh keeps failing, so every poll yields the same line with an
-    empty head. Dedup is keyed on ``(head, line)``, so the standing failure
-    appears once rather than once per poll; with no head there is nothing
-    to record as the last alerted head. Intended: the log shows a standing
-    failure once, and the bound-reached line still reports the poll count.
-
-    MOCK SETUP: ``_poll_once`` scripted to three identical failed outcomes
-    then a quiet terminal one; real registry in tmp.
-
-    EXPECTED BEHAVIOR: the failure line is logged exactly once and
-    ``last_alerted_head`` stays empty.
-    """
-    line = "PR #9: poll failed (boom)"
-    outcomes = [pr_watch.PollOutcome(alerts=[line], ok=False) for _ in range(3)]
-    outcomes.append(pr_watch.PollOutcome(alerts=[], terminal=True))
-    with caplog.at_level(logging.WARNING, logger=pr_watch.logger.name):
-        reg_path = _run_loop(outcomes, tmp_path, monkeypatch).registry
-    assert caplog.messages.count(f"pr-watch: {line}") == 1
-    assert Registry.load(reg_path).monitors[0].last_alerted_head == ""
-
-
-def test_monitor_loop_does_not_stamp_a_head_for_a_quiet_poll(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A poll with no alerts leaves ``last_alerted_head`` unset.
-
-    SCENARIO: the PR is healthy on head h1; nothing was alerted, so no head
-    is recorded as alerted. Intended behavior, not an omission.
-
-    MOCK SETUP: ``_poll_once`` scripted to two quiet outcomes on h1, the
-    last terminal; real registry in tmp.
-
-    EXPECTED BEHAVIOR: ``last_alerted_head`` is empty, ``last_poll`` is set.
-    """
-    outcomes = [
-        pr_watch.PollOutcome(alerts=[], head="h1"),
-        pr_watch.PollOutcome(alerts=[], head="h1", terminal=True),
-    ]
-    reg_path = _run_loop(outcomes, tmp_path, monkeypatch).registry
-    record = Registry.load(reg_path).monitors[0]
-    assert record.last_alerted_head == ""
-    assert record.last_poll != ""
-
-
 @pytest.mark.parametrize(
-    ("pr_list_stdout", "expected_code", "expected_pr"),
+    ("pr_list_stdout", "expected_pr"),
     [
-        ('[{"number": 77}]', pr_watch.EXIT_OK, 77),
-        ("[]", pr_watch.EXIT_REFUSED, None),
-        ("not json", pr_watch.EXIT_REFUSED, None),
-        ("[1]", pr_watch.EXIT_REFUSED, None),
+        ('[{"number": 77}]', 77),
+        ("[]", None),
+        ("not json", None),
+        ("[1]", None),
     ],
     ids=["found", "no-open-pr", "malformed-json", "wrong-element-type"],
 )
-def test_start_without_pr_detects_it_from_the_branch_via_pr_list(
+def test_auto_detect_pr_finds_it_from_the_branch_via_pr_list(
     watch_repo: Path,
     monkeypatch: pytest.MonkeyPatch,
     pr_list_stdout: str,
-    expected_code: int,
     expected_pr: int | None,
 ) -> None:
-    """Start without --pr finds the PR with ``gh pr list --head``, never ``pr view``.
+    """Auto-detect finds the PR with ``gh pr list --head``, never ``pr view``.
 
     SCENARIO: ``gh pr view`` has no ``--head`` flag, so the old form made
-    every start without ``--pr`` refuse. The branch is resolved to a PR
-    through ``pr list``; an empty, malformed or oddly-shaped answer refuses.
+    every --pr-less run refuse. The branch is resolved to a PR through
+    ``pr list``; an empty, malformed or oddly-shaped answer finds nothing.
 
     MOCK SETUP: ``subprocess.run`` replaced by ``FakeGh`` (exits 1 for
     ``view --head``, serves the parametrized ``list`` payload, rejects
-    anything else); ``Popen`` faked; arming check stubbed to pass; git
-    branch name stubbed.
+    anything else); git branch name stubbed.
 
-    EXPECTED BEHAVIOR: the exit code and registered PR match the row, and
-    no ``view`` call carried ``--head``.
+    EXPECTED BEHAVIOR: the PR matches the row, and no ``view`` call carried
+    ``--head``.
 
     Args:
         pr_list_stdout: What ``gh pr list --head`` prints.
-        expected_code: Exit code ``cmd_start`` must return.
-        expected_pr: PR registered, or ``None`` when nothing may register.
+        expected_pr: PR found, or ``None`` when nothing matches.
     """
-    monkeypatch.setenv("FORGE_CODE_HEALTH_DIR", str(watch_repo / "health"))
     fake = FakeGh(pr_list_stdout)
     monkeypatch.setattr(pr_watch.subprocess, "run", fake)
-    monkeypatch.setattr(pr_watch.subprocess, "Popen", _FakePopen)
     monkeypatch.setattr(pr_watch, "run_git", lambda *_a, **_k: "feat/x\n")
-    monkeypatch.setattr(pr_watch, "arming_check", lambda *_a, **_k: [])
-    args = argparse.Namespace(pr=None, repo="o/r", interval=60, bound=1800)
-    assert pr_watch.cmd_start(args) == expected_code
-    registered = Registry.load(watch_repo / ".plan" / "pr_monitors.json").monitors
-    assert [m.pr for m in registered] == ([] if expected_pr is None else [expected_pr])
+    assert pr_watch._auto_detect_pr(watch_repo, "o/r") == expected_pr
     assert not any(c[2:3] == ["view"] and "--head" in c for c in fake.calls)
 
 
-def test_start_without_pr_refuses_a_detached_head_and_never_lists_prs(
+def test_auto_detect_pr_refuses_a_detached_head_and_never_lists_prs(
     watch_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Auto-detect on a detached HEAD refuses instead of adopting any open PR.
+    """Auto-detect on a detached HEAD finds nothing instead of adopting any PR.
 
     SCENARIO: ``git branch --show-current`` prints nothing; ``gh pr list
-    --head ""`` would match every open PR and register an arbitrary one.
+    --head ""`` would match every open PR and adopt an arbitrary one.
 
-    MOCK SETUP: ``FakeGh`` serving a PR, ``Popen`` faked, arming stubbed,
-    git branch name stubbed to empty.
+    MOCK SETUP: ``FakeGh`` serving a PR; git branch name stubbed to empty.
 
-    EXPECTED BEHAVIOR: ``EXIT_REFUSED``, no ``gh pr list`` call, nothing
-    registered.
+    EXPECTED BEHAVIOR: ``None`` and no ``gh pr list`` call.
     """
-    monkeypatch.setenv("FORGE_CODE_HEALTH_DIR", str(watch_repo / "health"))
     fake = FakeGh('[{"number": 77}]')
     monkeypatch.setattr(pr_watch.subprocess, "run", fake)
-    monkeypatch.setattr(pr_watch.subprocess, "Popen", _FakePopen)
     monkeypatch.setattr(pr_watch, "run_git", lambda *_a, **_k: "\n")
-    monkeypatch.setattr(pr_watch, "arming_check", lambda *_a, **_k: [])
-    args = argparse.Namespace(pr=None, repo="o/r", interval=60, bound=1800)
-    assert pr_watch.cmd_start(args) == pr_watch.EXIT_REFUSED
+    assert pr_watch._auto_detect_pr(watch_repo, "o/r") is None
     assert not any(c[2:3] == ["list"] for c in fake.calls)
-    registry = Registry.load(watch_repo / ".plan" / "pr_monitors.json")
-    assert registry.monitors == []
-
-
-def test_monitor_loop_exits_on_terminal_and_names_what_is_owed(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """A merged or closed PR ends the loop at once and says what is owed.
-
-    SCENARIO: the first poll reports the PR terminal while the bound is a
-    full minute away. Without the exit the loop polls a merged PR to its
-    bound and then reports that, not the owed merge actions.
-
-    MOCK SETUP: ``_poll_once`` returns one terminal outcome (a second poll
-    would raise); ``time.sleep`` is recorded.
-
-    EXPECTED BEHAVIOR: loop returns with no sleep requested; the log names
-    ``/forge-next`` and ``forge-issue-triage post-pr``, not the bound line.
-    """
-    outcomes = [pr_watch.PollOutcome(alerts=[], head="h1", terminal=True)]
-    with caplog.at_level(logging.WARNING, logger=pr_watch.logger.name):
-        sleeps = _run_loop(
-            outcomes, tmp_path, monkeypatch, bound=60, interval=60
-        ).sleeps
-    assert sleeps == []
-    assert "/forge-next" in caplog.text
-    assert "forge-issue-triage post-pr" in caplog.text
-    assert "bound of" not in caplog.text
 
 
 def test_comment_alerts_baseline_then_news() -> None:
@@ -1092,11 +682,12 @@ def test_comment_alerts_first_comment_on_an_empty_pr_is_news() -> None:
     )
 
 
-def _two_separate_comment_alerts() -> list[str]:
-    """Return the alerts for two lone comments arriving on separate polls.
+def test_comment_alerts_two_separate_arrivals_render_distinct_text() -> None:
+    """Two lone comments on separate polls must not render the same sentence.
 
-    Returns:
-        Both alerts, in arrival order.
+    The log and digest drop a repeated line, which is right for a standing
+    condition and wrong for an event: identical text swallowed the second
+    comment.
     """
     seen: set[str] = set()
     pr_watch._comment_alerts(5, {"comments": []}, seen, first_poll=True)
@@ -1106,50 +697,8 @@ def _two_separate_comment_alerts() -> list[str]:
     second = pr_watch._comment_alerts(
         5, {"comments": [{"id": "a"}, {"id": "b"}]}, seen, first_poll=False
     )
-    return [*first, *second]
-
-
-def test_comment_alerts_two_separate_arrivals_render_distinct_text() -> None:
-    """Two lone comments on separate polls must not render the same sentence.
-
-    The loop and digest drop a repeated line, which is right for a standing
-    condition and wrong for an event: identical text swallowed the second
-    comment.
-    """
-    alerts = _two_separate_comment_alerts()
-    assert len(alerts) == 2
-    assert alerts[0] != alerts[1]
-
-
-def test_monitor_loop_logs_two_separate_comment_alerts_on_one_head(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Two comment arrivals on one head are both logged, not collapsed by dedup.
-
-    SCENARIO: a lone comment arrives on poll 2 and another on poll 3, head
-    unchanged. Regression: the second rendered identically and was dropped.
-
-    MOCK SETUP: ``_poll_once`` scripted with the alert strings the real
-    ``_comment_alerts`` renders for those arrivals; real registry in tmp.
-
-    EXPECTED BEHAVIOR: both alert lines appear in the log.
-    """
-    first, second = _two_separate_comment_alerts()
-    outcomes = [
-        pr_watch.PollOutcome(alerts=[first], head="h1"),
-        pr_watch.PollOutcome(alerts=[second], head="h1"),
-        pr_watch.PollOutcome(alerts=[], head="h1", terminal=True),
-    ]
-    with caplog.at_level(logging.WARNING, logger=pr_watch.logger.name):
-        _run_loop(outcomes, tmp_path, monkeypatch)
-    # Counted, not just present: if the two arrivals ever render the same
-    # sentence again, `first` and `second` are equal and two membership
-    # checks would both pass on the single line dedup left behind.
-    assert caplog.messages.count(f"pr-watch: {first}") == 1
-    assert caplog.messages.count(f"pr-watch: {second}") == 1
-    assert len([m for m in caplog.messages if "new comment" in m]) == 2
+    assert len([*first, *second]) == 2
+    assert first != second
 
 
 @pytest.mark.parametrize(
@@ -1161,9 +710,9 @@ def test_poll_once_reports_head_and_terminal_state(
 ) -> None:
     """``_poll_once`` returns the head it read and whether the PR is finished.
 
-    SCENARIO: the loop decides re-alerting and exit from the outcome, so the
-    producer must report head and terminal state faithfully, and a transient
-    gh failure must neither end the loop nor stamp a head.
+    SCENARIO: the loop decides exit from the outcome, so the producer must
+    report head and terminal state faithfully, and a transient gh failure
+    must neither end the loop nor stamp a head.
 
     MOCK SETUP: ``_gh`` returns a canned ``pr view``; the stack, CI and
     staleness helpers are stubbed to report nothing.
@@ -1235,6 +784,475 @@ def test_poll_once_feeds_the_comments_it_reads_to_the_comment_signal(
     second = pr_watch._poll_once("o/r", 9, seen, first_poll=False)
     assert len(second.alerts) == 1
     assert "1 new comment" in second.alerts[0]
+
+
+# ---------------------------------------------------------------------------
+# The wait: which alerts wake a session, the loop, the baseline, the command
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "alert",
+    [
+        "PR #9 MERGED",
+        "PR #9 CLOSED",
+        "PR #9 CONFLICTING — run forge-update-branch (monitor never syncs)",
+        "PR #9 CI FAILED: build",
+        "PR #9: 1 new comment(s), 3 total — review and reply via /forge-pr-comments",
+    ],
+)
+def test_wakes_a_session_for_news_about_the_pr(alert: str) -> None:
+    """A merge, close, conflict, CI failure or comment ends the wait.
+
+    Args:
+        alert: An alert line that changes what the session should do next.
+    """
+    assert pr_watch._wakes_a_session(alert) is True
+
+
+def test_wakes_a_session_not_for_staleness_or_a_failed_poll(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Neither a stale wrap-up nor a failed poll is news worth an interruption.
+
+    SCENARIO: a flaky network fails polls repeatedly and a stale wrap-up is a
+    standing condition; waking on either would interrupt a session while
+    nothing about the PR changed.
+
+    MOCK SETUP: both lines are produced by the real ``_staleness_alerts`` and
+    ``_poll_once`` (``subprocess.run`` / ``_gh`` faked), not written as
+    literals, so the shared marker constants are what is under test.
+
+    EXPECTED BEHAVIOR: both lines carry their marker and neither wakes.
+    """
+    stale = _staleness_line(monkeypatch)
+    failed = _failed_poll_line(monkeypatch)
+    assert pr_watch._STALENESS_MARKER in stale
+    assert pr_watch._POLL_FAILED_MARKER in failed
+    assert pr_watch._wakes_a_session(stale) is False
+    assert pr_watch._wakes_a_session(failed) is False
+
+
+def test_await_marks_only_the_first_poll_as_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_clock: _FakeTime
+) -> None:
+    """The wait passes ``first_poll=True`` to poll 1 only.
+
+    SCENARIO: the comment baseline is whatever the first poll reads; every
+    later poll must treat new comments as news. A loop passing a constant, or
+    deriving the flag wrongly, silently swallows or floods comments.
+
+    MOCK SETUP: ``_poll_once`` scripted to two quiet outcomes then a terminal
+    one, recording each call's ``first_poll``; fake clock.
+
+    EXPECTED BEHAVIOR: recorded flags are ``[True, False, False]``.
+    """
+    polls = _script(monkeypatch, [_quiet(), _quiet(), _quiet(terminal=True)])
+    pr_watch.await_events("o/r", 9, _INTERVAL, 10 * _INTERVAL, tmp_path / "w.log")
+    assert polls.first_polls == [True, False, False]
+    assert fake_clock.sleeps == [_INTERVAL, _INTERVAL]
+
+
+def test_await_does_not_spend_the_comment_baseline_on_a_failed_poll(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_clock: _FakeTime
+) -> None:
+    """A failed first poll leaves the baseline owed to the next successful one.
+
+    SCENARIO: poll 1 fails (gh error) and reads no comments; poll 2 succeeds.
+    Without the ``ok`` rule poll 2 gets ``first_poll=False`` and announces
+    every comment the PR already had. A failed poll does not wake, so the
+    loop continues to poll 2.
+
+    MOCK SETUP: ``_poll_once`` scripted to a failed outcome (line built from
+    the real marker), a quiet one, then a terminal one; fake clock.
+
+    EXPECTED BEHAVIOR: recorded flags are ``[True, True, False]``.
+    """
+    failed = pr_watch.PollOutcome(
+        alerts=[f"PR #9{pr_watch._POLL_FAILED_MARKER}boom)"], ok=False
+    )
+    polls = _script(monkeypatch, [failed, _quiet(), _quiet(terminal=True)])
+    pr_watch.await_events("o/r", 9, _INTERVAL, 10 * _INTERVAL, tmp_path / "w.log")
+    assert polls.first_polls == [True, True, False]
+    assert fake_clock.sleeps == [_INTERVAL, _INTERVAL]
+
+
+def test_await_exits_at_once_on_terminal_and_synthesises_the_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_clock: _FakeTime
+) -> None:
+    """A merged or closed PR ends the wait with no sleep, even with no alert.
+
+    SCENARIO: the first poll sees the PR terminal while the bound is a full
+    minute away; the poll produced no alert line of its own.
+
+    MOCK SETUP: ``_poll_once`` returns one quiet terminal outcome (a second
+    poll would raise); fake clock records sleeps.
+
+    EXPECTED BEHAVIOR: ``EXIT_OK``, the synthesised terminal line, no sleep.
+    """
+    _script(monkeypatch, [_quiet(terminal=True)])
+    code, lines = pr_watch.await_events("o/r", 9, 60, 60, tmp_path / "w.log")
+    assert code == pr_watch.EXIT_OK
+    assert lines == ["PR #9 reached a terminal state"]
+    assert fake_clock.sleeps == []
+
+
+def test_await_reports_the_real_alert_when_terminal_produced_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_clock: _FakeTime
+) -> None:
+    """A terminal poll that raised its own alert reports that, not the stand-in.
+
+    MOCK SETUP: ``_poll_once`` returns a terminal outcome carrying
+    ``PR #9 MERGED``; fake clock.
+
+    EXPECTED BEHAVIOR: the returned lines are exactly that alert.
+    """
+    outcome = pr_watch.PollOutcome(alerts=["PR #9 MERGED"], head="h1", terminal=True)
+    _script(monkeypatch, [outcome])
+    code, lines = pr_watch.await_events("o/r", 9, 60, 60, tmp_path / "w.log")
+    assert code == pr_watch.EXIT_OK
+    assert lines == ["PR #9 MERGED"]
+    assert fake_clock.sleeps == []
+
+
+def test_await_returns_only_waking_alerts_and_logs_every_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_clock: _FakeTime
+) -> None:
+    """Waking alerts are returned; every alert, waking or not, reaches the log.
+
+    SCENARIO: one poll raises a stale wrap-up, a failed-poll line and a CI
+    failure. Only the CI failure is news, but ``digest`` must still be able
+    to show the other two.
+
+    MOCK SETUP: ``_poll_once`` scripted to that one outcome; the two
+    non-waking lines are built from the marker constants; fake clock.
+
+    EXPECTED BEHAVIOR: returned lines are the CI failure alone; the log holds
+    all three, in order.
+    """
+    stale = f"PR #9 {pr_watch._STALENESS_MARKER} verified-at t0, head h1"
+    failed = f"PR #9{pr_watch._POLL_FAILED_MARKER}boom)"
+    ci = "PR #9 CI FAILED: build"
+    _script(monkeypatch, [pr_watch.PollOutcome(alerts=[stale, failed, ci], head="h1")])
+    log = tmp_path / "w.log"
+    code, lines = pr_watch.await_events("o/r", 9, _INTERVAL, 5 * _INTERVAL, log)
+    assert code == pr_watch.EXIT_OK
+    assert lines == [ci]
+    assert pr_watch._alert_lines(log) == [stale, failed, ci]
+
+
+def test_await_keeps_waiting_through_non_waking_alerts_until_the_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_clock: _FakeTime
+) -> None:
+    """Staleness and failed polls never end the wait; the bound does.
+
+    SCENARIO: three polls each raise only non-waking lines. The wait must run
+    to its bound and say how many polls it made, and a wait that was blind is
+    still visible in the log.
+
+    MOCK SETUP: ``_poll_once`` scripted to three non-waking outcomes (a fourth
+    poll would raise); fake clock; ``bound = 3 * interval``.
+
+    EXPECTED BEHAVIOR: ``EXIT_TIMEOUT``, a line naming "3 poll(s)", three
+    sleeps, and both non-waking lines in the log.
+    """
+    stale = f"PR #9 {pr_watch._STALENESS_MARKER} verified-at t0, head h1"
+    failed = f"PR #9{pr_watch._POLL_FAILED_MARKER}boom)"
+    outcomes = [
+        pr_watch.PollOutcome(alerts=[stale], head="h1"),
+        pr_watch.PollOutcome(alerts=[failed], ok=False),
+        pr_watch.PollOutcome(alerts=[stale, failed], head="h1"),
+    ]
+    _script(monkeypatch, outcomes)
+    log = tmp_path / "w.log"
+    code, lines = pr_watch.await_events("o/r", 9, _INTERVAL, 3 * _INTERVAL, log)
+    assert code == pr_watch.EXIT_TIMEOUT
+    assert len(lines) == 1
+    assert "3 poll(s)" in lines[0]
+    assert "forge-pr-watch await --pr 9" in lines[0]
+    assert fake_clock.sleeps == [_INTERVAL] * 3
+    assert pr_watch._alert_lines(log) == [stale, failed]
+
+
+def test_await_with_a_zero_bound_never_polls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_clock: _FakeTime
+) -> None:
+    """An expired bound times out without a single poll.
+
+    MOCK SETUP: scripted ``_poll_once`` with no outcomes (any call raises);
+    fake clock; ``bound = 0``.
+
+    EXPECTED BEHAVIOR: ``EXIT_TIMEOUT``, "0 poll(s)", no poll, no sleep.
+    """
+    polls = _script(monkeypatch, [])
+    code, lines = pr_watch.await_events("o/r", 9, _INTERVAL, 0, tmp_path / "w.log")
+    assert code == pr_watch.EXIT_TIMEOUT
+    assert "0 poll(s)" in lines[0]
+    assert polls.first_polls == []
+    assert fake_clock.sleeps == []
+
+
+def test_await_still_delivers_when_the_log_cannot_be_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_clock: _FakeTime
+) -> None:
+    """A log that cannot be written costs the digest, never the delivery.
+
+    SCENARIO: the log's parent is a regular file, so every append and every
+    sidecar write fails with ``OSError``.
+
+    MOCK SETUP: ``_poll_once`` scripted to one ``PR #9 MERGED`` outcome; real
+    unwritable path in tmp.
+
+    EXPECTED BEHAVIOR: the alert is still returned with ``EXIT_OK``.
+    """
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file, not a directory")
+    outcome = pr_watch.PollOutcome(alerts=["PR #9 MERGED"], head="h1", terminal=True)
+    _script(monkeypatch, [outcome])
+    code, lines = pr_watch.await_events("o/r", 9, 60, 60, blocker / "w.log")
+    assert code == pr_watch.EXIT_OK
+    assert lines == ["PR #9 MERGED"]
+
+
+class _CommentPolls:
+    """A ``_poll_once`` that runs the real comment signal over a mutable list.
+
+    Attributes:
+        comments: Comments the "PR" currently has; the test grows it.
+        first_polls: The ``first_poll`` keyword of each call, in order.
+    """
+
+    def __init__(self) -> None:
+        """Start with no comments."""
+        self.comments: list[dict[str, str]] = []
+        self.first_polls: list[bool] = []
+
+    def __call__(
+        self, _repo: str, pr: int, seen: set[str], *, first_poll: bool
+    ) -> pr_watch.PollOutcome:
+        """Poll the comment signal only.
+
+        Args:
+            _repo: ``owner/repo`` slug, ignored.
+            pr: PR number.
+            seen: Comment identities, updated by the signal.
+            first_poll: Whether this poll is the baseline.
+
+        Returns:
+            An outcome carrying whatever the comment signal raised.
+        """
+        self.first_polls.append(first_poll)
+        alerts = pr_watch._comment_alerts(
+            pr, {"comments": self.comments}, seen, first_poll=first_poll
+        )
+        return pr_watch.PollOutcome(alerts=alerts, head="h1")
+
+
+def test_a_comment_arriving_between_two_waits_is_reported_by_the_second(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_clock: _FakeTime
+) -> None:
+    """The comment baseline outlives the wait, so nothing falls between waits.
+
+    SCENARIO: wait 1 baselines one comment and times out. A second comment
+    arrives while no wait is running. Wait 2 must report it. Each wait is its
+    own process; without a persisted baseline wait 2's first poll would take
+    the new comment as history and swallow it, unrecoverably.
+
+    MOCK SETUP: ``_poll_once`` replaced by ``_CommentPolls``, which runs the
+    real ``_comment_alerts``; real log and sidecar files in tmp; fake clock.
+
+    EXPECTED BEHAVIOR: wait 1 is a first poll and writes the sidecar; wait 2
+    is NOT a first poll and returns exactly one "1 new comment" alert.
+    """
+    polls = _CommentPolls()
+    monkeypatch.setattr(pr_watch, "_poll_once", polls)
+    log = tmp_path / "pr_watch_9.log"
+    assert not pr_watch._seen_path(log).exists()
+
+    polls.comments = [{"id": "a"}]
+    code, _ = pr_watch.await_events("o/r", 9, _INTERVAL, _INTERVAL, log)
+    assert code == pr_watch.EXIT_TIMEOUT
+    assert polls.first_polls == [True]
+    assert pr_watch._seen_path(log).exists()
+
+    polls.comments = [{"id": "a"}, {"id": "b"}]
+    code, lines = pr_watch.await_events("o/r", 9, _INTERVAL, _INTERVAL, log)
+    assert polls.first_polls == [True, False]
+    assert code == pr_watch.EXIT_OK
+    assert len(lines) == 1
+    assert "1 new comment" in lines[0]
+
+
+def test_a_failed_poll_does_not_write_the_comment_baseline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_clock: _FakeTime
+) -> None:
+    """A blind wait leaves no sidecar, so the next wait still owes a baseline.
+
+    MOCK SETUP: ``_poll_once`` scripted to one failed outcome; fake clock.
+
+    EXPECTED BEHAVIOR: no sidecar after the wait.
+    """
+    failed = pr_watch.PollOutcome(
+        alerts=[f"PR #9{pr_watch._POLL_FAILED_MARKER}boom)"], ok=False
+    )
+    _script(monkeypatch, [failed])
+    log = tmp_path / "w.log"
+    pr_watch.await_events("o/r", 9, _INTERVAL, _INTERVAL, log)
+    assert not pr_watch._seen_path(log).exists()
+
+
+def test_seen_round_trips_and_an_unreadable_sidecar_loads_empty(
+    tmp_path: Path,
+) -> None:
+    """Saved identities load back; a missing or unreadable sidecar is empty.
+
+    The unreadable case is a directory where the sidecar should be, which
+    raises ``OSError`` on read; the load must absorb it rather than abort a
+    wait before it starts.
+    """
+    log = tmp_path / "pr_watch_9.log"
+    assert pr_watch._load_seen(log) == set()
+    pr_watch._save_seen(log, {"b", "a"})
+    assert pr_watch._load_seen(log) == {"a", "b"}
+    bad = tmp_path / "pr_watch_10.log"
+    pr_watch._seen_path(bad).mkdir()
+    assert pr_watch._load_seen(bad) == set()
+
+
+def test_save_seen_swallows_an_unwritable_location(tmp_path: Path) -> None:
+    """Failing to record the baseline never raises; the wait carries on."""
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file, not a directory")
+    pr_watch._save_seen(blocker / "w.log", {"a"})
+
+
+def _await_args(pr: int | None = 9) -> argparse.Namespace:
+    """Build ``await`` arguments.
+
+    Args:
+        pr: PR number, or ``None`` to auto-detect.
+
+    Returns:
+        The parsed-argument namespace.
+    """
+    return argparse.Namespace(pr=pr, repo="o/r", interval=_INTERVAL, bound=30)
+
+
+def test_cmd_await_self_skips_in_ci_without_polling(
+    watch_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In CI nobody is there to be woken, so the command exits 0 and never waits.
+
+    MOCK SETUP: ``GITHUB_ACTIONS`` set; ``await_events`` replaced by a
+    function that fails the test if called.
+
+    EXPECTED BEHAVIOR: ``EXIT_OK`` and no wait.
+    """
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+
+    def must_not_wait(*_a: object, **_k: object) -> tuple[int, list[str]]:
+        msg = "await_events ran in CI"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(pr_watch, "await_events", must_not_wait)
+    assert pr_watch.cmd_await(_await_args()) == pr_watch.EXIT_OK
+
+
+def test_cmd_await_refuses_when_arming_fails(
+    watch_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A PR that cannot be read at all exits 2 before any wait starts."""
+    monkeypatch.setattr(pr_watch, "_gh", _missing_gh)
+    monkeypatch.setattr(
+        pr_watch,
+        "await_events",
+        lambda *_a, **_k: pytest.fail("waited on an unreadable PR"),
+    )
+    assert pr_watch.cmd_await(_await_args(993)) == pr_watch.EXIT_ARMING_FAILED
+
+
+@pytest.mark.parametrize(
+    "missing", ["repo-root", "repo", "pr"], ids=["no-repo-root", "no-slug", "no-pr"]
+)
+def test_cmd_await_refuses_when_it_cannot_resolve_what_to_watch(
+    watch_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    missing: str,
+) -> None:
+    """No repository, no ``owner/repo`` or no PR exits 1 and says which.
+
+    Args:
+        missing: Which input fails to resolve.
+    """
+    if missing == "repo-root":
+        monkeypatch.setattr(pr_watch, "repo_root", lambda: None)
+    if missing == "repo":
+        monkeypatch.setattr(pr_watch, "_resolve_repo", lambda *_a, **_k: None)
+    monkeypatch.setattr(pr_watch, "_auto_detect_pr", lambda *_a, **_k: None)
+    monkeypatch.setattr(pr_watch, "arming_check", lambda *_a, **_k: [])
+    args = _await_args(None if missing == "pr" else 9)
+    with caplog.at_level(logging.ERROR, logger=pr_watch.logger.name):
+        assert pr_watch.cmd_await(args) == pr_watch.EXIT_REFUSED
+    assert caplog.text.strip()
+
+
+def test_cmd_await_prints_the_event_to_stdout_and_returns_its_code(
+    watch_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The delivered lines go to stdout, one per line, with the wait's exit code.
+
+    SCENARIO: the re-invoked session reads stdout, so the event text must be
+    there and not in the logger.
+
+    MOCK SETUP: arming stubbed to pass; ``await_events`` faked to return a
+    merge event and record its arguments; health dir pinned into tmp.
+
+    EXPECTED BEHAVIOR: stdout is the line, the code passes through, and the
+    wait got this PR's log path and the requested interval and bound.
+    """
+    monkeypatch.setenv("FORGE_CODE_HEALTH_DIR", str(watch_repo / "health"))
+    monkeypatch.setattr(pr_watch, "arming_check", lambda *_a, **_k: [])
+    seen: list[tuple[object, ...]] = []
+
+    def fake_await(*args: object) -> tuple[int, list[str]]:
+        seen.append(args)
+        return pr_watch.EXIT_OK, ["PR #9 MERGED"]
+
+    monkeypatch.setattr(pr_watch, "await_events", fake_await)
+    assert pr_watch.cmd_await(_await_args()) == pr_watch.EXIT_OK
+    assert capsys.readouterr().out == "PR #9 MERGED\n"
+    assert seen == [("o/r", 9, _INTERVAL, 30, pr_watch.monitor_log_path(watch_repo, 9))]
+
+
+def test_cmd_await_detects_the_pr_when_none_is_given(
+    watch_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without ``--pr`` the branch's open PR is the one waited on."""
+    monkeypatch.setenv("FORGE_CODE_HEALTH_DIR", str(watch_repo / "health"))
+    monkeypatch.setattr(pr_watch, "_auto_detect_pr", lambda *_a, **_k: 77)
+    monkeypatch.setattr(pr_watch, "arming_check", lambda *_a, **_k: [])
+    waited: list[object] = []
+
+    def fake_await(_repo: str, pr: int, *_rest: object) -> tuple[int, list[str]]:
+        waited.append(pr)
+        return pr_watch.EXIT_TIMEOUT, ["nothing happened"]
+
+    monkeypatch.setattr(pr_watch, "await_events", fake_await)
+    assert pr_watch.cmd_await(_await_args(None)) == pr_watch.EXIT_TIMEOUT
+    assert waited == [77]
+
+
+def test_the_parser_offers_await_digest_and_stack_but_not_start() -> None:
+    """The detached-monitor subcommands are gone; a stale caller fails loudly."""
+    parser = pr_watch._build_parser()
+    assert parser.parse_args(["await", "--pr", "4"]).func is pr_watch.cmd_await
+    assert parser.parse_args(["digest"]).func is pr_watch.cmd_digest
+    assert parser.parse_args(["stack"]).func is pr_watch.cmd_stack
+    with pytest.raises(SystemExit):
+        parser.parse_args(["start", "--pr", "4"])
 
 
 def test_digest_reports_distinct_alerts_from_every_log_and_exits_zero(
