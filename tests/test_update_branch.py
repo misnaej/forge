@@ -126,7 +126,7 @@ def _lessons(repo: Path) -> list[Path]:
 def test_start_merges_commits_but_does_not_push_and_is_idempotent(
     tmp_path: Path,
 ) -> None:
-    """SCENARIO: base advanced with an unrelated file; run twice.
+    """SCENARIO: branch has one own commit; base gains an unrelated file; run twice.
 
     EXPECTED BEHAVIOR: first run commits a two-parent merge locally but
     leaves the remote untouched (origin's branch stays at its old tip);
@@ -135,6 +135,8 @@ def test_start_merges_commits_but_does_not_push_and_is_idempotent(
     repo, origin = _repo_with_origin(tmp_path)
     git_stdout(repo, "push", "-q", "origin", "feature/x")
     remote_before = git_stdout(origin, "rev-parse", "feature/x").strip()
+    (repo / "own.txt").write_text("mine\n")
+    commit_all(repo, "branch own commit")
     _advance_origin(tmp_path, origin, {"unrelated.txt": "moved\n"})
 
     assert update_branch.start(repo, None) == 0
@@ -152,10 +154,31 @@ def test_start_merges_commits_but_does_not_push_and_is_idempotent(
 def test_start_logs_that_the_merge_is_not_pushed(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """SCENARIO: clean merge committed locally.
+    """SCENARIO: branch has one own commit; clean merge committed locally.
 
     EXPECTED BEHAVIOR: the log names the gated publish path
     (`forge-commit`), not a push.
+    """
+    repo, origin = _repo_with_origin(tmp_path)
+    (repo / "own.txt").write_text("mine\n")
+    commit_all(repo, "branch own commit")
+    _advance_origin(tmp_path, origin, {"unrelated.txt": "moved\n"})
+
+    with caplog.at_level("INFO"):
+        assert update_branch.start(repo, None) == 0
+
+    assert "not pushed" in caplog.text
+
+
+def test_start_fast_forwards_a_branch_with_no_commits_of_its_own(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """SCENARIO: branch forked at the base tip, no own commits; base advanced.
+
+    EXPECTED BEHAVIOR: HEAD moves to `origin/main` with no merge commit (an
+    empty one would read "ahead 1" with nothing in it); the base's file is
+    present, no merge is left in progress, the log says it fast-forwarded
+    with nothing to merge, and a second run changes nothing.
     """
     repo, origin = _repo_with_origin(tmp_path)
     _advance_origin(tmp_path, origin, {"unrelated.txt": "moved\n"})
@@ -163,7 +186,16 @@ def test_start_logs_that_the_merge_is_not_pushed(
     with caplog.at_level("INFO"):
         assert update_branch.start(repo, None) == 0
 
-    assert "not pushed" in caplog.text
+    assert len(_parents(repo)) == 1
+    head = git_stdout(repo, "rev-parse", "HEAD").strip()
+    assert head == git_stdout(repo, "rev-parse", "origin/main").strip()
+    assert (repo / "unrelated.txt").read_text() == "moved\n"
+    assert not _merge_in_progress(repo)
+    assert "fast-forwarded" in caplog.text
+    assert "nothing to merge" in caplog.text
+
+    assert update_branch.start(repo, None) == 0
+    assert git_stdout(repo, "rev-parse", "HEAD").strip() == head
 
 
 def test_start_does_not_take_a_base_revert_as_already_seen(tmp_path: Path) -> None:

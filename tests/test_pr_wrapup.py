@@ -38,7 +38,7 @@ from forge.git_utils import code_health_dir
 from forge.pr_delta import FOLLOW_UP_RE
 from forge.pr_plan import WrapupFreshness
 from forge.pr_squash_comment import SQUASH_MARKER
-from forge.pr_wrapup_compose import slot, summarize_rollup
+from forge.pr_wrapup_compose import slot, summarize_rollup, word_budget
 from forge.text_budget import ceiling
 from tests.conftest import CapturedCalls, commit_all, init_git_repo
 
@@ -420,7 +420,7 @@ def test_warn_if_long_warns_only_above_the_ceiling(
         findings: Number of real-finding sections.
         over: Whether the body sits one word over the ceiling.
     """
-    limit = ceiling(mod.WORD_BUDGET + mod.FINDING_ALLOWANCE * findings)
+    limit = ceiling(word_budget(findings))
     head, sections = _budget_inputs(limit + int(over), findings=findings)
     with caplog.at_level(logging.WARNING):
         mod._warn_if_long(head, sections)
@@ -1701,6 +1701,44 @@ def test_main_compose_writes_the_wrapup_file_and_prints_the_slot_count(
     # The reasons go to stdout, not into the (word-budgeted) wrap-up.
     assert "small diff" not in written
     assert "pr-wrapup: light-code because: small diff" in out
+
+
+def test_main_compose_with_a_findings_slot_quotes_the_raised_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A reporter with findings adds a slot, so ``compose`` quotes the raised target.
+
+    MOCK SETUP: real tmp repo, full-mode plan, one design report whose body
+    carries a finding (so its section renders as a findings slot).
+    EXPECTED BEHAVIOR: the printed target is `word_budget(1)` and says the
+    finished wrap-up is measured against it "or lower".
+    """
+    init_git_repo(tmp_path)
+    monkeypatch.setattr(mod, "repo_root", lambda: tmp_path)
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(
+        json.dumps({"mode": "full", "reporters": ["design-checker"], "reasons": []})
+    )
+    report_path = tmp_path / "design.md"
+    report_path.write_text("FAIL — one problem\n- finding\n", encoding="utf-8")
+
+    rc = mod.main(
+        [
+            "compose",
+            "--base",
+            "HEAD",
+            "--plan",
+            str(plan_path),
+            "--design",
+            str(report_path),
+        ]
+    )
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "findings: design-checker" in out
+    assert f"up to {word_budget(1)} words" in out
+    assert "or lower" in out
 
 
 def test_main_compose_reports_a_compose_error_as_exit_two(

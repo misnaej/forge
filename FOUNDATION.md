@@ -42,7 +42,13 @@ finding alike:
 
 1. **Your own work caused it** → fix now, in this PR; never deferred (§7).
 2. **In scope, not caused by you, and not already held** by an open PR or a
-   `[sentinel]` pickup → propose fix, make it on user's yes.
+   `[sentinel]` pickup → **size it before routing it**. Looks small and
+   local → one bounded read-only investigation, delegated: cause, blast
+   radius, the edit it would take. Report says cheap and contained →
+   propose it, fix on user's yes, now. Wider than it looked, or resting on
+   judgment the report cannot settle → route per 3 and say which. Doubt →
+   ask. Why: "file it and move on" spends a later triage on what one read
+   would have closed.
 3. **Otherwise, file an issue only if it happened**, or an agent could
    plausibly hit it in normal work. Hypothetical (gap only crafted input
    reaches, hardening idea with no incident) → record it in the intake

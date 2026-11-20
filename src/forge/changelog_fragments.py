@@ -326,12 +326,43 @@ def _check_bullets(name: str, body: str) -> list[str]:
     ]
 
 
+def _check_major_carries_upgrade_notes(name: str, ftype: str, level: str) -> list[str]:
+    """Require a ``major`` fragment to be the ``upgrade`` lane itself.
+
+    A major release is the one a consumer cannot take without acting, and
+    ``forge-upgrade`` reads exactly one lane to tell them what to do.
+    Nothing else can carry it: the gate admits **one** fragment per PR,
+    so a sibling ``<slug>.upgrade.md`` is not an option the author has —
+    the single fragment is either the upgrade note or there is none.
+
+    Args:
+        name: Fragment filename (for error messages).
+        ftype: The parsed type token.
+        level: The parsed bump level.
+
+    Returns:
+        One error when a major fragment sits in another lane, else none.
+    """
+    if level != "major" or ftype == "upgrade":
+        return []
+    return [
+        (
+            f"{name}: 'bump: major' requires type 'upgrade', not '{ftype}' — a "
+            f"major is what a consumer must act on, and `forge-upgrade` reads "
+            f"the upgrade lane to tell them how. A PR carries one fragment, so "
+            f"rename this to <slug>.upgrade.md and write the action in it; if "
+            f"nothing is owed on upgrade, the bump is not major."
+        )
+    ]
+
+
 def validate_fragment(path: Path) -> tuple[Fragment | None, list[str]]:
     """Parse *path* into a :class:`Fragment`, collecting every violation.
 
     The gate contract: filename must match ``<slug>.<type>.md`` with a
     known type; the body's first line must be ``bump: <level>`` with a
-    known level; no version-shaped string may appear in the filename or
+    known level; a ``major`` level must carry type ``upgrade``; no
+    version-shaped string may appear in the filename or
     body (level-only rule); no embedded ``## `` heading may appear in
     the body (assembly-structure injection); every body line is a ``- ``
     bullet or an indented continuation.
@@ -368,6 +399,11 @@ def _validate_fragment_text(path: Path, text: str) -> tuple[Fragment | None, lis
     content_errors = _check_no_versions_or_headings(name, body, body_line)
     if body:
         content_errors += _check_bullets(name, body)
+    # Only once both halves parsed: a filename or bump error already told
+    # the author what to fix, and a cross-check over an unparsed token
+    # would name a lane that is not what they wrote.
+    if not filename_errors and not bump_errors:
+        content_errors += _check_major_carries_upgrade_notes(name, ftype, level)
     errors = filename_errors + bump_errors + content_errors
     if errors:
         return None, errors

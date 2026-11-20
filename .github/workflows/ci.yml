@@ -33,9 +33,32 @@ permissions:
   pull-requests: read
   actions: read
 
+# A pull request's runs are cancellable: only its newest head matters. A
+# push to the default branch is not. `tag-release.yml` fires on CI
+# *success*, so a cancelled `main` run cuts no tag, and that merge's
+# release is lost with nothing reporting it.
+#
+# One group per commit on `main`, not one shared group with
+# `cancel-in-progress: false`: a group holds one running run plus one
+# *pending* run, and a third arrival replaces the pending one, so a
+# shared group still drops the middle merge of a three-merge burst.
+# Per-commit groups never queue, so nothing can be evicted.
+#
+# `refs/heads/main` is written out, matching the `head_branch == 'main'`
+# check in `tag-release.yml` — the default branch is named in both, and
+# renaming it means changing both. Deliberately not
+# `github.event.repository.default_branch`: that context is absent on
+# some events, where it reads falsy and silently restores cancellation
+# on `main`.
+#
+# `tag-release.yml` keeps its single `tag-release-main` group, so tag
+# jobs stay serialized and each merge gets its own correctly-levelled
+# tag. A burst of three or more merges can still evict a queued tag job
+# there; reporting that orphaned merge needs the wider `tag-gaps` window
+# that issue #1052 covers.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   ci:

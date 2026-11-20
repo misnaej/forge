@@ -628,6 +628,49 @@ def _consumer_upgrade_notes(
     return "\n\n".join(chunks) if chunks else None
 
 
+def _majors_missing_upgrade_notes(
+    changelog_text: str, *, max_versions: int = 3
+) -> list[str]:
+    """Return recent major releases that document no upgrade-notes lane.
+
+    A release without the lane is usually additive, and
+    :func:`_consumer_upgrade_notes` skips it for that reason. A **major**
+    without one is different: it is the release a consumer cannot adopt
+    blind, so an absent lane is a gap in the notes, never a statement
+    that nothing is owed. Saying nothing would leave the reader to infer
+    the second from the first.
+
+    A heading counts as major when its major component exceeds that of
+    the heading below it, which is what the changelog already records —
+    no outside version is needed to judge it.
+
+    Args:
+        changelog_text: Full ``CHANGELOG.md`` contents.
+        max_versions: How many of the newest versions to examine, the
+            same blunt window :func:`_consumer_upgrade_notes` uses.
+
+    Returns:
+        Version strings, newest-first; empty when every recent major
+        carries its lane (or none is recent).
+    """
+    headings = list(_CHANGELOG_VERSION_RE.finditer(changelog_text))
+    gaps: list[str] = []
+    for index, heading in enumerate(headings[:max_versions]):
+        nxt = headings[index + 1] if index + 1 < len(headings) else None
+        if nxt is None:
+            continue
+        this_semver = parse_semver(heading.group(1))
+        prev_semver = parse_semver(nxt.group(1))
+        if this_semver is None or prev_semver is None:
+            continue
+        if this_semver[0] <= prev_semver[0]:
+            continue
+        end = nxt.start()
+        if not _UPGRADE_NOTES_RE.search(changelog_text[heading.end() : end]):
+            gaps.append(heading.group(1))
+    return gaps
+
+
 _ACTIONS_MAX_VERSIONS = 3
 
 
@@ -819,6 +862,11 @@ def _print_upgrade_notes() -> None:
     contract changes to review) that mechanical regen cannot surface.
     No-op when the changelog is absent; each section prints only when
     it has content.
+
+    A recent major release that documents no upgrade-notes lane is
+    reported too. Printing nothing in that case would read as "nothing
+    is owed", which is the one thing an undocumented major does not
+    establish (FOUNDATION §8 — emitted prose is behavior).
     """
     text = _read_changelog()
     if text is None:
@@ -841,7 +889,17 @@ def _print_upgrade_notes() -> None:
         )
         for version, action in actions:
             logger.info("  %s: %s", version, action)
-    if notes is None and not actions:
+    gaps = _majors_missing_upgrade_notes(text)
+    if gaps:
+        logger.info("")
+        logger.warning(
+            "No upgrade notes are documented for %s, a major release. That "
+            "is a gap in the shipped changelog, not a statement that "
+            "nothing is owed on upgrade — read that version's entries in "
+            "CHANGELOG.md before relying on this upgrade.",
+            ", ".join(gaps),
+        )
+    if notes is None and not actions and not gaps:
         return
     logger.info("")
     logger.info("Full release history: CHANGELOG.md in the forge repo.")

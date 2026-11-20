@@ -102,6 +102,7 @@ from forge.pr_wrapup_compose import (
     rollup_not_run,
     summarize_rollup,
     unfilled_slots,
+    word_budget,
 )
 from forge.precommit import freshness_verdicts, resolve_steps
 from forge.text_budget import ceiling
@@ -484,7 +485,7 @@ def _warn_if_long(head: list[str], sections: list[tuple[str, list[str]]]) -> Non
         and (body := titles.get(required.casefold())) is not None
         and not _is_clean(body)
     )
-    budget = WORD_BUDGET + FINDING_ALLOWANCE * findings
+    budget = word_budget(findings)
     words = _count_words(head, sections)
     if words > ceiling(budget):
         logger.warning(
@@ -1197,10 +1198,12 @@ def _cmd_compose(args: argparse.Namespace) -> int:
     slots = unfilled_slots(text)
     findings = sum(1 for name in slots if name.startswith("findings: "))
     todo = (
-        f"{len(slots)} slot(s) to fill: {', '.join(slots)} — "
-        f"{WORD_BUDGET + FINDING_ALLOWANCE * findings} words for the lot "
+        f"{len(slots)} slot(s) to fill: {', '.join(slots)} — up to "
+        f"{word_budget(findings)} words for the lot "
         f"({WORD_BUDGET} + {FINDING_ALLOWANCE} per findings slot); each "
-        "findings marker states its own share"
+        "findings marker states its own share. A findings section you fill "
+        "as clean spends none of its share, so the target the finished "
+        "wrap-up is measured against is this figure or lower"
         if slots
         else "no slots to fill"
     )

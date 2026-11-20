@@ -71,6 +71,29 @@ _SLOT_RE: Final[re.Pattern[str]] = re.compile(
 # them, and that module imports this one.
 WORD_BUDGET: Final[int] = 120
 FINDING_ALLOWANCE: Final[int] = 40
+
+
+def word_budget(findings: int) -> int:
+    """Return the wrap-up's word target for *findings* findings sections.
+
+    The one place the arithmetic lives, because two callers must agree:
+    ``compose`` quotes it when it writes the slots, and ``validate``
+    measures the finished file against it. They count *findings*
+    differently and unavoidably — ``compose`` counts the slots it wrote,
+    before anyone fills them, while ``validate`` counts the sections that
+    ended up reporting findings — so ``compose``'s figure is the upper
+    bound and says so. Were the formula duplicated instead, the two would
+    also be free to drift.
+
+    Args:
+        findings: Number of sections carrying findings prose.
+
+    Returns:
+        The target word count.
+    """
+    return WORD_BUDGET + FINDING_ALLOWANCE * findings
+
+
 _BACKTICK_RUN_RE: Final[re.Pattern[str]] = re.compile(r"`+")
 _NAME_MAX: Final[int] = 60
 _NAMES_SHOWN: Final[int] = 5

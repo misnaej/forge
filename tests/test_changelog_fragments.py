@@ -437,6 +437,35 @@ def test_validate_fragment_accepts_upgrade_type(tmp_path: Path) -> None:
     assert fragment.type == "upgrade"
 
 
+def test_validate_fragment_rejects_major_outside_upgrade_lane(
+    tmp_path: Path,
+) -> None:
+    """A major in any lane but ``upgrade`` is refused, naming the file."""
+    path = _write_fragment(tmp_path, "big.added.md", "bump: major\n- breaking\n")
+    fragment, errors = validate_fragment(path)
+    assert fragment is None
+    assert any("requires type 'upgrade'" in e and "big.added.md" in e for e in errors)
+
+
+def test_validate_fragment_accepts_minor_upgrade(tmp_path: Path) -> None:
+    """The rule keys on the level: an ``upgrade`` fragment need not be major."""
+    path = _write_fragment(tmp_path, "tweak.upgrade.md", "bump: minor\n- run x\n")
+    fragment, errors = validate_fragment(path)
+    assert errors == []
+    assert fragment is not None
+
+
+def test_validate_fragment_bad_filename_skips_major_lane_check(
+    tmp_path: Path,
+) -> None:
+    """An unparseable filename reports only itself, not a lane complaint too."""
+    path = _write_fragment(tmp_path, "x.bogus.md", "bump: major\n- breaking\n")
+    fragment, errors = validate_fragment(path)
+    assert fragment is None
+    assert errors
+    assert not any("requires type" in e for e in errors)
+
+
 def test_assemble_changelog_renders_upgrade_notes_before_features() -> None:
     """The upgrade lane leads the entry, ahead of every other group."""
     fragments = [
@@ -570,7 +599,8 @@ def test_plan_assembly_uses_max_level_of_untagged(
     """
     directory = tmp_path / "changelog.d"
     for i, level in enumerate(levels):
-        _write_fragment(directory, f"f{i}.added.md", f"bump: {level}\n- x\n")
+        ftype = "upgrade" if level == "major" else "added"
+        _write_fragment(directory, f"f{i}.{ftype}.md", f"bump: {level}\n- x\n")
     plan = plan_assembly(tmp_path, "v1.2.3")
     assert plan is not None
     assert (plan.version, plan.level) == expected
@@ -1384,7 +1414,7 @@ def test_main_auto_tag_takes_strongest_new_level(
     init_autotag_repo(repo, origin)
     monkeypatch.setattr(changelog_fragments, "repo_root", lambda: repo)
     assert main(["auto-tag"]) == 0
-    (repo / "changelog.d" / "big.added.md").write_text("bump: major\n- breaking\n")
+    (repo / "changelog.d" / "big.upgrade.md").write_text("bump: major\n- breaking\n")
     commit_all(repo, "feat: breaking")
     capsys.readouterr()
 

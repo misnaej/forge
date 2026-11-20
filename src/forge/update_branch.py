@@ -6,9 +6,14 @@ whole sync so no agent carries the procedure and no merge needs a human
 keystroke (FOUNDATION §2, §6):
 
 1. Refuse on a protected or detached branch; fetch the base.
-2. A dirty tree is secured first as a ``wip-sync:`` checkpoint commit.
-3. Merge the base without committing, so this command owns the commit.
-4. Resolve the conflicts whose answer is mechanical:
+2. A branch holding no commits of its own is fast-forwarded and the run
+   ends: there is nothing to merge, and a merge commit there records no
+   decision while making the branch look like it carries work.
+3. A dirty tree is secured first as a ``wip-sync:`` checkpoint commit.
+   That checkpoint is a commit of the branch's own, so the sync after it
+   is a real merge, not a fast-forward.
+4. Merge the base without committing, so this command owns the commit.
+5. Resolve the conflicts whose answer is mechanical:
 
    - **already seen** — the base's version of the file already appears
      in this branch's own history, so the base brings nothing new there
@@ -18,10 +23,10 @@ keystroke (FOUNDATION §2, §6):
    - **generated artifacts** — regenerated from the merged tree, once
      nothing else conflicts (:func:`forge.resync.regenerate_artifact`);
 
-5. Anything left stops the run: the paths are listed, an intake lesson
+6. Anything left stops the run: the paths are listed, an intake lesson
    records the stop, and the next step is named — ``forge-merge-resolver``
    edits the files, then ``forge-update-branch --continue``.
-6. Commit the merge. A merge only this command resolved commits
+7. Commit the merge. A merge only this command resolved commits
    without the local gate, like a merge git completes itself; CI and the
    next ordinary commit check it. A merge with hand-edited files runs the
    pre-commit gate, because those edits are new code. The branch is not
@@ -34,7 +39,7 @@ merge in progress is of the base, nothing is unresolved, and the staged
 result differs from git's own automatic merge only at conflicted paths.
 
 Exit codes:
-    0  merged (or already up to date) and committed locally
+    0  merged and committed locally, fast-forwarded, or already up to date
     1  refused — nothing changed, or the merge left in progress
     3  stopped on conflicts that need judgment; the merge stays in progress
 """
@@ -590,6 +595,64 @@ def _stop(root: Path, base_ref: str, done: Resolution) -> int:
     return EXIT_STOPPED
 
 
+def _fast_forwardable(root: Path, base_ref: str) -> bool:
+    """Return whether the sync is a fast-forward rather than a merge.
+
+    True when the branch holds no commit the base lacks, so the base's
+    tip already contains this branch's whole history. Merging there
+    records no decision: ``--no-ff`` would mint an empty merge commit,
+    leaving the branch reading "ahead 1" with nothing of its own in it,
+    and every later reader — a wrap-up's commit list, a reviewer counting
+    commits — has to open that commit to learn it is empty.
+
+    A dirty tree disqualifies it. The checkpoint taken for one is a
+    commit of the branch's own, which makes the sync a genuine merge, and
+    taking it first keeps that work safe instead of handing uncommitted
+    changes to a ref update.
+
+    Args:
+        root: Repo root.
+        base_ref: The base ref being synced from.
+
+    Returns:
+        True when the branch can simply be fast-forwarded.
+    """
+    return not _dirty(root) and is_ancestor(root, "HEAD", base_ref)
+
+
+def _fast_forward(root: Path, branch: str, base_ref: str) -> int:
+    """Advance *branch* to *base_ref* without a merge commit, and report it.
+
+    Args:
+        root: Repo root.
+        branch: The current branch's name.
+        base_ref: The base ref being synced from.
+
+    Returns:
+        :data:`EXIT_OK`.
+
+    Raises:
+        UpdateRefusedError: When git declines to advance the branch.
+    """
+    try:
+        run_git("merge", "--ff-only", "--end-of-options", base_ref, cwd=root)
+    except subprocess.CalledProcessError as exc:
+        msg = (
+            f"git declined to advance {branch} to {base_ref} without a merge; "
+            f"see `git status`, then rerun. {exc}"
+        )
+        raise UpdateRefusedError(msg) from exc
+    sha = run_git("rev-parse", "--short", "HEAD", cwd=root).strip()
+    logger.info(
+        "forge-update-branch: fast-forwarded %s to %s (%s) — the branch held "
+        "no commits of its own, so there was nothing to merge.",
+        branch,
+        base_ref,
+        sha,
+    )
+    return EXIT_OK
+
+
 def start(root: Path, base: str | None) -> int:
     """Merge the base into the current branch and resolve what is mechanical.
 
@@ -603,7 +666,7 @@ def start(root: Path, base: str | None) -> int:
     Raises:
         UpdateRefusedError: When a guard refuses.
     """
-    current_branch(root)
+    branch = current_branch(root)
     if merge_in_progress(root):
         msg = (
             "a merge is already in progress; "
@@ -617,6 +680,8 @@ def start(root: Path, base: str | None) -> int:
     if is_ancestor(root, base_ref, "HEAD"):
         logger.info("forge-update-branch: already up to date with %s.", base_ref)
         return EXIT_OK
+    if _fast_forwardable(root, base_ref):
+        return _fast_forward(root, branch, base_ref)
     if _dirty(root):
         checkpoint(root, f"wip-sync: before updating from {base_ref}")
     # Exit 1 on conflicts is expected; whether the merge started is read

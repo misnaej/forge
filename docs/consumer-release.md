@@ -69,6 +69,14 @@ in spirit; the deliberate divergences are listed at the end.
   surfaces them as a distinct "Action required" section (`--continue`)
   and a pending count (`--check`). Forward-only — entries without
   markers behave as before.
+  - **The marker belongs to this convention, not to fragments mode.**
+    A repo that hand-writes its changelog states an action with the
+    marker; a fragments-mode repo states it by filing the PR as type
+    `upgrade`, which the assembler renders into the lane above. The
+    changelog mode decides which surface an author uses, so nobody
+    chooses between them and no action has two homes. `forge-upgrade`
+    still parses both, because it reads consumer changelogs written
+    either way.
 
 ### Per-PR rule
 
@@ -231,6 +239,15 @@ more than one, so writing a fragment means deciding these:
   file a PR as `upgrade` when it needs action from consumers (a breaking
   change, a config change, new mandatory behaviour), and word each
   bullet as that action.
+- **`bump: major` requires type `upgrade`**, and the gate refuses any
+  other pairing. A major is the release a consumer cannot adopt without
+  acting, and the upgrade lane is where `forge-upgrade` looks to tell
+  them how; because a PR carries one fragment, that fragment either *is*
+  the upgrade note or there is none. So a major PR files as
+  `<slug>.upgrade.md` and words its bullets as the action — and if
+  nothing is owed on upgrade, the level was not major. A version whose
+  notes are missing is reported as a gap by `forge-upgrade`, never as
+  nothing to do.
 - **Bodies carry no headings.** The assembler writes every heading; a
   heading line inside a body is refused, since it could forge or end a
   group.
@@ -332,7 +349,10 @@ capability, it is never a MINOR — it is a PATCH.**
 - **MAJOR (X+1, Y→0, Z→0)** — breaking: something in the public
   surface renamed / removed / signature-incompatible; semantics of an
   adopted behavior inverted or altered; any upgrade that requires the
-  consumer to act beyond updating the pin.
+  consumer to act beyond updating the pin. In fragments mode this level
+  obliges the entry to say what that action is: the fragment must be
+  type `upgrade` (above), so choosing MAJOR and having nothing to write
+  there means the level is wrong.
 
 **When in doubt**, ask the deciding question: *is this a new
 capability, or a new option on an existing one?* Tags are free, but

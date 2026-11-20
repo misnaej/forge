@@ -439,6 +439,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_parse_bump_line_and_body(path: Path, lines: list[str]) -> tuple[str, str, int, list[str]]` _(internal)_ — Validate bump line and extract level, body and the body's file line.
 - `_check_no_versions_or_headings(name: str, body: str, body_line: int) -> list[str]` _(internal)_ — Check for version-shaped strings and embedded headings.
 - `_check_bullets(name: str, body: str) -> list[str]` _(internal)_ — Check the body starts with a ``- `` bullet and every line continues one.
+- `_check_major_carries_upgrade_notes(name: str, ftype: str, level: str) -> list[str]` _(internal)_ — Require a ``major`` fragment to be the ``upgrade`` lane itself.
 - `validate_fragment(path: Path) -> tuple[Fragment | None, list[str]]` — Parse *path* into a :class:`Fragment`, collecting every violation.
 - `_validate_fragment_text(path: Path, text: str) -> tuple[Fragment | None, list[str]]` _(internal)_ — Apply :func:`validate_fragment`'s contract to *text* as *path*'s content.
 - `discover_fragments(root: Path) -> list[Path]` — Return pending fragment files under ``changelog.d/``, filename-sorted.
@@ -1933,6 +1934,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _pr_wrapup_compose — render a PR wrap-up's mechanical parts, with slots for judgment._
 
+- `word_budget(findings: int) -> int` — Return the wrap-up's word target for *findings* findings sections.
 - `class ComposeError` — Raised when the inputs cannot yield an honest wrap-up (evidence missing).
 - `slot(name: str, hint: str = '') -> str` — Return the fill-in marker line for slot *name*.
 - `class ComposeInputs` — Everything a wrap-up is rendered from, gathered by the caller.
@@ -2332,6 +2334,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_commit(root: Path, message: str, *, gated: bool) -> None` _(internal)_ — Commit the merge, with or without the pre-commit gate.
 - `_finish(root: Path, base_ref: str, done: Resolution) -> int` _(internal)_ — Check and commit a fully resolved merge.
 - `_stop(root: Path, base_ref: str, done: Resolution) -> int` _(internal)_ — Report the conflicts that need judgment and leave the merge in progress.
+- `_fast_forwardable(root: Path, base_ref: str) -> bool` _(internal)_ — Return whether the sync is a fast-forward rather than a merge.
+- `_fast_forward(root: Path, branch: str, base_ref: str) -> int` _(internal)_ — Advance *branch* to *base_ref* without a merge commit, and report it.
 - `start(root: Path, base: str | None) -> int` — Merge the base into the current branch and resolve what is mechanical.
 - `resume(root: Path, base: str | None) -> int` — Finish a merge in progress once its judgment conflicts are resolved.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — The CLI surface.
@@ -2358,6 +2362,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_run_phase1(args: argparse.Namespace, root: Path) -> tuple[int, str | None]` _(internal)_ — Phase 1 — detect the pin, rewrite it, print the install command.
 - `_read_changelog() -> str | None` _(internal)_ — Return forge's packaged ``CHANGELOG.md`` text, or ``None`` if unavailable.
 - `_consumer_upgrade_notes(changelog_text: str, *, max_versions: int = 3) -> str | None` _(internal)_ — Extract the most recent ``⚠️ Upgrade notes`` lanes from the changelog.
+- `_majors_missing_upgrade_notes(changelog_text: str, *, max_versions: int = 3) -> list[str]` _(internal)_ — Return recent major releases that document no upgrade-notes lane.
 - `_recent_action_items(changelog_text: str, *, max_versions: int = _ACTIONS_MAX_VERSIONS) -> list[tuple[str, str]]` _(internal)_ — Return ``**Action:**`` items from the newest marker-bearing versions.
 - `_installed_revision() -> str | None` _(internal)_ — Return the installed forge-scripts build's requested git revision.
 - `pin_revision_mismatch(root: Path) -> tuple[str, str] | None` — Return ``(pinned_ref, installed_ref)`` on a provable pin/install mismatch.
