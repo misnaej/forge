@@ -724,6 +724,11 @@ def _fast_forward(root: Path, branch: str, base_ref: str) -> int:
         base_ref,
         sha,
     )
+    # Same report the merge path owes, in the same position: a fast-forward
+    # moves HEAD just as a merge does, so a posted wrap-up is just as stale.
+    # Skipping it here dropped the signal on exactly the branch least likely
+    # to notice — one carrying no commits of its own.
+    _report_wrapup_staleness(root, branch)
     return EXIT_OK
 
 
