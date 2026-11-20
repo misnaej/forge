@@ -244,7 +244,7 @@ def test_validate_wrapup_reports_many_violations_for_a_narrated_body(
     """A header-less, narrated, over-budget body fails on several distinct rules."""
     problems = mod.validate_wrapup(overlong_narrating_wrapup_body)
     assert any("verified-at" in p for p in problems)
-    assert any("summary line" in p for p in problems)
+    assert any("not all bullets" in p and "narration" in p for p in problems)
     assert any("is clean (PASS) but runs" in p for p in problems)
     assert any("is a status line" in p for p in problems)
     assert not any("budget" in p for p in problems)
@@ -295,13 +295,57 @@ def test_validate_wrapup_requires_verified_at_first_line() -> None:
 def test_validate_wrapup_rejects_zero_summary_lines() -> None:
     """A header with no summary sentence at all is refused."""
     problems = mod.validate_wrapup(_body([VERIFIED_AT]))
-    assert any("found 0" in p for p in problems)
+    assert any(
+        "a summary belongs between the header and the first section" in p
+        for p in problems
+    )
 
 
-def test_validate_wrapup_rejects_two_summary_lines() -> None:
-    """More than one summary sentence is narration, and is refused."""
-    body = _body([VERIFIED_AT, "First summary sentence.", "Second summary sentence."])
-    assert any("found 2" in p for p in mod.validate_wrapup(body))
+def test_validate_wrapup_accepts_a_labelled_bullet_summary(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Behavior test: the labelled-bullets summary the slot asks for passes.
+
+    The compose slot asks for one labelled bullet per outcome while the
+    checker once refused any multi-line summary, so the only way to pass
+    was to cram every label onto one line.
+    """
+    body = _body(
+        [
+            VERIFIED_AT,
+            "- **shipped:** the wrap-up checker accepts a bullet per outcome.",
+            "- **verified:** the two suites pass on this head.",
+            "- **deferred:** nothing is left owed.",
+        ]
+    )
+    with caplog.at_level(logging.WARNING):
+        problems = mod.validate_wrapup(body)
+    assert problems == []
+    assert "no outcome label" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "summary",
+    [
+        ["First summary sentence.", "Second summary sentence."],
+        ["- **shipped:** the change landed.", "Stray narration after the bullet."],
+    ],
+    ids=["pure-prose-run", "bullet-plus-stray-narration"],
+)
+def test_validate_wrapup_rejects_a_multi_line_summary_that_is_not_all_bullets(
+    summary: list[str],
+) -> None:
+    """A multi-line summary with any non-bullet line is narration, and is refused.
+
+    The mixed case guards the `all(...)` check: loosening it to `any(...)`
+    would still refuse pure prose but let a bullet plus narration through.
+
+    Args:
+        summary: The summary lines placed under the verified-at header.
+    """
+    body = _body([VERIFIED_AT, *summary])
+    problems = mod.validate_wrapup(body)
+    assert any("found 2 lines, not all bullets" in p for p in problems)
 
 
 def test_validate_wrapup_does_not_count_title_mode_comment_or_prior_art_lines() -> None:

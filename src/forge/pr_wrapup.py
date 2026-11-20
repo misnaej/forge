@@ -331,7 +331,14 @@ def _summary_lines(head: list[str]) -> list[str]:
 
 
 def _check_head(head: list[str]) -> list[str]:
-    """Validate the header contract and the single summary line.
+    """Validate the header contract and the shape of the summary.
+
+    The summary is labelled bullets (§6), so a bullet per outcome is the
+    expected shape and the count is not capped — capping it would make the
+    rule unusable, which is what one line plus a bullet contract did:
+    every label had to be crammed onto one line, losing the glance-ability
+    the labels exist for. What is still refused is *narration*: an
+    unlabelled run of prose lines where bullets belong.
 
     Args:
         head: Lines before the first ``## `` section.
@@ -343,10 +350,15 @@ def _check_head(head: list[str]) -> list[str]:
     if not head or not VERIFIED_AT_RE.match(head[0]):
         problems.append("first line must be the `verified-at: <sha>` header")
     summary_lines = _summary_lines(head)
-    if len(summary_lines) != 1:
+    if not summary_lines:
+        problems.append("a summary belongs between the header and the first section")
+    elif len(summary_lines) > 1 and not all(
+        line.strip().startswith("- ") for line in summary_lines
+    ):
         problems.append(
-            "exactly one summary line belongs between the header and the first "
-            f"section (found {len(summary_lines)}); the rest is narration"
+            f"a multi-line summary is labelled bullets, one per outcome "
+            f"(found {len(summary_lines)} lines, not all bullets); prose "
+            "between the header and the first section is narration"
         )
     return problems
 
