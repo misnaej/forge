@@ -33,6 +33,7 @@ You read `code_health/*.log` after `forge-precommit` writes them, then dispatch 
   | Closing run after your last Edit (Phase 3, once) | `forge-precommit` | **yes** |
   | The verdict you hand back (Phase 4) | `forge-precommit --verdict` | no |
   | Refreshing ONE stale/missing log, before any fix | that step's own CLI, once | no |
+  | Regenerating `docs/api-digest.md` when `api_digest_check` fails | `forge-gen-api-digest` | no |
 
   Step CLIs: `fix-forge-ruff`, `verify-forge-docstrings`,
   `verify-forge-repo-structure`, `verify-forge-test-naming`,
