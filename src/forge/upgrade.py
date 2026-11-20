@@ -589,6 +589,35 @@ def _read_changelog() -> str | None:
         return None
 
 
+def _changelog_sections(changelog_text: str) -> list[tuple[str, str]]:
+    """Split the changelog into ``(version, section body)`` pairs, newest first.
+
+    The one walk over ``## vX.Y.Z`` headings, because two readers need it
+    and a second copy would be free to disagree about where a section
+    ends. What each does with the pairs differs — one collects lanes, the
+    other checks majors for a missing one — but neither re-derives the
+    boundaries.
+
+    Args:
+        changelog_text: Full ``CHANGELOG.md`` contents.
+
+    Returns:
+        ``(version, body)`` per release heading in file order, which the
+        changelog keeps newest-first; the body runs to the next heading
+        or to end of file.
+    """
+    headings = list(_CHANGELOG_VERSION_RE.finditer(changelog_text))
+    sections: list[tuple[str, str]] = []
+    for index, heading in enumerate(headings):
+        end = (
+            headings[index + 1].start()
+            if index + 1 < len(headings)
+            else len(changelog_text)
+        )
+        sections.append((heading.group(1), changelog_text[heading.end() : end]))
+    return sections
+
+
 def _consumer_upgrade_notes(
     changelog_text: str, *, max_versions: int = 3
 ) -> str | None:
@@ -596,8 +625,9 @@ def _consumer_upgrade_notes(
 
     Walks version sections newest-first and collects each one's
     ``### ⚠️ Upgrade notes`` block, up to *max_versions* that have one.
-    Releases without the lane are additive/internal and carry no consumer
-    action, so they are skipped.
+    Releases without the lane are skipped: usually additive/internal, so
+    nothing to show. A major without it is the exception, reported
+    separately by :func:`_majors_missing_upgrade_notes`.
 
     Args:
         changelog_text: Full ``CHANGELOG.md`` contents.
@@ -611,20 +641,13 @@ def _consumer_upgrade_notes(
         A formatted block (``vX.Y.Z:`` headers + their note lines), or
         ``None`` when no version carries upgrade notes.
     """
-    headings = list(_CHANGELOG_VERSION_RE.finditer(changelog_text))
     chunks: list[str] = []
-    for index, heading in enumerate(headings):
+    for version, section in _changelog_sections(changelog_text):
         if len(chunks) >= max_versions:
             break
-        end = (
-            headings[index + 1].start()
-            if index + 1 < len(headings)
-            else len(changelog_text)
-        )
-        section = changelog_text[heading.end() : end]
         note = _UPGRADE_NOTES_RE.search(section)
         if note:
-            chunks.append(f"{heading.group(1)}:\n{note.group(1).strip()}")
+            chunks.append(f"{version}:\n{note.group(1).strip()}")
     return "\n\n".join(chunks) if chunks else None
 
 
@@ -646,28 +669,33 @@ def _majors_missing_upgrade_notes(
 
     Args:
         changelog_text: Full ``CHANGELOG.md`` contents.
-        max_versions: How many of the newest versions to examine, the
-            same blunt window :func:`_consumer_upgrade_notes` uses.
+        max_versions: How many of the newest release headings to examine.
+            A different window from the one
+            :func:`_consumer_upgrade_notes` applies: that one counts
+            note-bearing versions, so it keeps reading past releases with
+            nothing to show, while this one counts headings — a gap older
+            than the newest few is not news.
 
     Returns:
         Version strings, newest-first; empty when every recent major
         carries its lane (or none is recent).
     """
-    headings = list(_CHANGELOG_VERSION_RE.finditer(changelog_text))
+    sections = _changelog_sections(changelog_text)
     gaps: list[str] = []
-    for index, heading in enumerate(headings[:max_versions]):
-        nxt = headings[index + 1] if index + 1 < len(headings) else None
-        if nxt is None:
+    for index, (version, body) in enumerate(sections[:max_versions]):
+        if index + 1 >= len(sections):
+            # The oldest heading has nothing below it to compare against,
+            # so nothing establishes it as a major — the first release of
+            # a project is not an upgrade anyone can be owed notes for.
             continue
-        this_semver = parse_semver(heading.group(1))
-        prev_semver = parse_semver(nxt.group(1))
+        this_semver = parse_semver(version)
+        prev_semver = parse_semver(sections[index + 1][0])
         if this_semver is None or prev_semver is None:
             continue
         if this_semver[0] <= prev_semver[0]:
             continue
-        end = nxt.start()
-        if not _UPGRADE_NOTES_RE.search(changelog_text[heading.end() : end]):
-            gaps.append(heading.group(1))
+        if not _UPGRADE_NOTES_RE.search(body):
+            gaps.append(version)
     return gaps
 
 

@@ -871,6 +871,8 @@ positional arguments:
   {start,list,stop,stack}
     start               Start a monitor for a PR.
     list                List registered monitors.
+    digest              Report what the monitors alerted on (the log's read
+                        end).
     stop                Stop a monitor.
     stack               List open PRs in stack (dependency) order with state.
 

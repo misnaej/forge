@@ -4,7 +4,10 @@
 # via monkeypatching _gh; process identity via /proc is faked by monkeypatching
 # _pid_cmdline. One test (test_start_spawns_monitor_that_polls_and_logs) spawns
 # the real detached monitor: it fakes only the `gh` executable on PATH, never
-# Popen, so the process boundary is exercised for real.
+# Popen, so the process boundary is exercised for real. Loop tests patch
+# _poll_once (scripted outcomes) and time.sleep; the --pr-less start test fakes
+# subprocess.run with FakeGh, which models `gh pr list --head` and rejects any
+# gh call it does not know. Digest tests use real log files.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ import os
 import signal
 import subprocess
 import time
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
@@ -595,3 +599,539 @@ def test_cmd_stack_empty_list_prints_no_open_prs(
     code = pr_watch.cmd_stack(argparse.Namespace(repo="o/r"))
     assert code == pr_watch.EXIT_OK
     assert "no open PRs" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Poll loop, auto-detect, comment baseline, poll producer, digest
+# ---------------------------------------------------------------------------
+
+
+class FakeGh:
+    """Stand-in for ``subprocess.run`` that answers only known gh calls.
+
+    Attributes:
+        calls: Every argv seen, in order.
+        branch_pr_list: Stdout returned for ``gh pr list --head``.
+    """
+
+    def __init__(self, branch_pr_list: str) -> None:
+        """Record the canned ``pr list`` payload.
+
+        Args:
+            branch_pr_list: Stdout for ``gh pr list --head <branch>``.
+        """
+        self.calls: list[list[str]] = []
+        self.branch_pr_list = branch_pr_list
+
+    def __call__(self, argv: list[str], **_kw: object) -> subprocess.CompletedProcess:
+        """Dispatch one gh call, rejecting any invocation not modelled.
+
+        Args:
+            argv: The command line.
+            **_kw: Keyword arguments to ``subprocess.run``, ignored.
+
+        Returns:
+            The canned result.
+
+        Raises:
+            AssertionError: The invocation is not one gh accepts.
+        """
+        self.calls.append(argv)
+        if argv[:3] == ["gh", "pr", "view"] and "--head" in argv:
+            return subprocess.CompletedProcess(
+                argv, 1, stdout="", stderr="unknown flag: --head"
+            )
+        if argv[:3] == ["gh", "pr", "list"] and "--head" in argv:
+            return subprocess.CompletedProcess(
+                argv, 0, stdout=self.branch_pr_list, stderr=""
+            )
+        msg = f"unmodelled gh invocation: {argv}"
+        raise AssertionError(msg)
+
+
+class _FakePopen:
+    """A spawned monitor that never ran; carries only a pid."""
+
+    pid = 4321
+
+    def __init__(self, *_a: object, **_k: object) -> None:
+        """Accept and ignore the real ``Popen`` arguments.
+
+        Args:
+            *_a: Positional ``Popen`` arguments, ignored.
+            **_k: Keyword ``Popen`` arguments, ignored.
+        """
+
+
+@dataclass(frozen=True)
+class _LoopRun:
+    """What one scripted ``_monitor_loop`` run observed.
+
+    Attributes:
+        registry: The registry file the loop stamped.
+        sleeps: Every sleep the loop asked for, so a test can prove it
+            stopped without waiting.
+        first_polls: The ``first_poll`` keyword the loop passed on each
+            poll, in order — the comment baseline's wiring.
+    """
+
+    registry: Path
+    sleeps: list[float]
+    first_polls: list[bool]
+
+
+def _run_loop(
+    outcomes: list[pr_watch.PollOutcome],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    bound: int = 1000,
+    interval: int = 0,
+) -> _LoopRun:
+    """Run ``_monitor_loop`` against scripted polls with a registered PR 9.
+
+    Args:
+        outcomes: What each successive ``_poll_once`` returns; polling past
+            the end raises, so a loop that fails to stop is caught.
+        tmp_path: Directory holding the registry.
+        monkeypatch: Used to script ``_poll_once`` and ``time.sleep``.
+        bound: Loop bound in seconds.
+        interval: Poll interval in seconds.
+
+    Returns:
+        What the run observed — see :class:`_LoopRun`.
+    """
+    reg_path = tmp_path / ".plan" / "pr_monitors.json"
+    Registry(
+        monitors=[MonitorRecord(pid=1, pr=9, repo="o/r", started_at="2026-01-01")]
+    ).save(reg_path)
+    scripted = iter(outcomes)
+    sleeps: list[float] = []
+    first_polls: list[bool] = []
+
+    def scripted_poll(*_a: object, **kwargs: object) -> pr_watch.PollOutcome:
+        first_polls.append(bool(kwargs["first_poll"]))
+        return next(scripted)
+
+    monkeypatch.setattr(pr_watch, "_poll_once", scripted_poll)
+    monkeypatch.setattr(pr_watch.time, "sleep", sleeps.append)
+    pr_watch._monitor_loop("o/r", 9, interval, bound, reg_path)
+    return _LoopRun(registry=reg_path, sleeps=sleeps, first_polls=first_polls)
+
+
+def test_monitor_loop_logs_a_standing_alert_once_per_head(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A standing alert is logged once per head; a new head alerts again.
+
+    SCENARIO: a PR stays CONFLICTING over three polls on head h1, then the
+    head moves to h2 and stays conflicting. Regression: one real log held 19
+    copies of one line, so a reader could not tell news from a standing fact.
+
+    MOCK SETUP: ``_poll_once`` scripted to five outcomes; ``time.sleep``
+    recorded, not slept; real registry file in tmp.
+
+    EXPECTED BEHAVIOR: the alert line is logged exactly twice (once per head)
+    and the registry's ``last_alerted_head`` is h2.
+    """
+    alert = "PR #9 CONFLICTING"
+    outcomes = [pr_watch.PollOutcome(alerts=[alert], head="h1") for _ in range(3)]
+    outcomes += [
+        pr_watch.PollOutcome(alerts=[alert], head="h2"),
+        pr_watch.PollOutcome(alerts=[], head="h2", terminal=True),
+    ]
+    with caplog.at_level(logging.WARNING, logger=pr_watch.logger.name):
+        reg_path = _run_loop(outcomes, tmp_path, monkeypatch).registry
+    assert caplog.messages.count(f"pr-watch: {alert}") == 2
+    assert Registry.load(reg_path).monitors[0].last_alerted_head == "h2"
+
+
+def test_monitor_loop_marks_only_the_first_successful_poll_as_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The loop passes ``first_poll=True`` to poll 1 only.
+
+    SCENARIO: the comment baseline is whatever the first poll reads; every
+    later poll must treat new comments as news. A loop passing a constant, or
+    deriving the flag wrongly, silently swallows or floods comments.
+
+    MOCK SETUP: ``_poll_once`` scripted to three successful outcomes, the
+    last terminal, recording the ``first_poll`` keyword of each call.
+
+    EXPECTED BEHAVIOR: recorded flags are ``[True, False, False]``.
+    """
+    outcomes = [
+        pr_watch.PollOutcome(alerts=[], head="h1"),
+        pr_watch.PollOutcome(alerts=[], head="h1"),
+        pr_watch.PollOutcome(alerts=[], head="h1", terminal=True),
+    ]
+    first_polls = _run_loop(outcomes, tmp_path, monkeypatch).first_polls
+    assert first_polls == [True, False, False]
+
+
+def test_monitor_loop_does_not_spend_the_comment_baseline_on_a_failed_poll(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed first poll leaves the baseline owed to the next successful one.
+
+    SCENARIO: poll 1 fails (gh error) and reads no comments; poll 2 succeeds.
+    Regression: the poll counter advanced on failure, so poll 2 got
+    ``first_poll=False`` and announced every comment the PR already had.
+
+    MOCK SETUP: ``_poll_once`` scripted to a failed outcome, a successful
+    one, then a terminal one, recording each call's ``first_poll``.
+
+    EXPECTED BEHAVIOR: recorded flags are ``[True, True, False]``.
+    """
+    failed = pr_watch.PollOutcome(alerts=["PR #9: poll failed (boom)"], ok=False)
+    outcomes = [
+        failed,
+        pr_watch.PollOutcome(alerts=[], head="h1"),
+        pr_watch.PollOutcome(alerts=[], head="h1", terminal=True),
+    ]
+    first_polls = _run_loop(outcomes, tmp_path, monkeypatch).first_polls
+    assert first_polls == [True, True, False]
+
+
+def test_monitor_loop_logs_a_repeating_headless_failure_once_and_never_stamps_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An identical ``poll failed`` line is logged once and stamps no head.
+
+    SCENARIO: gh keeps failing, so every poll yields the same line with an
+    empty head. Dedup is keyed on ``(head, line)``, so the standing failure
+    appears once rather than once per poll; with no head there is nothing
+    to record as the last alerted head. Intended: the log shows a standing
+    failure once, and the bound-reached line still reports the poll count.
+
+    MOCK SETUP: ``_poll_once`` scripted to three identical failed outcomes
+    then a quiet terminal one; real registry in tmp.
+
+    EXPECTED BEHAVIOR: the failure line is logged exactly once and
+    ``last_alerted_head`` stays empty.
+    """
+    line = "PR #9: poll failed (boom)"
+    outcomes = [pr_watch.PollOutcome(alerts=[line], ok=False) for _ in range(3)]
+    outcomes.append(pr_watch.PollOutcome(alerts=[], terminal=True))
+    with caplog.at_level(logging.WARNING, logger=pr_watch.logger.name):
+        reg_path = _run_loop(outcomes, tmp_path, monkeypatch).registry
+    assert caplog.messages.count(f"pr-watch: {line}") == 1
+    assert Registry.load(reg_path).monitors[0].last_alerted_head == ""
+
+
+def test_monitor_loop_does_not_stamp_a_head_for_a_quiet_poll(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A poll with no alerts leaves ``last_alerted_head`` unset.
+
+    SCENARIO: the PR is healthy on head h1; nothing was alerted, so no head
+    is recorded as alerted. Intended behavior, not an omission.
+
+    MOCK SETUP: ``_poll_once`` scripted to two quiet outcomes on h1, the
+    last terminal; real registry in tmp.
+
+    EXPECTED BEHAVIOR: ``last_alerted_head`` is empty, ``last_poll`` is set.
+    """
+    outcomes = [
+        pr_watch.PollOutcome(alerts=[], head="h1"),
+        pr_watch.PollOutcome(alerts=[], head="h1", terminal=True),
+    ]
+    reg_path = _run_loop(outcomes, tmp_path, monkeypatch).registry
+    record = Registry.load(reg_path).monitors[0]
+    assert record.last_alerted_head == ""
+    assert record.last_poll != ""
+
+
+@pytest.mark.parametrize(
+    ("pr_list_stdout", "expected_code", "expected_pr"),
+    [
+        ('[{"number": 77}]', pr_watch.EXIT_OK, 77),
+        ("[]", pr_watch.EXIT_REFUSED, None),
+        ("not json", pr_watch.EXIT_REFUSED, None),
+        ("[1]", pr_watch.EXIT_REFUSED, None),
+    ],
+    ids=["found", "no-open-pr", "malformed-json", "wrong-element-type"],
+)
+def test_start_without_pr_detects_it_from_the_branch_via_pr_list(
+    watch_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    pr_list_stdout: str,
+    expected_code: int,
+    expected_pr: int | None,
+) -> None:
+    """Start without --pr finds the PR with ``gh pr list --head``, never ``pr view``.
+
+    SCENARIO: ``gh pr view`` has no ``--head`` flag, so the old form made
+    every start without ``--pr`` refuse. The branch is resolved to a PR
+    through ``pr list``; an empty, malformed or oddly-shaped answer refuses.
+
+    MOCK SETUP: ``subprocess.run`` replaced by ``FakeGh`` (exits 1 for
+    ``view --head``, serves the parametrized ``list`` payload, rejects
+    anything else); ``Popen`` faked; arming check stubbed to pass; git
+    branch name stubbed.
+
+    EXPECTED BEHAVIOR: the exit code and registered PR match the row, and
+    no ``view`` call carried ``--head``.
+
+    Args:
+        pr_list_stdout: What ``gh pr list --head`` prints.
+        expected_code: Exit code ``cmd_start`` must return.
+        expected_pr: PR registered, or ``None`` when nothing may register.
+    """
+    monkeypatch.setenv("FORGE_CODE_HEALTH_DIR", str(watch_repo / "health"))
+    fake = FakeGh(pr_list_stdout)
+    monkeypatch.setattr(pr_watch.subprocess, "run", fake)
+    monkeypatch.setattr(pr_watch.subprocess, "Popen", _FakePopen)
+    monkeypatch.setattr(pr_watch, "run_git", lambda *_a, **_k: "feat/x\n")
+    monkeypatch.setattr(pr_watch, "arming_check", lambda *_a, **_k: [])
+    args = argparse.Namespace(pr=None, repo="o/r", interval=60, bound=1800)
+    assert pr_watch.cmd_start(args) == expected_code
+    registered = Registry.load(watch_repo / ".plan" / "pr_monitors.json").monitors
+    assert [m.pr for m in registered] == ([] if expected_pr is None else [expected_pr])
+    assert not any(c[2:3] == ["view"] and "--head" in c for c in fake.calls)
+
+
+def test_monitor_loop_exits_on_terminal_and_names_what_is_owed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A merged or closed PR ends the loop at once and says what is owed.
+
+    SCENARIO: the first poll reports the PR terminal while the bound is a
+    full minute away. Without the exit the loop polls a merged PR to its
+    bound and then reports that, not the owed merge actions.
+
+    MOCK SETUP: ``_poll_once`` returns one terminal outcome (a second poll
+    would raise); ``time.sleep`` is recorded.
+
+    EXPECTED BEHAVIOR: loop returns with no sleep requested; the log names
+    ``/forge-next`` and ``forge-issue-triage post-pr``, not the bound line.
+    """
+    outcomes = [pr_watch.PollOutcome(alerts=[], head="h1", terminal=True)]
+    with caplog.at_level(logging.WARNING, logger=pr_watch.logger.name):
+        sleeps = _run_loop(
+            outcomes, tmp_path, monkeypatch, bound=60, interval=60
+        ).sleeps
+    assert sleeps == []
+    assert "/forge-next" in caplog.text
+    assert "forge-issue-triage post-pr" in caplog.text
+    assert "bound of" not in caplog.text
+
+
+def test_comment_alerts_baseline_then_news() -> None:
+    """The first poll baselines existing comments; later arrivals alert once."""
+    two = [{"id": "a"}, {"id": "b"}]
+    seen: set[str] = set()
+    assert pr_watch._comment_alerts(5, {"comments": two}, seen, first_poll=True) == []
+    three = [*two, {"id": "c"}]
+    alerts = pr_watch._comment_alerts(5, {"comments": three}, seen, first_poll=False)
+    assert len(alerts) == 1
+    assert "1 new comment" in alerts[0]
+    assert (
+        pr_watch._comment_alerts(5, {"comments": three}, seen, first_poll=False) == []
+    )
+
+
+def test_comment_alerts_identifies_an_idless_comment_by_date_and_author() -> None:
+    """A comment with no id is keyed ``createdAt:author`` and alerts once."""
+    anonymous = {"createdAt": "2026-01-01", "author": "bob"}
+    seen_anonymous: set[str] = {"x"}
+    assert (
+        len(
+            pr_watch._comment_alerts(
+                5, {"comments": [anonymous]}, seen_anonymous, first_poll=False
+            )
+        )
+        == 1
+    )
+    assert "2026-01-01:bob" in seen_anonymous
+    assert (
+        pr_watch._comment_alerts(
+            5, {"comments": [anonymous]}, seen_anonymous, first_poll=False
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize(
+    "view", [{}, {"comments": None}], ids=["missing-key", "none-value"]
+)
+def test_comment_alerts_ignores_a_view_without_a_comment_list(
+    view: dict[str, object],
+) -> None:
+    """A view lacking a usable ``comments`` list yields no alerts.
+
+    Args:
+        view: A ``gh pr view`` payload with no comment list.
+    """
+    assert pr_watch._comment_alerts(5, view, set(), first_poll=False) == []
+
+
+def test_comment_alerts_first_comment_on_an_empty_pr_is_news() -> None:
+    """A PR with no comments at arming must alert when its first one arrives.
+
+    The regression this pins: the baseline used to be inferred from *seen*
+    being empty, which a PR with no comments at arming leaves empty — so
+    the first comment to arrive was read as the baseline and swallowed.
+    The caller now says which poll is the first.
+    """
+    seen: set[str] = set()
+    assert pr_watch._comment_alerts(5, {"comments": []}, seen, first_poll=True) == []
+    assert (
+        len(
+            pr_watch._comment_alerts(
+                5, {"comments": [{"id": "n"}]}, seen, first_poll=False
+            )
+        )
+        == 1
+    )
+
+
+@pytest.mark.parametrize(
+    ("state", "terminal"),
+    [("MERGED", True), ("CLOSED", True), ("OPEN", False)],
+)
+def test_poll_once_reports_head_and_terminal_state(
+    monkeypatch: pytest.MonkeyPatch, state: str, *, terminal: bool
+) -> None:
+    """``_poll_once`` returns the head it read and whether the PR is finished.
+
+    SCENARIO: the loop decides re-alerting and exit from the outcome, so the
+    producer must report head and terminal state faithfully, and a transient
+    gh failure must neither end the loop nor stamp a head.
+
+    MOCK SETUP: ``_gh`` returns a canned ``pr view``; the stack, CI and
+    staleness helpers are stubbed to report nothing.
+
+    EXPECTED BEHAVIOR: ``head`` equals ``headRefOid``; ``terminal`` is true
+    only for MERGED/CLOSED; a failing gh gives one "poll failed" alert,
+    empty head, not terminal.
+
+    Args:
+        state: The PR state gh reports.
+        terminal: Whether that state ends the watch.
+    """
+    view = {"number": 9, "state": state, "mergeable": "MERGEABLE"}
+    view |= {"headRefOid": "abc123", "baseRefName": "main", "comments": []}
+    monkeypatch.setattr(pr_watch, "_gh", lambda *_a, **_k: _completed(json.dumps(view)))
+    monkeypatch.setattr(pr_watch, "_stack_parent", lambda *_a, **_k: False)
+    monkeypatch.setattr(pr_watch, "_ci_alerts", lambda *_a, **_k: [])
+    monkeypatch.setattr(pr_watch, "_staleness_alerts", lambda *_a, **_k: [])
+    outcome = pr_watch._poll_once("o/r", 9, set(), first_poll=False)
+    assert outcome.head == "abc123"
+    assert outcome.terminal is terminal
+
+    def failing_gh(*_a: object, **_k: object) -> object:
+        raise subprocess.CalledProcessError(1, "gh")
+
+    monkeypatch.setattr(pr_watch, "_gh", failing_gh)
+    failed = pr_watch._poll_once("o/r", 9, set(), first_poll=False)
+    assert len(failed.alerts) == 1
+    assert "poll failed" in failed.alerts[0]
+    assert failed.head == ""
+    assert failed.terminal is False
+    assert failed.ok is False
+
+
+def test_poll_once_feeds_the_comments_it_reads_to_the_comment_signal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_poll_once`` requests comments and forwards them with ``first_poll``.
+
+    SCENARIO: the other signals are tested apart, so nothing else catches
+    ``_poll_once`` dropping the comment signal, not forwarding ``first_poll``,
+    or omitting ``comments`` from the fields it asks gh for.
+
+    MOCK SETUP: ``_gh`` records its argv and returns a view whose comments
+    are set per call; stack, CI and staleness helpers report nothing.
+
+    EXPECTED BEHAVIOR: ``comments`` is in the ``--json`` field list; poll one
+    (one comment, ``first_poll=True``) is quiet; poll two (two comments,
+    ``first_poll=False``, same ``seen``) raises exactly one "1 new comment".
+    """
+    calls: list[tuple[str, ...]] = []
+    comments: list[dict[str, str]] = [{"id": "a"}]
+
+    def fake_gh(*argv: str, **_k: object) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        view = {"number": 9, "state": "OPEN", "mergeable": "MERGEABLE"}
+        view |= {"headRefOid": "abc", "baseRefName": "main", "comments": comments}
+        return _completed(json.dumps(view))
+
+    monkeypatch.setattr(pr_watch, "_gh", fake_gh)
+    monkeypatch.setattr(pr_watch, "_stack_parent", lambda *_a, **_k: False)
+    monkeypatch.setattr(pr_watch, "_ci_alerts", lambda *_a, **_k: [])
+    monkeypatch.setattr(pr_watch, "_staleness_alerts", lambda *_a, **_k: [])
+    seen: set[str] = set()
+    first = pr_watch._poll_once("o/r", 9, seen, first_poll=True)
+    assert first.alerts == []
+    assert "comments" in calls[0][calls[0].index("--json") + 1].split(",")
+    comments.append({"id": "b"})
+    second = pr_watch._poll_once("o/r", 9, seen, first_poll=False)
+    assert len(second.alerts) == 1
+    assert "1 new comment" in second.alerts[0]
+
+
+def test_digest_reports_distinct_alerts_from_every_log_and_exits_zero(
+    watch_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Digest lists each distinct alert once per log, reading unregistered logs.
+
+    Regression: monitor alerts sat in a gitignored log nothing opened, so a
+    PR conflicted and merged with nobody told.
+    """
+    health = watch_repo / "health"
+    monkeypatch.setenv("FORGE_CODE_HEALTH_DIR", str(health))
+    health.mkdir()
+    conflict = "pr-watch: PR #1043 CONFLICTING — run forge-update-branch"
+    (health / "pr_watch_1043.log").write_text(
+        f"{conflict}\n"
+        f"2026-01-01 10:00:00,123 WARNING {conflict}\n"
+        f"{conflict}\n"
+        "pr-watch: PR #1043 MERGED\n"
+        "Traceback-free noise without the prefix\n"
+    )
+    (health / "pr_watch_7.log").write_text("noise only\n")
+    assert pr_watch.main(["digest"]) == pr_watch.EXIT_OK
+    out = capsys.readouterr().out
+    assert out.count("PR #1043 CONFLICTING") == 1
+    assert out.index("CONFLICTING") < out.index("MERGED")
+    assert "pr_watch_7" not in out
+    assert "noise" not in out
+
+
+@pytest.mark.parametrize(
+    ("log_text", "wording"),
+    [
+        (None, "no monitor alerts to report (no monitor logs present)"),
+        ("", "no monitor alerts to report\n"),
+    ],
+    ids=["no-logs", "empty-log"],
+)
+def test_digest_says_nothing_to_report_and_exits_zero(
+    watch_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    log_text: str | None,
+    wording: str,
+) -> None:
+    """Digest exits 0 with distinct wording for absent logs and empty logs.
+
+    Args:
+        log_text: Content of a written log, or ``None`` to write none.
+        wording: Text the output must contain.
+    """
+    health = watch_repo / "health"
+    monkeypatch.setenv("FORGE_CODE_HEALTH_DIR", str(health))
+    health.mkdir()
+    if log_text is not None:
+        (health / "pr_watch_5.log").write_text(log_text)
+    assert pr_watch.main(["digest"]) == pr_watch.EXIT_OK
+    assert wording in capsys.readouterr().out

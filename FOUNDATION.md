@@ -126,7 +126,11 @@ consequence, never option names alone; recommendation with its reason;
 disputable assumptions stated. **never compress a decision to a table of
 identifiers.** Relay user can't follow gets rubber-stamped, and rubber
 stamp is indistinguishable from judgment after — worst where validated
-decision licenses unattended work (§14).
+decision licenses unattended work (§14). **Written for someone who has
+not opened the file** — name what the user sees and what changes for
+them, not the symbol, field or count that encodes it. A relay needing
+the file to parse comes back unanswered, and the retry costs more than
+writing it plainly once.
 
 **One question at a time.** Several to ask → list them in one line, ask
 the first; next only after its answer, which may change or drop it. One
@@ -136,6 +140,16 @@ question per `AskUserQuestion` call. Batch only where nobody answers live
 **Authorized work starts in the same turn.** Go-ahead given → do it now,
 or say what blocks it. Turn ending on an announcement of unstarted work =
 null turn; started, bounded background job (§6) is not one.
+
+**A question may end a turn only when its answer is owed before any
+work.** Null-turn rule bites hardest here: go-ahead given, turn ends on
+a question, nothing moved. The test, in order — could a read or search
+settle it (→ settle it); does one reading strongly favour (→ take it,
+state the assumption, continue); would the wrong reading be unsafe,
+irreversible, or waste the work (→ ask, and the turn may end); else ask
+*while* doing everything the answer does not gate. Authorization always
+qualifies (§2). A question failing this test and still ending a turn is
+a null turn, however well written.
 
 ### Ask before acting on ambiguity
 
@@ -425,6 +439,7 @@ Mechanics (modes, commands, templates): the `/forge-pr` skill. Rules:
   - **The push is gated too, not only the create.** `forge-commit` commits locally and refuses `--push` / `--push-only` without publication evidence: a wrap-up naming `HEAD`, an open PR for the branch, or an armed `forge-emergency`. Nothing reaches the remote unverified.
 - **Verification starts itself.** Implementation commits done → run finalization reviews automatically (read-only, no permission). Stopping at "ready to finalize?" unverified = too early. Commit, push, open PR: no pause after verification. Merging, force ops, cutting release, publishing package: pause. Every §2 bypass keeps own confirmation.
 - **The wrap-up never waits on CI.** Post when checks done; state plainly when CI incomplete — unqualified wrap-up reads "all green", false.
+- **The summary is labelled bullets, not prose.** Each bullet opens with its outcome, so what landed and what is still owed separate at a glance instead of being read out of paragraphs; a claim checked and a change made carry different labels, because they send a reviewer to different places. The labels are canonical in `forge.pr_wrapup_compose.SUMMARY_LABELS`, which the fill-in slot renders — not restated here, so nothing can drift from it. The same labels carry the terminal run summary. `forge-pr-wrapup validate` warns, never refuses.
 - **The summary and Recommendation never restate a section the wrap-up renders.** `Code Quality` and `CI Status` come from the evidence; a slot repeating them ("suite green; pre-commit passes") says what the same comment says two lines down. Say what changed and what the reader must decide. Saying CI *disagrees* is required, not restating. `forge-pr-wrapup validate` warns, never refuses.
 - **An agent bounds every job it starts, and says so when the bound is hit.** "Waiting for the run to complete" is not a result. Declare the bound up front; exceeding it is a **finding** — what ran, how long, what remains — never silence. Evidence supplied with its SHA is authoritative. A bound limits *waiting*, not obligation: §4 and §1 outrank it.
 - **Before commissioning verification, establish what is already verified** — the prior `verified-at:`, and whether changes since fall inside it. That is **a CLI call, never prose** (`forge-pr-plan`), and **its verdict is stated in one line before any reporter starts**. Thresholds and modes: `/forge-pr`.

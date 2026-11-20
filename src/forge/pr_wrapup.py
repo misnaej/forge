@@ -91,6 +91,7 @@ from forge.pr_wrapup_compose import (
     FINDING_ALLOWANCE,
     PENDING_CI,
     REPORTER_SECTIONS,
+    SUMMARY_LABELS,
     WORD_BUDGET,
     ComposeError,
     ComposeInputs,
@@ -102,6 +103,7 @@ from forge.pr_wrapup_compose import (
     rollup_not_run,
     summarize_rollup,
     unfilled_slots,
+    unlabelled_summary_bullets,
     word_budget,
 )
 from forge.precommit import freshness_verdicts, resolve_steps
@@ -469,13 +471,13 @@ def _warn_if_long(head: list[str], sections: list[tuple[str, list[str]]]) -> Non
     need — process state and bookkeeping — which is a content rule, not
     a count.
 
+    The budget is :func:`~forge.pr_wrapup_compose.word_budget` of the count
+    of required non-clean, non-status sections, and the warning fires above
+    :func:`forge.text_budget.ceiling` of it.
+
     Args:
         head: Lines before the first section.
         sections: ``(title, body_lines)`` pairs in document order.
-
-    The budget is ``WORD_BUDGET`` plus ``FINDING_ALLOWANCE`` per required
-    non-clean, non-status section, and warns above
-    :func:`forge.text_budget.ceiling` of it.
     """
     titles = {title.casefold(): body for title, body in sections}
     findings = sum(
@@ -545,6 +547,32 @@ def _check_attribution(text: str) -> list[str]:
     return []
 
 
+def _warn_if_unlabelled(head: list[str]) -> None:
+    """Warn when a summary bullet opens with no outcome label.
+
+    The summary is what the reader reads first and often only, so each
+    bullet names its own outcome instead of leaving good and bad news to
+    be inferred from prose. Warn-only by design, like every other length
+    and shape rule here: a wrap-up is not re-cut over formatting, and
+    refusing one would cost more than the labels save.
+
+    Args:
+        head: The wrap-up's lines before the first section heading.
+    """
+    bad = unlabelled_summary_bullets(head)
+    if not bad:
+        return
+    logger.warning(
+        "%d summary bullet(s) open with no outcome label — nothing refuses "
+        "it. Open each with one of %s in bold, e.g. `- **shipped:** …`, so "
+        "what landed and what is still owed are separable at a glance. "
+        "First: %s",
+        len(bad),
+        ", ".join(SUMMARY_LABELS),
+        bad[0][:80],
+    )
+
+
 def validate_wrapup(text: str) -> list[str]:
     """Return every rule the wrap-up *text* breaks (empty means valid).
 
@@ -566,6 +594,7 @@ def validate_wrapup(text: str) -> list[str]:
     head, sections = _split(text)
     _warn_if_long(head, sections)
     _warn_if_restating(head, sections)
+    _warn_if_unlabelled(head)
     return (
         slots
         + _check_head(head)
@@ -1201,9 +1230,9 @@ def _cmd_compose(args: argparse.Namespace) -> int:
         f"{len(slots)} slot(s) to fill: {', '.join(slots)} — up to "
         f"{word_budget(findings)} words for the lot "
         f"({WORD_BUDGET} + {FINDING_ALLOWANCE} per findings slot); each "
-        "findings marker states its own share. A findings section you fill "
-        "as clean spends none of its share, so the target the finished "
-        "wrap-up is measured against is this figure or lower"
+        "findings marker states its own share. A clean findings section "
+        "spends none of its share, so the final target is this figure or "
+        "lower"
         if slots
         else "no slots to fill"
     )

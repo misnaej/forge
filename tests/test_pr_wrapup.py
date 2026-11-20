@@ -492,6 +492,21 @@ def test_validate_wrapup_warns_only_above_the_ceiling_of_the_budget(
     assert ("over the 120-word target" in caplog.text) is warns
 
 
+def test_validate_wrapup_warns_but_does_not_refuse_an_unlabelled_summary(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Behavior: an unlabelled summary bullet warns; it never adds a problem."""
+    with caplog.at_level(logging.WARNING):
+        unlabelled = mod.validate_wrapup(_body([VERIFIED_AT, "- a thing landed"]))
+    assert unlabelled == []
+    assert "no outcome label" in caplog.text
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        labelled = mod.validate_wrapup(_body([VERIFIED_AT, "- **shipped:** a thing"]))
+    assert labelled == []
+    assert "no outcome label" not in caplog.text
+
+
 # ---------------------------------------------------------------------------
 # _warn_if_restating — judgment slots must not assert status compose renders
 # ---------------------------------------------------------------------------

@@ -318,15 +318,85 @@ def _check_pr_view(repo: str, pr: int, failures: list[str]) -> None:
         failures.append(f"{_SIGNALS[3]}/{_SIGNALS[4]}: unparseable JSON ({exc})")
 
 
-def _poll_once(repo: str, pr: int) -> list[str]:
-    """Run one poll cycle and return alert lines.
+@dataclass
+class PollOutcome:
+    """One poll's alerts plus the state the loop decides from.
+
+    Attributes:
+        alerts: Alert lines raised by this poll; empty means quiet.
+        head: The PR's head SHA, empty when the poll could not read it.
+            The loop keys alert de-duplication on it, so FOUNDATION §6's
+            "once per new head" is decidable without a second call.
+        terminal: Whether the PR is merged or closed, so there is
+            nothing left to watch.
+    """
+
+    alerts: list[str]
+    head: str = ""
+    terminal: bool = False
+    ok: bool = True
+
+
+def _comment_alerts(
+    pr: int, view: dict[str, object], seen: set[str], *, first_poll: bool
+) -> list[str]:
+    """Return alerts for comments not seen on an earlier poll.
+
+    The fifth signal of FOUNDATION §6. *seen* is the identity set this
+    poll adds to, so the first poll establishes a baseline and never
+    announces the conversation a PR already had — only what arrives while
+    the monitor watches is news.
+
+    *first_poll* is what marks that baseline, and it has to come from the
+    caller: an empty *seen* cannot mean it. A PR with no comments at all
+    when the monitor arms leaves the set empty, so inferring the baseline
+    from emptiness swallows the very first comment to arrive — the one
+    case this signal exists for.
+
+    Args:
+        pr: PR number.
+        view: Decoded ``gh pr view`` JSON.
+        seen: Comment identities already accounted for; mutated in place.
+        first_poll: Whether this is the monitor's first poll of this PR.
+
+    Returns:
+        One alert line when new comments arrived, else none.
+    """
+    comments = view.get("comments")
+    if not isinstance(comments, list):
+        return []
+    identities = [
+        str(c.get("id") or f"{c.get('createdAt', '')}:{c.get('author', '')}")
+        for c in comments
+        if isinstance(c, dict)
+    ]
+    fresh = [i for i in identities if i and i not in seen]
+    seen.update(identities)
+    if first_poll or not fresh:
+        return []
+    return [
+        (
+            f"PR #{pr}: {len(fresh)} new comment(s) — review and reply via "
+            "/forge-pr-comments"
+        )
+    ]
+
+
+def _poll_once(
+    repo: str, pr: int, seen_comments: set[str], *, first_poll: bool
+) -> PollOutcome:
+    """Run one poll cycle over all five signals.
 
     Args:
         repo: ``owner/repo`` slug.
         pr: PR number.
+        seen_comments: Comment identities from earlier polls; mutated.
+        first_poll: Whether this is the monitor's first poll, which
+            establishes the comment baseline instead of alerting on it.
 
     Returns:
-        Alert lines (empty = quiet).
+        The poll's alerts, the head it read, and whether the PR is in a
+        terminal state.
     """
     alerts: list[str] = []
     try:
@@ -338,7 +408,7 @@ def _poll_once(repo: str, pr: int) -> list[str]:
                 "--repo",
                 repo,
                 "--json",
-                "number,state,mergeable,headRefOid,baseRefName",
+                "number,state,mergeable,headRefOid,baseRefName,comments",
             ).stdout
         )
     except (
@@ -346,13 +416,19 @@ def _poll_once(repo: str, pr: int) -> list[str]:
         subprocess.TimeoutExpired,
         json.JSONDecodeError,
     ) as exc:
-        return [f"PR #{pr}: poll failed ({exc})"]
+        return PollOutcome(alerts=[f"PR #{pr}: poll failed ({exc})"], ok=False)
     base_ref = str(view.get("baseRefName", ""))
     stack_child = _stack_parent(repo, base_ref) if base_ref else False
     alerts.extend(_state_alerts(pr, view, stack_child=stack_child))
     alerts.extend(_ci_alerts(repo, pr, stack_child=stack_child, base_ref=base_ref))
     alerts.extend(_staleness_alerts(repo, pr))
-    return alerts
+    alerts.extend(_comment_alerts(pr, view, seen_comments, first_poll=first_poll))
+    state = str(view.get("state", ""))
+    return PollOutcome(
+        alerts=alerts,
+        head=str(view.get("headRefOid", "")),
+        terminal=state in {"MERGED", "CLOSED"},
+    )
 
 
 def _stack_parent(repo: str, base_ref: str) -> bool:
@@ -519,10 +595,26 @@ def _monitor_loop(
         registry_path: Absolute path of the registry file to stamp.
     """
     deadline = time.monotonic() + bound
+    seen_comments: set[str] = set()
+    # One entry per (head, alert) already written. Without it every poll
+    # re-states a standing condition — a conflicting PR logged the same
+    # line once a minute for its whole bound — and a reader of this log
+    # cannot tell a new event from an old one still true.
+    emitted: set[tuple[str, str]] = set()
+    # Set by the first poll that actually read the PR, never by one that
+    # failed: a failed poll sees no comments, so counting it as the
+    # baseline would make every comment the PR already had arrive as news
+    # on the next successful poll.
+    baselined = False
+    polls = 0
     while time.monotonic() < deadline:
-        alerts = _poll_once(repo, pr)
-        for line in alerts:
+        outcome = _poll_once(repo, pr, seen_comments, first_poll=not baselined)
+        polls += 1
+        baselined = baselined or outcome.ok
+        fresh = [line for line in outcome.alerts if (outcome.head, line) not in emitted]
+        for line in fresh:
             logger.warning("pr-watch: %s", line)
+            emitted.add((outcome.head, line))
         # Match on the PR alone, never on our own pid: the parent registers
         # the record *after* spawning us, so a fast first poll can run before
         # it exists, and a pid comparison would silently skip the stamp. One
@@ -533,11 +625,24 @@ def _monitor_loop(
             for m in reg.monitors:
                 if m.pr == pr:
                     m.last_poll = datetime.now(UTC).isoformat()
+                    if fresh and outcome.head:
+                        m.last_alerted_head = outcome.head
             reg.save(registry_path)
         except OSError:
             # Never silent: swallowing this is what let a dead monitor look
             # like a running one. The log this writes to is the alert channel.
             logger.exception("pr-watch: could not stamp last_poll in %s", registry_path)
+        if outcome.terminal:
+            # Nothing further can change, and the merge actions FOUNDATION §6
+            # names need a session this process cannot start. Say what is owed
+            # and stop, rather than restating it until the bound expires.
+            logger.warning(
+                "pr-watch: PR #%s is in a terminal state — monitor exiting. "
+                "Owed next, in a session: local cleanup via /forge-next and "
+                "forge-issue-triage post-pr.",
+                pr,
+            )
+            return
         time.sleep(interval)
     logger.warning(
         "pr-watch: bound of %ds reached for PR #%s — %d poll(s) ran; "
@@ -585,16 +690,21 @@ def cmd_start(args: argparse.Namespace) -> int:
         return EXIT_REFUSED
     pr = args.pr
     if pr is None:
-        # Auto-detect from the current branch
+        # Auto-detect from the current branch. `gh pr list --head` is the
+        # branch-scoped query; `gh pr view` has no `--head` flag, so the
+        # form this used to send always exited non-zero and every
+        # `--pr`-less start refused with "no PR found".
         try:
             branch = run_git("branch", "--show-current", cwd=root).strip()
             proc = subprocess.run(
                 [
                     "gh",
                     "pr",
-                    "view",
+                    "list",
                     "--head",
                     branch,
+                    "--state",
+                    "open",
                     "--repo",
                     repo,
                     "--json",
@@ -606,12 +716,16 @@ def cmd_start(args: argparse.Namespace) -> int:
                 check=False,
             )
             if proc.returncode == 0:
-                pr = int(json.loads(proc.stdout)["number"])
+                found = json.loads(proc.stdout)
+                if isinstance(found, list) and found:
+                    pr = int(found[0]["number"])
         except (
             subprocess.CalledProcessError,
             subprocess.TimeoutExpired,
             json.JSONDecodeError,
             KeyError,
+            IndexError,
+            TypeError,
         ):
             pass
         if pr is None:
@@ -840,6 +954,74 @@ def cmd_list(_args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+#: The prefix every alert line carries in a monitor's log.
+_ALERT_PREFIX: Final = "pr-watch: "
+
+
+def _alert_lines(path: Path) -> list[str]:
+    """Return a monitor log's alert lines, in order, without repeats.
+
+    Args:
+        path: A ``pr_watch_<pr>.log`` path.
+
+    Returns:
+        The alert text of each distinct alert line; empty when the log is
+        absent or holds none.
+    """
+    try:
+        raw = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    seen: set[str] = set()
+    lines: list[str] = []
+    for line in raw:
+        _, marker, rest = line.partition(_ALERT_PREFIX)
+        text = rest.strip()
+        if not marker or not text or text in seen:
+            continue
+        seen.add(text)
+        lines.append(text)
+    return lines
+
+
+def cmd_digest(_args: argparse.Namespace) -> int:
+    """Report what the monitors saw, so their alerts reach a session.
+
+    The monitor runs detached and can reach nobody directly, so its only
+    channel is ``code_health/pr_watch_<pr>.log``. This is the read end of
+    that channel: without it the alerts sit in a gitignored file nothing
+    opens, which is how a PR merged and conflicted with no one told.
+
+    Reads every monitor log present, not only the registered ones — a
+    registry record can be lost while its log survives, and the alerts
+    are worth more than the bookkeeping.
+
+    Args:
+        _args: Parsed CLI arguments (unused).
+
+    Returns:
+        Exit code; ``0`` whether or not anything was found, since having
+        nothing to report is a normal outcome and never an error.
+    """
+    root = repo_root()
+    logs = sorted(code_health_dir(root).glob("pr_watch_*.log"))
+    reported = 0
+    for path in logs:
+        lines = _alert_lines(path)
+        if not lines:
+            continue
+        reported += 1
+        sys.stdout.write(f"{path.stem.removeprefix('pr_watch_')}: {path}\n")
+        for line in lines:
+            sys.stdout.write(f"  - {line}\n")
+    if not reported:
+        sys.stdout.write(
+            "no monitor alerts to report"
+            + (" (no monitor logs present)\n" if not logs else "\n")
+        )
+    return EXIT_OK
+
+
 def _stack_order(prs: list[dict[str, object]]) -> list[dict[str, object]]:
     """Order open PRs so every parent precedes its stacked children.
 
@@ -980,6 +1162,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_start.set_defaults(func=cmd_start)
     p_list = sub.add_parser("list", help="List registered monitors.")
     p_list.set_defaults(func=cmd_list)
+    p_digest = sub.add_parser(
+        "digest", help="Report what the monitors alerted on (the log's read end)."
+    )
+    p_digest.set_defaults(func=cmd_digest)
     p_stop = sub.add_parser("stop", help="Stop a monitor.")
     p_stop.add_argument("--pr", type=int, help="PR number to stop.")
     p_stop.add_argument("--all", action="store_true", help="Stop all monitors.")

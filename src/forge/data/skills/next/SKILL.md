@@ -87,7 +87,22 @@ Stop immediately and report if any step fails.
 
 7. **Verify cross-references** after deletions — no remaining file should reference a deleted one.
 
-8. **Check what the last task's agents did**
+8. **Read what the PR monitors saw while nobody was watching**
+   ```bash
+   forge-pr-watch digest
+   ```
+   A monitor runs detached and cannot reach a session, so its alerts
+   wait in `code_health/pr_watch_<pr>.log` until something reads them.
+   This is that read, and task start is when it pays: a PR that
+   conflicted, failed CI or merged since the last session is reported
+   here or not at all. Nothing to report is a silent pass. A **merged or
+   closed** PR in the digest means the cleanup it names is owed — that is
+   Phase 1's pruning plus `forge-issue-triage` `post-pr`; a
+   **CONFLICTING** one means `forge-update-branch` on that branch, never
+   here. Surface each alert to the user; act only where this phase
+   already acts.
+
+9. **Check what the last task's agents did**
    ```bash
    forge-agent-profile --last 20
    ```

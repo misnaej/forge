@@ -1870,7 +1870,9 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_check_gh_present(failures: list[str]) -> bool` _(internal)_ — Append a failure when gh is missing; return whether gh is usable.
 - `_check_gh_auth(failures: list[str]) -> None` _(internal)_ — Append a failure when gh auth is not logged in.
 - `_check_pr_view(repo: str, pr: int, failures: list[str]) -> None` _(internal)_ — Parse one full gh pr view and append failures for missing signals.
-- `_poll_once(repo: str, pr: int) -> list[str]` _(internal)_ — Run one poll cycle and return alert lines.
+- `class PollOutcome` — One poll's alerts plus the state the loop decides from.
+- `_comment_alerts(pr: int, view: dict[str, object], seen: set[str], *, first_poll: bool) -> list[str]` _(internal)_ — Return alerts for comments not seen on an earlier poll.
+- `_poll_once(repo: str, pr: int, seen_comments: set[str], *, first_poll: bool) -> PollOutcome` _(internal)_ — Run one poll cycle over all five signals.
 - `_stack_parent(repo: str, base_ref: str) -> bool` _(internal)_ — Return whether *base_ref* is another open PR's head branch.
 - `_state_alerts(pr: int, view: dict[str, object], *, stack_child: bool = False) -> list[str]` _(internal)_ — Return alerts for the PR's state and mergeable fields.
 - `_ci_alerts(repo: str, pr: int, *, stack_child: bool = False, base_ref: str = '') -> list[str]` _(internal)_ — Return CI-failure alerts from ``gh pr checks``.
@@ -1883,6 +1885,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `cmd_stop(args: argparse.Namespace) -> int` — Stop one or all monitors, verifying process identity before signalling.
 - `_monitor_state(record: MonitorRecord, *, alive: bool) -> str` _(internal)_ — Return a one-word reading of a monitor's state, for display.
 - `cmd_list(_args: argparse.Namespace) -> int` — List registered monitors.
+- `_alert_lines(path: Path) -> list[str]` _(internal)_ — Return a monitor log's alert lines, in order, without repeats.
+- `cmd_digest(_args: argparse.Namespace) -> int` — Report what the monitors saw, so their alerts reach a session.
 - `_stack_order(prs: list[dict[str, object]]) -> list[dict[str, object]]` _(internal)_ — Order open PRs so every parent precedes its stacked children.
 - `cmd_stack(args: argparse.Namespace) -> int` — List the open-PR stack in dependency order with per-PR state.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — The CLI surface.
@@ -1903,6 +1907,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_warn_if_restating(head: list[str], sections: list[tuple[str, list[str]]]) -> None` _(internal)_ — Warn when a judgment slot asserts status a sibling section renders.
 - `_warn_if_long(head: list[str], sections: list[tuple[str, list[str]]]) -> None` _(internal)_ — Warn about a long wrap-up, scaled by the number of findings sections.
 - `_check_attribution(text: str) -> list[str]` _(internal)_ — Wrap the shared FOUNDATION §2 attribution gate as a violation list.
+- `_warn_if_unlabelled(head: list[str]) -> None` _(internal)_ — Warn when a summary bullet opens with no outcome label.
 - `validate_wrapup(text: str) -> list[str]` — Return every rule the wrap-up *text* breaks (empty means valid).
 - `_check_no_squash_section(text: str) -> list[str]` _(internal)_ — Refuse a wrap-up that embeds the squash-merge message.
 - `_collapse(existing: list[dict[str, object]], new_sha: str) -> int` _(internal)_ — Fold every earlier wrap-up into a ``<details>`` block, once.
@@ -1934,6 +1939,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _pr_wrapup_compose — render a PR wrap-up's mechanical parts, with slots for judgment._
 
+- `unlabelled_summary_bullets(body: list[str]) -> list[str]` — Return summary bullets that open with no known label.
 - `word_budget(findings: int) -> int` — Return the wrap-up's word target for *findings* findings sections.
 - `class ComposeError` — Raised when the inputs cannot yield an honest wrap-up (evidence missing).
 - `slot(name: str, hint: str = '') -> str` — Return the fill-in marker line for slot *name*.
@@ -2361,6 +2367,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_write_atomic(path: Path, content: str) -> None` _(internal)_ — Replace *path*'s contents with *content*, atomically.
 - `_run_phase1(args: argparse.Namespace, root: Path) -> tuple[int, str | None]` _(internal)_ — Phase 1 — detect the pin, rewrite it, print the install command.
 - `_read_changelog() -> str | None` _(internal)_ — Return forge's packaged ``CHANGELOG.md`` text, or ``None`` if unavailable.
+- `_changelog_sections(changelog_text: str) -> list[tuple[str, str]]` _(internal)_ — Split the changelog into ``(version, section body)`` pairs, newest first.
 - `_consumer_upgrade_notes(changelog_text: str, *, max_versions: int = 3) -> str | None` _(internal)_ — Extract the most recent ``⚠️ Upgrade notes`` lanes from the changelog.
 - `_majors_missing_upgrade_notes(changelog_text: str, *, max_versions: int = 3) -> list[str]` _(internal)_ — Return recent major releases that document no upgrade-notes lane.
 - `_recent_action_items(changelog_text: str, *, max_versions: int = _ACTIONS_MAX_VERSIONS) -> list[tuple[str, str]]` _(internal)_ — Return ``**Action:**`` items from the newest marker-bearing versions.

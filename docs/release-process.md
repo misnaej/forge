@@ -82,10 +82,34 @@ strongest `bump:` level among the fragments the merge brought.
   is not the one the branch tips hold is refused. `auto-tag` reports that
   cause and its remedy; the wording lives there, not here.
 
+### Why a push to the default branch gets its own concurrency group
+
+A pull request's runs are cancellable: only its newest head matters. A
+push to the default branch is not, because the job above fires on CI
+*success* — a cancelled `main` run cuts no tag, and that merge's release
+is lost with nothing reporting it.
+
+The group is keyed per **commit**, not shared with
+`cancel-in-progress: false`, because a concurrency group holds one
+running run plus only **one pending** run: a third arrival replaces the
+pending one, so a shared group still drops the middle merge of a
+three-merge burst. Per-commit groups never queue, so nothing can be
+evicted.
+
+`refs/heads/main` is written out in both halves of the expression, to
+match the `head_branch == 'main'` check in `tag-release.yml` — the
+default branch is named in both files and renaming it means changing
+both. Deliberately not `github.event.repository.default_branch`: that
+context is absent on some events, where it reads falsy and silently
+restores cancellation on `main`.
+
+`tag-release.yml` keeps its single `tag-release-main` group, so tag jobs
+stay serialized and each merge gets its own correctly-levelled tag. The
+burst case that can still evict a queued tag job is the one named under
+"What that wiring does not reach" above.
+
 **Invariant.** A push to the default branch is never cancelled and never
-left queueing: `ci.yml` groups those runs per commit. The job below fires
-on CI *success*, so a run that is cancelled, or evicted while pending,
-cuts no tag at all. **Enforced by**
+left queueing: `ci.yml` groups those runs per commit. **Enforced by**
 `test_main_ci_runs_are_never_cancelled_and_never_queue` in
 `tests/test_ci_tree_gate.py`.
 

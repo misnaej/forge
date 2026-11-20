@@ -30,6 +30,7 @@ from forge.pr_wrapup_compose import (
     slot,
     summarize_rollup,
     unfilled_slots,
+    unlabelled_summary_bullets,
 )
 from tests.conftest import timing_log
 
@@ -992,3 +993,45 @@ def test_render_issue_management_without_follow_ups_adds_no_none_filed_claim() -
         [1], pr_body_checked=True, pr_named=True, follow_ups=()
     )
     assert text == "Closes #1"
+
+
+@pytest.mark.parametrize(
+    ("line", "flagged"),
+    [
+        ("- **shipped:** x", False),
+        ("- **fixed:** x", False),
+        ("- **verified:** x", False),
+        ("- **deferred:** x", False),
+        ("- **blocked:** x", False),
+        ("- **Shipped:** x", False),
+        ("- a thing landed", True),
+        ("- **done:** x", True),
+        ("A short lead line, not a bullet.", False),
+        ("* **shipped:** x", False),
+    ],
+    ids=[
+        "shipped",
+        "fixed",
+        "verified",
+        "deferred",
+        "blocked",
+        "casefolded",
+        "plain-bullet",
+        "unknown-label",
+        "lead-line-not-judged",
+        "star-bullet-not-judged",
+    ],
+)
+def test_unlabelled_summary_bullets_flags_only_unlabelled_bullets(
+    line: str, *, flagged: bool
+) -> None:
+    """Behavior: only a ``- `` bullet without a known bold label is flagged.
+
+    Labels are written out literally so the test cannot pass by reading
+    the same constant the code does.
+
+    Args:
+        line: One summary line.
+        flagged: Whether the line must be reported.
+    """
+    assert (unlabelled_summary_bullets([line]) == [line]) is flagged
