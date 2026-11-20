@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 from forge.audit import agents as audit_agents
-from forge.audit.common import Severity
+from forge.audit.common import Severity, strip_code_blocks
 from forge.git_utils import code_health_dir
 
 
@@ -43,26 +43,6 @@ def test_split_frontmatter_no_block_returns_empty_dict() -> None:
     fm, body = audit_agents._split_frontmatter(text)
     assert fm == {}
     assert body == text
-
-
-# ---------------------------------------------------------------------------
-# Code-block stripping + word count
-# ---------------------------------------------------------------------------
-
-
-def test_strip_code_blocks_removes_fenced_content() -> None:
-    """Triple-backtick blocks are removed from the body."""
-    body = "before\n```python\nfoo = 1\nbar = 2\n```\nafter\n"
-    stripped = audit_agents._strip_code_blocks(body)
-    assert "foo = 1" not in stripped
-    assert "before" in stripped
-    assert "after" in stripped
-
-
-def test_word_count_excludes_code() -> None:
-    """Embedded code does not inflate the word count."""
-    body_no_code = "one two three four five"
-    assert audit_agents._word_count(body_no_code) == 5
 
 
 # ---------------------------------------------------------------------------
@@ -433,7 +413,7 @@ def test_check_section_order_all_sections_missing_returns_empty() -> None:
 def test_check_required_sections_heading_inside_fence_counts_missing() -> None:
     """A heading swallowed by a code fence does not count as present.
 
-    Matches against `body_no_code`: `_strip_code_blocks` removes the
+    Matches against `body_no_code`: `strip_code_blocks` removes the
     fenced ``## Output`` entirely, so it is missing exactly like a
     section that was never written.
     """
@@ -449,7 +429,7 @@ def test_check_required_sections_heading_inside_fence_counts_missing() -> None:
         path="agents/fenced.md",
         frontmatter={},
         body=body,
-        body_no_code=audit_agents._strip_code_blocks(body),
+        body_no_code=strip_code_blocks(body),
     )
     findings = audit_agents._check_required_sections(doc)
     assert len(findings) == 1
@@ -475,7 +455,7 @@ def test_check_section_order_ignores_fenced_heading() -> None:
         path="agents/fenced.md",
         frontmatter={},
         body=body,
-        body_no_code=audit_agents._strip_code_blocks(body),
+        body_no_code=strip_code_blocks(body),
     )
     assert audit_agents._check_section_order(doc) == []
 
@@ -790,13 +770,6 @@ def test_strip_generated_regions_many_unclosed_starts_is_fast() -> None:
     elapsed = time.perf_counter() - began
     assert out.startswith(text)
     assert elapsed < 1.0
-
-
-def test_word_count_includes_text_inside_generated_markers() -> None:
-    """Generated text is still prompt the agent pays for, so it is counted."""
-    body = f"<!-- team:shared start -->{_SHARED_BLOCK}<!-- team:shared end -->"
-    assert audit_agents._word_count(body) == len(body.split())
-    assert audit_agents._word_count(body) > len(_SHARED_BLOCK.split())
 
 
 # ---------------------------------------------------------------------------

@@ -56,11 +56,14 @@ from forge.audit.common import (
     Finding,
     Scope,
     Severity,
+    instruction_word_count,
     make_audit_parser,
+    strip_code_blocks,
     write_log,
 )
 from forge.config import (
     AGENT_DEFINITION_DIRS,
+    SKILL_DEFINITION_DIRS,
     filter_excluded,
     is_agent_definition,
     read_tool_forge_section,
@@ -230,21 +233,6 @@ def _split_frontmatter(text: str) -> tuple[dict[str, str | tuple[str, ...]], str
     return fm, body
 
 
-def _strip_code_blocks(body: str) -> str:
-    """Remove fenced code blocks (``` ... ```) from *body*.
-
-    Embedded code snippets shouldn't inflate the agent's word count or
-    accidentally match FOUNDATION content.
-
-    Args:
-        body: Markdown text.
-
-    Returns:
-        Same text with everything between matched ``` fences removed.
-    """
-    return re.sub(r"```.*?```", "", body, flags=re.DOTALL)
-
-
 def _parse_agent(path: Path, repo_root_path: Path) -> AgentDoc:
     """Read and parse one agent file.
 
@@ -262,25 +250,13 @@ def _parse_agent(path: Path, repo_root_path: Path) -> AgentDoc:
         path=rel,
         frontmatter=fm,
         body=body.strip(),
-        body_no_code=_strip_code_blocks(body).strip(),
+        body_no_code=strip_code_blocks(body).strip(),
     )
 
 
 # ---------------------------------------------------------------------------
 # Per-agent checks
 # ---------------------------------------------------------------------------
-
-
-def _word_count(body_no_code: str) -> int:
-    """Return the whitespace-split token count of *body_no_code*.
-
-    Args:
-        body_no_code: Agent body with code blocks already stripped.
-
-    Returns:
-        Integer token count.
-    """
-    return len(body_no_code.split())
 
 
 def _check_word_count(agent: AgentDoc) -> list[Finding]:
@@ -298,7 +274,7 @@ def _check_word_count(agent: AgentDoc) -> list[Finding]:
     body = re.sub(
         r"(?ms)^## Output style \(always\)\n.*?(?=^## |\Z)", "", agent.body_no_code
     )
-    count = _word_count(body)
+    count = instruction_word_count(body)
     if count > WORD_CAP_HIGH:
         return [
             Finding(
@@ -320,7 +296,7 @@ def _check_word_count(agent: AgentDoc) -> list[Finding]:
                 path=agent.path,
                 line=0,
                 message=(
-                    f"word_count={count} above target {WORD_CAP_MEDIUM} "
+                    f"word_count={count} above ceiling {WORD_CAP_MEDIUM} "
                     "— trim candidate"
                 ),
             )
@@ -952,6 +928,105 @@ def _per_agent_findings(
     return findings
 
 
+def _iter_skill_files(root: Path) -> list[Path]:
+    """Return every skill instruction file to measure, repo-relative order.
+
+    Both homes: the shipped set under ``skills/`` and a consumer's own
+    under ``.claude/skills/``. A skill is always ``<dir>/SKILL.md``, so
+    the glob needs no content sniffing the way agent files do.
+
+    Args:
+        root: Repo root.
+
+    Returns:
+        Sorted absolute paths; empty when neither directory exists.
+    """
+    found: list[Path] = []
+    for rel in SKILL_DEFINITION_DIRS:
+        base = root / rel
+        if base.is_dir():
+            found.extend(sorted(base.glob("*/SKILL.md")))
+    return found
+
+
+def _check_skill_word_count(path: str, body: str) -> list[Finding]:
+    """Flag a skill whose instruction text runs past the length budget.
+
+    Measured and capped exactly as an agent doc is: a skill is the same
+    kind of always-loaded instruction text, read in full every time it is
+    invoked, so one budget covers both. Either the agent cap is right for
+    both or it is wrong for both — two different numbers would say these
+    are different kinds of text, which they are not.
+
+    Args:
+        path: Repo-relative path, for the finding.
+        body: The file's text.
+
+    Returns:
+        Zero or one finding, at the same severities as an agent doc.
+    """
+    count = instruction_word_count(body)
+    if count > WORD_CAP_HIGH:
+        return [
+            Finding(
+                audit="agents",
+                severity=Severity.HIGH,
+                path=path,
+                line=0,
+                message=(
+                    f"word_count={count} exceeds hard cap {WORD_CAP_HIGH} "
+                    "— skill instructions load in full on every invocation"
+                ),
+            )
+        ]
+    if count > WORD_CAP_MEDIUM:
+        return [
+            Finding(
+                audit="agents",
+                severity=Severity.MEDIUM,
+                path=path,
+                line=0,
+                message=(
+                    f"word_count={count} above ceiling {WORD_CAP_MEDIUM} "
+                    "— trim candidate"
+                ),
+            )
+        ]
+    return []
+
+
+def _skill_findings(root: Path) -> tuple[list[Finding], str]:
+    """Measure every skill file and render its summary block.
+
+    Args:
+        root: Repo root.
+
+    Returns:
+        ``(findings, summary_block)``; the block is empty when no skill
+        file exists, so a repo with none reads no differently than before.
+    """
+    paths = _iter_skill_files(root)
+    if not paths:
+        return [], ""
+    findings: list[Finding] = []
+    rows: list[str] = []
+    for p in paths:
+        try:
+            body = p.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        rel = str(p.relative_to(root))
+        findings.extend(_check_skill_word_count(rel, body))
+        rows.append(
+            f"| {Path(rel).parent.name:<31} | {instruction_word_count(body):>5} |"
+        )
+    header = (
+        "| skill                           | words |"
+        "\n|---------------------------------|-------|"
+    )
+    return findings, header + "\n" + "\n".join(rows)
+
+
 def _render_summary(agents: list[AgentDoc], findings: list[Finding]) -> str:
     """Render the per-agent summary table for the log header.
 
@@ -973,7 +1048,7 @@ def _render_summary(agents: list[AgentDoc], findings: list[Finding]) -> str:
     rows = []
     for a in agents:
         name = Path(a.path).stem
-        words = _word_count(a.body_no_code)
+        words = instruction_word_count(a.body_no_code)
         tools = a.frontmatter.get("tools", ())
         tools_count = len(tools) if isinstance(tools, tuple) else 0
         counts: dict[str, int] = defaultdict(int)
@@ -1065,8 +1140,11 @@ def run(scope: Scope, roots: list[Path], config: AgentsConfig) -> int:
         )
     findings.extend(_cross_agent_duplicate_findings(agents))
 
+    skill_findings, skill_block = _skill_findings(root)
+    findings.extend(skill_findings)
+
     summary = "\n\n".join(
-        filter(None, [_render_summary(agents, findings), excluded_block])
+        filter(None, [_render_summary(agents, findings), skill_block, excluded_block])
     )
     write_log("agents", findings, summary, output=config.output, scope=scope)
     return 0

@@ -484,34 +484,44 @@ def _message_of(total_words: int) -> tuple[str, list[str]]:
 
 
 @pytest.mark.parametrize(
-    "total_words",
-    [
-        mod.MAX_WORDS,
-        mod.WARN_OVER_WORDS,
-        mod.WARN_OVER_WORDS + 1,
-        56,
-        200,
-    ],
+    ("total_words", "warns"),
+    [(45, False), (46, True), (54, True)],
 )
-def test_length_never_refuses_and_warns_only_above_the_margin(
-    total_words: int,
+def test_length_up_to_the_refusal_threshold_validates_and_warns_above_the_ceiling(
+    total_words: int, *, warns: bool
 ) -> None:
-    """Behavior: no length refuses; only a total past ``WARN_OVER_WORDS`` warns.
-
-    The target itself stays silent — the margin is the warn line.
+    """Behavior: the ceiling (45) is silent, one over it warns, 54 still validates.
 
     Args:
         total_words: Whole-message word count under test.
+        warns: Whether ``word_cap_warning`` should fire.
     """
     title, bullets = _message_of(total_words)
     assert mod._word_total(title, bullets) == total_words
     assert mod.validate(title, bullets) == []
     warning = mod.word_cap_warning(title, bullets)
-    if total_words <= mod.WARN_OVER_WORDS:
-        assert warning is None
-    else:
+    if warns:
         assert warning is not None
         assert str(total_words) in warning
+    else:
+        assert warning is None
+
+
+@pytest.mark.parametrize("total_words", [55, 200])
+def test_length_past_the_refusal_threshold_is_a_validate_problem(
+    total_words: int,
+) -> None:
+    """Behavior: a message past 54 words fails ``validate`` and no longer warns.
+
+    Args:
+        total_words: Whole-message word count under test.
+    """
+    title, bullets = _message_of(total_words)
+    problems = mod.validate(title, bullets)
+    assert len(problems) == 1
+    assert str(total_words) in problems[0]
+    assert "54" in problems[0]
+    assert mod.word_cap_warning(title, bullets) is None
 
 
 # ---------------------------------------------------------------------------
@@ -613,12 +623,12 @@ def test_main_validation_failure_returns_one(
 def test_main_reports_every_failing_rule_prefixed_on_its_own_stderr_line(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Two broken rules both reach stderr, each on its own prefixed line.
+    """Three broken rules all reach stderr, each on its own prefixed line.
 
-    SCENARIO: title and bullet count are both broken, with a long bullet
-    that would once also have broken the word count.
-    EXPECTED BEHAVIOR: both problems are visible in one run, each opened
-    by the ``forge-pr-squash-comment: `` prefix; length is not a problem.
+    SCENARIO: title, bullet count and length are all broken (a 55-word
+    bullet puts the message past the 54-word refusal threshold).
+    EXPECTED BEHAVIOR: all three problems are visible in one run, each
+    opened by the ``forge-pr-squash-comment: `` prefix.
     """
     long_bullet = " ".join(["word"] * 55)
     sys.argv.extend(
@@ -628,10 +638,10 @@ def test_main_reports_every_failing_rule_prefixed_on_its_own_stderr_line(
     err = capsys.readouterr().err
     prefix = "forge-pr-squash-comment: "
     prefixed_lines = [line for line in err.splitlines() if line.startswith(prefix)]
-    assert len(prefixed_lines) == 2
+    assert len(prefixed_lines) == 3
     assert any("conventional-commit" in line for line in prefixed_lines)
     assert any("requires 3-5" in line for line in prefixed_lines)
-    assert "words" not in err
+    assert any("message is 57 words" in line for line in prefixed_lines)
 
 
 @pytest.mark.usefixtures("_cli_argv")
@@ -986,12 +996,12 @@ def test_main_ensure_last_errors_without_an_existing_comment(
 @pytest.mark.usefixtures("_cli_argv")
 @pytest.mark.parametrize(
     ("total_words", "warns"),
-    [(mod.WARN_OVER_WORDS, False), (200, True)],
+    [(45, False), (52, True)],
 )
-def test_main_dry_run_warns_on_stderr_only_well_over_target(
+def test_main_dry_run_warns_on_stderr_only_over_the_ceiling(
     capsys: pytest.CaptureFixture[str], *, total_words: int, warns: bool
 ) -> None:
-    """Behavior: dry run exits 0 with the body on stdout; warns only past the margin.
+    """Behavior: dry run exits 0 with the body on stdout; warns only past 45 words.
 
     Args:
         total_words: Whole-message word count under test.
@@ -1013,3 +1023,23 @@ def test_main_dry_run_warns_on_stderr_only_well_over_target(
     assert ("forge-pr-squash-comment: warning: " in captured.err) is warns
     if warns:
         assert f"is {total_words} words" in captured.err
+
+
+@pytest.mark.usefixtures("_cli_argv")
+def test_main_dry_run_refuses_a_message_past_the_threshold(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Behavior: 62 words exits 1 with the problem on stderr and no body on stdout."""
+    title, bullets = _message_of(62)
+    sys.argv.extend(
+        [
+            "--dry-run",
+            "--title",
+            title,
+            *(item for b in bullets for item in ("--bullet", b)),
+        ]
+    )
+    assert mod.main() == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "62 words" in captured.err

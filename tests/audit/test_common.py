@@ -14,12 +14,14 @@ from forge.audit.common import (
     Scope,
     Severity,
     exit_code_for,
+    instruction_word_count,
     iter_files,
     make_audit_parser,
     read_finding_count,
     read_scope,
     relpath,
     resolve_roots,
+    strip_code_blocks,
     write_log,
 )
 from tests.audit.conftest import write_pyproject
@@ -562,3 +564,32 @@ def test_read_scope_table(log_text: str, expected: str | None) -> None:
         expected: The scope value ``read_scope`` should return, or ``None``.
     """
     assert read_scope(log_text) == expected
+
+
+# ---------------------------------------------------------------------------
+# Code-block stripping + instruction word count
+# ---------------------------------------------------------------------------
+
+
+def test_strip_code_blocks_removes_fenced_content() -> None:
+    """Triple-backtick blocks are removed from the body."""
+    body = "before\n```python\nfoo = 1\nbar = 2\n```\nafter\n"
+    stripped = strip_code_blocks(body)
+    assert "foo = 1" not in stripped
+    assert "before" in stripped
+    assert "after" in stripped
+
+
+def test_instruction_word_count_excludes_code() -> None:
+    """Fenced code does not inflate the count, stripped or not beforehand."""
+    body = "one two three\n```python\nfoo = 1\nbar = 2\n```\nfour five\n"
+    assert instruction_word_count(body) == 5
+    assert instruction_word_count(strip_code_blocks(body)) == 5
+
+
+def test_instruction_word_count_includes_text_inside_generated_markers() -> None:
+    """Generated text is still prompt the agent pays for, so it is counted."""
+    block = "this exact generated block repeats across every consumer agent file"
+    body = f"<!-- team:shared start -->{block}<!-- team:shared end -->"
+    assert instruction_word_count(body) == len(body.split())
+    assert instruction_word_count(body) > len(block.split())

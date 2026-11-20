@@ -39,7 +39,6 @@ from forge.pr_delta import FOLLOW_UP_RE
 from forge.pr_plan import WrapupFreshness
 from forge.pr_squash_comment import SQUASH_MARKER
 from forge.pr_wrapup_compose import slot, summarize_rollup, word_budget
-from forge.text_budget import ceiling
 from tests.conftest import CapturedCalls, commit_all, init_git_repo
 
 
@@ -450,41 +449,54 @@ def _budget_inputs(
     return [" ".join(["w"] * padding)], sections
 
 
-@pytest.mark.parametrize("findings", [0, 1, 3])
-@pytest.mark.parametrize("over", [False, True], ids=["at-ceiling", "over-ceiling"])
-def test_warn_if_long_warns_only_above_the_ceiling(
-    caplog: pytest.LogCaptureFixture, *, findings: int, over: bool
+@pytest.mark.parametrize(
+    ("findings", "ceiling", "threshold"),
+    [(0, 120, 144), (1, 160, 192), (3, 240, 288)],
+)
+def test_length_problems_bands_at_the_ceiling_and_the_refusal_threshold(
+    caplog: pytest.LogCaptureFixture, *, findings: int, ceiling: int, threshold: int
 ) -> None:
-    """Behavior: ``_warn_if_long`` warns only above ``ceiling`` of the budget.
+    """Behavior: silent at ceiling, warns (no problem) up to threshold, then refuses.
 
-    The budget scales by ``FINDING_ALLOWANCE`` per finding, so the warn
-    line moves with it.
+    The budget scales by ``FINDING_ALLOWANCE`` per finding, so both lines
+    move with it; the expected numbers are literals.
 
     Args:
         findings: Number of real-finding sections.
-        over: Whether the body sits one word over the ceiling.
+        ceiling: Expected word ceiling for that many findings.
+        threshold: Expected last word count not refused.
     """
-    limit = ceiling(word_budget(findings))
-    head, sections = _budget_inputs(limit + int(over), findings=findings)
-    with caplog.at_level(logging.WARNING):
-        mod._warn_if_long(head, sections)
-    assert ("over the" in caplog.text) is over
+    assert word_budget(findings) == ceiling
+    cases = [
+        (ceiling, False, False),
+        (ceiling + 1, True, False),
+        (threshold, True, False),
+        (threshold + 1, False, True),
+    ]
+    for words, warns, refuses in cases:
+        caplog.clear()
+        head, sections = _budget_inputs(words, findings=findings)
+        with caplog.at_level(logging.WARNING):
+            problems = mod._length_problems(head, sections)
+        assert (f"is {words} words, over the" in caplog.text) is warns
+        assert bool(problems) is refuses
+        if refuses:
+            assert f"{words} words" in problems[0]
+            assert str(threshold) in problems[0]
 
 
-def test_warn_if_long_warns_for_a_thousand_word_body_not_an_under_budget_one(
+def test_length_problems_refuses_a_thousand_word_body_not_an_under_budget_one(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Behavior: a ~1000-word body warns; an under-budget one stays silent."""
+    """Behavior: a ~1000-word body is refused; an under-budget one is silent."""
     with caplog.at_level(logging.WARNING):
-        mod._warn_if_long(*_budget_inputs(1000, findings=0))
-        assert "over the" in caplog.text
-        caplog.clear()
-        mod._warn_if_long(*_budget_inputs(50, findings=0))
+        assert len(mod._length_problems(*_budget_inputs(1000, findings=0))) == 1
+        assert mod._length_problems(*_budget_inputs(50, findings=0)) == []
     assert "over the" not in caplog.text
 
 
-def test_validate_wrapup_refuses_nothing_for_an_over_budget_clean_body() -> None:
-    """Behavior: a verbose clean body past the 120-word target still validates."""
+def test_validate_wrapup_accepts_a_verbose_clean_body_inside_the_refusal_band() -> None:
+    """Behavior: verbose clean body over the 120-word ceiling, under 144, validates."""
     status_long = (
         "PASS — reviewed the change carefully end to end, re-read every "
         "touched file twice, and found absolutely nothing at all worth "
@@ -497,7 +509,7 @@ def test_validate_wrapup_refuses_nothing_for_an_over_budget_clean_body() -> None
                 "This wrap-up exists purely to validate the shared word-budget "
                 "contract with a longer than usual but still single-line summary "
                 "sentence for the test, padded out a little further so the total "
-                "comfortably clears the default budget" + " and more" * 20 + "."
+                "comfortably clears the default budget" + " and more" * 4 + "."
             ),
         ],
         overrides={
@@ -514,26 +526,36 @@ def test_validate_wrapup_refuses_nothing_for_an_over_budget_clean_body() -> None
 
 
 @pytest.mark.parametrize(
-    ("summary_words", "warns"),
-    [(127, False), (128, True)],
+    ("summary_words", "warns", "refuses"),
+    [(103, False, False), (104, True, False), (127, True, False), (128, False, True)],
 )
-def test_validate_wrapup_warns_only_above_the_ceiling_of_the_budget(
-    summary_words: int, caplog: pytest.LogCaptureFixture, *, warns: bool
+def test_validate_wrapup_bands_by_the_budget_of_a_clean_body(
+    summary_words: int,
+    caplog: pytest.LogCaptureFixture,
+    *,
+    warns: bool,
+    refuses: bool,
 ) -> None:
-    """A clean body validates either way; only one past ``ceiling(120)`` warns.
+    """A clean body: silent at 120 words, warns to 144, produces a problem at 145.
 
-    The clean sections add 17 words and ``ceiling(120)`` is 144, so 127
-    summary words give 144 (silent) and 128 give 145 (warns).
+    The clean sections add 17 words, so 103 summary words total 120, 104
+    total 121 (warns), 127 total 144 (warns), 128 total 145 (refused).
 
     Args:
         summary_words: Words in the one-line summary.
-        warns: Whether the over-target warning is expected.
+        warns: Whether the over-ceiling warning is expected.
+        refuses: Whether a length problem is expected from ``validate_wrapup``.
     """
     body = _body([VERIFIED_AT, " ".join(["word"] * summary_words)])
     with caplog.at_level(logging.WARNING):
         problems = mod.validate_wrapup(body)
-    assert problems == []
-    assert ("over the 120-word target" in caplog.text) is warns
+    assert ("over the 120-word ceiling" in caplog.text) is warns
+    if refuses:
+        assert len(problems) == 1
+        assert "wrap-up is 145 words" in problems[0]
+        assert "144" in problems[0]
+    else:
+        assert problems == []
 
 
 def test_validate_wrapup_warns_but_does_not_refuse_an_unlabelled_summary(

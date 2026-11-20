@@ -61,6 +61,7 @@ from forge.pr_delta import unlisted_closing_refs
 from forge.pr_plan import classify
 from forge.pr_wrapup import WRAPUP_NAME, base_sync_verdict, wrapup_names_head
 from forge.precommit import install_refresh_hint, resolve_steps
+from forge.text_budget import length_verdict, refusal_threshold
 
 
 configure_cli_logging()
@@ -520,22 +521,81 @@ def _gate(root: Path, branch: str, base: str) -> tuple[str | None, bool]:
     return None, False
 
 
-def _warn_unlisted_closes(body_file: str) -> None:
-    """Warn when the body would close an issue forge's summary does not list.
+#: Ceiling for a PR description — FOUNDATION §6 "PR descriptions".
+#:
+#: Stated in §6 and in `agents/pr-manager.md`, and until now read by no
+#: code: the description was the people-facing text with a number nobody
+#: enforced. It is checked here, where the body is already in hand, and
+#: is a ceiling, never a length to write toward: over it warns, far
+#: past it refuses (:mod:`forge.text_budget`).
+PR_BODY_WORD_CEILING: Final[int] = 300
 
-    Advisory only: a body that cannot be read here (stdin as ``-``, a
-    missing file) is left for ``gh`` to report, so it never changes
-    whether publication proceeds.
+
+def _read_body(body_file: str) -> str | None:
+    """Return the PR body's text, or ``None`` when it cannot be read here.
+
+    Stdin (``-``) and an unreadable file are left for ``gh`` to report, so
+    neither changes whether publication proceeds. One read serves every
+    body advisory below.
 
     Args:
         body_file: The ``--body-file`` value, as ``gh`` will read it.
+
+    Returns:
+        The body text, or ``None``.
     """
     if body_file == "-":
-        return
+        return None
     try:
-        body = Path(body_file).read_text(encoding="utf-8")
+        return Path(body_file).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
-        return
+        return None
+
+
+def _body_length_refusal(body: str) -> str | None:
+    """Return the refusal for a description far past its ceiling, or ``None``.
+
+    Over the ceiling warns and publishes; past
+    :func:`~forge.text_budget.refusal_threshold` it refuses, because a
+    description that long is carrying the bookkeeping §6 keeps out of it.
+
+    Args:
+        body: The PR body text.
+
+    Returns:
+        The refusal message, or ``None`` when the body may publish.
+    """
+    words = len(body.split())
+    verdict = length_verdict(words, PR_BODY_WORD_CEILING)
+    if verdict == "refuse":
+        return (
+            f"PR description is {words} words, past the "
+            f"{refusal_threshold(PR_BODY_WORD_CEILING)} allowed for a "
+            f"{PR_BODY_WORD_CEILING}-word ceiling (FOUNDATION §6). Summary "
+            "and Changes carry the change; release bookkeeping, check status "
+            "and word counts for this repo's own documents belong nowhere "
+            "in it."
+        )
+    if verdict == "warn":
+        logger.warning(
+            "PR description is %d words, over the %d-word ceiling "
+            "(FOUNDATION §6) — publishing anyway. The ceiling is a limit, "
+            "not a length to aim for.",
+            words,
+            PR_BODY_WORD_CEILING,
+        )
+    return None
+
+
+def _warn_unlisted_closes(body: str) -> None:
+    """Warn when the body would close an issue forge's summary does not list.
+
+    Advisory only, like every check here: it never changes whether
+    publication proceeds.
+
+    Args:
+        body: The PR body text.
+    """
     unlisted = unlisted_closing_refs(body)
     if not unlisted:
         return
@@ -624,19 +684,56 @@ def main() -> int:
         *(["--draft"] if args.draft else []),
         *extra,
     ]
-    _warn_unlisted_closes(args.body_file)
+    body_refusal = _body_refusal(args.body_file)
+    if body_refusal is not None:
+        logger.error("REFUSED: %s", body_refusal)
+        return 2
     logger.info(
         "publishing '%s' — verified against %s",
         branch,
         code_health_dir(root) / WRAPUP_NAME,
     )
-    if is_emergency:
-        claim_refusal = _claim_emergency(root, branch)
-        if claim_refusal is not None:
-            logger.error("REFUSED: %s", claim_refusal)
-            return 2
-        return _publish_emergency(root, branch, cmd)
-    return _run_create(cmd)
+    return _publish(root, branch, cmd, is_emergency=is_emergency)
+
+
+def _body_refusal(body_file: str) -> str | None:
+    """Return why the PR body is refused, warning about unlisted closes when it passes.
+
+    Args:
+        body_file: Path to the PR body file.
+
+    Returns:
+        The refusal message, or ``None`` when the body is absent or passes the
+        length check.
+    """
+    body = _read_body(body_file)
+    if body is None:
+        return None
+    refusal = _body_length_refusal(body)
+    if refusal is None:
+        _warn_unlisted_closes(body)
+    return refusal
+
+
+def _publish(root: Path, branch: str, cmd: list[str], *, is_emergency: bool) -> int:
+    """Publish through the emergency path or the normal ``gh pr create`` path.
+
+    Args:
+        root: Repository root.
+        branch: Branch being published.
+        cmd: The fully assembled ``gh pr create`` argv.
+        is_emergency: Whether the publication runs under an armed emergency.
+
+    Returns:
+        ``0`` on success, ``2`` when refused or the underlying command failed.
+    """
+    if not is_emergency:
+        return _run_create(cmd)
+    claim_refusal = _claim_emergency(root, branch)
+    if claim_refusal is not None:
+        logger.error("REFUSED: %s", claim_refusal)
+        return 2
+    return _publish_emergency(root, branch, cmd)
 
 
 def _run_create(cmd: list[str]) -> int:

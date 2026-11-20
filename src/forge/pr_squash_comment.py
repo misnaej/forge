@@ -89,7 +89,7 @@ from forge.gh_comments import (
     validate_no_ai_attribution,
 )
 from forge.git_utils import configure_cli_logging, gh_api
-from forge.text_budget import ceiling
+from forge.text_budget import length_verdict, refusal_threshold
 
 
 configure_cli_logging()
@@ -124,16 +124,15 @@ TITLE_RE: Final[re.Pattern[str]] = re.compile(
 
 MIN_BULLETS: Final[int] = 3
 MAX_BULLETS: Final[int] = 5
-# The target the prompt asks for, and what "cut N" is measured against.
-# Nothing is refused on length: a message over the target posts, and only
-# one past WARN_OVER_WORDS says so. A hard edge sent agents round a
-# rewrite loop over a word or two, and length was the wrong lever anyway
+# The ceiling, never a length to write toward, and what "cut N" is
+# measured against. Over it the message posts with one warning; far past
+# it it is refused, because text that long is carrying the bloat the
+# content rules forbid. Length alone was the wrong lever anyway
 # — across the last 60 merged messages, 26% carried a bullet reporting
 # process state or bookkeeping (tests passed, a fragment exists, forge's
 # own word counts), 9% of all bullet words. The content rules in
 # FOUNDATION §6 cut that; a counter never could.
 MAX_WORDS: Final[int] = 45
-WARN_OVER_WORDS: Final[int] = ceiling(MAX_WORDS)
 # A breakdown line only has to identify the part to shorten, not show it.
 PREVIEW_CHARS: Final[int] = 40
 
@@ -204,8 +203,7 @@ def _word_total(title: str, bullets: list[str]) -> int:
         bullets: Bullet strings.
 
     Returns:
-        The combined word count :data:`MAX_WORDS` targets and
-        :data:`WARN_OVER_WORDS` warns above.
+        The combined word count measured against :data:`MAX_WORDS`.
     """
     return len(title.split()) + sum(len(b.split()) for b in bullets)
 
@@ -255,30 +253,52 @@ def _word_breakdown(title: str, bullets: list[str]) -> list[str]:
 
 
 def word_cap_warning(title: str, bullets: list[str]) -> str | None:
-    """Return the warning for a message well past its target, or ``None``.
+    """Return the warning for a message over its ceiling, or ``None``.
 
-    Kept out of :func:`validate` because length refuses nothing: this is
-    the whole of the word budget's enforcement. It fires only above
-    :data:`WARN_OVER_WORDS`, not at the first word over, so the author is
-    told once and posts anyway rather than trimming toward a line.
+    Fires at the first word over: :data:`MAX_WORDS` is a ceiling, not a
+    length to write toward. Far past it the message is refused instead,
+    by :func:`_check_length` inside :func:`validate`.
 
     Args:
         title: Squash title.
         bullets: Bullet strings.
 
     Returns:
-        The warning (total, target, per-part breakdown) above
-        ``WARN_OVER_WORDS``, else ``None``.
+        The warning (total, ceiling, per-part breakdown) when the message
+        is over but not refused, else ``None``.
     """
     total = _word_total(title, bullets)
-    if total <= WARN_OVER_WORDS:
+    if length_verdict(total, MAX_WORDS) != "warn":
         return None
     header = (
         f"squash-merge message is {total} words — over the {MAX_WORDS}-word "
-        f"target (posting anyway, not refused; shorten the next one by "
-        f"dropping process state, not prose)"
+        f"ceiling (posting anyway; shorten the next one by dropping process "
+        f"state, not prose)"
     )
     return "\n".join([header, *_word_breakdown(title, bullets)])
+
+
+def _check_length(title: str, bullets: list[str]) -> list[str]:
+    """Refuse a message so far over its ceiling that it is carrying bloat.
+
+    Args:
+        title: Squash title.
+        bullets: Bullet strings.
+
+    Returns:
+        One problem past :func:`~forge.text_budget.refusal_threshold` of
+        :data:`MAX_WORDS`, else none.
+    """
+    total = _word_total(title, bullets)
+    if length_verdict(total, MAX_WORDS) != "refuse":
+        return []
+    return [
+        (
+            f"message is {total} words, past the {refusal_threshold(MAX_WORDS)} "
+            f"allowed for a {MAX_WORDS}-word ceiling — drop the bullets reporting "
+            "process state and bookkeeping, never what changed"
+        )
+    ]
 
 
 def _check_attribution(title: str, bullets: list[str]) -> list[str]:
@@ -341,14 +361,16 @@ def validate(title: str, bullets: list[str]) -> list[str]:
         bullets: Bullet strings.
 
     Returns:
-        Problem messages in rule order (title, bullets, attribution);
-        empty when the message is valid. Length is not among them: it
-        warns through :func:`word_cap_warning` and refuses nothing.
+        Problem messages in rule order (title, bullets, attribution,
+        length); empty when the message is valid. Length over the ceiling
+        only warns, through :func:`word_cap_warning`; far past it it is
+        refused here.
     """
     return (
         _check_title(title)
         + _check_bullets(bullets)
         + _check_attribution(title, bullets)
+        + _check_length(title, bullets)
     )
 
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -159,6 +160,39 @@ class Finding:
             parts.append(f"    key={sanitize_log_text(self.key)}")
         parts.extend(f"    {sanitize_log_text(line)}" for line in self.evidence)
         return "\n".join(parts) + "\n\n"
+
+
+def strip_code_blocks(body: str) -> str:
+    """Remove fenced code blocks (``` ... ```) from *body*.
+
+    Embedded snippets must not inflate a word count or match prose
+    checks. Shared so agent docs and skill docs are measured the same
+    way: a count taken with the fences left in reports a different number
+    for the same file, and the two audits are held to one budget.
+
+    Args:
+        body: Markdown text.
+
+    Returns:
+        Same text with everything between matched ``` fences removed.
+    """
+    return re.sub(r"```.*?```", "", body, flags=re.DOTALL)
+
+
+def instruction_word_count(body: str) -> int:
+    """Return the measured length of always-loaded instruction text.
+
+    Fences stripped first, then whitespace-split. The one counter for
+    agent and skill docs, so a cap stated once means the same thing in
+    both.
+
+    Args:
+        body: Markdown body, frontmatter already removed.
+
+    Returns:
+        Word count of the prose an agent actually reads.
+    """
+    return len(strip_code_blocks(body).split())
 
 
 def under_module_prefix(module: str, prefix: str) -> bool:
