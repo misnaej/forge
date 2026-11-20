@@ -377,6 +377,11 @@ def _comment_alerts(
         if isinstance(c, dict)
     ]
     fresh = [i for i in identities if i and i not in seen]
+    # Append-only, and the alert below depends on it: `len(seen)` is what
+    # makes two separate arrivals render differently, so the loop's
+    # text-keyed dedup keeps them both. Pruning deleted comments from this
+    # set would make the count fall, let two arrivals render alike again,
+    # and silently drop the second — the bug this total exists to fix.
     seen.update(identities)
     if first_poll or not fresh:
         return []
@@ -740,10 +745,10 @@ def _auto_detect_pr(root: Path, repo: str) -> int | None:
         branch = run_git("branch", "--show-current", cwd=root).strip()
         if not branch:
             # Detached HEAD. An empty --head matches every open PR, so
-            # auto-detect would adopt an arbitrary one.
-            logger.error(
-                "pr-watch: HEAD is detached, so no branch names a PR; pass --pr N."
-            )
+            # auto-detect would adopt an arbitrary one. The caller reports
+            # it: saying so here too produced two lines, the second of
+            # which ("no PR found for the current branch") contradicts the
+            # first, since a detached HEAD has no current branch.
             return None
         proc = subprocess.run(
             [
@@ -784,11 +789,17 @@ def _auto_detect_pr(root: Path, repo: str) -> int | None:
 def cmd_start(args: argparse.Namespace) -> int:
     """Start a bounded monitor for a PR.
 
+    Resolves the PR (``--pr``, else the open PR of the current branch),
+    runs the arming check, then spawns the detached monitor. Does nothing
+    in CI, where no human receives alerts.
+
     Args:
         args: Parsed CLI arguments.
 
     Returns:
-        Exit code.
+        Exit code: ``EXIT_OK`` on start or CI skip, ``EXIT_REFUSED`` when
+        no repo or PR resolves, ``EXIT_ARMING_FAILED`` when the arming
+        check fails.
     """
     if is_ci():
         logger.info("pr-watch: CI context — monitor not started (no human to alert).")
@@ -800,6 +811,12 @@ def cmd_start(args: argparse.Namespace) -> int:
         return EXIT_REFUSED
     pr = args.pr
     if pr is None:
+        branch = run_git("branch", "--show-current", cwd=root).strip()
+        if not branch:
+            logger.error(
+                "pr-watch: HEAD is detached, so no branch names a PR; pass --pr N."
+            )
+            return EXIT_REFUSED
         pr = _auto_detect_pr(root, repo)
     if pr is None:
         logger.error("pr-watch: no PR found for the current branch; pass --pr N.")

@@ -336,6 +336,9 @@ def _check_bullets(name: str, body: str) -> list[str]:
 #: bullet per thing that changed, and the bullet is short either way.
 BULLET_WORD_TARGET: Final[int] = 12
 
+#: Longest bullet excerpt quoted in the advisory, in characters.
+_NOTE_QUOTE_MAX: Final[int] = 80
+
 
 def long_bullets(body: str) -> list[tuple[str, int]]:
     """Return the fragment's bullets that run past the word target.
@@ -380,12 +383,15 @@ def verbose_entry_note(body: str) -> str | None:
     long = long_bullets(body)
     if not long:
         return None
+
     worst, words = max(long, key=lambda pair: pair[1])
+    if len(worst) > _NOTE_QUOTE_MAX:
+        worst = worst[:_NOTE_QUOTE_MAX] + "…"
     return (
         f"ADVISORY: {len(long)} bullet(s) run long, worst at {words} words "
         f"against about {BULLET_WORD_TARGET}. Say what changed in as few "
         f"words as it takes and stop — the why belongs in the commit, not "
-        f"here. Longest: {worst[:80]}. Nothing refuses this."
+        f"here. Longest: {worst}. Nothing refuses this."
     )
 
 

@@ -742,7 +742,7 @@ def test_latest_verified_sha_returns_none_when_gh_missing(
     assert pr_plan._latest_verified_sha(42) is None
 
 
-# --- pr_plan._line_count() (exercised here: this file owns the
+# --- _line_count() --------------------------------------------------------
 
 
 def test_line_count_ignores_binary_file_rows(tmp_path: Path) -> None:
