@@ -724,7 +724,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_positional_args(args: ast.arguments) -> list[str]` _(internal)_ — Render the positional (and positional-only) arguments.
 - `_keyword_only_args(args: ast.arguments) -> list[str]` _(internal)_ — Render the keyword-only arguments, including the ``*`` marker.
 - `format_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str` — Reconstruct a function's signature from its AST node.
-- `_summary_line(node: ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef) -> str` _(internal)_ — Return the first line of an AST node's docstring.
+- `_summary_line(node: ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef) -> str` _(internal)_ — Return the first paragraph of an AST node's docstring, whitespace-normalized.
 - `_is_public(name: str) -> bool` _(internal)_ — Return whether a symbol name is public.
 - `_is_dunder(name: str) -> bool` _(internal)_ — Return whether a symbol name is a dunder name.
 - `_class_methods(node: ast.ClassDef) -> tuple[tuple[str, str], ...]` _(internal)_ — Extract the public methods of a class.

@@ -1,0 +1,3 @@
+bump: patch
+- **Docstring rewraps no longer churn `docs/api-digest.md`.** The digest's summary now takes the first docstring paragraph with all internal whitespace collapsed, so a formatting-only rewrap leaves the digest unchanged instead of failing `api_digest_check` — and `forge-gen-api-digest` is now in the fixer's Allowed-CLIs, so it can regenerate the digest in-pass.
+- **The fixer doc states the PR-flow sequencing rule where it applies:** every content edit before the first `precommit-fixer` dispatch; an edit after its closing run stales every `code_health/` log and the commit is refused.

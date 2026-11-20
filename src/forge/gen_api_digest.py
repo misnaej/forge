@@ -313,19 +313,24 @@ def format_signature(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
 def _summary_line(
     node: ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef,
 ) -> str:
-    """Return the first line of an AST node's docstring.
+    """Return the first paragraph of an AST node's docstring, whitespace-normalized.
+
+    Every run of spaces, newlines and tabs inside the first paragraph
+    collapses to one space, so rewrapping the docstring does not churn
+    the digest; a wording change in that paragraph still does.
 
     Args:
         node: A module, class, or function node.
 
     Returns:
-        The stripped first line of the docstring, or an empty string
+        The normalized first docstring paragraph, or an empty string
         when the node has no docstring.
     """
     docstring = ast.get_docstring(node)
     if not docstring:
         return ""
-    return docstring.strip().split("\n", 1)[0].strip()
+    first_paragraph = docstring.strip().split("\n\n", 1)[0]
+    return " ".join(first_paragraph.split())
 
 
 def _is_public(name: str) -> bool:

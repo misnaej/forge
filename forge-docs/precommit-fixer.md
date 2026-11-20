@@ -56,6 +56,12 @@ verdict is read mechanically. Hence one full closing run after the last
 Edit. With no Edit since the opening run, the opening run already is the
 closing one.
 
+**In a PR flow, every content edit happens before the first fixer
+dispatch.** An edit after the fixer's closing run stales every
+`code_health/` log, `forge-commit` refuses the stale verdict, and the full
+battery re-runs — the rule that costs two gate iterations when missed, so
+state it where it applies: no content edits after the fixer starts.
+
 **The cap is a ceiling, not a budget.** The opening and closing runs use
 two of the three, leaving one spare for a fix that genuinely needs a full
 re-check mid-loop. A run that uses only two is doing it right. Hitting the

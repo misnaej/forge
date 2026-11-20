@@ -319,6 +319,36 @@ def test_render_digest_shows_module_docstring_summary(tmp_path: Path) -> None:
     assert "> _Sample module for digest tests._" in doc
 
 
+def test_summary_whitespace_normalized(tmp_path: Path) -> None:
+    """SCENARIO: modules whose first docstring paragraph is wrapped differently.
+
+    EXPECTED BEHAVIOR: the digest summary collapses the first paragraph's
+    internal whitespace/newlines, so a rewrap-only edit leaves the digest
+    unchanged; a wording change in that paragraph still changes it, and a
+    second paragraph never leaks into the summary.
+    """
+    _init_git_repo(tmp_path)
+    pkg = tmp_path / "src" / "sample"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "wrapped.py").write_text(
+        '"""Summary: First line."""\n        """Details follow."""'
+    )
+    (pkg / "rewrapped.py").write_text(
+        '"""First line of the summary\nparagraph continues here."""\n'
+    )
+    (pkg / "wording.py").write_text(
+        '"""First line of the summary\nparagraph continues elsewhere."""\n'
+    )
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, env=_GIT_ENV, check=True)
+    digests = build_digest(tmp_path, [tmp_path / "src"])
+    summaries = {d.dotted: d.summary for d in digests}
+    expected = "First line of the summary paragraph continues here."
+    assert summaries["sample.wrapped"] == expected
+    assert summaries["sample.rewrapped"] == expected
+    assert summaries["sample.wording"] != expected
+
+
 def test_build_digest_keeps_docstring_only_module(tmp_path: Path) -> None:
     """A module with only a docstring (no symbols) still earns a digest entry."""
     _init_git_repo(tmp_path)
