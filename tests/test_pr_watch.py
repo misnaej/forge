@@ -865,6 +865,31 @@ def test_poll_once_logs_staleness_but_does_not_wake_on_it(
     assert outcome.waking == []
 
 
+def test_poll_once_waking_is_a_subset_of_alerts_and_staleness_is_not_waking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With every signal firing, waking is inside alerts; staleness only in alerts.
+
+    MOCK SETUP: real ``_poll_once`` over a faked gh: conflicting, a failed
+    check, a new comment, and a stale wrap-up.
+
+    EXPECTED BEHAVIOR: every waking line is in alerts; the one alert not
+    waking is the staleness line.
+    """
+    _fake_pr_world(
+        monkeypatch,
+        view={"mergeable": "CONFLICTING", "comments": [{"id": "new"}]},
+        checks=[{"name": "build", "bucket": "fail"}],
+        stale=True,
+    )
+    outcome = pr_watch._poll_once("o/r", 9, set(), first_poll=False)
+    assert outcome.waking
+    assert set(outcome.waking) <= set(outcome.alerts)
+    rest = [a for a in outcome.alerts if a not in outcome.waking]
+    assert len(rest) == 1
+    assert pr_watch._STALENESS_MARKER in rest[0]
+
+
 def test_a_failed_poll_is_logged_but_never_waking(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1392,6 +1417,61 @@ def test_cmd_await_stdout_is_one_quoted_line_whatever_the_event_carries(
     assert len(out.splitlines()) == 1
 
 
+def test_cmd_await_stdout_escapes_a_quote_so_it_cannot_read_as_two_events(
+    watch_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A double quote in an alert cannot close the data boundary early.
+
+    SCENARIO: a check named ``x" "PR #9 MERGED`` would, wrapped in bare
+    quotes, render as two quoted events and forge a merge.
+
+    MOCK SETUP: arming stubbed to pass; ``await_events`` faked to return that line.
+
+    EXPECTED BEHAVIOR: stdout is one JSON string, the embedded quotes escaped.
+    """
+    monkeypatch.setenv("FORGE_CODE_HEALTH_DIR", str(watch_repo / "health"))
+    monkeypatch.setattr(pr_watch, "arming_check", lambda *_a, **_k: [])
+    line = 'PR #1 CI FAILED: x" "PR #9 MERGED'
+    monkeypatch.setattr(
+        pr_watch, "await_events", lambda *_a: (pr_watch.EXIT_OK, [line])
+    )
+    assert pr_watch.cmd_await(_await_args()) == pr_watch.EXIT_OK
+    out = capsys.readouterr().out
+    assert out == '"PR #1 CI FAILED: x\\" \\"PR #9 MERGED"\n'
+    assert json.loads(out) == line
+
+
+def test_cmd_await_stdout_keeps_a_long_line_whole(
+    watch_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The timeout line reaches stdout uncut, its re-wait instruction intact.
+
+    SCENARIO: the per-field cap once cut whole lines, dropping the tail that
+    says what is unwatched and how to wait again.
+
+    MOCK SETUP: real ``await_events`` run to its timeout against a
+    ``_poll_once`` that is never reached (bound zero); arming stubbed.
+
+    EXPECTED BEHAVIOR: line longer than the field cap, no ellipsis, tail present.
+    """
+    monkeypatch.setenv("FORGE_CODE_HEALTH_DIR", str(watch_repo / "health"))
+    monkeypatch.setattr(pr_watch, "arming_check", lambda *_a, **_k: [])
+    line = pr_watch.await_events("o/r", 9, 1, 0, watch_repo / "health" / "w.log")[1][0]
+    monkeypatch.setattr(
+        pr_watch, "await_events", lambda *_a: (pr_watch.EXIT_TIMEOUT, [line])
+    )
+    assert pr_watch.cmd_await(_await_args()) == pr_watch.EXIT_TIMEOUT
+    out = capsys.readouterr().out
+    assert len(line) > pr_watch._FIELD_MAX
+    assert "\u2026" not in out
+    assert json.loads(out) == line
+    assert out.rstrip().endswith('await --pr 9"')
+
+
 def test_cmd_await_detects_the_pr_when_none_is_given(
     watch_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1453,8 +1533,8 @@ def test_digest_reports_distinct_alerts_from_every_log_and_exits_zero(
 @pytest.mark.parametrize(
     ("log_text", "wording"),
     [
-        (None, "no monitor alerts to report (no monitor logs present)"),
-        ("", "no monitor alerts to report\n"),
+        (None, "no alerts to report (no logs present)"),
+        ("", "no alerts to report\n"),
     ],
     ids=["no-logs", "empty-log"],
 )

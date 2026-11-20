@@ -1045,6 +1045,9 @@ FRAGMENT_ITEMS = ["first delivered thing", "second delivered thing", "third one"
         pytest.param("[1-99999999999] x", set(), "x", id="oversized-range"),
         pytest.param("[1-102] x", set(), "x", id="range-just-over-the-cap"),
         pytest.param("[1-102,2] x", {2}, "x", id="oversized-piece-spares-others"),
+        pytest.param("[1-101] x", set(range(1, 102)), "x", id="range-at-the-cap"),
+        pytest.param("[\u00b2] z", set(), "[\u00b2] z", id="non-ascii-digit"),
+        pytest.param("[" + "9" * 5000 + "] z", set(), "z", id="huge-number"),
     ],
 )
 def test_parse_coverage_forms(bullet: str, claimed: set[int], text: str) -> None:

@@ -303,11 +303,17 @@ _COVERAGE_RE: Final = re.compile(
     r"^\s*\[(?P<spec>[\d,\s-]+)\]\s*(?P<text>.*)$", re.DOTALL
 )
 
-#: Widest range a single claim may span. A fragment carries a handful of
-#: bullets, so anything beyond this is a typo'd bound rather than an
-#: intent — and expanding one would build a set large enough to exhaust
-#: memory.
+#: Widest range a single claim may span: ``high - low`` up to this value
+#: is accepted, so ``1-101`` passes and ``1-102`` does not. A fragment
+#: carries a handful of bullets, so anything beyond this is a typo'd bound
+#: rather than an intent — and expanding one would build a set large enough
+#: to exhaust memory.
 _MAX_CLAIM_SPAN: Final = 100
+
+#: Longest a claim's index may be, in digits. A fragment has single
+#: digits of bullets; this only keeps an absurd number from reaching
+#: :func:`int`, which raises past its own conversion limit.
+_MAX_INDEX_DIGITS: Final = 6
 
 
 def parse_coverage(bullet: str) -> tuple[frozenset[int], str]:
@@ -318,11 +324,12 @@ def parse_coverage(bullet: str) -> tuple[frozenset[int], str]:
     gets posted.
 
     Args:
-        bullet: One ``--bullet`` value, with or without a leading
-            ``[1,4-6]`` claim.
+        bullet: One ``--bullet`` value, with or without leading
+            ``[1,4-6]`` claim groups.
 
     Returns:
-        ``(claimed indices, bullet text)``. A bullet with no claim
+        ``(claimed indices, bullet text)``. Every leading claim group is
+        stripped and the groups' indices are unioned. A bullet with no claim
         returns an empty set and its text unchanged — allowed, since a
         bullet may describe a consequence no fragment line states, as
         long as every fragment line is claimed somewhere.
@@ -347,10 +354,12 @@ def _parse_spec(spec: str) -> set[int]:
     Returns:
         The indices named. A malformed piece contributes nothing and so
         surfaces as an unclaimed item, which the refusal names — better
-        than guessing what was meant. A range wider than
-        :data:`_MAX_CLAIM_SPAN` is malformed by the same rule: a typo'd
-        bound (``[1-99999999999]``) would otherwise build a set large
-        enough to exhaust memory.
+        than guessing what was meant; its sibling pieces still count
+        (``1-102,2`` gives ``{2}``). A range whose ``high - low`` exceeds
+        :data:`_MAX_CLAIM_SPAN` (inclusive cap: exactly that is accepted)
+        is malformed by the same rule: a typo'd bound
+        (``[1-99999999999]``) would otherwise build a set large enough to
+        exhaust memory.
     """
     claimed: set[int] = set()
     for part in spec.split(","):
@@ -359,17 +368,34 @@ def _parse_spec(spec: str) -> set[int]:
             continue
         if "-" in piece:
             lo, _, hi = piece.partition("-")
-            low, high = lo.strip(), hi.strip()
-            if (
-                low.isdigit()
-                and high.isdigit()
-                and int(high) - int(low) <= _MAX_CLAIM_SPAN
-            ):
-                claimed.update(range(int(low), int(high) + 1))
+            low, high = _index(lo), _index(hi)
+            if low is not None and high is not None and high - low <= _MAX_CLAIM_SPAN:
+                claimed.update(range(low, high + 1))
             continue
-        if piece.isdigit():
-            claimed.add(int(piece))
+        if (index := _index(piece)) is not None:
+            claimed.add(index)
     return claimed
+
+
+def _index(piece: str) -> int | None:
+    """Return *piece* as a fragment index, or ``None`` when it is not one.
+
+    ``str.isdigit`` is true of characters :func:`int` refuses (``²``)
+    and of digit strings long enough to trip its conversion limit, both
+    of which raised instead of reading as the malformed input they are —
+    and a malformed piece must surface as an unclaimed item, never as a
+    traceback.
+
+    Args:
+        piece: One comma-separated part of a claim, already stripped.
+
+    Returns:
+        The index, or ``None`` when *piece* is not a plain ASCII number
+        of sane length.
+    """
+    if not piece.isascii() or not piece.isdigit() or len(piece) > _MAX_INDEX_DIGITS:
+        return None
+    return int(piece)
 
 
 def _pr_fragment_items() -> tuple[list[str], str | None]:

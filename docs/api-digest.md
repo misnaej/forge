@@ -1855,6 +1855,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `word_cap_warning(title: str, bullets: list[str]) -> str | None` — Return the warning for a message over its ceiling, or ``None``.
 - `parse_coverage(bullet: str) -> tuple[frozenset[int], str]` — Split a bullet into the fragment items it claims and its own text.
 - `_parse_spec(spec: str) -> set[int]` _(internal)_ — Return the indices a claim's ``1,4-6`` body names.
+- `_index(piece: str) -> int | None` _(internal)_ — Return *piece* as a fragment index, or ``None`` when it is not one.
 - `_pr_fragment_items() -> tuple[list[str], str | None]` _(internal)_ — Return the bullets this branch's changelog fragment delivers.
 - `_check_coverage(claims: list[frozenset[int]], items: list[str]) -> list[str]` _(internal)_ — Refuse a message that leaves part of the merge undescribed.
 - `_check_attribution(title: str, bullets: list[str]) -> list[str]` _(internal)_ — Return the Claude / AI attribution problem per FOUNDATION §2 (shared gate).
@@ -1885,6 +1886,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_stack_parent(repo: str, base_ref: str) -> bool` _(internal)_ — Return whether *base_ref* is another open PR's head branch.
 - `_state_alerts(pr: int, view: dict[str, object], *, stack_child: bool = False) -> list[str]` _(internal)_ — Return alerts for the PR's state and mergeable fields.
 - `_one_line(text: str) -> str` _(internal)_ — Flatten a GitHub-supplied string to one printable line.
+- `_flatten(text: str, *, limit: int | None) -> str` _(internal)_ — Flatten *text* to one printable line, optionally truncating it.
 - `_ci_alerts(repo: str, pr: int, *, stack_child: bool = False, base_ref: str = '') -> list[str]` _(internal)_ — Return CI-failure alerts from ``gh pr checks``.
 - `_staleness_alerts(repo: str, pr: int) -> list[str]` _(internal)_ — Return a wrap-up-staleness alert when the freshness verdict is stale.
 - `_auto_detect_pr(root: Path, repo: str) -> int | None` _(internal)_ — Find the open PR for the current branch.

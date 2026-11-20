@@ -268,7 +268,7 @@ class PollOutcome:
             strings, so a check named ``stale wrap-up:`` would have made
             its own CI-failure line read as record-only and the failure
             would never have been delivered. Which signal produced a
-            line is a fact this function knows and prose cannot carry.
+            line is a fact :func:`_poll_once` knows and prose cannot carry.
         head: The PR's head SHA, empty when the poll could not read it.
             The loop keys alert de-duplication on it, so FOUNDATION §6's
             "once per new head" is decidable without a second call.
@@ -293,11 +293,11 @@ def _comment_alerts(
     The fifth signal of FOUNDATION §6. *seen* is the identity set this
     poll adds to, so the first poll establishes a baseline and never
     announces the conversation a PR already had — only what arrives while
-    the monitor watches is news.
+    the wait is running is news.
 
     *first_poll* is what marks that baseline, and it has to come from the
     caller: an empty *seen* cannot mean it. A PR with no comments at all
-    when the monitor arms leaves the set empty, so inferring the baseline
+    when the wait arms leaves the set empty, so inferring the baseline
     from emptiness swallows the very first comment to arrive — the one
     case this signal exists for.
 
@@ -305,7 +305,7 @@ def _comment_alerts(
         pr: PR number.
         view: Decoded ``gh pr view`` JSON.
         seen: Comment identities already accounted for; mutated in place.
-        first_poll: Whether this is the monitor's first poll of this PR.
+        first_poll: Whether this is the first poll of this PR, across waits.
 
     Returns:
         One alert line when new comments arrived, else none.
@@ -349,12 +349,12 @@ def _poll_once(
         repo: ``owner/repo`` slug.
         pr: PR number.
         seen_comments: Comment identities from earlier polls; mutated.
-        first_poll: Whether this is the monitor's first poll, which
+        first_poll: Whether this is the first poll of this PR, which
             establishes the comment baseline instead of alerting on it.
 
     Returns:
-        The poll's alerts, the head it read, and whether the PR is in a
-        terminal state.
+        The poll's alerts, the waking subset of them, the head it read,
+        and whether the PR is in a terminal state.
     """
     alerts: list[str] = []
     try:
@@ -377,17 +377,24 @@ def _poll_once(
         return PollOutcome(alerts=[f"PR #{pr}{_POLL_FAILED_MARKER}{exc})"], ok=False)
     base_ref = str(view.get("baseRefName", ""))
     stack_child = _stack_parent(repo, base_ref) if base_ref else False
-    state_lines = _state_alerts(pr, view, stack_child=stack_child)
-    ci_lines = _ci_alerts(repo, pr, stack_child=stack_child, base_ref=base_ref)
-    stale_lines = _staleness_alerts(repo, pr)
-    comment_lines = _comment_alerts(pr, view, seen_comments, first_poll=first_poll)
-    alerts.extend(state_lines + ci_lines + stale_lines + comment_lines)
+    # Two groups, and `alerts` is their sum rather than a third list
+    # written by hand: a signal added to one of these and forgotten in
+    # the other would be logged and never wake anybody, which is the
+    # quiet half of the failure this command exists to end.
+    waking = [
+        *_state_alerts(pr, view, stack_child=stack_child),
+        *_ci_alerts(repo, pr, stack_child=stack_child, base_ref=base_ref),
+        *_comment_alerts(pr, view, seen_comments, first_poll=first_poll),
+    ]
+    # Staleness is the one signal that ends no wait: a condition for the
+    # next picker-up, not news. Left out of `waking` here, never filtered
+    # out of rendered text downstream.
+    record_only = _staleness_alerts(repo, pr)
+    alerts.extend(waking + record_only)
     state = str(view.get("state", ""))
     return PollOutcome(
         alerts=alerts,
-        # Staleness is the one signal that ends no wait, and it is left
-        # out here rather than filtered out of the text downstream.
-        waking=state_lines + ci_lines + comment_lines,
+        waking=waking,
         head=str(view.get("headRefOid", "")),
         terminal=state in {"MERGED", "CLOSED"},
     )
@@ -460,7 +467,7 @@ def _state_alerts(
         alerts.append(f"PR #{pr} CLOSED")
     if mergeable == "CONFLICTING" and not stack_child:
         alerts.append(
-            f"PR #{pr} CONFLICTING — run forge-update-branch (monitor never syncs)"
+            f"PR #{pr} CONFLICTING — run forge-update-branch (the wait never syncs)"
         )
     return alerts
 
@@ -490,10 +497,28 @@ def _one_line(text: str) -> str:
     Returns:
         A single-line printable rendering, never empty.
     """
+    return _flatten(text, limit=_FIELD_MAX)
+
+
+def _flatten(text: str, *, limit: int | None) -> str:
+    """Flatten *text* to one printable line, optionally truncating it.
+
+    Args:
+        text: The value to flatten.
+        limit: Longest result before an ellipsis, or ``None`` to keep the
+            whole line. A **field** is truncated — a long check name is
+            worth less than a readable log — but a whole alert line is
+            not: :data:`_FIELD_MAX` applied to one cut the end off the
+            timeout line, and its end is the part naming what is left
+            unwatched.
+
+    Returns:
+        A single-line printable rendering, never empty.
+    """
     flat = " ".join(str(text).split())
     printable = "".join(c for c in flat if c.isprintable())
-    if len(printable) > _FIELD_MAX:
-        printable = printable[:_FIELD_MAX] + "…"
+    if limit is not None and len(printable) > limit:
+        printable = printable[:limit] + "…"
     return printable or "?"
 
 
@@ -710,7 +735,7 @@ def _seen_path(log_path: Path) -> Path:
     """Return the file holding the comment identities already accounted for.
 
     Args:
-        log_path: The PR's monitor log.
+        log_path: The PR's alert log.
 
     Returns:
         A sidecar beside that log.
@@ -737,7 +762,7 @@ def _load_seen(log_path: Path) -> set[str] | None:
     single process; this is its cross-process twin.
 
     Args:
-        log_path: The PR's monitor log; the sidecar sits beside it.
+        log_path: The PR's alert log; the sidecar sits beside it.
 
     Returns:
         The identities a previous wait recorded, which may legitimately
@@ -755,14 +780,14 @@ def _save_seen(log_path: Path, seen: set[str]) -> None:
     """Record the comment identities accounted for, for the next wait.
 
     Args:
-        log_path: The PR's monitor log; the sidecar sits beside it.
+        log_path: The PR's alert log; the sidecar sits beside it.
         seen: Identities to persist.
     """
     try:
         path = _seen_path(log_path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        # Written whole then renamed: two waits on one PR (a sentinel run
-        # and a session, say) would otherwise interleave and leave a
+        # Written whole then renamed, so a wait reading while another
+        # writes (a sentinel run and a session, say) never sees a
         # half-written cursor, which reads as a shorter history and
         # re-announces comments.
         tmp = path.with_suffix(".seen.tmp")
@@ -778,7 +803,7 @@ def _append_alert(path: Path, line: str) -> None:
     """Append one alert to the PR's log, so ``digest`` can still read it.
 
     Args:
-        path: The PR's monitor log.
+        path: The PR's alert log.
         line: One alert line.
     """
     stamp = datetime.now(UTC).isoformat(timespec="seconds")
@@ -802,6 +827,9 @@ def cmd_await(args: argparse.Namespace) -> int:
 
     Self-skips under CI: nothing is waited on and the exit is
     :data:`EXIT_OK`.
+
+    Prints each reported line to stdout inside double quotes, flattened to
+    one line, so a caller parses it as quoted data (FOUNDATION §14).
 
     Args:
         args: Parsed CLI arguments (``pr``, ``repo``, ``interval``,
@@ -847,7 +875,15 @@ def cmd_await(args: argparse.Namespace) -> int:
     # reason: a check name is GitHub-supplied text, so the reader is told
     # which part is data (§14).
     for line in lines:
-        sys.stdout.write(f'"{_one_line(line)}"\n')
+        # json.dumps, not an f-string in quotes: it escapes the quote
+        # character itself, and a check name may contain one — `x" "PR #9
+        # MERGED` would otherwise close the quote early and render as two
+        # quoted events, forging the data boundary a reader relies on
+        # (§14). Flattened without a length cap: the per-field cap cut
+        # the end off the timeout line, which is the part naming what is
+        # left unwatched.
+        sys.stdout.write(json.dumps(_flatten(line, limit=None), ensure_ascii=False))
+        sys.stdout.write("\n")
     return code
 
 
@@ -891,8 +927,8 @@ def cmd_digest(_args: argparse.Namespace) -> int:
 
     ``await`` delivers qualifying events by exiting; this is the catch-up
     read of ``code_health/pr_watch_<pr>.log`` for the rest: events with
-    no session waiting, and the ones that end no wait (a green run,
-    wrap-up staleness, a failed poll).
+    no session waiting, and the ones that end no wait (wrap-up
+    staleness, a failed poll).
 
     Reads every ``pr_watch_*.log`` present.
 
@@ -931,8 +967,7 @@ def cmd_digest(_args: argparse.Namespace) -> int:
             sys.stdout.write(f"  - {line}\n")
     if not reported:
         sys.stdout.write(
-            "no monitor alerts to report"
-            + (" (no monitor logs present)\n" if not logs else "\n")
+            "no alerts to report" + (" (no logs present)\n" if not logs else "\n")
         )
     return EXIT_OK
 
