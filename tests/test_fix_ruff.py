@@ -359,6 +359,49 @@ def _run_main_with_real_ruff(
     return fix_ruff.main()
 
 
+def _stub_subprocess_with_version(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    ruff_version: str | None = None,
+    calls: list[list[str]] | None = None,
+) -> list[list[str]]:
+    """Stub subprocess.run for fix_ruff with optional ruff --version mock.
+
+    Extends _stub_subprocess to optionally return a mocked ruff --version.
+
+    Args:
+        monkeypatch: pytest monkeypatch fixture.
+        ruff_version: Optional version string to return from 'ruff --version'.
+        calls: Optional list to collect every argv.
+
+    Returns:
+        The list of captured argvs.
+    """
+    captured = calls if calls is not None else []
+
+    def _fake_run(cmd: list[str], **_kwargs: object) -> object:
+        captured.append(cmd)
+        if cmd[:2] == ["git", "diff"]:
+            return type("P", (), {"returncode": 0, "stdout": b""})()
+        if cmd[:2] == ["ruff", "check"]:
+            return type(
+                "P",
+                (),
+                {"returncode": 0, "stdout": "", "stderr": ""},
+            )()
+        if cmd == ["ruff", "--version"]:
+            stdout = f"ruff {ruff_version}\n" if ruff_version is not None else ""
+            return type(
+                "P",
+                (),
+                {"returncode": 0, "stdout": stdout, "stderr": ""},
+            )()
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(fix_ruff.subprocess, "run", _fake_run)
+    return captured
+
+
 def test_unused_suppression_fails_and_file_is_not_rewritten(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -409,3 +452,153 @@ def test_ci_mode_formatting_only_difference_fails_without_rewriting(
     assert _run_main_with_real_ruff(monkeypatch, tmp_path) == 1
     assert source.read_bytes() == before
     assert "CI: reporting only" in (code_health_dir(tmp_path) / "ruff.log").read_text()
+
+
+def test_version_guard_rejects_foreign_ruff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: repo pins ruff>=0.16,<0.17; PATH ruff is 0.11.2.
+
+    EXPECTED BEHAVIOR: SystemExit code 2; ruff.log contains both pin and
+    foreign version; no ruff format/check argv ran.
+    """
+    (tmp_path / "src").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'x'\nversion = '0.1'\ndependencies = ['ruff>=0.16,<0.17']\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    calls = _stub_subprocess_with_version(monkeypatch, ruff_version="0.11.2")
+    monkeypatch.setattr("sys.argv", ["fix-forge-ruff"])
+    with pytest.raises(SystemExit) as exc_info:
+        fix_ruff.main()
+    assert exc_info.value.code == 2
+    log_path = code_health_dir(tmp_path) / "ruff.log"
+    assert log_path.is_file()
+    log = log_path.read_text()
+    assert "0.11.2" in log
+    assert "ruff>=0.16,<0.17" in log
+    assert not any(
+        c[:2] == ["ruff", "format"] or c[:2] == ["ruff", "check"] for c in calls
+    )
+
+
+def test_version_guard_accepts_pinned_ruff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: repo pins ruff>=0.16,<0.17; PATH ruff is 0.16.1.
+
+    EXPECTED BEHAVIOR: exit 0; format/check argvs are present.
+    """
+    (tmp_path / "src").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'x'\nversion = '0.1'\ndependencies = ['ruff>=0.16,<0.17']\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    calls = _stub_subprocess_with_version(monkeypatch, ruff_version="0.16.1")
+    monkeypatch.setattr("sys.argv", ["fix-forge-ruff"])
+    assert fix_ruff.main() == 0
+    assert any(c[:2] == ["ruff", "format"] for c in calls)
+    assert any(c[:2] == ["ruff", "check"] for c in calls)
+
+
+def test_version_guard_skipped_without_pin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: pyproject.toml exists but has no ruff pin.
+
+    EXPECTED BEHAVIOR: exit 0; no ['ruff','--version'] captured.
+    """
+    (tmp_path / "src").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'x'\nversion = '0.1'\ndependencies = []\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    calls = _stub_subprocess_with_version(monkeypatch, ruff_version="0.11.2")
+    monkeypatch.setattr("sys.argv", ["fix-forge-ruff"])
+    assert fix_ruff.main() == 0
+    assert not any(c == ["ruff", "--version"] for c in calls)
+
+
+def test_version_guard_unparseable_version_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: pin present; ruff --version returns no digits.
+
+    EXPECTED BEHAVIOR: SystemExit code 2 (fails closed).
+    """
+    (tmp_path / "src").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'x'\nversion = '0.1'\ndependencies = ['ruff>=0.16,<0.17']\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    calls = _stub_subprocess_with_version(monkeypatch, ruff_version="")
+    monkeypatch.setattr("sys.argv", ["fix-forge-ruff"])
+    with pytest.raises(SystemExit) as exc_info:
+        fix_ruff.main()
+    assert exc_info.value.code == 2
+    assert any(c == ["ruff", "--version"] for c in calls)
+
+
+@pytest.mark.parametrize(
+    ("pin", "version", "expected"),
+    [
+        ("ruff>=0.16,<0.17", "0.16.0", True),
+        ("ruff>=0.16,<0.17", "0.11.2", False),
+        ("ruff>=0.16,<0.17", "0.17.0", False),
+        ("ruff==0.16.0", "0.16.0", True),
+        ("ruff==0.16.0", "0.16.1", False),
+        ("ruff>=0.16", "0.16", True),
+        ("ruff~=0.16", "0.16.0", False),  # unrecognized clause fails closed
+    ],
+)
+def test_pin_bounds_allow_various_clauses(
+    pin: str, version: str, *, expected: bool
+) -> None:
+    """Check _pin_bounds_allow against various pin clauses.
+
+    SCENARIO: evaluate requirement strings against versions.
+    EXPECTED BEHAVIOR: matches expected boolean.
+
+    Args:
+        pin: The dependency pin to check.
+        version: The ruff version to compare against.
+        expected: The expected result of the check.
+    """
+    assert fix_ruff._pin_bounds_allow(pin, version) == expected
+
+
+def test_repo_ruff_pin_variants(tmp_path: Path) -> None:
+    """Check _repo_ruff_pin returns correct requirement or None in each variant.
+
+    SCENARIO: pyproject.toml variants with pin in different sections.
+    EXPECTED BEHAVIOR: exact requirement string or None.
+    """
+    # Pin in project.dependencies
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'x'\nversion = '0.1'\ndependencies = ['ruff>=0.16,<0.17']\n"
+    )
+    assert fix_ruff._repo_ruff_pin(tmp_path) == "ruff>=0.16,<0.17"
+
+    # Pin only in dependency-groups
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'x'\nversion = '0.1'\n"
+        "[dependency-groups]\ndev = ['ruff>=0.16,<0.17']\n"
+    )
+    assert fix_ruff._repo_ruff_pin(tmp_path) == "ruff>=0.16,<0.17"
+
+    # Pin only in project.optional-dependencies
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'x'\nversion = '0.1'\n"
+        "[project.optional-dependencies]\nlint = ['ruff>=0.16,<0.17']\n"
+    )
+    assert fix_ruff._repo_ruff_pin(tmp_path) == "ruff>=0.16,<0.17"
+
+    # No ruff entry anywhere
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = 'x'\nversion = '0.1'\ndependencies = ['black']\n"
+    )
+    assert fix_ruff._repo_ruff_pin(tmp_path) is None
+
+    # No pyproject.toml at all
+    (tmp_path / "pyproject.toml").unlink()
+    assert fix_ruff._repo_ruff_pin(tmp_path) is None
