@@ -20,6 +20,60 @@ fragment type (**Features / Changes / Fixes / Removed / Docs**).
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v14.7.1 — 2026-11-20
+
+### Fixes
+- **fix-forge-ruff version-guards the ruff binary on PATH.** Before any `ruff format` / `ruff check` invocation (CI reporting mode included), `ruff --version` is checked against the repo's own ruff pin in `pyproject.toml` (FOUNDATION §5 one-minor pin). A foreign ruff now fails loudly with exit 2 and writes the refusal to `code_health/ruff.log` instead of rewriting files — ruff 0.11.x's N802 unsafe autofix renamed `ast.NodeVisitor.visit_*` dispatch methods in `verify_docstrings.py` / `verify_test_naming.py` and broke the verifiers at runtime while the step reported success.
+
+## v14.7.0 — 2026-11-20
+
+### Changes
+- An agent no longer claims a session runs stale definitions.
+- It says which surface reloaded and what a restart settles.
+- An agent stops at the edge of what was asked.
+- A status report mid-flow no longer ends a turn.
+- Length limits are ceilings, not lengths to write toward.
+- Text far past its ceiling is now refused, not just warned.
+- A long pull request description earns an advisory.
+- Skill instructions are measured against the agent length cap.
+- A regenerated integration installs the shared guard library too.
+- Guards no longer all refuse every command after an upgrade.
+
+## v14.6.1 — 2026-11-20
+
+### Fixes
+- **One shared command-segment reader for all guard hooks.** `claude-hooks/lib/command_utils.sh` now holds the command-positions scanner (moved verbatim from `git_anchor.sh`, which sources it) plus `parse_command_segment()`, the single extraction point for `.tool_input.command`; all 22 hooks use it instead of per-hook jq one-liners.
+- **`block_vibe_config.sh` blocks mutations, not mentions.** The Bash branch no longer substring-matches `.vibe`/`.agents`/`AGENTS.md` in the raw command, so read-only compound commands like `cat .vibe/hooks.toml && ls` or `grep -r AGENTS.md docs/ | wc -l` pass; a destructive verb with a protected path argument, a redirect into a protected path, or an indirected form (`D=.vibe; rm -rf "$D"`) still blocks, verified per verb form (rm, cp, mv, sed -i, tee, redirects, heredocs).
+
+## v14.6.0 — 2026-11-20
+
+### Changes
+- Merges to `main` no longer lose their release tag.
+- `forge-pr-watch digest` reports what a monitor saw; `/forge-next` reads it.
+- A monitor stops when its pull request is merged or closed.
+- A standing condition is reported once per revision, not every minute.
+- New comments are reported, including a second on the same revision.
+- Monitor text is flattened to one printable line.
+- Each report says how long ago it was written.
+- Starting a monitor without naming a pull request works again.
+- A detached checkout refuses rather than guessing a pull request.
+- Review reports label each point: shipped, fixed, verified, deferred, blocked.
+- Changelog bullets stay short; an advisory names any that run long.
+- A major release must carry upgrade notes.
+- Upgrading across a major with no notes says so.
+- Syncing a branch with no commits of its own fast-forwards.
+- A question no longer stops work when its answer was not needed.
+
+### Fixes
+- **Docstring rewraps no longer churn `docs/api-digest.md`.** The digest's summary now takes the first docstring paragraph with all internal whitespace collapsed, so a formatting-only rewrap leaves the digest unchanged instead of failing `api_digest_check` — and `forge-gen-api-digest` is now in the fixer's Allowed-CLIs, so it can regenerate the digest in-pass.
+- **The fixer doc states the PR-flow sequencing rule where it applies:** every content edit before the first `precommit-fixer` dispatch; an edit after its closing run stales every `code_health/` log and the commit is refused.
+
+## v14.5.3 — 2026-11-20
+
+### Fixes
+- **`forge-update-branch` says when a base merge left the PR's wrap-up stale.** A merge moves the head by construction, so a posted wrap-up's `verified-at:` stops naming it the moment the merge commits; the command now logs that verdict — stale SHA vs new head, with the `/forge-pr <N>` delta refresh as the remedy — while still exiting 0, instead of leaving the author to meet the refusal at the next gate.
+- **`forge-pr-wrapup post` refuses a wrap-up whose `verified-base:` no longer matches the PR's base**, mirroring the retarget check `forge-pr-plan --freshness` already reported: a wrap-up verified against another base describes a diff the PR does not have.
+
 ## v14.5.2 — 2026-11-19
 
 ### Fixes
