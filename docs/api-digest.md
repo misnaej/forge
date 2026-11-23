@@ -598,7 +598,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_query_reference_states(root: Path, numbers: list[int]) -> dict | None` _(internal)_ — Fetch issue/PR states for *numbers* in one batched GraphQL call.
 - `_landed_references(root: Path, numbers: list[int]) -> set[int] | None` _(internal)_ — Return which referenced issue/PR numbers are closed or merged.
 - `_stale_line_count(root: Path, text: str) -> int | None` _(internal)_ — Count written-section lines that name landed (closed/merged) work.
-- `check_note(root: Path, *, strict: bool = False) -> int` — Report the written section's usage, budget and staleness.
+- `check_note(root: Path, *, strict: bool = False) -> int` — Report the written section's usage, budgets, orphans and staleness.
+- `clean_details(root: Path, *, days: int, yes: bool) -> int` — Delete old, unreferenced detail files beside the note.
 - `reset_note(root: Path, *, force: bool = False) -> int` — Replace the written section with a skeleton and regenerate the panel.
 - `_live_work_signals(root: Path, text: str) -> list[str]` _(internal)_ — Return live-work signals visible in the current panel text.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Build the ``forge-continuation`` argument parser.
@@ -621,9 +622,15 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `panel_span(text: str) -> tuple[int, int] | None` — Return the panel block's ``[start, end)`` offsets in *text*.
 - `written_section(text: str) -> str` — Return the note minus its panel block.
 - `written_line_count(text: str) -> int` — Count the written section's lines, ignoring surrounding blank lines.
+- `_strip_code_fences(text: str) -> str` _(internal)_ — Drop fenced code blocks so their lines are never counted or parsed.
+- `written_item_count(text: str) -> int` — Count the written section's items: top-level block starters.
+- `detail_pointers(text: str) -> set[str]` — Return the detail-file paths the written section points at.
+- `detail_files(root: Path) -> list[Path]` — Return the note's sibling detail files (``.plan/*.md`` minus the note).
+- `orphan_details(root: Path, text: str) -> tuple[list[str], list[str]]` — Return ``(dangling pointers, orphan detail files)`` for the note.
 - `migrate_legacy(text: str) -> str` — Drop the retired ledger, digest and archive pointer from *text*.
 - `parse_panel(text: str) -> dict[str, tuple[str, str | None]]` — Read the existing panel's values, re-sanitized.
 - `judgment_max_lines(root: Path) -> int` — Return the written section's line budget.
+- `judgment_max_items(root: Path) -> int` — Return the written section's item budget.
 - `note_is_ignored(root: Path) -> bool` — Return whether git ignores the note, so a write can never be committed.
 - `_utc_token() -> str` _(internal)_ — Return the current UTC time as a panel-safe token.
 - `_pr_fields(pr: PrState | None) -> dict[str, tuple[str, str | None]]` _(internal)_ — Return fresh PR fields, or ``unknown`` when GitHub was not read.

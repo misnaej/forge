@@ -415,24 +415,29 @@ options:
 ## forge-continuation
 
 ```text
-usage: forge-continuation [-h] {state,check,reset} ...
+usage: forge-continuation [-h] {state,check,clean,reset} ...
 
 Keep .plan/CONTINUATION.md's generated status panel current and check its
 written section's line budget.
 
 positional arguments:
-  {state,check,reset}
-    state              Rewrite the status panel; every byte outside it stays
-                       identical.
-    check              Report the written section's line usage against
-                       [tool.forge.continuation].judgment_max_lines, plus
-                       lines naming landed work; exit 1 on bad markers.
-    reset              Replace the written section with a skeleton and
-                       regenerate the panel; refuses on live work unless
-                       --force.
+  {state,check,clean,reset}
+    state               Rewrite the status panel; every byte outside it stays
+                        identical.
+    check               Report the written section's line/item usage against
+                        [tool.forge.continuation].judgment_max_lines /
+                        judgment_max_items, dangling Detail pointers and
+                        orphan detail files, plus lines naming landed work;
+                        exit 1 on bad markers.
+    clean               Delete .plan/ detail files that no Detail: pointer
+                        names and that are older than --days; never touches
+                        CONTINUATION.md.
+    reset               Replace the written section with a skeleton and
+                        regenerate the panel; refuses on live work unless
+                        --force.
 
 options:
-  -h, --help           show this help message and exit
+  -h, --help            show this help message and exit
 ```
 
 ## forge-doctor
