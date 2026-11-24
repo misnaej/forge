@@ -1887,7 +1887,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _forge-pr-watch — wait for a PR event a session must act on._
 
-- `monitor_log_path(root: Path, pr: int) -> Path` — Return the log a PR's waits append their alerts to.
 - `_resolve_repo(root: Path, repo_arg: str | None) -> str | None` _(internal)_ — Return ``owner/repo``, from *repo_arg* or the checkout's origin remote.
 - `_gh(*args: str, timeout: int = GH_TIMEOUT_S) -> subprocess.CompletedProcess[str]` _(internal)_ — Run a ``gh`` command, raising on failure.
 - `arming_check(repo: str, pr: int) -> list[str]` — Verify every signal the wait needs is parseable.
@@ -1901,27 +1900,33 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_stack_parent(repo: str, base_ref: str) -> bool` _(internal)_ — Return whether *base_ref* is another open PR's head branch.
 - `_state_alerts(pr: int, view: dict[str, object], *, stack_child: bool = False) -> list[str]` _(internal)_ — Return alerts for the PR's state and mergeable fields.
 - `_one_line(text: str) -> str` _(internal)_ — Flatten a GitHub-supplied string to one printable line.
-- `_flatten(text: str, *, limit: int | None) -> str` _(internal)_ — Flatten *text* to one printable line, optionally truncating it.
 - `_ci_alerts(repo: str, pr: int, *, stack_child: bool = False, base_ref: str = '') -> list[str]` _(internal)_ — Return CI-failure alerts from ``gh pr checks``.
 - `_staleness_alerts(repo: str, pr: int) -> list[str]` _(internal)_ — Return a wrap-up-staleness alert when the freshness verdict is stale.
 - `_auto_detect_pr(root: Path, repo: str) -> int | None` _(internal)_ — Find the open PR for the current branch.
 - `await_events(repo: str, pr: int, interval: int, bound: int, log_path: Path) -> tuple[int, list[str]]` — Poll until something happens that a session must hear, then stop.
-- `_seen_path(log_path: Path) -> Path` _(internal)_ — Return the file holding the comment identities already accounted for.
-- `_load_seen(log_path: Path) -> set[str] | None` _(internal)_ — Return the comment identities an earlier wait already accounted for.
-- `_save_seen(log_path: Path, seen: set[str]) -> None` _(internal)_ — Record the comment identities accounted for, for the next wait.
-- `_append_alert(path: Path, line: str) -> None` _(internal)_ — Append one alert to the PR's log, so ``digest`` can still read it.
 - `_args_valid(args: argparse.Namespace) -> bool` _(internal)_ — Report whether the wait's own numbers can produce a wait at all.
 - `_resolve_target(args: argparse.Namespace) -> tuple[Path, str, int] | None` _(internal)_ — Resolve the checkout, repo slug and PR this wait is for.
 - `cmd_await(args: argparse.Namespace) -> int` — Wait for the first event on a PR worth telling a session about.
 - `_watch_until(args: argparse.Namespace, repo: str, pr: int, log_path: Path) -> int` _(internal)_ — Wait in windows until something happens, or the total runs out.
 - `_deliver(lines: list[str]) -> None` _(internal)_ — Write the watch's result to stdout, as quoted data.
-- `_alert_lines(path: Path) -> list[str]` _(internal)_ — Return a log's alert lines, in order, without repeats.
 - `cmd_digest(args: argparse.Namespace) -> int` — Report what past waits logged, including what never woke a session.
 - `_prune_settled_logs(root: Path, logs: list[Path]) -> None` _(internal)_ — Delete the log and cursor of every PR that has merged or closed.
 - `_stack_order(prs: list[dict[str, object]]) -> list[dict[str, object]]` _(internal)_ — Order open PRs so every parent precedes its stacked children.
 - `cmd_stack(args: argparse.Namespace) -> int` — List the open-PR stack in dependency order with per-PR state.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — The CLI surface.
 - `main(argv: Sequence[str] | None = None) -> int` — Entry point for ``forge-pr-watch``.
+
+## `forge.pr_watch_log`
+
+> _The alert log and comment cursor a PR wait leaves behind._
+
+- `flatten(text: str, *, limit: int | None) -> str` — Flatten *text* to one printable line, optionally truncating it.
+- `monitor_log_path(root: Path, pr: int) -> Path` — Return the log a PR's waits append their alerts to.
+- `append_alert(path: Path, line: str) -> None` — Append one alert to the PR's log, so ``digest`` can still read it.
+- `alert_lines(path: Path) -> list[str]` — Return a log's alert lines, in order, without repeats.
+- `seen_path(log_path: Path) -> Path` — Return the file holding the comment identities already accounted for.
+- `load_seen(log_path: Path) -> set[str] | None` — Return the comment identities an earlier wait already accounted for.
+- `save_seen(log_path: Path, seen: set[str]) -> None` — Record the comment identities accounted for, for the next wait.
 
 ## `forge.pr_wrapup`
 

@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from forge import pr_watch
+from forge import pr_watch, pr_watch_log
 from forge.gh_comments import SQUASH_MARKER, WRAPUP_MARKER
 
 
@@ -348,12 +348,12 @@ def test_one_line_truncates_and_never_returns_empty() -> None:
 def test_hostile_check_name_cannot_forge_a_second_alert_in_the_log(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Round trip: a hostile alert written by ``_append_alert`` reads back as one.
+    """Round trip: a hostile alert written by ``append_alert`` reads back as one.
 
     SCENARIO: a check name embeds a newline then ``pr-watch: PR #999 MERGED``.
-    ``_append_alert`` writes its line raw, so it is ``_one_line`` upstream
-    (inside ``_ci_alerts``) that keeps the log to one physical line. Without
-    it, ``_alert_lines`` would read a forged second alert about another PR.
+    ``_ci_alerts`` (``pr_watch``) flattens the name via ``_one_line``, and
+    ``append_alert`` flattens again; this pins the two together. Without
+    either, ``alert_lines`` would read a forged second alert about another PR.
     A log written by an older version may also hold raw control bytes, which
     the reader must drop.
 
@@ -363,45 +363,17 @@ def test_hostile_check_name_cannot_forge_a_second_alert_in_the_log(
     """
     log = tmp_path / "pr_watch_7.log"
     for alert in _hostile_check_alerts(monkeypatch):
-        pr_watch._append_alert(log, alert)
+        pr_watch_log.append_alert(log, alert)
     assert len(log.read_text(encoding="utf-8").splitlines()) == 1
-    entries = pr_watch._alert_lines(log)
+    entries = pr_watch_log.alert_lines(log)
     assert len(entries) == 1
     assert "PR #7" in entries[0]
     assert "PR #999" not in entries[0].split("PR #7")[0]
     # A log from an older version: control bytes stripped on the way out.
     legacy = tmp_path / "pr_watch_8.log"
     legacy.write_text("pr-watch: PR #8 \x1b[31mCI FAILED\n", encoding="utf-8")
-    assert all("\x1b" not in e for e in pr_watch._alert_lines(legacy))
-    assert len(pr_watch._alert_lines(legacy)) == 1
-
-
-def test_append_alert_writes_one_stamped_line_whatever_it_is_handed(
-    tmp_path: Path,
-) -> None:
-    """One call writes one physical line and reads back as one entry.
-
-    SCENARIO: a line holding a newline and a forged ``pr-watch:`` prefix is
-    handed straight to ``_append_alert``, with no ``_ci_alerts`` upstream.
-    The stamp must be written (for a human reader) yet never reach the text
-    ``_alert_lines`` returns, so the same alert in two different seconds is
-    one entry.
-
-    EXPECTED BEHAVIOR: one physical line matching ``_STAMP_RE``; one entry
-    with no newline and no stamp; a repeat in a later second adds none.
-    """
-    log = tmp_path / "pr_watch_7.log"
-    pr_watch._append_alert(log, "PR #7 CI FAILED\npr-watch: PR #999 MERGED")
-    raw = log.read_text(encoding="utf-8").splitlines()
-    assert len(raw) == 1
-    assert pr_watch._STAMP_RE.match(raw[0].removeprefix("pr-watch: "))
-    entries = pr_watch._alert_lines(log)
-    assert len(entries) == 1
-    assert entries[0].startswith("PR #7 CI FAILED")
-    assert not pr_watch._STAMP_RE.match(entries[0])
-    with log.open("a", encoding="utf-8") as handle:
-        handle.write("pr-watch: 2030-01-01T00:00:00+00:00 " + entries[0] + "\n")
-    assert pr_watch._alert_lines(log) == entries
+    assert all("\x1b" not in e for e in pr_watch_log.alert_lines(legacy))
+    assert len(pr_watch_log.alert_lines(legacy)) == 1
 
 
 def test_stack_parent_matches_open_pr_head(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1056,7 +1028,7 @@ def test_await_returns_only_waking_alerts_and_logs_every_one(
     code, lines = pr_watch.await_events("o/r", 9, _INTERVAL, 5 * _INTERVAL, log)
     assert code == pr_watch.EXIT_OK
     assert lines == [ci]
-    assert pr_watch._alert_lines(log) == [stale, failed, ci]
+    assert pr_watch_log.alert_lines(log) == [stale, failed, ci]
 
 
 def test_await_keeps_waiting_through_non_waking_alerts_until_the_bound(
@@ -1089,7 +1061,7 @@ def test_await_keeps_waiting_through_non_waking_alerts_until_the_bound(
     assert "3 poll(s)" in lines[0]
     assert "forge-pr-watch await --pr 9" in lines[0]
     assert fake_clock.sleeps == [_INTERVAL] * 3
-    assert pr_watch._alert_lines(log) == [stale, failed]
+    assert pr_watch_log.alert_lines(log) == [stale, failed]
 
 
 def test_await_with_a_zero_bound_never_polls(
@@ -1187,13 +1159,13 @@ def test_a_comment_arriving_between_two_waits_is_reported_by_the_second(
     polls = _CommentPolls()
     monkeypatch.setattr(pr_watch, "_poll_once", polls)
     log = tmp_path / "pr_watch_9.log"
-    assert not pr_watch._seen_path(log).exists()
+    assert not pr_watch_log.seen_path(log).exists()
 
     polls.comments = [{"id": "a"}]
     code, _ = pr_watch.await_events("o/r", 9, _INTERVAL, _INTERVAL, log)
     assert code == pr_watch.EXIT_TIMEOUT
     assert polls.first_polls == [True]
-    assert pr_watch._seen_path(log).exists()
+    assert pr_watch_log.seen_path(log).exists()
 
     polls.comments = [{"id": "a"}, {"id": "b"}]
     code, lines = pr_watch.await_events("o/r", 9, _INTERVAL, _INTERVAL, log)
@@ -1225,7 +1197,7 @@ def test_a_comment_on_a_pr_that_had_none_is_reported_by_the_next_wait(
 
     code, _ = pr_watch.await_events("o/r", 9, _INTERVAL, _INTERVAL, log)
     assert code == pr_watch.EXIT_TIMEOUT
-    assert pr_watch._load_seen(log) == set()
+    assert pr_watch_log.load_seen(log) == set()
 
     polls.comments = [{"id": "first"}]
     code, lines = pr_watch.await_events("o/r", 9, _INTERVAL, _INTERVAL, log)
@@ -1250,42 +1222,7 @@ def test_a_failed_poll_does_not_write_the_comment_baseline(
     _script(monkeypatch, [failed])
     log = tmp_path / "w.log"
     pr_watch.await_events("o/r", 9, _INTERVAL, _INTERVAL, log)
-    assert not pr_watch._seen_path(log).exists()
-
-
-def test_seen_distinguishes_absent_from_empty_and_unreadable_from_neither(
-    tmp_path: Path,
-) -> None:
-    """Missing sidecar is ``None``; present-but-empty is ``set()``.
-
-    Only absence makes the next poll a genuine first poll. The unreadable
-    case is a directory where the sidecar should be, which raises
-    ``OSError`` on read; the load must absorb it (as "no baseline") rather
-    than abort a wait before it starts.
-    """
-    log = tmp_path / "pr_watch_9.log"
-    assert pr_watch._load_seen(log) is None
-    pr_watch._save_seen(log, set())
-    assert pr_watch._load_seen(log) == set()
-    pr_watch._save_seen(log, {"b", "a"})
-    assert pr_watch._load_seen(log) == {"a", "b"}
-    bad = tmp_path / "pr_watch_10.log"
-    pr_watch._seen_path(bad).mkdir()
-    assert pr_watch._load_seen(bad) is None
-
-
-def test_save_seen_leaves_no_temp_file_behind(tmp_path: Path) -> None:
-    """The cursor is written whole then renamed, so only the sidecar remains."""
-    log = tmp_path / "pr_watch_9.log"
-    pr_watch._save_seen(log, {"a"})
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["pr_watch_9.seen"]
-
-
-def test_save_seen_swallows_an_unwritable_location(tmp_path: Path) -> None:
-    """Failing to record the baseline never raises; the wait carries on."""
-    blocker = tmp_path / "blocker"
-    blocker.write_text("a file, not a directory")
-    pr_watch._save_seen(blocker / "w.log", {"a"})
+    assert not pr_watch_log.seen_path(log).exists()
 
 
 def _await_args(

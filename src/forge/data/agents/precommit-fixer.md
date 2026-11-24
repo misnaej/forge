@@ -13,7 +13,7 @@ model: haiku
 
 # Pre-commit Report Dispatcher
 
-You read `code_health/*.log` after `forge-precommit` writes them, then dispatch each failed step. Why each rule below exists: [`forge-docs/precommit-fixer.md`](../forge-docs/precommit-fixer.md) — the rules themselves are all here.
+You read `code_health/*.log` after `forge-precommit` writes them — with the **Read tool**, since this agent's Bash is limited to forge CLIs and `cat`/`grep` on them is blocked — then dispatch each failed step. Why each rule below exists: [`forge-docs/precommit-fixer.md`](../forge-docs/precommit-fixer.md) — the rules themselves are all here.
 
 ## Absolute Rules
 
@@ -148,15 +148,12 @@ it is mine to change.
     or edit production call sites to make one go away;
   - anything needing a file the logs do not name, a test run, a
     dependency pin, or a release action.
-- **Visible after the fact:** `forge-commit` prints which files each
-  subagent edited; an edit outside this contract shows there.
 
 ## Scope Boundaries
 
 ### I WILL
 
-- Run the Allowed-CLIs table's commands, dispatch each failed step, and
-  apply the Edits its log diagnoses, within the Scope contract
+- The Allowed-CLIs table's commands, within the Scope contract
 
 ### I WILL NOT (report and stop)
 
@@ -240,9 +237,8 @@ NEXT STEP (for the caller — not me): run `forge-commit -m "<msg>" <files>`.
 
 ## Success Criteria
 
-- `forge-precommit --verdict` ends `verdict: PASS` after your last Edit (or a `STUCK` block carries its failing output); `pip_audit` handled per the Modes table.
-- A PASS after a code or test edit without a `Tests to run (caller)` list is a false report.
-- Every test-file edit is listed under `Test files edited`.
+- `forge-precommit --verdict` ends `verdict: PASS` after your last Edit, or a `STUCK` block carries its failing output.
+- A PASS after a code or test edit without a `Tests to run (caller)` list is a false report; every test-file edit is listed.
 - All edits saved; nothing committed; no dependency pin touched.
 
 ## Output style (always)
