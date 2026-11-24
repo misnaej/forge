@@ -14,6 +14,14 @@ hearing, because a process finishing is what a harness notices:
   re-invokes the session, which reads the event as its next input.
   Wrap-up staleness deliberately does not end the wait: it is a
   condition for the next picker-up, not news.
+
+  It waits in **windows**: ``--bound`` proves the loop is alive, and a
+  window expiring with the PR still open opens another, up to
+  ``--total-bound``. A PR's events are hours away, so a window of
+  minutes expiring is the ordinary case — and a watch that stopped
+  there left the PR unwatched until a human happened to notice, which
+  is the same silence the log-only monitor had. The total still bounds
+  it, because a process cannot deliver to a session that has ended.
 - ``digest`` prints the distinct alerts in every log, including the ones
   that do not interrupt anyone. It is the catch-up read for whatever
   happened while nothing was waiting, and ``/forge-next`` runs it at
@@ -67,6 +75,20 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_INTERVAL_S: Final = 60
 DEFAULT_BOUND_S: Final = 1800
+
+#: How long a whole watch may live, across however many windows. Hours,
+#: because that is the scale a PR runs on: a window of minutes expiring
+#: is the ordinary case, not news, and a watch that stopped there left
+#: the PR unwatched until a human noticed. Still bounded, because the
+#: process cannot deliver to a session that has ended — an unbounded one
+#: is how the retired monitor's registry filled with dead entries.
+DEFAULT_TOTAL_BOUND_S: Final = 21600
+
+#: Shortest poll interval accepted. Each poll costs about three API
+#: calls, and a PR's events do not arrive faster than this, so anything
+#: below is cost without information — and with re-arming it is a hot
+#: loop rather than a slow one.
+_MIN_INTERVAL_S: Final = 30
 GH_TIMEOUT_S: Final = 30
 
 #: The five signals the arming check verifies before the first poll.
@@ -737,7 +759,10 @@ def await_events(
         repo: ``owner/repo`` slug.
         pr: PR number.
         interval: Seconds between polls.
-        bound: Total seconds to wait before giving up.
+        bound: Seconds in this one window. :func:`_watch_until` opens
+            another when it expires with the PR still open, so this is
+            how long the loop may go unproven, not how long the PR is
+            watched.
         log_path: File every alert is appended to.
 
     Returns:
@@ -876,6 +901,46 @@ def _append_alert(path: Path, line: str) -> None:
         logger.exception("pr-watch: could not append to %s", path)
 
 
+def _resolve_target(args: argparse.Namespace) -> tuple[Path, str, int] | int:
+    """Validate the wait's arguments and resolve its repo root, repo and PR.
+
+    Args:
+        args: Parsed CLI arguments (``interval``, ``bound``, ``repo``, ``pr``).
+
+    Returns:
+        ``(root, repo, pr)`` when the wait can start, otherwise the
+        :data:`EXIT_REFUSED` exit code to return unwaited.
+    """
+    # Refused, not clamped, and both halves matter. A window shorter
+    # than one poll cannot poll at all, so with re-arming it becomes a
+    # loop that only calls `gh` — and a caller who asked for that meant
+    # something else.
+    if args.interval < _MIN_INTERVAL_S:
+        logger.error("pr-watch: --interval must be at least %ds", _MIN_INTERVAL_S)
+        return EXIT_REFUSED
+    if args.bound < args.interval:
+        logger.error(
+            "pr-watch: --bound (%ds) must hold at least one poll (--interval %ds)",
+            args.bound,
+            args.interval,
+        )
+        return EXIT_REFUSED
+
+    root = repo_root()
+    if root is None:
+        logger.error("pr-watch: not in a repository")
+        return EXIT_REFUSED
+    repo = _resolve_repo(root, args.repo)
+    if repo is None:
+        logger.error("pr-watch: could not resolve owner/repo")
+        return EXIT_REFUSED
+    pr = args.pr if args.pr is not None else _auto_detect_pr(root, repo)
+    if pr is None:
+        logger.error("pr-watch: no open PR for this branch; pass --pr")
+        return EXIT_REFUSED
+    return root, repo, pr
+
+
 def cmd_await(args: argparse.Namespace) -> int:
     """Wait for the first event on a PR worth telling a session about.
 
@@ -893,53 +958,102 @@ def cmd_await(args: argparse.Namespace) -> int:
     Returns:
         :data:`EXIT_OK` when an event is reported (or under CI, where
         nothing is waited on), :data:`EXIT_TIMEOUT`
-        when the bound expires first, :data:`EXIT_REFUSED` when no repo
-        or PR resolves, :data:`EXIT_ARMING_FAILED` when the PR cannot be
-        read at all.
+        when the bound expires first, :data:`EXIT_REFUSED` when the
+        arguments are invalid or no repo or PR resolves,
+        :data:`EXIT_ARMING_FAILED` when the PR cannot be read at all.
     """
     if is_ci():
         # Nobody is there to be woken, and a blocking wait would hold a
         # runner for the whole bound (FOUNDATION §15).
         logger.info("pr-watch: CI run — not waiting")
         return EXIT_OK
-    root = repo_root()
-    if root is None:
-        logger.error("pr-watch: not in a repository")
-        return EXIT_REFUSED
-    repo = _resolve_repo(root, args.repo)
-    if repo is None:
-        logger.error("pr-watch: could not resolve owner/repo")
-        return EXIT_REFUSED
-    pr = args.pr if args.pr is not None else _auto_detect_pr(root, repo)
-    if pr is None:
-        logger.error("pr-watch: no open PR for this branch; pass --pr")
-        return EXIT_REFUSED
+    target = _resolve_target(args)
+    if isinstance(target, int):
+        return target
+    root, repo, pr = target
     if failures := arming_check(repo, pr):
         for failure in failures:
             logger.error("pr-watch: %s", failure)
         return EXIT_ARMING_FAILED
+    return _watch_until(args, repo, pr, monitor_log_path(root, pr))
 
-    code, lines = await_events(
-        repo, pr, args.interval, args.bound, monitor_log_path(root, pr)
-    )
-    # stdout, not the logger: this text is the delivery, and it is what a
-    # re-invoked session reads. Flattened again at the boundary — the
-    # producers flatten, but this is the line that becomes a session's
-    # input, so the guarantee is made where it matters rather than
-    # inherited from every caller remembering. Quoted for the same
-    # reason: a check name is GitHub-supplied text, so the reader is told
-    # which part is data (§14).
+
+def _watch_until(args: argparse.Namespace, repo: str, pr: int, log_path: Path) -> int:
+    """Wait in windows until something happens, or the total runs out.
+
+    One window is :func:`await_events`, whose bound is a **hang
+    detector**: it proves the loop is still polling. It was never a
+    statement about how long a PR is interesting for. A PR's events —
+    a merge, a review, a CI failure — are hours or days out, so a window
+    expiring is the ordinary case, and treating that as "done" left the
+    PR unwatched until somebody noticed. Three times it was the user who
+    noticed.
+
+    So a window that expires with the PR still open opens another, and
+    the watch ends only on an event, on a terminal state, or when the
+    total is spent. The total is what keeps the orphan problem solved:
+    the process cannot outlive the PR, and it cannot sit polling for a
+    session that ended days ago — which is how the detached monitor's
+    registry filled with dead entries.
+
+    Args:
+        args: Parsed CLI arguments (``interval``, ``bound``,
+            ``total_bound``, ``once``).
+        repo: ``owner/repo`` slug.
+        pr: PR number.
+        log_path: The PR's alert log.
+
+    Returns:
+        :data:`EXIT_OK` with the event reported, or
+        :data:`EXIT_TIMEOUT` once the total is spent.
+    """
+    started = time.monotonic()
+    windows = 0
+    # Counted as well as timed. A window that returns instantly — a
+    # non-positive bound, a clock that does not advance — leaves `spent`
+    # at zero, and a loop bounded only by elapsed time would then spin,
+    # calling `gh` as fast as it can answer. The count cannot be fooled
+    # that way.
+    max_windows = max(1, args.total_bound // max(1, args.bound))
+    while True:
+        code, lines = await_events(repo, pr, args.interval, args.bound, log_path)
+        windows += 1
+        if code == EXIT_OK:
+            _deliver(lines)
+            return code
+        spent = time.monotonic() - started
+        # Only open another window if a whole one fits: stopping early
+        # beats reporting a total the watch did not actually wait.
+        if args.once or windows >= max_windows or spent + args.bound > args.total_bound:
+            _deliver(
+                [
+                    (
+                        f"PR #{pr}: nothing happened in {spent:.0f}s "
+                        f"({windows} window(s) of {args.bound}s); a merge, a CI "
+                        f"failure, a conflict or a review comment after this point "
+                        f"is unwatched — wait again with forge-pr-watch await "
+                        f"--pr {pr}"
+                    )
+                ]
+            )
+            return EXIT_TIMEOUT
+
+
+def _deliver(lines: list[str]) -> None:
+    """Write the watch's result to stdout, as quoted data.
+
+    stdout, not the logger: this text is the delivery, and it is what a
+    re-invoked session reads. Flattened again here — the producers
+    flatten, but this is the line that becomes a session's input, so the
+    guarantee is made where it matters. ``json.dumps`` escapes the quote
+    character itself, which a check name may contain (FOUNDATION §14).
+
+    Args:
+        lines: The lines to deliver.
+    """
     for line in lines:
-        # json.dumps, not an f-string in quotes: it escapes the quote
-        # character itself, and a check name may contain one — `x" "PR #9
-        # MERGED` would otherwise close the quote early and render as two
-        # quoted events, forging the data boundary a reader relies on
-        # (§14). Flattened without a length cap: the per-field cap cut
-        # the end off the timeout line, which is the part naming what is
-        # left unwatched.
         sys.stdout.write(json.dumps(_flatten(line, limit=None), ensure_ascii=False))
         sys.stdout.write("\n")
-    return code
 
 
 def _alert_lines(path: Path) -> list[str]:
@@ -1234,7 +1348,28 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Poll interval seconds.",
     )
     p_await.add_argument(
-        "--bound", type=int, default=DEFAULT_BOUND_S, help="Total wait bound seconds."
+        "--bound",
+        type=int,
+        default=DEFAULT_BOUND_S,
+        help=(
+            "Seconds in ONE wait window. A window expiring with the PR still "
+            "open opens another; this bound only proves the loop is alive."
+        ),
+    )
+    p_await.add_argument(
+        "--total-bound",
+        type=int,
+        default=DEFAULT_TOTAL_BOUND_S,
+        help=(
+            "Seconds the whole watch may live across windows. It ends sooner "
+            "on an event or a terminal state; this is what stops a watch "
+            "outliving the session that started it."
+        ),
+    )
+    p_await.add_argument(
+        "--once",
+        action="store_true",
+        help="Wait a single window and exit, rather than re-arming.",
     )
     p_await.set_defaults(func=cmd_await)
     p_digest = sub.add_parser(

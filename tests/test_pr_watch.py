@@ -1288,16 +1288,27 @@ def test_save_seen_swallows_an_unwritable_location(tmp_path: Path) -> None:
     pr_watch._save_seen(blocker / "w.log", {"a"})
 
 
-def _await_args(pr: int | None = 9) -> argparse.Namespace:
-    """Build ``await`` arguments.
+def _await_args(
+    pr: int | None = 9, *, interval: int = 30, bound: int = 30
+) -> argparse.Namespace:
+    """Build ``await`` arguments (defaults sit on the validation floors).
 
     Args:
         pr: PR number, or ``None`` to auto-detect.
+        interval: Seconds between polls.
+        bound: One window's length.
 
     Returns:
         The parsed-argument namespace.
     """
-    return argparse.Namespace(pr=pr, repo="o/r", interval=_INTERVAL, bound=30)
+    return argparse.Namespace(
+        pr=pr,
+        repo="o/r",
+        interval=interval,
+        bound=bound,
+        total_bound=30,
+        once=True,
+    )
 
 
 def test_cmd_await_self_skips_in_ci_without_polling(
@@ -1387,7 +1398,7 @@ def test_cmd_await_prints_the_event_to_stdout_and_returns_its_code(
     monkeypatch.setattr(pr_watch, "await_events", fake_await)
     assert pr_watch.cmd_await(_await_args()) == pr_watch.EXIT_OK
     assert capsys.readouterr().out == '"PR #9 MERGED"\n'
-    assert seen == [("o/r", 9, _INTERVAL, 30, pr_watch.monitor_log_path(watch_repo, 9))]
+    assert seen == [("o/r", 9, 30, 30, pr_watch.monitor_log_path(watch_repo, 9))]
 
 
 def test_cmd_await_stdout_is_one_quoted_line_whatever_the_event_carries(
@@ -1444,28 +1455,22 @@ def test_cmd_await_stdout_escapes_a_quote_so_it_cannot_read_as_two_events(
     assert json.loads(out) == line
 
 
-def test_cmd_await_stdout_keeps_a_long_line_whole(
+def test_deliver_keeps_a_long_line_whole(
     watch_repo: Path,
-    monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The timeout line reaches stdout uncut, its re-wait instruction intact.
+    """A long line reaches stdout uncut, its re-wait instruction intact.
 
     SCENARIO: the per-field cap once cut whole lines, dropping the tail that
     says what is unwatched and how to wait again.
 
     MOCK SETUP: real ``await_events`` run to its timeout against a
-    ``_poll_once`` that is never reached (bound zero); arming stubbed.
+    ``_poll_once`` that is never reached (bound zero).
 
     EXPECTED BEHAVIOR: line longer than the field cap, no ellipsis, tail present.
     """
-    monkeypatch.setenv("FORGE_CODE_HEALTH_DIR", str(watch_repo / "health"))
-    monkeypatch.setattr(pr_watch, "arming_check", lambda *_a, **_k: [])
     line = pr_watch.await_events("o/r", 9, 1, 0, watch_repo / "health" / "w.log")[1][0]
-    monkeypatch.setattr(
-        pr_watch, "await_events", lambda *_a: (pr_watch.EXIT_TIMEOUT, [line])
-    )
-    assert pr_watch.cmd_await(_await_args()) == pr_watch.EXIT_TIMEOUT
+    pr_watch._deliver([line])
     out = capsys.readouterr().out
     assert len(line) > pr_watch._FIELD_MAX
     assert "\u2026" not in out
@@ -1489,6 +1494,249 @@ def test_cmd_await_detects_the_pr_when_none_is_given(
     monkeypatch.setattr(pr_watch, "await_events", fake_await)
     assert pr_watch.cmd_await(_await_args(None)) == pr_watch.EXIT_TIMEOUT
     assert waited == [77]
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        (1, 30, "--interval must be at least 30"),
+        (60, 30, "--bound (30s) must hold"),
+    ],
+    ids=["interval-below-floor", "bound-shorter-than-one-poll"],
+)
+def test_cmd_await_refuses_values_that_would_only_call_gh(
+    watch_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    case: tuple[int, int, str],
+) -> None:
+    """A too-short interval, or a bound under one interval, is refused unwaited.
+
+    SCENARIO: a window shorter than one poll cannot poll, and with
+    re-arming it becomes a loop that only calls ``gh``.
+
+    MOCK SETUP: arming stubbed to pass; ``await_events`` fails the test if called.
+
+    EXPECTED BEHAVIOR: ``EXIT_REFUSED`` with the floor named in the error.
+
+    Args:
+        case: ``(interval, bound, needle)`` — the two values and the text
+            the refusal must name. One parameter rather than three: the
+            row is one scenario, and splitting it across the signature
+            only grew the argument count.
+    """
+    interval, bound, needle = case
+    monkeypatch.setattr(pr_watch, "arming_check", lambda *_a, **_k: [])
+    monkeypatch.setattr(
+        pr_watch,
+        "await_events",
+        lambda *_a, **_k: pytest.fail("waited on a refused value"),
+    )
+    args = _await_args(interval=interval, bound=bound)
+    with caplog.at_level(logging.ERROR, logger=pr_watch.logger.name):
+        assert pr_watch.cmd_await(args) == pr_watch.EXIT_REFUSED
+    assert needle in caplog.text
+
+
+class _ScriptedWindows:
+    """Stand-in for ``await_events`` that replays window results in order.
+
+    A timing-out window advances the fake clock by its bound, as a real
+    one would, so ``_watch_until`` sees time pass without sleeping.
+
+    Attributes:
+        bounds: The bound each window was opened with, in order.
+    """
+
+    def __init__(self, clock: _FakeTime, results: list[tuple[int, list[str]]]) -> None:
+        """Remember the clock and the results to replay.
+
+        Args:
+            clock: Fake clock advanced by each timed-out window.
+            results: One result per window, in order.
+        """
+        self._clock = clock
+        self._results = results
+        self.bounds: list[int] = []
+
+    def __call__(
+        self, _repo: str, _pr: int, _interval: int, bound: int, _log: Path
+    ) -> tuple[int, list[str]]:
+        """Replay the next result.
+
+        Args:
+            _repo: Ignored.
+            _pr: Ignored.
+            _interval: Ignored.
+            bound: This window's bound, recorded.
+            _log: Ignored.
+
+        Returns:
+            The next scripted ``(code, lines)``.
+        """
+        self.bounds.append(bound)
+        code, lines = self._results[len(self.bounds) - 1]
+        if code == pr_watch.EXIT_TIMEOUT:
+            self._clock.now += bound
+        return code, lines
+
+
+def _until_args(
+    *, bound: int = 10, total_bound: int = 100, once: bool = False
+) -> argparse.Namespace:
+    """Build ``_watch_until`` arguments.
+
+    Args:
+        bound: One window's length.
+        total_bound: Ceiling on the whole watch.
+        once: Whether to stop after one window.
+
+    Returns:
+        The parsed-argument namespace.
+    """
+    return argparse.Namespace(
+        interval=_INTERVAL, bound=bound, total_bound=total_bound, once=once
+    )
+
+
+def _timeout() -> tuple[int, list[str]]:
+    """Return a window result for an expired window.
+
+    Returns:
+        A timeout code with no lines.
+    """
+    return pr_watch.EXIT_TIMEOUT, []
+
+
+def test_watch_until_opens_another_window_after_a_timeout(
+    fake_clock: _FakeTime,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """An expired window does not end the watch while the total allows more.
+
+    Regression: the wait stopped at its bound and left the PR unwatched
+    until a human noticed, three times in one session.
+
+    MOCK SETUP: ``await_events`` scripted to time out twice, then report a
+    merge.
+
+    EXPECTED BEHAVIOR: three windows ran, the event is on stdout, exit 0.
+    """
+    windows = _ScriptedWindows(
+        fake_clock, [_timeout(), _timeout(), (pr_watch.EXIT_OK, ["PR #9 MERGED"])]
+    )
+    monkeypatch.setattr(pr_watch, "await_events", windows)
+    code = pr_watch._watch_until(_until_args(), "o/r", 9, tmp_path / "w.log")
+    assert code == pr_watch.EXIT_OK
+    assert windows.bounds == [10, 10, 10]
+    assert capsys.readouterr().out == '"PR #9 MERGED"\n'
+
+
+def test_watch_until_once_stops_after_the_first_window(
+    fake_clock: _FakeTime,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """``--once`` keeps the single-window behaviour: no re-arm after a timeout."""
+    windows = _ScriptedWindows(fake_clock, [_timeout(), _timeout()])
+    monkeypatch.setattr(pr_watch, "await_events", windows)
+    code = pr_watch._watch_until(_until_args(once=True), "o/r", 9, tmp_path / "w.log")
+    assert code == pr_watch.EXIT_TIMEOUT
+    assert windows.bounds == [10]
+
+
+def test_watch_until_never_starts_a_window_the_total_cannot_hold(
+    fake_clock: _FakeTime,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """With bound 10 and total 25 only two windows run, and the line says so.
+
+    SCENARIO: a third window would end at 30s, past the 25s total, so it is
+    refused rather than started and overshot. The reported figure is the
+    time actually spent, not the per-window bound.
+
+    MOCK SETUP: three timeouts scripted; the third must never be reached.
+
+    EXPECTED BEHAVIOR: two windows, ``EXIT_TIMEOUT``, line naming 20s and
+    ``2 window(s) of 10s``.
+    """
+    windows = _ScriptedWindows(fake_clock, [_timeout(), _timeout(), _timeout()])
+    monkeypatch.setattr(pr_watch, "await_events", windows)
+    args = _until_args(bound=10, total_bound=25)
+    assert pr_watch._watch_until(args, "o/r", 9, tmp_path / "w.log") == (
+        pr_watch.EXIT_TIMEOUT
+    )
+    assert windows.bounds == [10, 10]
+    line = json.loads(capsys.readouterr().out)
+    assert "nothing happened in 20s (2 window(s) of 10s)" in line
+
+
+def test_watch_until_is_bounded_by_a_window_count_not_only_the_clock(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Windows that return instantly still end after ``total_bound // bound``.
+
+    SCENARIO: a clock anomaly or a zero-length wait makes a window return
+    with no time spent; elapsed time alone would then never end the loop.
+
+    MOCK SETUP: ``await_events`` times out instantly; real clock, never advanced.
+
+    EXPECTED BEHAVIOR: terminates with exactly ``total_bound // bound`` windows.
+    """
+    calls: list[int] = []
+
+    def instant(*_a: object) -> tuple[int, list[str]]:
+        calls.append(1)
+        if len(calls) > 1000:
+            pytest.fail("watch did not terminate")
+        return pr_watch.EXIT_TIMEOUT, []
+
+    monkeypatch.setattr(pr_watch, "await_events", instant)
+    args = _until_args(bound=10, total_bound=50)
+    assert pr_watch._watch_until(args, "o/r", 9, tmp_path / "w.log") == (
+        pr_watch.EXIT_TIMEOUT
+    )
+    assert len(calls) == 5
+
+
+def test_watch_until_give_up_is_one_whole_quoted_stdout_line(
+    fake_clock: _FakeTime,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """The give-up line goes via ``_deliver``: one JSON line, uncut; re-wait intact."""
+    monkeypatch.setattr(
+        pr_watch, "await_events", _ScriptedWindows(fake_clock, [_timeout()])
+    )
+    args = _until_args(once=True)
+    assert pr_watch._watch_until(args, "o/r", 9, tmp_path / "w.log") == (
+        pr_watch.EXIT_TIMEOUT
+    )
+    out = capsys.readouterr().out
+    assert len(out.splitlines()) == 1
+    assert "…" not in out
+    assert out.rstrip().endswith('await --pr 9"')
+    assert isinstance(json.loads(out), str)
+
+
+def test_watch_until_does_not_poll_again_after_an_event(
+    fake_clock: _FakeTime,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """An event in the first window ends the watch; no second window opens."""
+    windows = _ScriptedWindows(
+        fake_clock, [(pr_watch.EXIT_OK, ["PR #9 MERGED"]), _timeout()]
+    )
+    monkeypatch.setattr(pr_watch, "await_events", windows)
+    code = pr_watch._watch_until(_until_args(), "o/r", 9, tmp_path / "w.log")
+    assert code == pr_watch.EXIT_OK
+    assert windows.bounds == [10]
 
 
 def test_the_parser_offers_await_digest_and_stack_but_not_start() -> None:
