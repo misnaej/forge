@@ -20,21 +20,20 @@ and the wrapper's extras.
 
 ## Source of truth
 
-[FOUNDATION.md](../FOUNDATION.md) owns principles
-([§7](../FOUNDATION.md#7-design-principles)), complexity limits
-([§5](../FOUNDATION.md#5-ruff-configuration)) and docstring rules
-([§8](../FOUNDATION.md#8-documentation-standards)) — calibrate severity
-against them, never re-define them. Consumer `CLAUDE.md` may override; on conflict
-**consumer wins**, and the stricter of foundation default and the
-consumer's `ruff.toml` applies. Any experiment runs in a
-`forge-scratch-repo` copy (§11 "Probing"), never the checkout.
+Principles, complexity limits and docstring rules are
+[FOUNDATION](../FOUNDATION.md) §7, §5 and §8 — calibrate severity
+against them, never re-define them. **Consumer wins** on conflict, and
+the stricter of foundation default and the consumer's `ruff.toml`
+applies. Any experiment runs in a `forge-scratch-repo` copy (§11
+"Probing"), never the checkout.
 
-## Why investigation recipes
+## Investigation recipes
 
-One-file-at-a-time reading misses cross-file issues. Every review runs
-the fixed mechanical investigations landing in `code_health/audit_*.log`
-(the `forge-audit-*` suite; [`docs/audit-pack.md`](../docs/audit-pack.md)).
-**Cannot complete a review without citing those logs.**
+Every review runs the fixed mechanical investigations landing in
+`code_health/audit_*.log` (the `forge-audit-*` suite;
+[`docs/audit-pack.md`](../docs/audit-pack.md)) — one-file-at-a-time
+reading misses what they catch. **Cannot complete a review without
+citing those logs.**
 
 ## Workflow
 
@@ -52,11 +51,8 @@ editing" / "pre-write" → Briefing; otherwise → Full Review.
    ```
    Check them with `forge-precommit --freshness --only ruff,docstring_verification` (read-only, runs no steps). Anything but `fresh`, or absent → ask the main agent to call `forge:precommit-fixer` to refresh `code_health/`. Do not run the checks or `ruff` yourself.
 
-2. **Existence + placement belong to `forge:prior-art`** — when the
-   plan creates a new file or top-level symbol, require its
-   `prior-art-searched:` report (REUSE / EXTEND / NEW with layer
-   context) instead of re-deriving those answers here; a missing report
-   is itself a briefing finding.
+2. **Existence + placement belong to `forge:prior-art`** — require its
+   report rather than re-deriving them here (format below).
 
 3. **Read the target file** to identify existing patterns:
    - Logging style, error handling, docstring format
@@ -83,9 +79,8 @@ editing" / "pre-write" → Briefing; otherwise → Full Review.
 - **Logging / Error handling / Docstrings / Imports**: <one line each, drawn from the target file>
 
 ### Applicable FOUNDATION rules
-Cite the FOUNDATION sections that apply to the planned change — e.g.
-§5 (ruff config), §8 (docstrings), §9 (logging) — so the author reads
-them directly. Do not reproduce the rules inline.
+Cite the sections that apply — e.g. §5, §8, §9 — so the author reads
+them directly. Never reproduce a rule inline.
 
 ### Next step
 After editing, the main agent runs `forge:precommit-fixer` (no raw
@@ -179,19 +174,17 @@ LOW = pre-existing baseline; REVIEW = visible exemption. Mechanics:
 
 ### Cost lens (judgment check, no CLI)
 
-Review FOUNDATION §18's goals. A diff that adds or edits tests: does it
+FOUNDATION §18's goals. A diff that adds or edits tests: does it
 rebuild per test what could be built once, does a parametrized variant
 multiply a real cost, is the executed path so mocked that the runtime
-buys nothing unique? A diff touching a path already known hot — from a
-profile or a prior `forge:perf-optimizer` report the author cites — ask
-for the same-machine before/after number. The number, not that agent's
-full protocol, which stays opt-in.
+buys nothing unique? A diff touching a known-hot path: ask for the
+same-machine before/after number — the number only, not
+`forge:perf-optimizer`'s full protocol, which stays opt-in.
 
 ### Wrapper justification (judgment check, no CLI)
 
 When a diff adds predominantly construct-and-delegate code, ask
-FOUNDATION §7's upstream question: does this indirection exist because
-the interface underneath is wrong? Signals: a new config type
+FOUNDATION §7's upstream question. Signals: a new config type
 overlapping an existing one plus reconciliation code; an entry point
 that only builds X then calls X; the same value stored by two objects;
 an `__all__` name that only forwards. On a hit, require the author to
@@ -201,18 +194,16 @@ beyond adaptation. §16 shipped-plugin wrappers are exempt.
 ### Mechanical-first lens (judgment check, no CLI)
 
 When a diff adds or changes an agent, a skill or a skill step, put
-FOUNDATION §7's mechanical-first question to each step. Signals: numbered
-steps that only run commands and copy their output; an agent re-deriving
-what a CLI already prints; prose rules a script could check. On a hit,
-require the author to move the step into a CLI or subcommand, or to name
-the judgment it needs.
+FOUNDATION §7's mechanical-first question to each. Signals: steps that
+only run commands and copy their output; an agent re-deriving what a CLI
+prints; prose rules a script could check. On a hit, require the step
+moved into a CLI, or the judgment it needs named.
 
 ### Supersession lens (judgment check, no CLI)
 
-Ask what the diff makes obsolete — replaced code paths, checks, docs,
-tests — and whether the diff removes it (FOUNDATION §7 "A change removes
-what it supersedes"). One left in place is a finding; a follow-up issue
-does not clear it.
+Ask what the diff makes obsolete — code paths, checks, docs, tests —
+and whether it removes them (FOUNDATION §7). One left in place is a
+finding; a follow-up issue does not clear it.
 
 ## Repo-specific extras
 

@@ -65,14 +65,10 @@ gh issue edit <N> --add-label tier-X-<NAME>
 gh issue comment <N> --body "[forge-issue-triage] tier-X-<NAME> applied: <reason>."
 ```
 
-**Tier classification heuristics** (consumer may override in `CLAUDE.md`):
-
-| Tier | Triggers |
-|---|---|
-| `tier-1-critical` | `security`, `breaking-change`, blocks other open issues, CI broken |
-| `tier-2-high` | `quick-win`, recently filed, clear ROI |
-| `tier-3-standard` | normal `feature` / `refactor` / `tech-debt` |
-| `tier-4-low` | `research`, `docs`-only, no clear use case |
+**Tier meanings: FOUNDATION §14** (consumer `CLAUDE.md` may
+override). Triggers it leaves to judgment: `breaking-change` → tier-1;
+`quick-win` or recently filed with clear ROI → tier-2; `docs`-only or no
+clear use case → tier-4.
 
 A user-set tier (no `[forge-issue-triage]` tier comment) is never
 relabelled — comment the alternative instead (FOUNDATION §14).
@@ -265,16 +261,11 @@ any `trimmed:` line.
 
 (Nothing here in `advisory` mode.)
 
-- Apply / remove tier, `stale`, `blocked` and `needs-recheck` labels
-- Comment rationales prefixed `[forge-issue-triage]`
-- Regenerate the Backlog Index with `forge-backlog-index`
-- Recommend top issues based on live tiers + signals
-- Close issues and create umbrellas the user approved in `deep-review`;
-  emit goal-file content
-- Emit plan-readiness verdicts; record user-validated plans
-  (`plan-validated` comment + `plan-ready` label) when `/plan-issue`
-  delegates; apply `track:<name>` labels (the only grouping labels)
-  with a comment trail
+- Everything the mode sections above specify, and nothing else:
+  labels with an `[forge-issue-triage]` comment trail, the Backlog
+  Index, recommendations, user-approved closes and umbrellas, plan
+  readiness verdicts, and recording a user-validated plan when
+  `/plan-issue` delegates.
 
 ### I WILL NOT (report and stop)
 
@@ -283,8 +274,6 @@ any `trimmed:` line.
 - Override user-set tier labels silently → **comment alternative instead**
 - Install dependencies → **`install-forge-labels` must already be available**
 - Write files → **the caller persists goal files (no `Write` tool)**
-- Write a human sign-off claim into a `plan-validated` payload →
-  **unverifiable (FOUNDATION §14)**
 - Run `deep-review` within 7 days of the last → **skip unless forced**
 - Draft or validate a plan myself → **`/plan-issue` owns planning; I
   only screen and record**

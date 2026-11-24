@@ -50,16 +50,29 @@ When regenerating the 📋 Backlog Index, pass
 the labelled issues leave the tier sections and the product backlog
 reads cleanly without them.
 
-Issue gate (forge repo only), in `triage` mode: for each open issue
-without `needs-forge-report`, check its author with
-`gh api repos/{owner}/{repo}/collaborators/<login>/permission` (write,
-maintain or admin = maintainer; a failed call is "unknown" — skip, never
-gate, and list the skipped issue numbers in the hand-back). A
-non-maintainer's issue whose body lacks the filing marker
-(format: skills/report-to-forge/SKILL.md Step 6; match its fixed prefix)
-gets `needs-forge-report` with the usual
-`[forge-issue-triage]` audit line, and is tiered as normal. Post nothing else
-on it. For each gated issue, return a reply DRAFT, posted by no one yet:
+Issue gate (forge repo only), in `triage` mode. Three steps **in this
+order**, for each open issue without `needs-forge-report`. The order is
+the rule: the author check is the gate, the marker is only what a gated
+issue is missing. Run them the other way round and every maintainer's
+issue looks gateable, because almost none carry the marker — that is
+how 32 of them were once labelled at once.
+
+1. **Author.** `gh api repos/{owner}/{repo}/collaborators/<login>/permission`.
+   `write`, `maintain` or `admin` → **maintainer: STOP. No label, no
+   gate audit line, nothing posted.** Tier and type it as normal and go
+   to the next issue. Any other result → step 3.
+2. **Unknown.** The call failed → **skip, never gate**; list the issue
+   number in the hand-back. Unknown is not "non-maintainer".
+3. **Marker.** Only for an author step 1 showed is *not* a maintainer:
+   if the body lacks the filing marker (format:
+   skills/report-to-forge/SKILL.md Step 6; match its fixed prefix),
+   apply `needs-forge-report` with the usual `[forge-issue-triage]`
+   audit line, and tier it as normal. Post nothing else on it.
+
+Never write the gate's audit line for an issue you did not run step 1
+against. The line asserts a permission check; writing it without one
+states something false about a real person's access, in a trail nobody
+later re-derives. For each gated issue, return a reply DRAFT, posted by no one yet:
 the issue number and title, one recommended shape — FIX (we will fix
 it), INVITE (we invite you to fix it, by PR from your fork; credited in
 CONTRIBUTING's Contributors), or DECLINE (we do not plan it, because

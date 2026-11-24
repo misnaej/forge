@@ -76,13 +76,13 @@ Rules (sections, word cap, plain-English `## Summary` lead): [FOUNDATION §6 "PR
        --bullet "[1,2] <key change>" --bullet "[3] <key change>"
    ```
 
-   3–5 `--bullet`s, each opening with the changelog bullets it covers. **Every one must be claimed or the post is refused**; one may claim several. Length never refuses: over the 45-word ceiling it warns and posts, so never write toward it. Spend words on behaviour changes, never test counts, green checks or forge's own counts.
+   3–5 `--bullet`s, each opening with the changelog bullets it covers. **Every one must be claimed or the post is refused**; one may claim several. Length warns past the ceiling, never refuses; content rules are FOUNDATION §6's.
 
 3. **Never set the PR title by hand here** — the CLI forces the PR title to match the `--title` it posts (FOUNDATION §6), so the squash title is authored in one place. A non-zero exit naming a rejected title sync means the prefill is stale: report it, do not paper over it.
 
 ## Task: Fill Wrap-up Slots (pre-publication)
 
-The caller ran `forge-pr-wrapup compose` (`/pr` Step 3.92): `code_health/pr_wrapup.md` already holds every mechanical part — header, mode line, skipped or clean reporter sections, Issue Management, Code Quality, CI Status — plus `<!-- forge:fill … -->` slots. Replace each slot line and nothing else: `summary` → one plain line on what the PR does; `findings: <reporter>` → that reporter's findings, each with where and how it was dispositioned, in the exact disposition forms and compressed per [_TEMPLATE.md's report-by-exception rule](_TEMPLATE.md#reporter-agent-header-contract); `recommendation` → one line on what the reader must decide. Never edit a rendered section — re-run `compose` when its inputs changed. Run `forge-pr-wrapup validate code_health/pr_wrapup.md` until it passes. **Neither length nor content refuses: it warns** — so write to the budget rather than discovering it afterwards. **Each slot marker states its own allowance** and `compose` prints the total; fill to them. Over it, cut before posting: process state and bookkeeping go first, then compress each disposition to its slot's share — compress, never drop one, and never pad to the number either. The other warning to write for rather than discover: a slot restating a section the wrap-up already renders (`Code Quality`, `CI Status` — say what changed, never that checks passed). Return the squash-merge message in your report; never write it into the wrap-up. Post nothing.
+The caller ran `forge-pr-wrapup compose` (`/pr` Step 3.92): `code_health/pr_wrapup.md` already holds every mechanical part — header, mode line, skipped or clean reporter sections, Issue Management, Code Quality, CI Status — plus `<!-- forge:fill … -->` slots. Replace each slot line and nothing else: `summary` → one plain line on what the PR does; `findings: <reporter>` → that reporter's findings, each with where and how it was dispositioned, in the exact disposition forms and compressed per [_TEMPLATE.md's report-by-exception rule](_TEMPLATE.md#reporter-agent-header-contract); `recommendation` → one line on what the reader must decide. Never edit a rendered section — re-run `compose` when its inputs changed. Run `forge-pr-wrapup validate code_health/pr_wrapup.md` until it passes. **Each slot marker states its own allowance** and `compose` prints the total; fill to them. Over it, cut before posting: process state first, then compress each disposition — compress, never drop one. A slot must not restate a section the wrap-up renders (FOUNDATION §6). Return the squash-merge message in your report; never write it into the wrap-up. Post nothing.
 
 **Never hard-wrap the slot text** ([_TEMPLATE.md's reporter-agent header contract](_TEMPLATE.md#reporter-agent-header-contract)).
 
@@ -111,15 +111,13 @@ git rev-list --left-right --count origin/<base>...HEAD   # left = behind
 
 `CONFLICTING` → **stop and report** (caller runs `forge-update-branch`, then `forge:merge-resolver` on an exit 3, and re-invokes); behind-but-clean → `forge-update-branch` and proceed, disclosed per Output — **no confirmation needed** (FOUNDATION §6's resolution rule; /pr Step 0.5).
 
-**Two modes.** *Evidence-supplied* ("Supplied evidence" above): every step below whose
-evidence was handed over is skipped. *Direct
-invocation* — no evidence, or evidence from another tree — means the
-agent gathers it itself: a **change-scoped** run, never the whole suite,
-under a bound stated before it starts (FOUNDATION §6). Exceeding the
-bound is a finding — report what ran, what is still unverified, and post
-the wrap-up saying so; "waiting for the run to complete" is never the
-result. A section with no evidence behind it is reported unverified,
-never assumed.
+**Two modes.** *Evidence-supplied* ("Supplied evidence" above): every
+step whose evidence was handed over is skipped. *Direct invocation* — no
+evidence, or evidence from another tree — gathers it here: a
+**change-scoped** run, never the whole suite, under a bound stated
+first (FOUNDATION §6). Exceeding it is a finding, reported with what
+remains unverified. A section with no evidence behind it is reported
+unverified, never assumed.
 
 1. **The three checkers** via Task — one design/security/docs report each; skip per pre-run coverage, all three under delta mode.
 2. **`precommit-fixer` in `mode: strict`** — unless the caller supplied pre-commit results for the current `HEAD`; otherwise ALWAYS, because docstring fixes shift line lengths (`strict`'s `pip_audit` escalation: `/pr` Step 2).
@@ -183,7 +181,7 @@ The hand-back lists every commit, merge or push this run caused, its own or a de
 
 ## Success Criteria
 
-Task-dependent: each task's report returned; description ≤300 words, bare `Closes #N`; squash message via `forge-pr-squash-comment`; both finalization comments posted; every side effect and refusal disclosed; issues only with user approval.
+Each task's report returned; both finalization comments posted; every side effect and refusal disclosed.
 
 ## Output style (always)
 
