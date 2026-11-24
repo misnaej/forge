@@ -476,6 +476,12 @@ Verification is done, fixes are committed, and the wrap-up is authored
     Then post the squash-merge message; a non-zero exit names the broken
     rule.
 
+17. **One memory-audit re-offer, never blocking.** After the wrap-up
+    posts (the natural pause), if `code_health/memory-audit-proposals.md`
+    exists, offer `/memory-audit` once in one line — the background audit
+    dispatched at implementation start left proposals there. One re-ask
+    only; silence is not a decision and nothing waits on an answer.
+
 ### Squash-merge message hard rules
 
 `forge-pr-squash-comment` enforces (check the bullets before posting):
