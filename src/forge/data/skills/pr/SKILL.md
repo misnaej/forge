@@ -569,6 +569,11 @@ Skip when `forge.run_context.is_ci()` — nobody is there to answer them
     Call-site delta: new review comments route to `/pr-comments`.
     Report what it says when it arrives; resolution stays with whoever
     picks up the work.
+    **A timeout is not an answer — re-arm it.** The wait re-arms its own
+    windows up to `--total-bound`, but when that is spent it exits
+    saying what is now unwatched. Start it again while the PR is open.
+    A watch that ends because nobody restarted it is the log-only
+    monitor's silence by another route.
     **`forge-pr-watch digest` is the catch-up read**: it prints each
     log's distinct alerts, including the ones that end no wait (wrap-up
     staleness, a failed poll), so anything that happened while nothing
