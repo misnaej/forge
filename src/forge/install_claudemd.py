@@ -261,6 +261,7 @@ FORGE_DOCS_DIR = "forge-docs"
 FORGE_DOCS_PAGES = (
     "configuration.md",
     "ci-recipe.md",
+    "continuation.md",
     "smart-test.md",
     "backlog-tracks.md",
     "precommit-fixer.md",

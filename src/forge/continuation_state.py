@@ -56,6 +56,7 @@ PANEL_NOTICE = (
 )
 WRITTEN_PLACEHOLDER = "## Handoff\n"
 DEFAULT_JUDGMENT_MAX_LINES = 60
+DEFAULT_JUDGMENT_MAX_ITEMS = 12
 
 # Sections of the retired append-and-rotate format, dropped on migration.
 LEGACY_SECTIONS = (
@@ -354,6 +355,110 @@ def written_line_count(text: str) -> int:
     return len(written_section(text).strip("\n").splitlines())
 
 
+_ITEM_START_RE = re.compile(r"^(?:#{1,6}\s|[-*+]\s)")
+_DETAIL_RE = re.compile(r"^[-*+]\s+Detail:\s+(\S+)\s*$")
+
+
+def _strip_code_fences(text: str) -> str:
+    """Drop fenced code blocks so their lines are never counted or parsed.
+
+    Args:
+        text: Markdown text.
+
+    Returns:
+        *text* without fenced blocks; an unterminated fence drops the rest.
+    """
+    out: list[str] = []
+    in_fence = False
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if not in_fence:
+            out.append(line)
+    return "\n".join(out)
+
+
+def written_item_count(text: str) -> int:
+    """Count the written section's items: top-level block starters.
+
+    An item is a heading or an unindented list bullet; nested bullets
+    belong to their parent item. Fenced code blocks are stripped first,
+    so example lines inside them never count. Unlike the line budget,
+    an item cap cannot be satisfied by rewording — only by deleting an
+    entry or moving it to a ``Detail:`` pointer file.
+
+    Args:
+        text: The note's content, with :func:`marker_problems` empty.
+
+    Returns:
+        The item count.
+    """
+    body = _strip_code_fences(written_section(text))
+    return sum(1 for line in body.splitlines() if _ITEM_START_RE.match(line))
+
+
+def detail_pointers(text: str) -> set[str]:
+    """Return the detail-file paths the written section points at.
+
+    A pointer is a top-level bullet of the form ``- Detail: .plan/<file>``.
+
+    Args:
+        text: The note's content, with :func:`marker_problems` empty.
+
+    Returns:
+        The referenced paths as written (e.g. ``{".plan/a.md"}``).
+    """
+    body = _strip_code_fences(written_section(text))
+    return {
+        match.group(1)
+        for line in body.splitlines()
+        if (match := _DETAIL_RE.match(line))
+    }
+
+
+def detail_files(root: Path) -> list[Path]:
+    """Return the note's sibling detail files (``.plan/*.md`` minus the note).
+
+    Args:
+        root: Repo root.
+
+    Returns:
+        Sorted absolute paths; empty when ``.plan`` does not exist.
+    """
+    plan_dir = root / CONTINUATION_PATH.parent
+    if not plan_dir.is_dir():
+        return []
+    return sorted(
+        path for path in plan_dir.glob("*.md") if path.name != CONTINUATION_PATH.name
+    )
+
+
+def orphan_details(root: Path, text: str) -> tuple[list[str], list[str]]:
+    """Return ``(dangling pointers, orphan detail files)`` for the note.
+
+    A dangling pointer is a ``Detail:`` path that does not exist; an
+    orphan file is a ``.plan/*.md`` file no pointer names. Both are
+    reported so neither direction goes unnoticed.
+
+    Args:
+        root: Repo root.
+        text: The note's content, with :func:`marker_problems` empty.
+
+    Returns:
+        ``(dangling, orphans)``, each sorted, as paths relative to *root*.
+    """
+    pointed = {Path(p) for p in detail_pointers(text)}
+    dangling = sorted(str(p) for p in pointed if not (root / p).is_file())
+    named = {p.name for p in pointed}
+    orphans = sorted(
+        str(path.relative_to(root))
+        for path in detail_files(root)
+        if path.name not in named
+    )
+    return dangling, orphans
+
+
 def migrate_legacy(text: str) -> str:
     """Drop the retired ledger, digest and archive pointer from *text*.
 
@@ -416,6 +521,22 @@ def judgment_max_lines(root: Path) -> int:
     if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0:
         return raw
     return DEFAULT_JUDGMENT_MAX_LINES
+
+
+def judgment_max_items(root: Path) -> int:
+    """Return the written section's item budget.
+
+    Args:
+        root: Repo root.
+
+    Returns:
+        ``[tool.forge.continuation].judgment_max_items``, or the default
+        when unset or not a positive integer.
+    """
+    raw = read_tool_forge_section(root, "continuation").get("judgment_max_items")
+    if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0:
+        return raw
+    return DEFAULT_JUDGMENT_MAX_ITEMS
 
 
 def note_is_ignored(root: Path) -> bool:

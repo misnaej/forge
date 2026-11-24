@@ -452,3 +452,15 @@ def test_reset_in_ci_is_a_noop(
     monkeypatch.setenv("CI", "1")
     assert cont.main(["reset"], repo_root=ignored_repo) == 0
     assert not (ignored_repo / cs.CONTINUATION_PATH).exists()
+
+
+def _note(root: Path) -> Path:
+    """Return the handoff note path under *root*.
+
+    Args:
+        root: The repository root path.
+
+    Returns:
+        The path to the continuation note file.
+    """
+    return root / cs.CONTINUATION_PATH

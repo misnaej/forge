@@ -1,0 +1,5 @@
+bump: minor
+- **The continuation note's written section is now capped by items, not only lines.** `forge-continuation check` reports `N/12 items` alongside the line budget (`[tool.forge.continuation].judgment_max_items`, default 12); an item is a top-level heading or list bullet, fenced code excluded. Unlike lines, items cannot be reworded away — trimming means deleting an entry or rehoming it. `--strict` gates on both budgets.
+- **Detail pointer files with an orphan check in both directions.** Long detail moves to `.plan/<slug>.md`, named from the note with one `- Detail: .plan/<slug>.md` line; `check` reports dangling pointers and unreferenced files, and the file plus its bullet leave in the same edit when the work lands.
+- **New `forge-continuation clean [--days N] [--yes]`** deletes detail files that are unreferenced *and* older than N days (default 14); it only lists without `--yes`, refuses when non-interactive, and never touches `CONTINUATION.md`.
+- The full protocol now lives in `forge-docs/continuation.md` (self-contained); FOUNDATION §10 is a pointer to it.

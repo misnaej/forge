@@ -469,6 +469,15 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "and `forge-continuation check` reports usage.",
     ),
     ConfigKey(
+        ("tool", "forge", "continuation", "judgment_max_items"),
+        default=12,
+        description="Item budget for CONTINUATION.md's written section: "
+        "top-level headings and list bullets, fenced code blocks excluded. "
+        "Unlike the line budget, rewording cannot satisfy it — compliance "
+        "means deleting an entry or moving it to a Detail pointer file. "
+        "`forge-continuation check` reports usage; `--strict` gates on it.",
+    ),
+    ConfigKey(
         ("tool", "forge", "memory_audit", "threshold"),
         default=5,
         description="New agent memories since the last /forge-memory-audit at "
