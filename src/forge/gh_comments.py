@@ -119,12 +119,28 @@ _POSSESSIVES: Final[tuple[str, ...]] = ("'s", "\u2019s")
 _CITATION_SUFFIX_RE: Final[re.Pattern[str]] = re.compile(r"(?:#[\w.-]*|:\d+)$")
 
 # Bare vendor tokens rejected by the backstop unless the containing
-# whitespace token is shaped like a file forge itself would cite:
+# whitespace token names an installed forge CLI (`install-forge-claude`)
+# or is shaped like a file forge itself would cite:
 # a `.claude`/`claude-hooks` dotdir/dir prefix, or a known repo file
 # extension. Deliberately NOT "contains any `/` or `.`" — that blanket
 # form exempts credit disguises like `generated-with/claude` or
 # `made-by.claude` (security review, PR #270).
 _VENDOR_TOKENS: Final[tuple[str, ...]] = ("claude", "anthropic")
+
+#: The wrap-up comment's marker. Invisible in rendered markdown,
+#: greppable in the raw body: how a later post recognizes the comment it
+#: supersedes.
+WRAPUP_MARKER: Final[str] = "<!-- forge:pr-wrapup -->"
+
+#: The squash-comment marker, same convention.
+SQUASH_MARKER: Final[str] = "<!-- forge:squash-merge-message -->"
+
+#: Every marker a comment forge posted itself carries. Defined here, in
+#: the module both posters already import, so a reader that only needs to
+#: recognise forge's comments — the PR wait, which must not be woken by
+#: the session's own bookkeeping — does not have to import a module whose
+#: job is posting them.
+FORGE_COMMENT_MARKERS: Final[tuple[str, ...]] = (WRAPUP_MARKER, SQUASH_MARKER)
 
 _CITABLE_PREFIXES: Final[tuple[str, ...]] = (".claude", "claude-hooks")
 
@@ -294,17 +310,43 @@ def _vendor_hit(blob: str) -> tuple[str, str] | None:
         blob: Lowercased text to scan token by token.
 
     Returns:
-        The vendor name and the token containing it, or ``None`` when every
-        vendor mention sits inside a repo-file citation.
+        The vendor name and the token containing it, or ``None`` when
+        every vendor mention sits inside a repo-file citation or names a
+        forge CLI.
     """
     for raw in blob.split():
         token = _strip_token(raw)
-        if _is_citation(token):
+        if _is_citation(token) or _names_forge_cli(token):
             continue
         for vendor in _VENDOR_TOKENS:
             if vendor in token:
                 return vendor, token
     return None
+
+
+def _names_forge_cli(token: str) -> bool:
+    """Return whether *token* is one of forge's own console scripts.
+
+    Several of them carry a vendor token in their name —
+    ``install-forge-claude``, ``install-forge-claude-md`` — so the bare
+    mention rule refused any commit message or PR body that named the
+    command it was describing. The rule exists to keep AI *credit* out of
+    repository history, and a tool's own name is not credit: the text
+    "the installer copied it" and "install-forge-claude copied it" differ
+    only in that the second is useful to the next reader.
+
+    Read from the installed distribution's entry points, like
+    :func:`_forge_cli_names`, so a CLI added later needs no second list
+    here. Trailing punctuation is shed first, so a name at the end of a
+    sentence still matches.
+
+    Args:
+        token: One already-stripped lowercased token from the text.
+
+    Returns:
+        ``True`` when the token names an installed forge console script.
+    """
+    return token.rstrip(".,:;-") in _forge_cli_names()
 
 
 def attribution_phrase(text: str) -> str | None:
@@ -330,9 +372,10 @@ def validate_no_ai_attribution(
 
     Two layers: attribution *phrases* anywhere in the text, then a
     bare-vendor-token backstop that exempts tokens shaped like files
-    forge mandates (:func:`_is_citation`) — PR content must be able to
-    name `CLAUDE.md` or `.claude/agents/x.md` while a bare "thanks
-    Claude" credit still fails. The phrase layer always reads the whole
+    forge mandates (:func:`_is_citation`) and forge's own CLI names
+    (:func:`_names_forge_cli`) — PR content must be able to name
+    `CLAUDE.md`, `.claude/agents/x.md` or `install-forge-claude` while a
+    bare "thanks Claude" credit still fails. The phrase layer always reads the whole
     text; only the backstop can skip fenced blocks, because quoted
     evidence (a diff, tool output) may name the product without
     crediting it, while an explicit credit phrase is a credit anywhere.
@@ -364,7 +407,8 @@ def validate_no_ai_attribution(
         msg = (
             f"AI attribution pattern detected: {vendor!r} "
             f"(in {token!r}). Path or file references like "
-            "`CLAUDE.md`, `CLAUDE.md's` or `CLAUDE.md:42` are allowed; "
+            "`CLAUDE.md`, `CLAUDE.md's` or `CLAUDE.md:42` and forge CLI "
+            "names like `install-forge-claude` are allowed; "
             "a bare vendor mention is not. FOUNDATION §2 forbids "
             "Claude/AI attribution in commits and PR content."
         )

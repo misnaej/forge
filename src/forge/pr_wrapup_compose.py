@@ -219,14 +219,22 @@ def _report_line(report_text: str, head_sha: str) -> str | None:
         head_sha: The wrap-up's HEAD SHA.
 
     Returns:
-        The PASS line (naming the report's own SHA when it differs from
-        HEAD), or ``None``.
+        The PASS line when the report's ``verified-at:`` header matches
+        HEAD; ``NOT re-verified at <head7> — <PASS line> (verdict at
+        <sha>)`` when it names another commit; ``None`` when the header
+        is missing or anything follows the PASS line.
     """
     lines = [line.strip() for line in report_text.splitlines() if line.strip()]
     report_sha = None
     if lines and (match := VERIFIED_AT_RE.match(lines[0])):
         report_sha = match.group("sha")
         lines = lines[1:]
+    # No header, no verdict: every reporter report opens with
+    # `verified-at:` (`agents/_TEMPLATE.md`), and a header-less one-line
+    # "PASS" was the cheap way past this gate. A fill slot costs the
+    # publisher a sentence; a forged sign-off costs the reader the truth.
+    if report_sha is None:
+        return None
     if not lines or not lines[0].lower().startswith("pass"):
         return None
     # "PASS" is how a report opens, not a promise about what follows: a
@@ -237,10 +245,13 @@ def _report_line(report_text: str, head_sha: str) -> str | None:
     # there is content to carry, so fall through to a fill slot.
     if len(lines) > 1:
         return None
-    if report_sha and not (
-        head_sha.startswith(report_sha) or report_sha.startswith(head_sha)
-    ):
-        return f"{lines[0]} (verified-at {report_sha})"
+    if not (head_sha.startswith(report_sha) or report_sha.startswith(head_sha)):
+        # Warning first: a reader scanning for "PASS" stops at the first
+        # word, and a trailing caveat reads as provenance, not as "this
+        # head is unreviewed".
+        return (
+            f"NOT re-verified at {head_sha[:7]} — {lines[0]} (verdict at {report_sha})"
+        )
     return lines[0]
 
 
@@ -253,11 +264,23 @@ def _reporter_body(reporter: str, inputs: ComposeInputs) -> list[str]:
 
     Returns:
         The section body, one line unless light-regen evidence follows.
+        A delta refresh renders ``NOT RE-RUN (delta)`` naming the prior
+        SHA, never a verdict.
     """
     if inputs.emergency_ledger is not None:
         return [f"SKIPPED (emergency: ledger #{inputs.emergency_ledger})"]
     if inputs.mode == "delta":
-        return [f"PASS — unchanged since {inputs.delta_prior_sha or '?'} (delta)"]
+        # Delta is chosen automatically for a small push and no reporter
+        # runs, so the mode alone cannot vouch for a verdict. The prior
+        # SHA is named so a reader can find the verdict that does exist.
+        prior = inputs.delta_prior_sha or "an earlier head"
+        return [
+            (
+                f"NOT RE-RUN (delta) — no reporter ran at this head; "
+                f"the diff since {prior} was classified immaterial. "
+                f"For a verdict, read the wrap-up verified at {prior}."
+            )
+        ]
     if reporter not in inputs.reporters:
         body = [f"SKIPPED ({inputs.mode})"]
         if (

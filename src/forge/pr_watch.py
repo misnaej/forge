@@ -17,7 +17,8 @@ hearing, because a process finishing is what a harness notices:
 - ``digest`` prints the distinct alerts in every log, including the ones
   that do not interrupt anyone. It is the catch-up read for whatever
   happened while nothing was waiting, and ``/forge-next`` runs it at
-  task start.
+  task start. ``--prune-terminal`` then clears the logs of PRs that
+  have merged or closed.
 - ``stack`` lists open PRs in stack (dependency) order with state.
 
 ``await`` self-skips under :func:`forge.run_context.is_ci` — no one is
@@ -28,7 +29,8 @@ it has to work (FOUNDATION §15).
 
 Every alert, qualifying or not, is appended to
 ``code_health/pr_watch_<pr>.log`` so ``digest`` keeps its source. The log
-is a record, not the delivery channel.
+is a record, not the delivery channel; ``digest --prune-terminal``
+clears a merged or closed PR's log once it has been reported.
 """
 
 from __future__ import annotations
@@ -44,6 +46,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
 
+from forge.gh_comments import FORGE_COMMENT_MARKERS
 from forge.git_utils import (
     code_health_dir,
     configure_cli_logging,
@@ -286,6 +289,48 @@ class PollOutcome:
     ok: bool = True
 
 
+#: The HTML markers forge's own PR comments open with. A wait exists for
+#: *other people's* review comments, and the standard flow posts a
+#: wrap-up and a squash message and then waits, so unfiltered a session
+#: is woken by its own bookkeeping (and by the
+#: ``keep_squash_comment_last`` hook re-posting).
+#:
+#: Marker, not author: forge's agent and the reviewing human often share
+#: one account, so an author filter would swallow real review comments.
+#: HTML marker, not visible prose: a reviewer quoting a phrase would
+#: otherwise silence their own comment.
+_FORGE_COMMENT_MARKERS: Final = FORGE_COMMENT_MARKERS
+
+#: The ``authorAssociation`` values GitHub reports for someone who can
+#: write to the repository. Forge's own comments are posted with such a
+#: credential, so a marker from anyone else is not forge's — it is a
+#: passer-by who found the string.
+_WRITE_ASSOCIATIONS: Final = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
+
+
+def _is_forge_comment(comment: dict[str, object]) -> bool:
+    """Return whether *comment* is one forge posted itself.
+
+    Both halves are required: the marker **and** an author who can write
+    to the repository. A PR comment is world-writable, so on a marker
+    alone any passer-by could paste the invisible string and silence
+    their own comment — the alert would never fire and nobody would know
+    one was due. A stranger's comment is exactly what this signal is
+    for, so it must stay loud whatever it contains.
+
+    Args:
+        comment: One entry from ``gh pr view --json comments``.
+
+    Returns:
+        ``True`` when the body carries a marker from
+        :data:`_FORGE_COMMENT_MARKERS` and the author has write access.
+    """
+    body = str(comment.get("body", ""))
+    if not any(marker in body for marker in _FORGE_COMMENT_MARKERS):
+        return False
+    return str(comment.get("authorAssociation", "")).upper() in _WRITE_ASSOCIATIONS
+
+
 def _comment_alerts(
     pr: int, view: dict[str, object], seen: set[str], *, first_poll: bool
 ) -> list[str]:
@@ -293,8 +338,8 @@ def _comment_alerts(
 
     The fifth signal of FOUNDATION §6. *seen* is the identity set this
     poll adds to, so the first poll establishes a baseline and never
-    announces the conversation a PR already had — only what arrives while
-    the wait is running is news.
+    announces the conversation a PR already had. Comments forge posted
+    itself (:data:`_FORGE_COMMENT_MARKERS`) never count, baseline or not.
 
     *first_poll* is what marks that baseline, and it has to come from the
     caller: an empty *seen* cannot mean it. A PR with no comments at all
@@ -317,7 +362,7 @@ def _comment_alerts(
     identities = [
         str(c.get("id") or f"{c.get('createdAt', '')}:{c.get('author', '')}")
         for c in comments
-        if isinstance(c, dict)
+        if isinstance(c, dict) and not _is_forge_comment(c)
     ]
     fresh = [i for i in identities if i and i not in seen]
     # Append-only, and the alert below depends on it: `len(seen)` is what
@@ -662,6 +707,11 @@ def _auto_detect_pr(root: Path, repo: str) -> int | None:
 
 _ALERT_PREFIX: Final = "pr-watch: "
 
+#: Most logs one ``digest --prune-terminal`` run will check the state of.
+#: Each costs a ``gh`` call, and the rest are simply left for the next
+#: run — the same bound the branch prune uses, for the same reason.
+_PRUNE_SCAN_MAX: Final = 50
+
 
 def await_events(
     repo: str, pr: int, interval: int, bound: int, log_path: Path
@@ -927,7 +977,7 @@ def _alert_lines(path: Path) -> list[str]:
     return lines
 
 
-def cmd_digest(_args: argparse.Namespace) -> int:
+def cmd_digest(args: argparse.Namespace) -> int:
     """Report what past waits logged, including what never woke a session.
 
     ``await`` delivers qualifying events by exiting; this is the catch-up
@@ -935,10 +985,16 @@ def cmd_digest(_args: argparse.Namespace) -> int:
     no session waiting, and the ones that end no wait (wrap-up
     staleness, a failed poll).
 
-    Reads every ``pr_watch_*.log`` present.
+    Reads every ``pr_watch_*.log`` present. With ``--prune-terminal``,
+    clears the ones whose PR has since merged or closed — **after**
+    reporting them, so the read is never the thing that loses an alert.
+    That ordering is why the clearing lives here and not in
+    ``forge-next-prep``: pruning before the digest is read would delete
+    the merge report that tells a session cleanup is owed.
 
     Args:
-        _args: Parsed CLI arguments (unused).
+        args: Parsed CLI arguments; ``prune_terminal`` decides whether
+            settled logs are cleared once reported.
 
     Returns:
         Exit code; ``0`` whether or not anything was found, since having
@@ -974,7 +1030,70 @@ def cmd_digest(_args: argparse.Namespace) -> int:
         sys.stdout.write(
             "no alerts to report" + (" (no logs present)\n" if not logs else "\n")
         )
+    if getattr(args, "prune_terminal", False):
+        _prune_settled_logs(root, logs)
     return EXIT_OK
+
+
+def _prune_settled_logs(root: Path, logs: list[Path]) -> None:
+    """Delete the log and cursor of every PR that has merged or closed.
+
+    A log is append-only and a cursor outlives the process, so without
+    this a merged PR's alerts are reported at every task start forever,
+    aged but unchanged — and a reader who learns to scroll past settled
+    history will scroll past a live conflict.
+
+    Checks at most :data:`_PRUNE_SCAN_MAX` logs per run; a PR whose state
+    ``gh`` cannot report is left alone, because "unknown" must never read
+    as "settled". Does nothing when the repo cannot be resolved.
+
+    Args:
+        root: Repo root, holding ``code_health/``.
+        logs: The log paths this run already reported.
+    """
+    repo = _resolve_repo(root, None)
+    if repo is None:
+        return
+    for path in logs[:_PRUNE_SCAN_MAX]:
+        pr = path.stem.removeprefix("pr_watch_")
+        if not (pr.isascii() and pr.isdigit()):
+            continue
+        try:
+            state = json.loads(
+                _gh("pr", "view", pr, "--repo", repo, "--json", "state").stdout
+            ).get("state")
+        except FileNotFoundError:
+            # `gh` is not installed. `await` never reaches here because
+            # `arming_check` refuses first; `digest` has no such gate, so
+            # without this the catch-up read printed its whole report and
+            # then died non-zero — losing the exit code for the part that
+            # mattered. Nothing can be judged settled, so stop scanning.
+            logger.warning("pr-watch: gh not found — nothing pruned")
+            return
+        except (
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            json.JSONDecodeError,
+        ):
+            continue
+        if state != "MERGED":
+            # MERGED only. A closed PR can be reopened, and a cleared
+            # cursor rebaselines its conversation — swallowing a comment
+            # left while it was closed, which is the loss this whole
+            # command exists to prevent. A closed-unmerged log is rare
+            # and harmless; a swallowed comment is neither.
+            continue
+        removed = True
+        for doomed in (path, _seen_path(path)):
+            try:
+                doomed.unlink(missing_ok=True)
+            except OSError:
+                logger.exception("pr-watch: could not remove %s", doomed)
+                removed = False
+        # Only on success: "cleared" over a file still on disk would send
+        # the next reader looking for something that is still there.
+        if removed:
+            sys.stdout.write(f"cleared PR #{pr} (merged): {path.name}\n")
 
 
 def _stack_order(prs: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -1123,6 +1242,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Report what waiting already alerted on, including the events "
             "that do not interrupt a session (the log's read end)."
+        ),
+    )
+    p_digest.add_argument(
+        "--prune-terminal",
+        action="store_true",
+        help=(
+            "After reporting, clear the log and cursor of every PR that "
+            "has merged or closed. /forge-next passes it at task start, "
+            "so settled history stops being re-reported forever."
         ),
     )
     p_digest.set_defaults(func=cmd_digest)
