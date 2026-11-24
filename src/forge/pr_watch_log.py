@@ -171,7 +171,7 @@ def load_seen(log_path: Path) -> set[str] | None:
     sidecar, so an empty set read as "no wait has run" would make every
     later wait a first poll again and swallow the first comment to
     arrive — the one case the signal exists for, and the common one on a
-    fresh PR. :func:`_comment_alerts` documents the same trap for a
+    fresh PR. :func:`forge.pr_watch._comment_alerts` documents the same trap for a
     single process; this is its cross-process twin.
 
     Args:
