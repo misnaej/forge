@@ -18,10 +18,10 @@ hearing, because a process finishing is what a harness notices:
   It waits in **windows**: ``--bound`` proves the loop is alive, and a
   window expiring with the PR still open opens another, up to
   ``--total-bound``. A PR's events are hours away, so a window of
-  minutes expiring is the ordinary case — and a watch that stopped
-  there left the PR unwatched until a human happened to notice, which
-  is the same silence the log-only monitor had. The total still bounds
-  it, because a process cannot deliver to a session that has ended.
+  minutes expiring is the ordinary case, and a watch that stopped
+  there would leave the PR unwatched. The total still bounds it,
+  because a process cannot deliver to a session that has ended.
+  ``--once`` waits a single window.
 - ``digest`` prints the distinct alerts in every log, including the ones
   that do not interrupt anyone. It is the catch-up read for whatever
   happened while nothing was waiting, and ``/forge-next`` runs it at
@@ -77,11 +77,8 @@ DEFAULT_INTERVAL_S: Final = 60
 DEFAULT_BOUND_S: Final = 1800
 
 #: How long a whole watch may live, across however many windows. Hours,
-#: because that is the scale a PR runs on: a window of minutes expiring
-#: is the ordinary case, not news, and a watch that stopped there left
-#: the PR unwatched until a human noticed. Still bounded, because the
-#: process cannot deliver to a session that has ended — an unbounded one
-#: is how the retired monitor's registry filled with dead entries.
+#: the scale a PR runs on. Bounded because the process cannot deliver to
+#: a session that has ended: an unbounded one would poll forever.
 DEFAULT_TOTAL_BOUND_S: Final = 21600
 
 #: Shortest poll interval accepted. A PR's events do not arrive faster
@@ -924,7 +921,11 @@ def _args_valid(args: argparse.Namespace) -> bool:
         reason already logged.
     """
     if args.interval < _MIN_INTERVAL_S:
-        logger.error("pr-watch: --interval must be at least %ds", _MIN_INTERVAL_S)
+        logger.error(
+            "pr-watch: --interval must be at least %ds; PR events arrive "
+            "slower than that and each poll costs about four API calls",
+            _MIN_INTERVAL_S,
+        )
         return False
     if args.bound < args.interval:
         logger.error(
@@ -1017,19 +1018,15 @@ def _watch_until(args: argparse.Namespace, repo: str, pr: int, log_path: Path) -
     """Wait in windows until something happens, or the total runs out.
 
     One window is :func:`await_events`, whose bound is a **hang
-    detector**: it proves the loop is still polling. It was never a
-    statement about how long a PR is interesting for. A PR's events —
-    a merge, a review, a CI failure — are hours or days out, so a window
-    expiring is the ordinary case, and treating that as "done" left the
-    PR unwatched until somebody noticed. Three times it was the user who
-    noticed.
+    detector**: it proves the loop is still polling, and says nothing
+    about how long a PR is interesting for. A PR's events — a merge, a
+    review, a CI failure — are hours or days out, so a window expiring
+    is the ordinary case, not the end of the watch.
 
-    So a window that expires with the PR still open opens another, and
-    the watch ends only on an event, on a terminal state, or when the
-    total is spent. The total is what keeps the orphan problem solved:
-    the process cannot outlive the PR, and it cannot sit polling for a
-    session that ended days ago — which is how the detached monitor's
-    registry filled with dead entries.
+    So a window that expires with the PR still open opens another. The
+    watch ends on an event, on a terminal state, on ``--once``, or when
+    the total is spent; the total keeps it from polling for a session
+    that has ended.
 
     Args:
         args: Parsed CLI arguments (``interval``, ``bound``,
@@ -1053,10 +1050,10 @@ def _watch_until(args: argparse.Namespace, repo: str, pr: int, log_path: Path) -
         spent = time.monotonic() - started
         # Only open another window if a whole one fits: stopping early
         # beats reporting a total the watch did not actually wait.
-        # Elapsed time is enough on its own *because* of the floors —
-        # with `bound >= interval >= 30` a window cannot return early,
-        # so `spent` always advances. Absent them this check would be a
-        # lie and the loop a hot one against the API.
+        # No window-count cap is needed: with `bound >= interval >= 30`
+        # a window cannot return early, so `spent` always advances.
+        # Without the floors this check would not terminate and the
+        # loop would be hot against the API.
         if args.once or spent + args.bound > args.total_bound:
             _deliver(
                 [
