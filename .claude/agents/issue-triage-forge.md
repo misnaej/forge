@@ -60,7 +60,7 @@ how 32 of them were once labelled at once.
 1. **Author.** `gh api repos/{owner}/{repo}/collaborators/<login>/permission`.
    `write`, `maintain` or `admin` → **maintainer: STOP. No label, no
    gate audit line, nothing posted.** Tier and type it as normal and go
-   to the next issue.
+   to the next issue. Any other result → step 3.
 2. **Unknown.** The call failed → **skip, never gate**; list the issue
    number in the hand-back. Unknown is not "non-maintainer".
 3. **Marker.** Only for an author step 1 showed is *not* a maintainer:
