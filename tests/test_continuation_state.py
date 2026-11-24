@@ -468,3 +468,171 @@ def test_collect_local_state_counts_staged_and_unstaged_paths(
     assert (state.staged, state.unstaged) == (1, 1)
     assert state.branch == "main"
     assert state.unpushed is None
+
+
+def test_written_item_count_headings_and_bullets(tmp_path: Path) -> None:
+    """Count top-level headings + bullets; skip nested bullets and blanks.
+
+    The panel is excluded; an unterminated fence drops the rest.
+    """
+    note = tmp_path / cs.CONTINUATION_PATH
+    note.parent.mkdir(parents=True)
+    note.write_text(
+        "# Heading 1\n"
+        "- bullet 1\n"
+        "  - nested bullet\n"
+        "- bullet 2\n"
+        "\n"
+        "```python\n"
+        "- x\n"
+        "# y\n"
+        "```\n"
+        "- bullet 3\n"
+        "```\n"
+        "unterminated fence\n"
+        "- should not count\n",
+        encoding="utf-8",
+    )
+    assert cs.written_item_count(note.read_text(encoding="utf-8")) == 4
+
+
+def test_written_item_count_fenced_code_blocks(tmp_path: Path) -> None:
+    """Lines inside fences not counted."""
+    note = tmp_path / cs.CONTINUATION_PATH
+    note.parent.mkdir(parents=True)
+    note.write_text(
+        "```python\n- x\n# y\n```\n- bullet\n",
+        encoding="utf-8",
+    )
+    assert cs.written_item_count(note.read_text(encoding="utf-8")) == 1
+
+
+def test_written_item_count_heading_inside_fence(tmp_path: Path) -> None:
+    """Heading inside a fence is not counted."""
+    note = tmp_path / cs.CONTINUATION_PATH
+    note.parent.mkdir(parents=True)
+    note.write_text(
+        "```markdown\n# Heading inside fence\n```\n- bullet\n",
+        encoding="utf-8",
+    )
+    assert cs.written_item_count(note.read_text(encoding="utf-8")) == 1
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [(None, 12), (0, 12), (-1, 12), ("x", 12), (True, 12)],
+)
+def test_judgment_max_items_default_and_invalid(
+    tmp_path: Path, raw: object, expected: int
+) -> None:
+    """Default 12 without config; invalid values fall back to default.
+
+    Args:
+        tmp_path: Pytest tmp dir used as repo root.
+        raw: Raw config value to write (None writes no pyproject).
+        expected: Expected item cap.
+    """
+    if raw is not None:
+        value = "true" if raw is True else repr(raw).replace("'", '"')
+        (tmp_path / "pyproject.toml").write_text(
+            f"[tool.forge.continuation]\njudgment_max_items = {value}\n",
+            encoding="utf-8",
+        )
+    assert cs.judgment_max_items(tmp_path) == expected
+
+
+def test_judgment_max_items_from_pyproject(tmp_path: Path) -> None:
+    """Reads [tool.forge.continuation] judgment_max_items from pyproject.toml."""
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.continuation]\njudgment_max_items = 24\n",
+        encoding="utf-8",
+    )
+    assert cs.judgment_max_items(tmp_path) == 24
+
+
+def test_detail_pointers_top_level_only_and_dedup(tmp_path: Path) -> None:
+    """Parse top-level '- Detail: .plan/a.md' bullets only.
+
+    Fenced examples and indented bullets are ignored; pointers dedupe.
+    """
+    plan = tmp_path / ".plan"
+    plan.mkdir(exist_ok=True)
+    (plan / "a.md").write_text("x", encoding="utf-8")
+    (plan / "b.md").write_text("y", encoding="utf-8")
+    note = tmp_path / cs.CONTINUATION_PATH
+    note.parent.mkdir(parents=True, exist_ok=True)
+    note.write_text(
+        "- Detail: .plan/a.md\n"
+        "- Detail: .plan/b.md\n"
+        "  - Detail: .plan/a.md\n"
+        "```\n"
+        "- Detail: .plan/b.md\n"
+        "```\n",
+        encoding="utf-8",
+    )
+    assert cs.detail_pointers(note.read_text(encoding="utf-8")) == {
+        ".plan/a.md",
+        ".plan/b.md",
+    }
+
+
+def test_detail_line_with_extra_spaces(tmp_path: Path) -> None:
+    """'- Detail:   .plan/a.md  ' parses."""
+    plan = tmp_path / ".plan"
+    plan.mkdir(exist_ok=True)
+    (plan / "a.md").write_text("x", encoding="utf-8")
+    note = tmp_path / cs.CONTINUATION_PATH
+    note.parent.mkdir(parents=True, exist_ok=True)
+    note.write_text(
+        "- Detail:   .plan/a.md  \n",
+        encoding="utf-8",
+    )
+    assert cs.detail_pointers(note.read_text(encoding="utf-8")) == {".plan/a.md"}
+
+
+def test_detail_files_sorted_and_excludes_continuation(tmp_path: Path) -> None:
+    """Sorted .plan/*.md minus CONTINUATION.md."""
+    plan = tmp_path / ".plan"
+    plan.mkdir(exist_ok=True)
+    (plan / "a.md").write_text("x", encoding="utf-8")
+    (plan / "b.md").write_text("y", encoding="utf-8")
+    (plan / cs.CONTINUATION_PATH.name).write_text("keep", encoding="utf-8")
+    note = tmp_path / cs.CONTINUATION_PATH
+    note.parent.mkdir(parents=True, exist_ok=True)
+    note.write_text("- Detail: .plan/a.md\n- Detail: .plan/b.md\n", encoding="utf-8")
+    assert cs.detail_files(tmp_path) == [
+        plan / "a.md",
+        plan / "b.md",
+    ]
+
+
+def test_detail_files_empty_when_no_plan(tmp_path: Path) -> None:
+    """Empty when no .plan directory."""
+    assert cs.detail_files(tmp_path) == []
+
+
+def test_orphan_details_dangling_vs_orphan_vs_referenced(
+    tmp_path: Path,
+) -> None:
+    """Classify dangling pointers, orphan files, referenced-existing.
+
+    Dangling = pointer to a missing file; orphan = file no pointer names;
+    CONTINUATION.md is never an orphan.
+    """
+    plan = tmp_path / ".plan"
+    plan.mkdir(exist_ok=True)
+    (plan / "a.md").write_text("x", encoding="utf-8")
+    (plan / "b.md").write_text("y", encoding="utf-8")
+    note = tmp_path / cs.CONTINUATION_PATH
+    note.parent.mkdir(parents=True, exist_ok=True)
+    text = "- Detail: .plan/a.md\n- Detail: .plan/missing.md\n- Detail: .plan/b.md\n"
+    note.write_text(text, encoding="utf-8")
+    # Verify setup
+    assert (plan / "a.md").exists()
+    assert (plan / "b.md").exists()
+    assert not (plan / "missing.md").exists()
+    # Run function
+    dangling, orphan = cs.orphan_details(tmp_path, text)
+    assert dangling == [".plan/missing.md"]
+    # b.md is pointed, so it should NOT be in orphans
+    assert orphan == []

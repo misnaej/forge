@@ -107,6 +107,7 @@ by `forge-gen-config-doc`; the sections below explain each key.
 | `[tool.forge.smart_test].nonpython_ignore` | built-in list (*.md, stamp, .plan/*, .gitignore) |
 | `[tool.forge.smart_test].safe_fallback` | `'escalate'` |
 | `[tool.forge.continuation].judgment_max_lines` | `60` |
+| `[tool.forge.continuation].judgment_max_items` | `12` |
 | `[tool.forge.memory_audit].threshold` | `5` |
 | `[tool.forge.intake].dir` | `'docs/intake'` |
 | `[tool.forge.intake].redact` | `[]` |

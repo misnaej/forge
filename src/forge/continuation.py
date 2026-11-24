@@ -16,11 +16,17 @@ Usage:
 - ``forge-continuation state --attempt <result>`` — record a commit
   attempt's result: ``passed``, ``blocked:<step>``, ``error`` or
   ``interrupted`` (free-form, sanitized).
-- ``forge-continuation check`` — report the written section's line usage
-  against ``[tool.forge.continuation].judgment_max_lines`` plus how many
-  written lines name landed work (closed issue / merged PR); exits ``1``
-  when the panel markers are mismatched or duplicated, or — with
-  ``--strict`` — when over budget or any line names landed work.
+- ``forge-continuation check`` — report the written section's line and
+  item usage against ``[tool.forge.continuation].judgment_max_lines`` /
+  ``judgment_max_items``, dangling ``Detail:`` pointers and orphan detail
+  files, plus how many written lines name landed work (closed issue /
+  merged PR); exits ``1`` when the panel markers are mismatched or
+  duplicated, or — with ``--strict`` — when over either budget, any line
+  names landed work, or any pointer/file is orphaned.
+- ``forge-continuation clean [--days N] [--yes]`` — delete detail files in
+  ``.plan/`` that no ``Detail:`` pointer names and that are older than
+  *N* days (default 14). Lists candidates without ``--yes`` and refuses
+  when non-interactive; never touches the note itself.
 - ``forge-continuation reset`` — replace the written section with a
   skeleton (§10's five headings), regenerate the panel, never delete the
   file. Refuses while the panel shows live work unless ``--force``.
@@ -37,6 +43,7 @@ import logging
 import re
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
@@ -45,11 +52,15 @@ from forge.continuation_state import (
     CONTINUATION_PATH,
     END_MARKER,
     PrState,
+    detail_files,
+    judgment_max_items,
     judgment_max_lines,
     marker_problems,
+    orphan_details,
     sanitize,
     short_head,
     write_state,
+    written_item_count,
     written_line_count,
     written_section,
 )
@@ -63,7 +74,7 @@ from forge.git_utils import (
 )
 from forge.pr_plan import wrapup_freshness
 from forge.pr_wrapup_compose import summarize_rollup
-from forge.run_context import is_ci
+from forge.run_context import is_ci, is_non_interactive
 
 
 configure_cli_logging()
@@ -293,16 +304,18 @@ def _stale_line_count(root: Path, text: str) -> int | None:
 
 
 def check_note(root: Path, *, strict: bool = False) -> int:
-    """Report the written section's usage, budget and staleness.
+    """Report the written section's usage, budgets, orphans and staleness.
 
     Args:
         root: Repo root.
-        strict: Exit ``1`` when over budget or any written line names
-            landed work, so a caller can gate on the note.
+        strict: Exit ``1`` when over either budget, any written line names
+            landed work, or any ``Detail:`` pointer/file is orphaned, so a
+            caller can gate on the note.
 
     Returns:
         ``1`` when the panel markers are mismatched or duplicated, or when
-        ``strict`` and a budget/staleness violation is found; else ``0``.
+        ``strict`` and a budget/orphan/staleness violation is found; else
+        ``0``.
     """
     path = root / CONTINUATION_PATH
     if not path.is_file():
@@ -318,13 +331,88 @@ def check_note(root: Path, *, strict: bool = False) -> int:
     over = used > budget
     verdict = "over budget — trim it" if over else "within budget"
     emit(f"{CONTINUATION_PATH}: written section {used}/{budget} lines ({verdict})")
+    items, item_cap = written_item_count(text), judgment_max_items(root)
+    over_items = items > item_cap
+    item_verdict = "over item cap — trim it" if over_items else "within item cap"
+    emit(
+        f"{CONTINUATION_PATH}: written section {items}/{item_cap} items "
+        f"({item_verdict})"
+    )
+    dangling, orphans = orphan_details(root, text)
+    if dangling:
+        emit(
+            f"{CONTINUATION_PATH}: {len(dangling)} dangling Detail pointer(s): "
+            + ", ".join(dangling)
+        )
+    if orphans:
+        emit(
+            f"{CONTINUATION_PATH}: {len(orphans)} orphan detail file(s): "
+            + ", ".join(orphans)
+        )
     stale = _stale_line_count(root, text)
     if stale is None:
         emit(f"{CONTINUATION_PATH}: staleness unavailable (gh not usable)")
     else:
         emit(f"{CONTINUATION_PATH}: {stale} line(s) name work that has landed")
-    if strict and (over or stale):
+    if strict and (over or over_items or stale or dangling or orphans):
         return 1
+    return 0
+
+
+def clean_details(root: Path, *, days: int, yes: bool) -> int:
+    """Delete old, unreferenced detail files beside the note.
+
+    A candidate is a ``.plan/*.md`` file (never the note itself) that no
+    ``Detail:`` pointer names and whose mtime is older than *days* days.
+    Without *yes* the candidates are only listed — and the run refuses
+    outright when non-interactive, so a piped or CI run never hangs on a
+    prompt.
+
+    Args:
+        root: Repo root.
+        days: Age threshold in days.
+        yes: Delete the candidates without asking.
+
+    Returns:
+        ``1`` when the panel markers are broken or a non-interactive run
+        was asked to delete without ``--yes``; else ``0``.
+    """
+    path = root / CONTINUATION_PATH
+    text = path.read_text(encoding="utf-8") if path.is_file() else ""
+    problems = marker_problems(text)
+    if problems:
+        for problem in problems:
+            emit(f"{CONTINUATION_PATH}: {problem}")
+        return 1
+    _dangling, orphans = orphan_details(root, text)
+    orphan_names = {Path(name).name for name in orphans}
+    cutoff = datetime.now(UTC).timestamp() - days * 86400
+    candidates = [
+        detail
+        for detail in detail_files(root)
+        if detail.name in orphan_names and detail.stat().st_mtime < cutoff
+    ]
+    if not candidates:
+        emit(f"{CONTINUATION_PATH}: no old unreferenced detail files to clean")
+        return 0
+    listed = ", ".join(str(candidate.relative_to(root)) for candidate in candidates)
+    if not yes:
+        if is_non_interactive():
+            emit(
+                f"{CONTINUATION_PATH}: {len(candidates)} old unreferenced detail "
+                f"file(s) not deleted (non-interactive): {listed} — rerun with --yes"
+            )
+            return 1
+        answer = input(
+            f"Delete {len(candidates)} old unreferenced detail file(s)? "
+            f"[{listed}] [y/N] "
+        )
+        if answer.strip().lower() not in ("y", "yes"):
+            emit(f"{CONTINUATION_PATH}: clean cancelled — nothing deleted")
+            return 0
+    for candidate in candidates:
+        candidate.unlink()
+        emit(f"{CONTINUATION_PATH}: deleted {candidate.relative_to(root)}")
     return 0
 
 
@@ -461,15 +549,35 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     check = sub.add_parser(
         "check",
-        help="Report the written section's line usage against "
-        "[tool.forge.continuation].judgment_max_lines, plus lines naming "
+        help="Report the written section's line/item usage against "
+        "[tool.forge.continuation].judgment_max_lines / judgment_max_items, "
+        "dangling Detail pointers and orphan detail files, plus lines naming "
         "landed work; exit 1 on bad markers.",
     )
     check.add_argument(
         "--strict",
         action="store_true",
-        help="Also exit 1 when over budget or any written line names "
-        "landed (closed/merged) work, so a caller can gate on the note.",
+        help="Also exit 1 when over either budget, any written line names "
+        "landed (closed/merged) work, or any pointer/file is orphaned, so a "
+        "caller can gate on the note.",
+    )
+    clean = sub.add_parser(
+        "clean",
+        help="Delete .plan/ detail files that no Detail: pointer names and "
+        "that are older than --days; never touches CONTINUATION.md.",
+    )
+    clean.add_argument(
+        "--days",
+        type=int,
+        default=14,
+        metavar="N",
+        help="Age threshold in days (default 14).",
+    )
+    clean.add_argument(
+        "--yes",
+        action="store_true",
+        help="Delete without asking; without it, candidates are only listed "
+        "and a non-interactive run refuses.",
     )
     reset = sub.add_parser(
         "reset",
@@ -499,6 +607,8 @@ def main(argv: list[str] | None = None, *, repo_root: Path | None = None) -> int
     root = repo_root if repo_root is not None else Path.cwd()
     if args.command == "check":
         return check_note(root, strict=args.strict)
+    if args.command == "clean":
+        return clean_details(root, days=args.days, yes=args.yes)
     if args.command == "reset":
         return reset_note(root, force=args.force)
     return refresh_state(root, with_pr=args.with_pr, attempt=args.attempt)
