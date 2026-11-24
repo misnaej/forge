@@ -54,6 +54,7 @@ from typing import TYPE_CHECKING, Final
 from forge.continuation import refresh_state
 from forge.emergency_state import armed_state, read_state
 from forge.gh_comments import (
+    WRAPUP_MARKER,
     ValidationError,
     attribution_phrase,
     list_marker_comments,
@@ -118,10 +119,6 @@ if TYPE_CHECKING:
 configure_cli_logging()
 logger = logging.getLogger(__name__)
 
-# Invisible in rendered markdown, greppable in the raw body: how a later
-# post recognizes the wrap-ups it supersedes. Same convention as the
-# squash-comment marker.
-WRAPUP_MARKER: Final[str] = "<!-- forge:pr-wrapup -->"
 
 # Sections every wrap-up carries (pr-manager's posting contract). Extra
 # sections (Issue Management, Testing, ...) are allowed; these must exist.

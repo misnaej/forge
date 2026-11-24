@@ -119,12 +119,28 @@ _POSSESSIVES: Final[tuple[str, ...]] = ("'s", "\u2019s")
 _CITATION_SUFFIX_RE: Final[re.Pattern[str]] = re.compile(r"(?:#[\w.-]*|:\d+)$")
 
 # Bare vendor tokens rejected by the backstop unless the containing
-# whitespace token is shaped like a file forge itself would cite:
+# whitespace token names an installed forge CLI (`install-forge-claude`)
+# or is shaped like a file forge itself would cite:
 # a `.claude`/`claude-hooks` dotdir/dir prefix, or a known repo file
 # extension. Deliberately NOT "contains any `/` or `.`" — that blanket
 # form exempts credit disguises like `generated-with/claude` or
 # `made-by.claude` (security review, PR #270).
 _VENDOR_TOKENS: Final[tuple[str, ...]] = ("claude", "anthropic")
+
+#: The wrap-up comment's marker. Invisible in rendered markdown,
+#: greppable in the raw body: how a later post recognizes the comment it
+#: supersedes.
+WRAPUP_MARKER: Final[str] = "<!-- forge:pr-wrapup -->"
+
+#: The squash-comment marker, same convention.
+SQUASH_MARKER: Final[str] = "<!-- forge:squash-merge-message -->"
+
+#: Every marker a comment forge posted itself carries. Defined here, in
+#: the module both posters already import, so a reader that only needs to
+#: recognise forge's comments — the PR wait, which must not be woken by
+#: the session's own bookkeeping — does not have to import a module whose
+#: job is posting them.
+FORGE_COMMENT_MARKERS: Final[tuple[str, ...]] = (WRAPUP_MARKER, SQUASH_MARKER)
 
 _CITABLE_PREFIXES: Final[tuple[str, ...]] = (".claude", "claude-hooks")
 
@@ -356,9 +372,10 @@ def validate_no_ai_attribution(
 
     Two layers: attribution *phrases* anywhere in the text, then a
     bare-vendor-token backstop that exempts tokens shaped like files
-    forge mandates (:func:`_is_citation`) — PR content must be able to
-    name `CLAUDE.md` or `.claude/agents/x.md` while a bare "thanks
-    Claude" credit still fails. The phrase layer always reads the whole
+    forge mandates (:func:`_is_citation`) and forge's own CLI names
+    (:func:`_names_forge_cli`) — PR content must be able to name
+    `CLAUDE.md`, `.claude/agents/x.md` or `install-forge-claude` while a
+    bare "thanks Claude" credit still fails. The phrase layer always reads the whole
     text; only the backstop can skip fenced blocks, because quoted
     evidence (a diff, tool output) may name the product without
     crediting it, while an explicit credit phrase is a credit anywhere.
@@ -390,7 +407,8 @@ def validate_no_ai_attribution(
         msg = (
             f"AI attribution pattern detected: {vendor!r} "
             f"(in {token!r}). Path or file references like "
-            "`CLAUDE.md`, `CLAUDE.md's` or `CLAUDE.md:42` are allowed; "
+            "`CLAUDE.md`, `CLAUDE.md's` or `CLAUDE.md:42` and forge CLI "
+            "names like `install-forge-claude` are allowed; "
             "a bare vendor mention is not. FOUNDATION §2 forbids "
             "Claude/AI attribution in commits and PR content."
         )

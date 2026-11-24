@@ -91,6 +91,7 @@ from forge.changelog_fragments import (
 from forge.config import load_config
 from forge.gh_comments import (
     GH_LIST_TIMEOUT,
+    SQUASH_MARKER,
     ValidationError,
     delete_comment,
     list_marker_comments,
@@ -150,11 +151,6 @@ MAX_BULLETS: Final[int] = 5
 MAX_WORDS: Final[int] = 45
 # A breakdown line only has to identify the part to shorten, not show it.
 PREVIEW_CHARS: Final[int] = 40
-
-# Invisible in rendered markdown, greppable in the raw body: how a later
-# run recognizes the squash comments it must supersede. Same convention
-# as `forge:c4:*` / `forge:badges:*` managed blocks.
-SQUASH_MARKER: Final[str] = "<!-- forge:squash-merge-message -->"
 
 
 def _check_title(title: str) -> list[str]:

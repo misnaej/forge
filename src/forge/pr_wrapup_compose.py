@@ -219,20 +219,20 @@ def _report_line(report_text: str, head_sha: str) -> str | None:
         head_sha: The wrap-up's HEAD SHA.
 
     Returns:
-        The PASS line (naming the report's own SHA when it differs from
-        HEAD), or ``None``.
+        The PASS line when the report's ``verified-at:`` header matches
+        HEAD; ``NOT re-verified at <head7> — <PASS line> (verdict at
+        <sha>)`` when it names another commit; ``None`` when the header
+        is missing or anything follows the PASS line.
     """
     lines = [line.strip() for line in report_text.splitlines() if line.strip()]
     report_sha = None
     if lines and (match := VERIFIED_AT_RE.match(lines[0])):
         report_sha = match.group("sha")
         lines = lines[1:]
-    # No header, no verdict. A reporter's report always opens with
-    # `verified-at:` (`agents/_TEMPLATE.md`), so a file that lacks one is
-    # not a report — and the cheapest way past this gate was a one-line
-    # "PASS" written to satisfy it, which then rendered as a reviewer's
-    # sign-off. Falling through to a fill slot costs whoever publishes a
-    # sentence; it stops the document asserting what nobody checked.
+    # No header, no verdict: every reporter report opens with
+    # `verified-at:` (`agents/_TEMPLATE.md`), and a header-less one-line
+    # "PASS" was the cheap way past this gate. A fill slot costs the
+    # publisher a sentence; a forged sign-off costs the reader the truth.
     if report_sha is None:
         return None
     if not lines or not lines[0].lower().startswith("pass"):
@@ -246,15 +246,9 @@ def _report_line(report_text: str, head_sha: str) -> str | None:
     if len(lines) > 1:
         return None
     if not (head_sha.startswith(report_sha) or report_sha.startswith(head_sha)):
-        # Loud, not parenthetical. A reader scanning for "PASS" takes a
-        # trailing "(verified-at <sha>)" as provenance rather than as a
-        # warning that the head is unreviewed — which is how three
-        # verdicts for an earlier commit read as sign-offs for this one.
-        # Warning first, verdict second. A reader scanning for "PASS"
-        # stops at the first word, so a caveat trailing a whole sentence
-        # ("PASS — no issues found. at abc1234 …") is read as
-        # provenance; leading with it cannot be. That misreading is how
-        # three verdicts for an earlier commit passed as sign-offs here.
+        # Warning first: a reader scanning for "PASS" stops at the first
+        # word, and a trailing caveat reads as provenance, not as "this
+        # head is unreviewed".
         return (
             f"NOT re-verified at {head_sha[:7]} — {lines[0]} (verdict at {report_sha})"
         )
@@ -270,16 +264,15 @@ def _reporter_body(reporter: str, inputs: ComposeInputs) -> list[str]:
 
     Returns:
         The section body, one line unless light-regen evidence follows.
+        A delta refresh renders ``NOT RE-RUN (delta)`` naming the prior
+        SHA, never a verdict.
     """
     if inputs.emergency_ledger is not None:
         return [f"SKIPPED (emergency: ledger #{inputs.emergency_ledger})"]
     if inputs.mode == "delta":
-        # Says what this round knows, never a verdict. Minting "PASS"
-        # from the mode alone asserted a sign-off no reporter had given,
-        # and because delta is chosen automatically for a small push, a
-        # wrap-up that once said PASS kept saying it — including one
-        # whose PASS came from placeholder evidence. The prior SHA is
-        # named so a reader can go find the verdict that does exist.
+        # Delta is chosen automatically for a small push and no reporter
+        # runs, so the mode alone cannot vouch for a verdict. The prior
+        # SHA is named so a reader can find the verdict that does exist.
         prior = inputs.delta_prior_sha or "an earlier head"
         return [
             (

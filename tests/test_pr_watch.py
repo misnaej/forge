@@ -22,8 +22,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from forge import pr_watch
-from forge.pr_squash_comment import SQUASH_MARKER
-from forge.pr_wrapup import WRAPUP_MARKER
+from forge.gh_comments import SQUASH_MARKER, WRAPUP_MARKER
 
 
 if TYPE_CHECKING:
@@ -1571,11 +1570,29 @@ _HUMAN_COMMENT = {"id": "human-1", "body": "Please rename this helper."}
 _WRAPUP_COMMENT = {
     "id": "forge-wrapup",
     "body": f"{WRAPUP_MARKER}\n## PR Wrap-up\nSummary: ...",
+    "authorAssociation": "OWNER",
 }
 _SQUASH_COMMENT = {
     "id": "forge-squash",
     "body": f"{SQUASH_MARKER}\nfeat: x\n- bullet",
+    "authorAssociation": "OWNER",
 }
+
+
+def _stranger_marker_comment(association: str) -> dict[str, object]:
+    """Build a marker-carrying comment from an author without write access.
+
+    Args:
+        association: The ``authorAssociation`` the comment claims.
+
+    Returns:
+        A comment pasting forge's wrap-up marker.
+    """
+    return {
+        "id": f"spoof-{association}",
+        "body": f"{WRAPUP_MARKER}\nlooks official",
+        "authorAssociation": association,
+    }
 
 
 @pytest.mark.parametrize(
@@ -1584,12 +1601,21 @@ _SQUASH_COMMENT = {
         pytest.param(_WRAPUP_COMMENT, True, id="wrapup-marker"),
         pytest.param(_SQUASH_COMMENT, True, id="squash-marker"),
         pytest.param(_HUMAN_COMMENT, False, id="plain-human-comment"),
+        pytest.param(_stranger_marker_comment("NONE"), False, id="spoof-none"),
+        pytest.param(
+            _stranger_marker_comment("CONTRIBUTOR"), False, id="spoof-contributor"
+        ),
     ],
 )
-def test_is_forge_comment_matches_only_comments_carrying_a_marker(
+def test_is_forge_comment_needs_a_marker_and_a_write_access_author(
     comment: dict[str, object], *, is_forge: bool
 ) -> None:
-    """Behavior test: the marker, and nothing else, makes a comment forge's.
+    """Behavior test: a marker alone never makes a comment forge's.
+
+    A PR comment is world-writable, so on a marker alone any passer-by could
+    paste the invisible string and silence their own comment; the alert would
+    never fire and nobody would know one was due. A stranger's comment is
+    precisely what the signal is for, so the spoof rows must stay loud.
 
     Args:
         comment: One ``gh pr view`` comment entry.
@@ -1677,10 +1703,12 @@ def _prune_world(
 def test_digest_prune_terminal_clears_settled_prs_and_keeps_the_rest(
     watch_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Behavior test: merged and closed PRs lose log and cursor; others keep both.
+    """Behavior test: only a MERGED PR loses its log and cursor; the rest keep both.
 
-    An unknown state (``gh`` raising) must never read as settled, and the
-    sentinel assertion proves the prune actually asked ``gh``.
+    A CLOSED PR can be reopened, and clearing its cursor would rebaseline the
+    conversation and swallow a comment left while it was closed. An unknown
+    state (``gh`` raising) must never read as settled either. The sentinel
+    assertion proves the prune actually asked ``gh``.
     """
     health, asked = _prune_world(
         watch_repo,
@@ -1689,10 +1717,9 @@ def test_digest_prune_terminal_clears_settled_prs_and_keeps_the_rest(
     )
     assert pr_watch.main(["digest", "--prune-terminal"]) == pr_watch.EXIT_OK
     assert sorted(asked) == ["11", "12", "13", "14"]
-    for gone in ("11", "12"):
-        assert not (health / f"pr_watch_{gone}.log").exists()
-        assert not (health / f"pr_watch_{gone}.seen").exists()
-    for kept in ("13", "14"):
+    assert not (health / "pr_watch_11.log").exists()
+    assert not (health / "pr_watch_11.seen").exists()
+    for kept in ("12", "13", "14"):
         assert (health / f"pr_watch_{kept}.log").exists()
         assert (health / f"pr_watch_{kept}.seen").exists()
 
@@ -1749,3 +1776,49 @@ def test_digest_prune_terminal_checks_at_most_the_scan_cap(
     assert not (health / "pr_watch_2.log").exists()
     assert (health / "pr_watch_3.log").exists()
     assert (health / "pr_watch_3.seen").exists()
+
+
+def test_digest_prune_terminal_survives_a_missing_gh_and_still_reports(
+    watch_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Behavior test: no ``gh`` binary costs the prune, never the report or exit code.
+
+    ``await`` is guarded by ``arming_check``; ``digest`` is not, so without
+    the catch it printed everything and then died non-zero.
+    """
+    health, _asked = _prune_world(watch_repo, monkeypatch, {"41": "MERGED"})
+    calls: list[tuple[str, ...]] = []
+
+    def missing_gh(*argv: str, **_k: object) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        msg = "gh"
+        raise FileNotFoundError(msg)
+
+    monkeypatch.setattr(pr_watch, "_gh", missing_gh)
+    assert pr_watch.main(["digest", "--prune-terminal"]) == pr_watch.EXIT_OK
+    assert calls  # the prune did reach gh
+    assert "  - PR #41 news" in capsys.readouterr().out
+    assert (health / "pr_watch_41.log").exists()
+    assert (health / "pr_watch_41.seen").exists()
+
+
+def test_digest_prune_terminal_prints_no_cleared_line_when_an_unlink_fails(
+    watch_repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Behavior test: "cleared" is never printed over a file still on disk.
+
+    The cursor path is made a non-empty directory so ``unlink`` raises.
+    """
+    health, asked = _prune_world(watch_repo, monkeypatch, {"51": "MERGED"})
+    cursor = health / "pr_watch_51.seen"
+    cursor.unlink()
+    cursor.mkdir()
+    (cursor / "occupant").write_text("x")
+    assert pr_watch.main(["digest", "--prune-terminal"]) == pr_watch.EXIT_OK
+    assert asked == ["51"]
+    assert "cleared" not in capsys.readouterr().out
+    assert cursor.exists()

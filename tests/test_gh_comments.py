@@ -206,6 +206,11 @@ def test_validate_no_ai_attribution_forge_cli_exemption_does_not_widen(
         mod.validate_no_ai_attribution(_with_extra(blob))
 
 
+def test_no_forge_console_script_is_named_after_a_credit_word() -> None:
+    """A CLI named bare ``claude`` or ``anthropic`` would exempt that credit word."""
+    assert not {"claude", "anthropic"} & mod._forge_cli_names()
+
+
 def test_validate_no_ai_attribution_reads_the_live_console_scripts() -> None:
     """The exemption follows the installed entry points, not a copied list."""
     assert "install-forge-claude" in mod._forge_cli_names()
