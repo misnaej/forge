@@ -257,8 +257,11 @@ more than one, so writing a fragment means deciding these:
   commit, the PR or the code, each of which the reader can reach and none
   of which they should have to read first. **Advisory only here** — a
   12-word ceiling's refusal band is three words wide, and a commit
-  blocked over that costs more than the prose does. The message surfaces
-  (commit, squash, wrap-up, PR description) do refuse far past theirs. The bullet count is deliberately unchecked: how
+  blocked over that costs more than the prose does. The commit message,
+  wrap-up and PR description do refuse far past theirs; the squash
+  message never refuses on length — what it must not do is leave part of
+  the merge undescribed, and that is what its coverage check refuses.
+  The bullet count is deliberately unchecked: how
   many things changed is not derivable from a diff, and guessing it from
   one would nag the entries that are already right.
 - **Bodies carry no headings.** The assembler writes every heading; a

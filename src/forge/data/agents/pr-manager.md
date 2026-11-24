@@ -70,12 +70,13 @@ Rules (sections, word cap, plain-English `## Summary` lead): [FOUNDATION §6 "PR
 2. **Write and post per [FOUNDATION §6 "Squash-merge messages"](../FOUNDATION.md#6-git--pr-workflow)** — content rules and the full `forge-pr-squash-comment` contract live there; never hand-construct the body.
 
    ```bash
+   forge-pr-squash-comment --pr <PR#> --dry-run   # numbers them
    forge-pr-squash-comment --pr <PR#> \
        --title "<type>(<scope>)?: <subject>" \
-       --bullet "<key change 1>" --bullet "<key change 2>" --bullet "<key change 3>"
+       --bullet "[1,2] <key change>" --bullet "[3] <key change>"
    ```
 
-   3–5 `--bullet`s; validation failure exits non-zero naming every broken rule — fix until it passes. Length is one only far past the 45-word ceiling; just over warns and posts (FOUNDATION §6). Never write toward it. Spend words on behaviour changes, never test counts, green checks, a fragment or forge's own counts.
+   3–5 `--bullet`s, each opening with the changelog bullets it covers. **Every one must be claimed or the post is refused**; one may claim several. Length never refuses: over the 45-word ceiling it warns and posts, so never write toward it. Spend words on behaviour changes, never test counts, green checks or forge's own counts.
 
 3. **Never set the PR title by hand here** — the CLI forces the PR title to match the `--title` it posts (FOUNDATION §6), so the squash title is authored in one place. A non-zero exit naming a rejected title sync means the prefill is stale: report it, do not paper over it.
 

@@ -189,21 +189,23 @@ Freeze, never guess:
 2. Open a **draft PR** (FOUNDATION §6's early-visibility escape hatch).
 3. Post PR comment(s) framing each open question, with the options
    considered and a recommendation.
-4. Hand the PR to a background monitor (below) and return to the watch
+4. Hand the PR to a background wait (below) and return to the watch
    loop for the next candidate.
 5. When the user replies: resume on that branch, apply the decisions,
    and finalize through the normal flow (`gh pr ready`, full `/pr`).
 
 ## Background PR monitors
 
-For **every** PR this loop opens — draft or final — start one background
-monitor with `forge-pr-watch start --pr <N>` per FOUNDATION §6 "PR
+For **every** PR this loop opens — draft or final — wait on it as a
+background job: `forge-pr-watch await --pr <N>` per FOUNDATION §6 "PR
 finalization" (the canonical description — the five watched signals and
-their actions are enumerated there). Sentinel delta: question replies
-route back into the frozen branch's resume flow. The monitors need no
-exemption — §6 skips only under `is_ci()`, which no sentinel run
-satisfies, so they start by default here as everywhere. The main loop
-never blocks on an open PR. Where a monitor's alerts land, and who has
+their actions are enumerated there). It exits on the first event worth
+acting on, and that exit is what brings the news back into a session.
+Sentinel delta: question replies route back into the frozen branch's
+resume flow. The waits need no exemption — §6 skips only under
+`is_ci()`, which no sentinel run satisfies, so they start by default
+here as everywhere. The main loop never blocks on an open PR: the wait
+is a background job, never a foreground one. Where an alert lands, and who has
 to read them: `/forge-pr` Step 7.
 
 ## After each PR
@@ -216,7 +218,7 @@ the watch loop.
 
 - Never merge, force-push, or rebase; never touch protected branches.
 - One issue or track in execution at a time — parallelism lives in
-  the background monitors, not in concurrent builds.
+  the background waits, not in concurrent builds.
 - Every skip or deferral leaves a `[forge-issue-triage]` comment trail.
 - A plan that stops matching reality goes back through `/plan-issue`;
   sentinel never improvises past its spec.
