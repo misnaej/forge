@@ -1675,34 +1675,6 @@ def test_watch_until_never_starts_a_window_the_total_cannot_hold(
     assert "nothing happened in 20s (2 window(s) of 10s)" in line
 
 
-def test_watch_until_is_bounded_by_a_window_count_not_only_the_clock(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Windows that return instantly still end after ``total_bound // bound``.
-
-    SCENARIO: a clock anomaly or a zero-length wait makes a window return
-    with no time spent; elapsed time alone would then never end the loop.
-
-    MOCK SETUP: ``await_events`` times out instantly; real clock, never advanced.
-
-    EXPECTED BEHAVIOR: terminates with exactly ``total_bound // bound`` windows.
-    """
-    calls: list[int] = []
-
-    def instant(*_a: object) -> tuple[int, list[str]]:
-        calls.append(1)
-        if len(calls) > 1000:
-            pytest.fail("watch did not terminate")
-        return pr_watch.EXIT_TIMEOUT, []
-
-    monkeypatch.setattr(pr_watch, "await_events", instant)
-    args = _until_args(bound=10, total_bound=50)
-    assert pr_watch._watch_until(args, "o/r", 9, tmp_path / "w.log") == (
-        pr_watch.EXIT_TIMEOUT
-    )
-    assert len(calls) == 5
-
-
 def test_watch_until_give_up_is_one_whole_quoted_stdout_line(
     fake_clock: _FakeTime,
     monkeypatch: pytest.MonkeyPatch,

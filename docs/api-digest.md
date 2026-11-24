@@ -1910,7 +1910,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_load_seen(log_path: Path) -> set[str] | None` _(internal)_ — Return the comment identities an earlier wait already accounted for.
 - `_save_seen(log_path: Path, seen: set[str]) -> None` _(internal)_ — Record the comment identities accounted for, for the next wait.
 - `_append_alert(path: Path, line: str) -> None` _(internal)_ — Append one alert to the PR's log, so ``digest`` can still read it.
-- `_resolve_target(args: argparse.Namespace) -> tuple[Path, str, int] | int` _(internal)_ — Validate the wait's arguments and resolve its repo root, repo and PR.
+- `_args_valid(args: argparse.Namespace) -> bool` _(internal)_ — Report whether the wait's own numbers can produce a wait at all.
+- `_resolve_target(args: argparse.Namespace) -> tuple[Path, str, int] | None` _(internal)_ — Resolve the checkout, repo slug and PR this wait is for.
 - `cmd_await(args: argparse.Namespace) -> int` — Wait for the first event on a PR worth telling a session about.
 - `_watch_until(args: argparse.Namespace, repo: str, pr: int, log_path: Path) -> int` _(internal)_ — Wait in windows until something happens, or the total runs out.
 - `_deliver(lines: list[str]) -> None` _(internal)_ — Write the watch's result to stdout, as quoted data.

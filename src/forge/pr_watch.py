@@ -84,10 +84,16 @@ DEFAULT_BOUND_S: Final = 1800
 #: is how the retired monitor's registry filled with dead entries.
 DEFAULT_TOTAL_BOUND_S: Final = 21600
 
-#: Shortest poll interval accepted. Each poll costs about three API
-#: calls, and a PR's events do not arrive faster than this, so anything
-#: below is cost without information — and with re-arming it is a hot
-#: loop rather than a slow one.
+#: Shortest poll interval accepted. A PR's events do not arrive faster
+#: than this, so anything below is cost without information — and with
+#: re-arming it is a hot loop rather than a slow one.
+#:
+#: The cost is worth knowing before watching many PRs at once: a poll
+#: spends about **four** API calls — ``gh pr view``, ``gh pr checks``,
+#: and the ``forge-pr-plan`` subprocess for staleness, which reads the
+#: PR again itself. At the defaults that is roughly 240 calls per hour
+#: per PR, so one PR is about 5% of an authenticated hour's budget and
+#: twenty would exhaust it. Raise ``--interval`` when watching several.
 _MIN_INTERVAL_S: Final = 30
 GH_TIMEOUT_S: Final = 30
 
@@ -901,43 +907,70 @@ def _append_alert(path: Path, line: str) -> None:
         logger.exception("pr-watch: could not append to %s", path)
 
 
-def _resolve_target(args: argparse.Namespace) -> tuple[Path, str, int] | int:
-    """Validate the wait's arguments and resolve its repo root, repo and PR.
+def _args_valid(args: argparse.Namespace) -> bool:
+    """Report whether the wait's own numbers can produce a wait at all.
+
+    Refused, not clamped, and both halves matter. A window shorter than
+    one poll cannot poll, so with re-arming it becomes a loop that only
+    calls ``gh`` — and a caller who asked for that meant something else.
+    Checked before anything reaches the network, so a usage error costs
+    no API call.
 
     Args:
-        args: Parsed CLI arguments (``interval``, ``bound``, ``repo``, ``pr``).
+        args: Parsed CLI arguments (``interval``, ``bound``).
 
     Returns:
-        ``(root, repo, pr)`` when the wait can start, otherwise the
-        :data:`EXIT_REFUSED` exit code to return unwaited.
+        ``True`` when the wait may start; otherwise ``False``, with the
+        reason already logged.
     """
-    # Refused, not clamped, and both halves matter. A window shorter
-    # than one poll cannot poll at all, so with re-arming it becomes a
-    # loop that only calls `gh` — and a caller who asked for that meant
-    # something else.
     if args.interval < _MIN_INTERVAL_S:
         logger.error("pr-watch: --interval must be at least %ds", _MIN_INTERVAL_S)
-        return EXIT_REFUSED
+        return False
     if args.bound < args.interval:
         logger.error(
             "pr-watch: --bound (%ds) must hold at least one poll (--interval %ds)",
             args.bound,
             args.interval,
         )
-        return EXIT_REFUSED
+        return False
+    if args.bound > args.total_bound:
+        # Otherwise the total is not a ceiling at all: the loop checks it
+        # only between windows, so a single window longer than the total
+        # runs to completion and the watch outlives what the caller
+        # asked for — the orphan the total exists to prevent.
+        logger.error(
+            "pr-watch: --bound (%ds) cannot exceed --total-bound (%ds); "
+            "the total is checked between windows, so a longer window "
+            "would run past it",
+            args.bound,
+            args.total_bound,
+        )
+        return False
+    return True
 
+
+def _resolve_target(args: argparse.Namespace) -> tuple[Path, str, int] | None:
+    """Resolve the checkout, repo slug and PR this wait is for.
+
+    Args:
+        args: Parsed CLI arguments (``repo``, ``pr``).
+
+    Returns:
+        ``(root, repo, pr)``, or ``None`` when any of them cannot be
+        resolved, with the reason already logged.
+    """
     root = repo_root()
     if root is None:
         logger.error("pr-watch: not in a repository")
-        return EXIT_REFUSED
+        return None
     repo = _resolve_repo(root, args.repo)
     if repo is None:
         logger.error("pr-watch: could not resolve owner/repo")
-        return EXIT_REFUSED
+        return None
     pr = args.pr if args.pr is not None else _auto_detect_pr(root, repo)
     if pr is None:
         logger.error("pr-watch: no open PR for this branch; pass --pr")
-        return EXIT_REFUSED
+        return None
     return root, repo, pr
 
 
@@ -967,9 +1000,11 @@ def cmd_await(args: argparse.Namespace) -> int:
         # runner for the whole bound (FOUNDATION §15).
         logger.info("pr-watch: CI run — not waiting")
         return EXIT_OK
+    if not _args_valid(args):
+        return EXIT_REFUSED
     target = _resolve_target(args)
-    if isinstance(target, int):
-        return target
+    if target is None:
+        return EXIT_REFUSED
     root, repo, pr = target
     if failures := arming_check(repo, pr):
         for failure in failures:
@@ -1009,12 +1044,6 @@ def _watch_until(args: argparse.Namespace, repo: str, pr: int, log_path: Path) -
     """
     started = time.monotonic()
     windows = 0
-    # Counted as well as timed. A window that returns instantly — a
-    # non-positive bound, a clock that does not advance — leaves `spent`
-    # at zero, and a loop bounded only by elapsed time would then spin,
-    # calling `gh` as fast as it can answer. The count cannot be fooled
-    # that way.
-    max_windows = max(1, args.total_bound // max(1, args.bound))
     while True:
         code, lines = await_events(repo, pr, args.interval, args.bound, log_path)
         windows += 1
@@ -1024,7 +1053,11 @@ def _watch_until(args: argparse.Namespace, repo: str, pr: int, log_path: Path) -
         spent = time.monotonic() - started
         # Only open another window if a whole one fits: stopping early
         # beats reporting a total the watch did not actually wait.
-        if args.once or windows >= max_windows or spent + args.bound > args.total_bound:
+        # Elapsed time is enough on its own *because* of the floors —
+        # with `bound >= interval >= 30` a window cannot return early,
+        # so `spent` always advances. Absent them this check would be a
+        # lie and the loop a hot one against the API.
+        if args.once or spent + args.bound > args.total_bound:
             _deliver(
                 [
                     (
