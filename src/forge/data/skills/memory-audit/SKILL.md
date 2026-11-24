@@ -96,14 +96,33 @@ some proposals and keep others:
 
 Entry format: the intake's `README.md` (written by `forge-intake init`).
 
+## Background mode (implementation start)
+
+When a session begins an implementation (`/next` picking a task, `/sentinel`
+picking a plan), it spawns this skill as a **background child** — not as an
+offer. In that mode:
+
+- Run Steps 1–4 unchanged, but **propose only**: never edit or delete
+  memory and never run Step 5 — the reconciling decisions belong to a
+  human later.
+- Write the Step-4 report (verdict table + proposals + promotion
+  candidates) to `code_health/memory-audit-proposals.md` in the repo root —
+  gitignored, and it survives the session that commissioned it.
+- End with a one-line proposal count. Nothing blocks on the result;
+  silence is not a decision.
+
 ## Cadence
 
 - **On demand.**
-- **`/next`** runs `forge-memory-audit status` and offers this audit once
-  enough new memories have built up (`[tool.forge.memory_audit].threshold`,
-  default 5).
-- **`/pr`** offers it when the PR edits the rule surface (`forge-pr-plan`
-  reports `rule_surface: true`) — the memory that motivated a rule change
+- **Implementation start**: `/next` and `/sentinel` spawn this skill as a
+  background child at task/plan pickup (see Background mode) — the audit
+  runs while the work runs and costs no attention.
+- **`/pr` after the wrap-up posts** re-offers it once when
+  `code_health/memory-audit-proposals.md` exists — the natural pause. One
+  re-ask, never a repeating prompt.
+- **`/pr` on rule-surface PRs** still offers it when `forge-pr-plan`
+  reports `rule_surface: true` — the memory that motivated a rule change
   is now a DUPLICATES candidate.
 
-Offered, never run silently.
+Offered interactively, never run silently; dispatched in background, it
+proposes only.

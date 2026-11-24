@@ -103,6 +103,13 @@ code**: `[sentinel] taken up — branch <name>, <date>`. The rule is for
 everyone: humans see who holds the issue, and the `plan-readiness`
 screen treats it as in execution.
 
+Implementation has now started → **dispatch the memory audit in the
+background**: if the harness names a memory directory in the session
+context, spawn the `forge:memory-audit` agent as a background child with
+instructions to run in Background mode — propose-only, report written to
+`code_health/memory-audit-proposals.md`. It runs while the plan executes,
+never blocks, and silence is not a decision. No memory directory → skip.
+
 ### Reading a recheck
 
 `drift` already ignores regenerated files and lists shared-file changes
