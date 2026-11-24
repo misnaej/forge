@@ -219,6 +219,12 @@ task-selection precedence rule in Important Rules).
     - Create a feature branch using the repo's prefix convention (`feat/`, `fix/`, `refactor/`, `test/`, `docs/`, `chore/` + short description, e.g., `feat/issue-NNN-short-description`).
     - Fetch issue details: `gh issue view <number>`.
     - Present a brief summary and starting points (key files, relevant code areas).
+    - **Dispatch the memory audit in the background** (implementation just
+      started): if the harness names a memory directory in the session
+      context, spawn the `forge:memory-audit` agent as a background child
+      with instructions to run in Background mode — propose-only, report
+      written to `code_health/memory-audit-proposals.md`. It costs no
+      attention and never blocks; no memory directory → skip.
 
 ## Phase 6: Carry CONTINUATION state forward
 
@@ -243,10 +249,11 @@ task-selection precedence rule in Important Rules).
       git and GitHub — the note owes the next session *orientation*, not
       a log. The never-delete rule protects the FILE, not stale content
       inside it.
-    - Run `forge-memory-audit status --memory-dir <memory dir>` (the
-      harness names the agent's memory directory in the session
-      context). When it reports the threshold is crossed, **offer**
-      `/memory-audit` — never run it silently. No memory directory →
+    - Run `forge-memory-audit status --memory-dir <memory dir>` for the
+      record (the harness names the agent's memory directory in the
+      session context). The audit itself was already dispatched in the
+      background at task pickup (Phase 5, step 15); its proposals land in
+      `code_health/memory-audit-proposals.md`. No memory directory →
       skip.
 
     If `.plan/CONTINUATION.md` does not exist, `forge-continuation state --with-pr`
