@@ -936,6 +936,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_phrase_hit(blob: str) -> str | None` _(internal)_ — Return the attribution phrase found in lowercased *blob*, if any.
 - `_outside_closed_fences(blob: str) -> str` _(internal)_ — Return *blob* without its CLOSED fenced blocks.
 - `_vendor_hit(blob: str) -> tuple[str, str] | None` _(internal)_ — Return ``(vendor, token)`` for the first bare vendor mention in *blob*.
+- `_names_forge_cli(token: str) -> bool` _(internal)_ — Return whether *token* is one of forge's own console scripts.
 - `attribution_phrase(text: str) -> str | None` — Return the AI-credit phrase in *text*, ignoring bare vendor names.
 - `validate_no_ai_attribution(text: str, *, exempt_fenced_vendor_tokens: bool = False) -> None` — Reject Claude / AI attribution per FOUNDATION §2.
 - `parse_paged_json(raw: str, *, strict: bool = False) -> list[Any]` — Flatten ``gh api --paginate --jq '[...]'`` output into one list.
@@ -1887,6 +1888,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_check_gh_auth(failures: list[str]) -> None` _(internal)_ — Append a failure when gh auth is not logged in.
 - `_check_pr_view(repo: str, pr: int, failures: list[str]) -> None` _(internal)_ — Parse one full gh pr view and append failures for missing signals.
 - `class PollOutcome` — One poll's alerts plus the state the loop decides from.
+- `_is_forge_comment(comment: dict[str, object]) -> bool` _(internal)_ — Return whether *comment* is one forge posted itself.
 - `_comment_alerts(pr: int, view: dict[str, object], seen: set[str], *, first_poll: bool) -> list[str]` _(internal)_ — Return alerts for comments not seen on an earlier poll.
 - `_poll_once(repo: str, pr: int, seen_comments: set[str], *, first_poll: bool) -> PollOutcome` _(internal)_ — Run one poll cycle over all five signals.
 - `_stack_parent(repo: str, base_ref: str) -> bool` _(internal)_ — Return whether *base_ref* is another open PR's head branch.
@@ -1903,7 +1905,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_append_alert(path: Path, line: str) -> None` _(internal)_ — Append one alert to the PR's log, so ``digest`` can still read it.
 - `cmd_await(args: argparse.Namespace) -> int` — Wait for the first event on a PR worth telling a session about.
 - `_alert_lines(path: Path) -> list[str]` _(internal)_ — Return a log's alert lines, in order, without repeats.
-- `cmd_digest(_args: argparse.Namespace) -> int` — Report what past waits logged, including what never woke a session.
+- `cmd_digest(args: argparse.Namespace) -> int` — Report what past waits logged, including what never woke a session.
+- `_prune_settled_logs(root: Path, logs: list[Path]) -> None` _(internal)_ — Delete the log and cursor of every PR that has merged or closed.
 - `_stack_order(prs: list[dict[str, object]]) -> list[dict[str, object]]` _(internal)_ — Order open PRs so every parent precedes its stacked children.
 - `cmd_stack(args: argparse.Namespace) -> int` — List the open-PR stack in dependency order with per-PR state.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — The CLI surface.

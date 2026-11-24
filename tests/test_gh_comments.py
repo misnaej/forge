@@ -152,6 +152,66 @@ def test_validate_no_ai_attribution_accepts_honest_text(blob: str) -> None:
     mod.validate_no_ai_attribution(_with_extra(blob))
 
 
+_FAKE_CLI_NAMES = frozenset({"install-forge-claude", "install-forge-claude-md"})
+
+
+@pytest.fixture
+def fixed_forge_cli_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the console-script set so rows do not depend on the editable install."""
+    monkeypatch.setattr(mod, "_forge_cli_names", lambda: _FAKE_CLI_NAMES)
+
+
+@pytest.mark.usefixtures("fixed_forge_cli_names")
+@pytest.mark.parametrize(
+    "blob",
+    [
+        "run install-forge-claude to refresh",
+        "run install-forge-claude-md to refresh",
+        "the step is install-forge-claude.",
+    ],
+    ids=["cli", "cli-with-suffix", "cli-ending-a-sentence"],
+)
+def test_validate_no_ai_attribution_accepts_a_forge_cli_name(blob: str) -> None:
+    """A forge console script named in prose is a tool name, not AI credit.
+
+    Args:
+        blob: Text naming a CLI whose name carries a vendor token.
+    """
+    mod.validate_no_ai_attribution(_with_extra(blob))
+
+
+@pytest.mark.usefixtures("fixed_forge_cli_names")
+@pytest.mark.parametrize(
+    "blob",
+    [
+        "install-forge-claude thanks claude",
+        "install-forge-claude generated with claude",
+        "notinstall-forge-claude",
+    ],
+    ids=[
+        "credit-token-beside-cli",
+        "credit-phrase-beside-cli",
+        "token-merely-containing-cli",
+    ],
+)
+def test_validate_no_ai_attribution_forge_cli_exemption_does_not_widen(
+    blob: str,
+) -> None:
+    """The CLI exemption is an exact-token match and never excuses credit.
+
+    Args:
+        blob: Credit beside a CLI name, or a token only containing one.
+    """
+    with pytest.raises(mod.ValidationError):
+        mod.validate_no_ai_attribution(_with_extra(blob))
+
+
+def test_validate_no_ai_attribution_reads_the_live_console_scripts() -> None:
+    """The exemption follows the installed entry points, not a copied list."""
+    assert "install-forge-claude" in mod._forge_cli_names()
+    mod.validate_no_ai_attribution(_with_extra("run install-forge-claude."))
+
+
 @pytest.mark.parametrize(
     "blob",
     [

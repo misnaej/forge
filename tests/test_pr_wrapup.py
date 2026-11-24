@@ -2077,7 +2077,8 @@ def test_main_compose_delta_mode_renders_prior_sha_rollup_and_checked_issue_mana
 
     assert rc == 0
     written = (code_health_dir(tmp_path) / "pr_wrapup.md").read_text(encoding="utf-8")
-    assert written.count("PASS — unchanged since abc1234 (delta)") == 3
+    assert written.count("NOT RE-RUN (delta)") == 3
+    assert "abc1234" in written
     assert "✅ passed (1 checks)" in written
     assert "Closes #99" in written
     assert "provisional" not in written

@@ -38,17 +38,28 @@ from tests.conftest import timing_log
 _ALL_REPORTERS = tuple(reporter for _title, reporter in REPORTER_SECTIONS)
 
 
-def _pass_report(sha: str | None = None) -> str:
-    """Build a clean reporter report, optionally headed by its own ``verified-at:``.
+def _pass_report(sha: str = "abc1234") -> str:
+    """Build a clean reporter report headed by its own ``verified-at:``.
+
+    The default SHA prefixes the ``head_sha`` that :func:`_inputs` uses, so
+    a bare ``_pass_report()`` reads as verified at the current head.
 
     Args:
-        sha: Header SHA to prepend, or ``None`` for a headerless report.
+        sha: Header SHA the report claims to have been verified at.
 
     Returns:
         A report whose first substantive line starts with ``PASS``.
     """
-    header = f"verified-at: {sha}   (PR #1, branch x)\n" if sha else ""
-    return f"{header}PASS — no issues found.\n"
+    return f"verified-at: {sha}   (PR #1, branch x)\nPASS — no issues found.\n"
+
+
+def _headerless_pass_report() -> str:
+    """Build a one-line ``PASS`` file with no ``verified-at:`` header.
+
+    Returns:
+        Text that satisfies a presence check but is not a reporter's report.
+    """
+    return "PASS — no issues found.\n"
 
 
 def _findings_report() -> str:
@@ -275,27 +286,34 @@ def test_render_wrapup_light_docs_and_light_regen_skip_design_and_security(
     assert validate_wrapup(_fill(text)) == []
 
 
-def test_render_wrapup_delta_mode_reports_unchanged_since_prior_sha() -> None:
-    """Delta reporter sections never render a ``verified-at:`` line.
+@pytest.mark.parametrize(
+    ("prior_sha", "named"),
+    [("9f8e7d6", "9f8e7d6"), (None, "an earlier head")],
+    ids=["prior-sha-known", "prior-sha-unknown"],
+)
+def test_render_wrapup_delta_mode_reports_not_re_run_never_a_verdict(
+    prior_sha: str | None, named: str
+) -> None:
+    """Delta reporter sections say ``NOT RE-RUN``, never a ``PASS`` verdict.
 
-    The prior SHA is not rendered as a line.
+    A verdict minted from the mode alone read as a reviewer's sign-off for a
+    head no reporter looked at. The prior SHA (or its absence) is named so a
+    reader can find the verdict that does exist.
+
+    Args:
+        prior_sha: The ``delta_prior_sha`` input.
+        named: What the rendered line must name instead of a verdict.
     """
-    inputs = _inputs(mode="delta", reporters=(), reports={}, delta_prior_sha="9f8e7d6")
+    inputs = _inputs(mode="delta", reporters=(), reports={}, delta_prior_sha=prior_sha)
     text = render_wrapup(inputs)
-    assert text.count("PASS — unchanged since 9f8e7d6 (delta)") == 3
+    assert text.count("NOT RE-RUN (delta)") == 3
+    assert text.count(named) >= 3
+    assert "PASS" not in text
     assert "wrapup-mode:" not in text
     # Only the real header counts — the quoted prior SHA never starts a line.
     assert extract_verified_shas(text) == [inputs.head_sha]
+    # The new wording must not trip a validator expecting PASS/SKIPPED.
     assert validate_wrapup(_fill(text)) == []
-
-
-def test_render_wrapup_delta_mode_falls_back_to_question_mark_without_a_prior_sha() -> (
-    None
-):
-    """A missing ``delta_prior_sha`` renders ``?`` rather than omitting the clause."""
-    inputs = _inputs(mode="delta", reporters=(), reports={}, delta_prior_sha=None)
-    text = render_wrapup(inputs)
-    assert "PASS — unchanged since ? (delta)" in text
 
 
 def test_render_wrapup_emergency_skips_evidence_checks_entirely() -> None:
@@ -369,46 +387,85 @@ def test_render_wrapup_raises_when_prior_art_report_lacks_the_header_line() -> N
 # ---------------------------------------------------------------------------
 
 
-def test_reporter_pass_line_gets_a_verified_at_suffix_when_the_report_sha_differs() -> (
-    None
-):
-    """A report verified at a different SHA than HEAD names its own SHA."""
+def test_reporter_pass_line_says_not_re_verified_when_the_report_sha_differs() -> None:
+    """A PASS for an earlier SHA is rendered as a warning, not a sign-off.
+
+    The line leads with the caveat: a reader scanning for "PASS" stops at the
+    first word, so a caveat trailing the sentence reads as provenance rather
+    than a warning.
+    """
     inputs = _inputs(
         head_sha="fed9999",
         reports={
             "design-checker": _pass_report(sha="abc1234"),
-            "security-checker": _pass_report(),
-            "docs-types-checker": _pass_report(),
+            "security-checker": _pass_report(sha="fed9999"),
+            "docs-types-checker": _pass_report(sha="fed9999"),
         },
     )
     text = render_wrapup(inputs)
-    assert "PASS — no issues found. (verified-at abc1234)" in text
+    assert text.count("NOT re-verified at fed9999") == 1
+    assert text.count("(verdict at abc1234)") == 1
+    assert text.count("PASS — no issues found.") == 3
+    assert "(verified-at" not in text
+    stale = next(ln for ln in text.splitlines() if "(verdict at abc1234)" in ln)
+    assert stale.startswith("NOT re-verified")
+    assert not stale.startswith("PASS")
     # The report's own header SHA is never mistaken for a wrap-up header.
     assert extract_verified_shas(text) == ["fed9999"]
 
 
-def test_reporter_pass_line_has_no_suffix_when_the_report_sha_prefixes_head() -> None:
-    """A report SHA that prefixes (or is prefixed by) HEAD needs no suffix."""
+@pytest.mark.parametrize(
+    ("head_sha", "report_sha"),
+    [("abc1234def", "abc1234"), ("abc1234", "abc1234def")],
+    ids=["report-sha-prefixes-head", "head-prefixes-report-sha"],
+)
+def test_reporter_pass_line_is_plain_when_either_sha_prefixes_the_other(
+    head_sha: str, report_sha: str
+) -> None:
+    """SHAs of different lengths for one commit stay a plain PASS, both ways.
+
+    The two rows pin the two-way prefix condition so neither direction can
+    be dropped without a failure.
+
+    Args:
+        head_sha: The wrap-up's head.
+        report_sha: The SHA the design report was verified at.
+    """
     inputs = _inputs(
-        head_sha="abc1234def",
+        head_sha=head_sha,
         reports={
-            "design-checker": _pass_report(sha="abc1234"),
-            "security-checker": _pass_report(),
-            "docs-types-checker": _pass_report(),
+            "design-checker": _pass_report(sha=report_sha),
+            "security-checker": _pass_report(sha=head_sha),
+            "docs-types-checker": _pass_report(sha=head_sha),
         },
     )
     text = render_wrapup(inputs)
-    assert "(verified-at" not in text
+    assert "NOT re-verified" not in text
     assert text.count("PASS — no issues found.") == 3
 
 
 def test_report_line_with_a_finding_after_pass_returns_none() -> None:
-    """A PASS-opening report with a further finding line is not compressed to it."""
+    """A PASS-opening report with a further finding line is not compressed to it.
+
+    The header is what lets the report reach the multi-line branch; without
+    one this would return ``None`` at the header gate and pin nothing.
+    """
     report = (
+        "verified-at: abc1234\n"
         "PASS — no vulnerabilities found.\n"
         "LOW: hardcoded example token in fixtures/demo.py\n"
     )
     assert _report_line(report, "abc1234") is None
+
+
+def test_report_line_without_a_verified_at_header_yields_no_verdict() -> None:
+    """A headerless ``PASS`` file is not a report, so it renders no verdict.
+
+    A one-line ``PASS`` written to satisfy a presence check once rendered as
+    a reviewer's sign-off; the same text with a header is the control.
+    """
+    assert _report_line(_headerless_pass_report(), "abc1234") is None
+    assert _report_line(_pass_report(), "abc1234") == "PASS — no issues found."
 
 
 # ---------------------------------------------------------------------------

@@ -294,17 +294,43 @@ def _vendor_hit(blob: str) -> tuple[str, str] | None:
         blob: Lowercased text to scan token by token.
 
     Returns:
-        The vendor name and the token containing it, or ``None`` when every
-        vendor mention sits inside a repo-file citation.
+        The vendor name and the token containing it, or ``None`` when
+        every vendor mention sits inside a repo-file citation or names a
+        forge CLI.
     """
     for raw in blob.split():
         token = _strip_token(raw)
-        if _is_citation(token):
+        if _is_citation(token) or _names_forge_cli(token):
             continue
         for vendor in _VENDOR_TOKENS:
             if vendor in token:
                 return vendor, token
     return None
+
+
+def _names_forge_cli(token: str) -> bool:
+    """Return whether *token* is one of forge's own console scripts.
+
+    Several of them carry a vendor token in their name —
+    ``install-forge-claude``, ``install-forge-claude-md`` — so the bare
+    mention rule refused any commit message or PR body that named the
+    command it was describing. The rule exists to keep AI *credit* out of
+    repository history, and a tool's own name is not credit: the text
+    "the installer copied it" and "install-forge-claude copied it" differ
+    only in that the second is useful to the next reader.
+
+    Read from the installed distribution's entry points, like
+    :func:`_forge_cli_names`, so a CLI added later needs no second list
+    here. Trailing punctuation is shed first, so a name at the end of a
+    sentence still matches.
+
+    Args:
+        token: One already-stripped lowercased token from the text.
+
+    Returns:
+        ``True`` when the token names an installed forge console script.
+    """
+    return token.rstrip(".,:;-") in _forge_cli_names()
 
 
 def attribution_phrase(text: str) -> str | None:

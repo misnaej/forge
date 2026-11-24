@@ -89,13 +89,17 @@ Stop immediately and report if any step fails.
 
 8. **Read what the PR waits saw while nobody was watching**
    ```bash
-   forge-pr-watch digest
+   forge-pr-watch digest --prune-terminal
    ```
    A wait that nothing was there to receive — no session open, or an
    alert that ends no wait, like a stale wrap-up or a failed poll —
    leaves its alerts in `code_health/pr_watch_<pr>.log`. This is that
    read, and task start is when it pays: whatever happened while nothing
-   was waiting is reported here or not at all. Nothing to report is a silent pass. A **merged or
+   was waiting is reported here or not at all. Nothing to report is a silent pass.
+   `--prune-terminal` clears a settled PR's log **after** reporting it,
+   so a merge is still read once and then stops being re-reported at
+   every task start; a log is only appended to, so without it settled
+   history accumulates until a reader learns to scroll past it. A **merged or
    closed** PR in the digest means the cleanup it names is owed — that is
    Phase 1's pruning plus `forge-issue-triage` `post-pr`; a
    **CONFLICTING** one means `forge-update-branch` on that branch, never

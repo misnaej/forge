@@ -51,6 +51,8 @@ from forge.git_utils import (
     run_git,
 )
 from forge.pr_plan import wrapup_freshness
+from forge.pr_squash_comment import SQUASH_MARKER
+from forge.pr_wrapup import WRAPUP_MARKER
 from forge.run_context import is_ci
 
 
@@ -286,6 +288,35 @@ class PollOutcome:
     ok: bool = True
 
 
+#: The HTML markers forge's own PR comments open with. A wait exists for
+#: *other people's* review comments, and the standard flow posts a
+#: wrap-up and a squash message and then waits — so without this a
+#: session is woken by its own bookkeeping, and the
+#: ``keep_squash_comment_last`` hook re-posting wakes it again.
+#:
+#: Matched on the marker, not on the comment's author: forge's agent and
+#: the human reviewing often share one account, so filtering by author
+#: would swallow real review comments. And matched on an HTML comment
+#: nobody types by hand rather than on visible prose — a reviewer who
+#: quoted a phrase would otherwise silence their own comment, which is
+#: the same spoof that let a check name bury a CI failure.
+_FORGE_COMMENT_MARKERS: Final = (WRAPUP_MARKER, SQUASH_MARKER)
+
+
+def _is_forge_comment(comment: dict[str, object]) -> bool:
+    """Return whether *comment* is one forge posted itself.
+
+    Args:
+        comment: One entry from ``gh pr view --json comments``.
+
+    Returns:
+        ``True`` when its body carries a marker from
+        :data:`_FORGE_COMMENT_MARKERS`.
+    """
+    body = str(comment.get("body", ""))
+    return any(marker in body for marker in _FORGE_COMMENT_MARKERS)
+
+
 def _comment_alerts(
     pr: int, view: dict[str, object], seen: set[str], *, first_poll: bool
 ) -> list[str]:
@@ -317,7 +348,7 @@ def _comment_alerts(
     identities = [
         str(c.get("id") or f"{c.get('createdAt', '')}:{c.get('author', '')}")
         for c in comments
-        if isinstance(c, dict)
+        if isinstance(c, dict) and not _is_forge_comment(c)
     ]
     fresh = [i for i in identities if i and i not in seen]
     # Append-only, and the alert below depends on it: `len(seen)` is what
@@ -662,6 +693,11 @@ def _auto_detect_pr(root: Path, repo: str) -> int | None:
 
 _ALERT_PREFIX: Final = "pr-watch: "
 
+#: Most logs one ``digest --prune-terminal`` run will check the state of.
+#: Each costs a ``gh`` call, and the rest are simply left for the next
+#: run — the same bound the branch prune uses, for the same reason.
+_PRUNE_SCAN_MAX: Final = 50
+
 
 def await_events(
     repo: str, pr: int, interval: int, bound: int, log_path: Path
@@ -927,7 +963,7 @@ def _alert_lines(path: Path) -> list[str]:
     return lines
 
 
-def cmd_digest(_args: argparse.Namespace) -> int:
+def cmd_digest(args: argparse.Namespace) -> int:
     """Report what past waits logged, including what never woke a session.
 
     ``await`` delivers qualifying events by exiting; this is the catch-up
@@ -935,10 +971,16 @@ def cmd_digest(_args: argparse.Namespace) -> int:
     no session waiting, and the ones that end no wait (wrap-up
     staleness, a failed poll).
 
-    Reads every ``pr_watch_*.log`` present.
+    Reads every ``pr_watch_*.log`` present. With ``--prune-terminal``,
+    clears the ones whose PR has since merged or closed — **after**
+    reporting them, so the read is never the thing that loses an alert.
+    That ordering is why the clearing lives here and not in
+    ``forge-next-prep``: pruning before the digest is read would delete
+    the merge report that tells a session cleanup is owed.
 
     Args:
-        _args: Parsed CLI arguments (unused).
+        args: Parsed CLI arguments; ``prune_terminal`` decides whether
+            settled logs are cleared once reported.
 
     Returns:
         Exit code; ``0`` whether or not anything was found, since having
@@ -974,7 +1016,53 @@ def cmd_digest(_args: argparse.Namespace) -> int:
         sys.stdout.write(
             "no alerts to report" + (" (no logs present)\n" if not logs else "\n")
         )
+    if getattr(args, "prune_terminal", False):
+        _prune_settled_logs(root, logs)
     return EXIT_OK
+
+
+def _prune_settled_logs(root: Path, logs: list[Path]) -> None:
+    """Delete the log and cursor of every PR that has merged or closed.
+
+    A log is append-only and a cursor outlives the process, so without
+    this a merged PR's alerts are reported at every task start forever,
+    aged but unchanged — and a reader who learns to scroll past settled
+    history is a reader who will scroll past a live conflict. The old
+    detached monitor hid this by truncating its log on start; nothing
+    starts any more.
+
+    Bounded like the branch prune: a PR whose state ``gh`` cannot report
+    is left alone, because "unknown" must never read as "settled".
+
+    Args:
+        root: Repo root, holding ``code_health/``.
+        logs: The log paths this run already reported.
+    """
+    repo = _resolve_repo(root, None)
+    if repo is None:
+        return
+    for path in logs[:_PRUNE_SCAN_MAX]:
+        pr = path.stem.removeprefix("pr_watch_")
+        if not pr.isdigit():
+            continue
+        try:
+            state = json.loads(
+                _gh("pr", "view", pr, "--repo", repo, "--json", "state").stdout
+            ).get("state")
+        except (
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            json.JSONDecodeError,
+        ):
+            continue
+        if state not in {"MERGED", "CLOSED"}:
+            continue
+        for doomed in (path, _seen_path(path)):
+            try:
+                doomed.unlink(missing_ok=True)
+            except OSError:
+                logger.exception("pr-watch: could not remove %s", doomed)
+        sys.stdout.write(f"cleared PR #{pr} ({state.lower()}): {path.name}\n")
 
 
 def _stack_order(prs: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -1123,6 +1211,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             "Report what waiting already alerted on, including the events "
             "that do not interrupt a session (the log's read end)."
+        ),
+    )
+    p_digest.add_argument(
+        "--prune-terminal",
+        action="store_true",
+        help=(
+            "After reporting, clear the log and cursor of every PR that "
+            "has merged or closed. /forge-next passes it at task start, "
+            "so settled history stops being re-reported forever."
         ),
     )
     p_digest.set_defaults(func=cmd_digest)
