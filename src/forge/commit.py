@@ -74,10 +74,11 @@ from forge.git_utils import (
     ref_exists,
     repo_root,
     run_git,
+    working_tree_sha,
 )
 from forge.pr_squash_comment import TITLE_RE
 from forge.pr_wrapup import WRAPUP_NAME, wrapup_names_head
-from forge.precommit import verdict
+from forge.precommit import index_reading_steps, run_all, verdict
 from forge.regen_docs import API_DIGEST_DOC, CLI_REFERENCE_DOC
 from forge.text_budget import BUDGET_RULE, length_verdict, refusal_threshold
 
@@ -255,19 +256,95 @@ def check_verdict(root: Path) -> None:
             excuse it).
     """
     passed, lines = verdict(root)
+    if not passed:
+        passed, lines = _refresh_index_steps(root, lines)
     if passed:
         return
     failed = [line for line in lines if line.startswith("FAIL")]
     if active_state(root) is not None and not failed:
         logger.warning("forge-commit: emergency armed — committing on stale evidence.")
         return
-    detail = "\n".join(lines[-6:])
     msg = (
         "pre-commit verdict did not pass; run forge-precommit-fixer first, then "
         "rerun forge-commit (the named files are left staged; it stages them "
-        f"again).\n{detail}"
+        f"again).\n{_verdict_detail(lines)}"
     )
     raise CommitRefusedError(msg)
+
+
+def _verdict_detail(lines: list[str]) -> str:
+    """Return the verdict rows a refusal must show, plus its closing line.
+
+    Every row that explains the refusal is kept, however far up the
+    verdict it sits: a tail slice drops the ``STALE`` and ``FAIL`` rows
+    behind a wall of ``PASS`` rows and leaves the reader only the cause
+    line, which names steps they cannot see.
+
+    Args:
+        lines: The verdict's rows, closing line last.
+
+    Returns:
+        The explaining rows and the closing line, newline-joined.
+    """
+    kept = [
+        line
+        for line in lines[:-1]
+        if line.startswith(("FAIL", "STALE", "MISSING", "NOTE"))
+    ]
+    return "\n".join([*kept, lines[-1]])
+
+
+def _refresh_index_steps(root: Path, lines: list[str]) -> tuple[bool, list[str]]:
+    """Re-run the index-reading steps when staging alone staled them.
+
+    ``forge-commit`` stages before reading the verdict, so its own staging
+    moves the index that ``regen_docs`` and ``changelog_updated`` are
+    judged against — and a verdict that passed on the unstaged tree then
+    refuses the commit it was produced for. Nothing about the working tree
+    changed, so those two steps are re-run here rather than charging the
+    caller a full battery for an index move this command made itself.
+
+    Mechanical by FOUNDATION §7: the result depends only on the tree and
+    the index. A ``--only`` run rewrites those steps' own logs and never
+    the full-run timing log, so the evidence stays honest about what ran
+    (FOUNDATION §13); a step that genuinely fails still refuses.
+
+    One of these steps regenerates rather than merely checks: ``regen_docs``
+    rewrites a generated doc whose sources moved, and that write stales
+    every tree-reading step at once. So the tree is fingerprinted across
+    the run, and a regeneration says so instead of leaving the caller to
+    read a cascade of ``STALE`` rows with no cause. The regenerated file is
+    staged by the step itself and belongs in this commit; only the full run
+    that re-checks the new tree is still owed.
+
+    Args:
+        root: Repo root.
+        lines: The verdict rows that just failed.
+
+    Returns:
+        The re-read verdict, or the original when nothing was re-runnable.
+    """
+    stale = [line.split(" ", 1)[1] for line in lines if line.startswith("STALE ")]
+    index_steps = index_reading_steps()
+    retryable = [name for name in stale if name in index_steps]
+    if not retryable or len(retryable) != len(stale):
+        return False, lines
+    if [line for line in lines if line.startswith(("FAIL", "MISSING"))]:
+        return False, lines
+    logger.info(
+        "forge-commit: staging moved the index; re-running %s",
+        ", ".join(retryable),
+    )
+    before = working_tree_sha(root)
+    run_all(root, print_progress=False, only=retryable)
+    if working_tree_sha(root) != before:
+        logger.warning(
+            "forge-commit: %s regenerated tracked files while re-running "
+            "(they are staged). That changed the tree, so every step needs "
+            "one full forge-precommit run before this commit.",
+            ", ".join(retryable),
+        )
+    return verdict(root)
 
 
 def _git_paths(root: Path, *args: str) -> set[str]:

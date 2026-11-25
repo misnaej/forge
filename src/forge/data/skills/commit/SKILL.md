@@ -32,7 +32,9 @@ Run the standard commit workflow:
    - `0` → done.
    - `1` → refused (failed/stale pre-commit verdict, protected or
      detached branch, bad message, or `--push` without publication
-     evidence). Pre-commit failure → back to step 1; a push refusal means
+     evidence). Staging is not a cause: `forge-commit` stages before it
+     reads the verdict, and re-runs the two index-reading steps itself
+     when its own staging staled them. Pre-commit failure → back to step 1; a push refusal means
      the wrap-up does not name HEAD yet — publish later, at `/pr` Step
      3.95; else fix cause, rerun. Never route around a refusal.
    - `2` → push failed, commit stays local. Investigate (behind remote →

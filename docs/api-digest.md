@@ -539,6 +539,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `current_branch(root: Path) -> str` — The checked-out branch, refused when protected or detached.
 - `refuse_mid_merge(root: Path) -> None` — Refuse while a merge is in progress: merges belong to ``forge-update-branch``.
 - `check_verdict(root: Path) -> None` — Refuse unless the latest pre-commit verdict passed on this tree.
+- `_verdict_detail(lines: list[str]) -> str` _(internal)_ — Return the verdict rows a refusal must show, plus its closing line.
+- `_refresh_index_steps(root: Path, lines: list[str]) -> tuple[bool, list[str]]` _(internal)_ — Re-run the index-reading steps when staging alone staled them.
 - `_git_paths(root: Path, *args: str) -> set[str]` _(internal)_ — Run a ``-z`` path-listing git command and return its paths.
 - `_staged(root: Path, *diff_filter: str) -> set[str]` _(internal)_ — Paths currently staged, a rename counted as its old and new path.
 - `stage_exactly(root: Path, paths: tuple[str, ...]) -> None` — Stage *paths* and refuse when the index then holds anything else.
@@ -2092,7 +2094,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_log_has_producer(stem: str, step_names: frozenset[str]) -> bool` _(internal)_ — Return whether something forge runs still writes ``<stem>.log``.
 - `freshness_verdicts(root: Path) -> dict[str, str]` — Return each ``code_health/`` log's freshness verdict against the working tree.
 - `verdict(root: Path) -> tuple[bool, list[str]]` — Return whether every enabled step passed on the current tree.
-- `_verdict_closing_line(*, stale: bool, failing: list[str], missing: list[str], unchecked: list[str]) -> str` _(internal)_ — Return the verdict's closing line, naming the cause of a FAIL.
+- `index_reading_steps() -> frozenset[str]` — Return the names of the steps judged against the index, not the tree.
+- `_verdict_closing_line(*, tree_stale: bool, index_stale: list[str], failing: list[str], missing: list[str], unchecked: list[str]) -> str` _(internal)_ — Return the verdict's closing line, naming the cause of a FAIL.
 - `_report_list_files(root: Path, only: list[str]) -> int` _(internal)_ — Print each selected step's file set, one ``<step>: <path>`` per line.
 - `_report_freshness(only: list[str], *, as_json: bool) -> int` _(internal)_ — Report each ``code_health/`` log's freshness against the working tree.
 - `_attempt_outcome(results: Sequence[StepResult]) -> str` _(internal)_ — Name a finished run's result for the continuation status panel.

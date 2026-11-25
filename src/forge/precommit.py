@@ -3761,7 +3761,14 @@ def verdict(root: Path) -> tuple[bool, list[str]]:
     # A missing timing log is not a stale one: there is no run to describe
     # another tree, so it gets its own MISSING line and the closing cause
     # names "missing", never "describes another tree".
-    stale = not timing_missing and verdicts.get("precommit_timing") != "fresh"
+    stale_timing = not timing_missing and verdicts.get("precommit_timing") != "fresh"
+    stale = stale_timing
+    # Staleness is split by cause, because the cure differs. An index-reading
+    # step goes stale when the index alone moves — staging the files the run
+    # already saw — and then only those steps need re-running. Anything else
+    # stale means the tree itself moved, which only a full run replaces.
+    index_stale: list[str] = []
+    other_stale: list[str] = []
     if timing_missing:
         missing.append("precommit_timing")
         lines.append("MISSING precommit_timing (no full run recorded)")
@@ -3786,6 +3793,10 @@ def verdict(root: Path) -> tuple[bool, list[str]]:
             step.name
         ) in NOT_VERIFIED:
             stale = True
+            if step.reads_index:
+                index_stale.append(step.name)
+            else:
+                other_stale.append(step.name)
             lines.append(f"STALE {step.name}")
     # Computed now, not read from the run: the question is what the current
     # tree holds that no step looked at. It sits above the closing line,
@@ -3797,14 +3808,36 @@ def verdict(root: Path) -> tuple[bool, list[str]]:
     unchecked = list(dict.fromkeys(s for _, names in untracked for s in names))
     lines.append(
         _verdict_closing_line(
-            stale=stale, failing=failing, missing=missing, unchecked=unchecked
+            tree_stale=stale_timing or bool(other_stale),
+            index_stale=index_stale,
+            failing=failing,
+            missing=missing,
+            unchecked=unchecked,
         )
     )
     return not (stale or failing or missing or unchecked), lines
 
 
+def index_reading_steps() -> frozenset[str]:
+    """Return the names of the steps judged against the index, not the tree.
+
+    These are the steps a bare ``git add`` can stale on its own, so a
+    caller that stages (``forge-commit``) can tell an index move apart
+    from a real tree change without reaching into the registry.
+
+    Returns:
+        The step names whose evidence must describe the current index.
+    """
+    return frozenset(step.name for step in _STEP_REGISTRY if step.reads_index)
+
+
 def _verdict_closing_line(
-    *, stale: bool, failing: list[str], missing: list[str], unchecked: list[str]
+    *,
+    tree_stale: bool,
+    index_stale: list[str],
+    failing: list[str],
+    missing: list[str],
+    unchecked: list[str],
 ) -> str:
     """Return the verdict's closing line, naming the cause of a FAIL.
 
@@ -3812,12 +3845,22 @@ def _verdict_closing_line(
     quotes: listed above it among dozens of PASS rows, a lone STALE or
     FAIL row is easy to miss and a harmless WARN easy to blame. Stale
     evidence outranks failing steps — markers from a run that describes
-    another tree say nothing about this one, so the only useful advice is
-    the full re-run that replaces them. Untracked files come last: they
-    matter only once the run itself is current and complete.
+    another tree say nothing about this one. Untracked files come last:
+    they matter only once the run itself is current and complete.
+
+    A moved index gets its own cause, because the advice differs and the
+    wrong advice is expensive: when the tree is unchanged and only
+    index-reading steps went stale, re-running those steps is enough, and
+    a reader told to "finish all edits, then one full run" pays a whole
+    battery for two steps. It takes nothing else being wrong — a failing
+    or missing step outranks it, since "re-run these two" would leave
+    that failure unnamed, and ``forge-commit`` refuses to retry then too.
 
     Args:
-        stale: The full-run timing log, or any step log, describes another tree.
+        tree_stale: Evidence describes another tree: the full-run timing
+            log or a stale step that reads the working tree.
+        index_stale: Stale steps that read the index (a moved index alone
+            explains them when nothing else is stale).
         failing: Enabled steps the last full run recorded as FAIL.
         missing: Enabled steps the last full run never reached.
         unchecked: Steps that passed over untracked files on this tree.
@@ -3825,7 +3868,15 @@ def _verdict_closing_line(
     Returns:
         ``verdict: PASS``, or ``verdict: FAIL — <cause>``.
     """
-    if stale:
+    if index_stale and not tree_stale and not failing and not missing:
+        names = ", ".join(index_stale)
+        return (
+            f"verdict: FAIL — the index moved since the run: {names} read "
+            "staged state and no longer describe it. The working tree is "
+            "unchanged, so re-run those steps alone — forge-precommit "
+            f"--only {','.join(index_stale)} — not the whole battery"
+        )
+    if tree_stale:
         return (
             "verdict: FAIL — evidence describes another tree; finish all "
             "edits, then one full forge-precommit run"

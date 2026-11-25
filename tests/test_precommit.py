@@ -8766,6 +8766,158 @@ def test_verdict_skip_on_non_index_step_with_stale_log_remains_exempt(
     assert lines[-1] == "verdict: PASS"
 
 
+def _index_stale_repo(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    rows_override: dict[str, str] | None = None,
+    timing_tree: str | None = None,
+) -> list[str]:
+    """Seed a repo whose enabled index-reading steps all carry a stale-index log.
+
+    Args:
+        tmp_path: Repo root to initialise.
+        monkeypatch: Forwarded to ``_verdict_repo``.
+        rows_override: Step name -> marker replacing the default PASS row.
+        timing_tree: Forwarded to ``_verdict_repo``.
+
+    Returns:
+        The enabled index-reading step names, in registry order.
+    """
+    init_git_repo(tmp_path)
+    _write_pyproject(
+        tmp_path, '[tool.forge.precommit]\nenable = ["changelog_updated"]\n'
+    )
+    rows = {**_all_rows(tmp_path), **(rows_override or {})}
+    enabled = _verdict_repo(tmp_path, monkeypatch, rows=rows, timing_tree=timing_tree)
+    index_steps = [n for n in enabled if n in precommit.index_reading_steps()]
+    head_tree = git_utils.get_tree_sha(tmp_path, "HEAD")
+    assert head_tree is not None
+    for name in index_steps:
+        _write_log_with_stamp(tmp_path, name, tree=head_tree, index="0" * 40)
+    return index_steps
+
+
+def test_verdict_index_only_stale_names_rerun_of_those_steps_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The index-moved cause advises a targeted re-run, not a full run.
+
+    SCENARIO: every step PASSed on the current tree, but both index-reading
+    steps' logs carry another index.
+    EXPECTED BEHAVIOR: the closing line says the index moved, names both
+    steps comma-joined in registry order after ``--only``, and offers
+    neither "finish all edits" nor a full run.
+    """
+    index_steps = _index_stale_repo(tmp_path, monkeypatch)
+
+    ok, lines = precommit.verdict(tmp_path)
+
+    assert ok is False
+    assert index_steps == ["regen_docs", "changelog_updated"]
+    assert all(f"STALE {name}" in lines for name in index_steps)
+    closing = lines[-1]
+    assert closing.startswith("verdict: FAIL — the index moved")
+    assert "forge-precommit --only regen_docs,changelog_updated" in closing
+    assert "finish all edits" not in closing
+    assert "full forge-precommit run" not in closing
+
+
+@pytest.mark.parametrize("case", ["stale_timing", "stale_other_step", "failing_step"])
+def test_verdict_index_stale_beside_other_cause_keeps_the_other_cause(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    """A stale index never masks a graver cause with the targeted-re-run advice.
+
+    SCENARIO: index steps are stale, and beside them either the timing log
+    is stale, a non-index step's log is stale, or a step FAILed.
+    EXPECTED BEHAVIOR: the closing line names that other cause and never
+    uses the index-moved wording.
+
+    Args:
+        case: Which second cause accompanies the stale index.
+    """
+    if case == "stale_timing":
+        _index_stale_repo(tmp_path, monkeypatch, timing_tree="0" * 40)
+    elif case == "failing_step":
+        _index_stale_repo(tmp_path, monkeypatch, rows_override={"ruff": "FAIL"})
+    else:
+        _index_stale_repo(tmp_path, monkeypatch)
+        _write_log_with_stamp(tmp_path, "ruff", tree="0" * 40)
+
+    ok, lines = precommit.verdict(tmp_path)
+
+    assert ok is False
+    closing = lines[-1]
+    assert "index moved" not in closing
+    if case == "failing_step":
+        assert closing == "verdict: FAIL — failing: ruff"
+    else:
+        assert "evidence describes another tree" in closing
+
+
+def test_index_reading_steps_includes_a_newly_registered_step(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The index-reading set comes from the registry, not a hardcoded pair.
+
+    SCENARIO: a step flagged ``reads_index`` is added to the registry.
+    MOCK SETUP: ``_STEP_REGISTRY`` is extended with one ``reads_index`` step.
+    EXPECTED BEHAVIOR: the new step joins the set beside the shipped
+    ``regen_docs`` and ``changelog_updated``.
+    """
+    extra = precommit.StepDef("zz_extra", precommit.step_ruff, reads_index=True)
+    monkeypatch.setattr(precommit, "_STEP_REGISTRY", (*precommit._STEP_REGISTRY, extra))
+
+    assert {"regen_docs", "changelog_updated", "zz_extra"} <= (
+        precommit.index_reading_steps()
+    )
+
+
+def test_verdict_staging_a_changed_file_stales_only_the_index_steps(
+    tmp_path: Path,
+) -> None:
+    """Pin the premise forge-commit relies on: staging moves only the index.
+
+    SCENARIO: real git; an edited tracked file, every step PASS, logs
+    stamped against the current tree and index. Then the file is staged.
+    EXPECTED BEHAVIOR: the verdict passes before staging; after it, the
+    only STALE rows are the index-reading steps and the closing line is the
+    index-moved cause (the working tree did not change).
+    """
+    init_git_repo(tmp_path)
+    _write_pyproject(
+        tmp_path, '[tool.forge.precommit]\nenable = ["changelog_updated"]\n'
+    )
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+    (tmp_path / "tracked.txt").write_text("v2\n")
+    tree = git_utils.working_tree_sha(tmp_path)
+    index = git_utils.index_sha(tmp_path)
+    assert tree is not None
+    assert index is not None
+    rows = _all_rows(tmp_path)
+    body = timing_log(*(f"{name} PASS" for name in rows), stamp=None)
+    _write_log_with_stamp(tmp_path, "precommit_timing", tree=tree, body=body)
+    index_steps = sorted(precommit.index_reading_steps() & rows.keys())
+    for name in index_steps:
+        _write_log_with_stamp(tmp_path, name, tree=tree, index=index)
+
+    assert precommit.verdict(tmp_path) == (
+        True,
+        [*(f"PASS {n}" for n in rows), "verdict: PASS"],
+    )
+
+    subprocess.run(["git", "add", "tracked.txt"], cwd=tmp_path, env=GIT_ENV, check=True)
+    ok, lines = precommit.verdict(tmp_path)
+
+    assert ok is False
+    assert sorted(line.split()[1] for line in lines if line.startswith("STALE")) == (
+        index_steps
+    )
+    assert lines[-1].startswith("verdict: FAIL — the index moved")
+
+
 @pytest.mark.parametrize(("marker", "rc"), [("PASS", 0), ("FAIL", 1)])
 def test_main_verdict_prints_lines_exits_by_verdict_and_runs_no_steps(
     tmp_path: Path,
