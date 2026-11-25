@@ -2224,6 +2224,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_widening_notice(plan: SelectionPlan, depth: int, extra_depth0: set[str], changed: set[str]) -> str` _(internal)_ — Return a warning when this run selects nearly the whole suite.
 - `_run_tiers(repo_root: Path, depth: int, plan: SelectionPlan, config: _RunConfig, log: RunLog) -> tuple[int, str]` _(internal)_ — Run depth batches 0..*depth* with fail-fast between them.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Construct the ``forge-smart-test`` argument parser.
+- `_render_history(repo_root: Path) -> int` _(internal)_ — Print the recorded full-run history and return ``0``.
+- `_render_lifecycle(repo_root: Path, cfg: dict[str, object]) -> int` _(internal)_ — Print development-marked files and their quiet time; return ``0``.
 - `_escalate_to_full(repo_root: Path, base_ref: str, changed: set[str], cfg: dict[str, object]) -> bool` _(internal)_ — Return whether the change set must run the full suite.
 - `_safe_fallback_mode(cfg: dict[str, object]) -> str` _(internal)_ — Resolve ``[tool.forge.smart_test].safe_fallback``.
 - `_resolve_run_inputs(args: argparse.Namespace, repo_root: Path, cfg: dict[str, object]) -> tuple[str | int, str, set[str]]` _(internal)_ — Resolve what a run needs: its depth, the ref it diffs against, the changes.

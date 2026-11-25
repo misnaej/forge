@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from forge.git_utils import code_health_dir
-from forge.smart_test import cli, runner
+from forge.smart_test import cli, lifecycle, runner
 from forge.smart_test.dependencies import SelectionPlan
 from forge.smart_test.run_log import LOCK_NAME, RunLog
 from tests.conftest import (
@@ -37,6 +37,7 @@ from tests.conftest import (
     init_git_repo,
     log_body,
 )
+from tests.test_smart_test_lifecycle import _commit_file
 
 
 if TYPE_CHECKING:
@@ -2102,3 +2103,184 @@ def test_main_full_depth_labels_run_full(
     code = cli.main()
     assert code == 0
     assert fake.telemetry_labels == ["full"]
+
+
+# ---------------------------------------------------------------------------
+# --history / --lifecycle: read-only reporting modes
+# ---------------------------------------------------------------------------
+# Lifecycle class for every test below: behavior. They pin the observable
+# output and the never-runs-tests contract of two CLI flags; each detects a
+# distinct failure (missing file, bad ledger, flag threshold, suite run).
+
+_DEV_MARKER = "import pytest\n\npytestmark = pytest.mark.development\n"
+
+
+def _run_main(monkeypatch: pytest.MonkeyPatch, repo: Path, flag: str) -> None:
+    """Point ``main()`` at *repo* with *flag* and a ``run_pytest`` that records calls.
+
+    Args:
+        monkeypatch: pytest monkeypatch fixture.
+        repo: Directory used as the cwd (and so repo root).
+        flag: The reporting flag to pass.
+    """
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(sys, "argv", ["forge-smart-test", flag])
+
+
+def _history_metrics(wall_s: float, total_files: int) -> lifecycle.RunMetrics:
+    """Build one full-run metrics record.
+
+    Args:
+        wall_s: Wall time recorded.
+        total_files: File count recorded.
+
+    Returns:
+        A ``RunMetrics`` labelled ``full``.
+    """
+    return lifecycle.RunMetrics(
+        label="full",
+        wall_s=wall_s,
+        total_files=total_files,
+        dev_files=0,
+        lifecycle_skipped=0,
+        differential_mismatches=0,
+    )
+
+
+def test_history_without_ledger_names_path_and_creates_nothing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A missing ledger yields guidance naming its path, exit 0, no file made."""
+    _run_main(monkeypatch, tmp_path, "--history")
+    fake = _FakeRunPytest()
+    monkeypatch.setattr(cli, "run_pytest", fake)
+
+    with caplog.at_level(logging.INFO):
+        code = cli.main()
+
+    ledger = code_health_dir(tmp_path) / lifecycle.HISTORY_NAME
+    assert code == 0
+    assert str(ledger) in caplog.text
+    assert "--depth full" in caplog.text
+    assert not ledger.exists()
+    assert fake.calls == []
+
+
+def test_history_prints_every_run_in_file_order(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Each recorded run's values reach the output, oldest first."""
+    lifecycle.append_history(tmp_path, _history_metrics(106.0, 81))
+    lifecycle.append_history(tmp_path, _history_metrics(219.0, 112))
+    _run_main(monkeypatch, tmp_path, "--history")
+    fake = _FakeRunPytest()
+    monkeypatch.setattr(cli, "run_pytest", fake)
+
+    with caplog.at_level(logging.INFO):
+        code = cli.main()
+
+    assert code == 0
+    assert "2 runs" in caplog.text
+    assert "106.0" in caplog.text
+    assert "219.0" in caplog.text
+    assert caplog.text.index("106.0") < caplog.text.index("219.0")
+    assert fake.calls == []
+
+
+@pytest.mark.parametrize("content", ["", "garbage with no fields\n\n"])
+def test_history_with_unparsable_ledger_reports_none_without_raising(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    content: str,
+) -> None:
+    """An empty or garbage ledger says it holds no parsable runs; exit 0.
+
+    Args:
+        content: Raw text written to the history ledger before `--history` runs.
+    """
+    ledger = code_health_dir(tmp_path) / lifecycle.HISTORY_NAME
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_text(content, encoding="utf-8")
+    _run_main(monkeypatch, tmp_path, "--history")
+    monkeypatch.setattr(cli, "run_pytest", _FakeRunPytest())
+
+    with caplog.at_level(logging.INFO):
+        code = cli.main()
+
+    assert code == 0
+    assert "no parsable runs" in caplog.text
+
+
+def test_lifecycle_without_marked_files_reports_total_scanned(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """With no development-marked file the output says so and counts the suite."""
+    init_git_repo(tmp_path)
+    _commit_file(tmp_path, "tests/test_a.py", "def test_a():\n    pass\n")
+    _commit_file(tmp_path, "tests/test_b.py", "def test_b():\n    pass\n")
+    _run_main(monkeypatch, tmp_path, "--lifecycle")
+    fake = _FakeRunPytest()
+    monkeypatch.setattr(cli, "run_pytest", fake)
+
+    with caplog.at_level(logging.INFO):
+        code = cli.main()
+
+    assert code == 0
+    assert "No development-marked test files among 2" in caplog.text
+    assert fake.calls == []
+
+
+def test_lifecycle_flags_stale_skipped_and_recent_active(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A file past the default window is SKIPPED, one inside it is active."""
+    init_git_repo(tmp_path)
+    _commit_file(tmp_path, "tests/test_old.py", _DEV_MARKER, days_ago=60)
+    _commit_file(tmp_path, "tests/test_new.py", _DEV_MARKER, days_ago=2)
+    _run_main(monkeypatch, tmp_path, "--lifecycle")
+    fake = _FakeRunPytest()
+    monkeypatch.setattr(cli, "run_pytest", fake)
+
+    with caplog.at_level(logging.INFO):
+        code = cli.main()
+
+    by_file = {
+        name: next(line for line in caplog.text.splitlines() if name in line)
+        for name in ("test_old.py", "test_new.py")
+    }
+    assert code == 0
+    assert "SKIPPED" in by_file["test_old.py"]
+    assert "active" in by_file["test_new.py"]
+    assert "SKIPPED" not in by_file["test_new.py"]
+    assert fake.calls == []
+
+
+def test_lifecycle_honours_configured_skip_days(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A 10-day file is active by default but SKIPPED under a 5-day skip threshold."""
+    init_git_repo(tmp_path)
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.smart_test]\nlifecycle_skip_days = 5\n", encoding="utf-8"
+    )
+    _commit_file(tmp_path, "tests/test_mid.py", _DEV_MARKER, days_ago=10)
+    _run_main(monkeypatch, tmp_path, "--lifecycle")
+    monkeypatch.setattr(cli, "run_pytest", _FakeRunPytest())
+
+    with caplog.at_level(logging.INFO):
+        code = cli.main()
+
+    line = next(ln for ln in caplog.text.splitlines() if "test_mid.py" in ln)
+    assert code == 0
+    assert "SKIPPED" in line

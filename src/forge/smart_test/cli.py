@@ -33,7 +33,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from forge import config as _config
-from forge.git_utils import configure_cli_logging
+from forge.git_utils import code_health_dir, configure_cli_logging
+from forge.ledger import parse_ledger
 from forge.run_context import is_ci
 from forge.smart_test import coverage as cov_stage
 from forge.smart_test import lifecycle
@@ -505,7 +506,120 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to a `coverage json --show-contexts` export; unions tests "
         "covering a changed line into the selection (enables coverage validation).",
     )
+    parser.add_argument(
+        "--history",
+        action="store_true",
+        help="Print the recorded full-run history (wall time, file counts, "
+        "development fraction, lifecycle skips, differential mismatches) and "
+        "exit without running tests.",
+    )
+    parser.add_argument(
+        "--lifecycle",
+        action="store_true",
+        help="Print which test files are development-marked and how long each "
+        "has gone untouched, and exit without running tests.",
+    )
     return parser
+
+
+def _render_history(repo_root: Path) -> int:
+    """Print the recorded full-run history and return ``0``.
+
+    FOUNDATION §8 calls these metrics record-only, which is a statement
+    about what they may *gate*, not a reason to leave them unread. Every
+    full run appends a line and nothing read them back, so a suite
+    growing slower or a development fraction drifting was recorded and
+    invisible. Rendered newest-last so a trend reads top-to-bottom, like
+    ``forge-telemetry --history``.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``0`` always — reading history never gates.
+    """
+    path = code_health_dir(repo_root) / lifecycle.HISTORY_NAME
+    if not path.is_file():
+        logger.info(
+            "No smart-test history at %s — run `forge-smart-test --depth full` first.",
+            path,
+        )
+        return 0
+    rows = parse_ledger(path.read_text(encoding="utf-8"))
+    if not rows:
+        logger.info("Smart-test history at %s holds no parsable runs.", path)
+        return 0
+    header = (
+        f"{'ts':<26} {'label':<6} {'wall_s':>8} {'files':>6} "
+        f"{'dev':>4} {'dev_frac':>9} {'skipped':>8} {'missed':>7}"
+    )
+    lines = [f"Smart-test full-run history ({len(rows)} runs):", header]
+    lines += [
+        f"{r.get('ts', '?'):<26} {r.get('label', '-'):<6} "
+        f"{r.get('wall_s', '?'):>8} {r.get('files', '?'):>6} "
+        f"{r.get('dev_files', '?'):>4} {r.get('dev_fraction', '?'):>9} "
+        f"{r.get('lifecycle_skipped', '?'):>8} "
+        f"{r.get('differential_mismatches', '?'):>7}"
+        for r in rows
+    ]
+    lines.append(
+        "`missed` counts files that failed outside a would-be depth-2 "
+        "selection: evidence the tiers lose nothing. Nothing here gates."
+    )
+    logger.info("%s", "\n".join(lines))
+    return 0
+
+
+def _render_lifecycle(repo_root: Path, cfg: dict[str, object]) -> int:
+    """Print development-marked files and their quiet time; return ``0``.
+
+    Answers the question the ledger's ``lifecycle_skipped`` count raises
+    but cannot settle: *which* files, and how close each is to leaving
+    ordinary runs. A count alone gives nobody anything to act on.
+
+    Args:
+        repo_root: Git repo root.
+        cfg: The ``[tool.forge.smart_test]`` table.
+
+    Returns:
+        ``0`` always — reading state never gates.
+    """
+    tests = all_test_files(repo_root)
+    marked = lifecycle.development_marked_files(repo_root, tests)
+    skip_days_raw = cfg.get("lifecycle_skip_days", lifecycle.DEFAULT_SKIP_DAYS)
+    skip_days = (
+        float(skip_days_raw)
+        if isinstance(skip_days_raw, (int, float))
+        else lifecycle.DEFAULT_SKIP_DAYS
+    )
+    if not marked:
+        logger.info(
+            "No development-marked test files among %d: every test is a "
+            "behavior test, so nothing is ever deselected (FOUNDATION §8).",
+            len(tests),
+        )
+        return 0
+    rows = sorted(
+        ((lifecycle.days_since_last_touch(repo_root, p), p) for p in marked),
+        reverse=True,
+    )
+    lines = [
+        (
+            f"Development-marked test files ({len(marked)} of {len(tests)}; "
+            f"quiet window {skip_days:g}d):"
+        )
+    ]
+    lines += [
+        f"  {'SKIPPED' if days >= skip_days else 'active ':<8} "
+        f"{days:>6.1f}d untouched  {path}"
+        for days, path in rows
+    ]
+    lines.append(
+        "A skipped file re-enters the moment it changes, and CI's truly-all "
+        "run executes every one of them. Deletion is not part of the model."
+    )
+    logger.info("%s", "\n".join(lines))
+    return 0
 
 
 def _escalate_to_full(
@@ -683,6 +797,12 @@ def main() -> int:
     args = _build_parser().parse_args()
     repo_root = Path.cwd()
     cfg = _smart_test_config(repo_root)
+    # Both read recorded state and run nothing, so they answer before any
+    # selection work, lock or log write happens.
+    if args.history:
+        return _render_history(repo_root)
+    if args.lifecycle:
+        return _render_lifecycle(repo_root, cfg)
     follow = bool(cfg.get("follow_mock_patches", False))
 
     depth_raw, base_ref, changed = _resolve_run_inputs(args, repo_root, cfg)
