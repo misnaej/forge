@@ -340,3 +340,43 @@ def test_append_history_two_calls_append(tmp_path: Path) -> None:
     assert len(lines) == 2
     assert "label=full" in lines[0]
     assert "label=all" in lines[1]
+
+
+# ---------------------------------------------------------------------------
+# skip_days_from / undecodable files — hardening
+# Lifecycle class: behavior. skip_days_from is the single reader for both the
+# run path and `--lifecycle`; the decode case pins a never-raises contract.
+# ---------------------------------------------------------------------------
+
+
+def test_skip_days_from_missing_key_returns_default() -> None:
+    """No ``lifecycle_skip_days`` key yields the default window."""
+    assert lifecycle.skip_days_from({}) == lifecycle.DEFAULT_SKIP_DAYS
+
+
+def test_skip_days_from_configured_number_returned_as_float() -> None:
+    """An int or float setting is honoured, as a float."""
+    assert lifecycle.skip_days_from({"lifecycle_skip_days": 5}) == 5.0
+    assert lifecycle.skip_days_from({"lifecycle_skip_days": 2.5}) == 2.5
+
+
+def test_skip_days_from_non_numeric_value_returns_default() -> None:
+    """A string setting falls back to the default rather than raising."""
+    cfg: dict[str, object] = {"lifecycle_skip_days": "soon"}
+    assert lifecycle.skip_days_from(cfg) == lifecycle.DEFAULT_SKIP_DAYS
+
+
+def test_development_marked_files_undecodable_file_skipped_valid_one_kept(
+    tmp_path: Path,
+) -> None:
+    """A test file with invalid UTF-8 is skipped; its valid neighbour is kept."""
+    (tmp_path / "test_bad.py").write_bytes(
+        b"pytestmark = pytest.mark.development\n# \xff\xfe\x80\n"
+    )
+    (tmp_path / "test_ok.py").write_text(
+        "import pytest\n\npytestmark = pytest.mark.development\n", encoding="utf-8"
+    )
+
+    result = lifecycle.development_marked_files(tmp_path, {"test_bad.py", "test_ok.py"})
+
+    assert result == {"test_ok.py"}

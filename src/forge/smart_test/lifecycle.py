@@ -68,6 +68,25 @@ DEFAULT_NONPYTHON_IGNORE = (
 _FAILED_LINE_RE = re.compile(r"^FAILED ([^\s:]+\.py)", re.MULTILINE)
 
 
+def skip_days_from(cfg: dict[str, object]) -> float:
+    """Return the quiet window from *cfg*, or the default.
+
+    One reader, because two callers must agree: the run path decides what
+    to deselect, and ``forge-smart-test --lifecycle`` reports what would
+    be deselected. Were the coercion written twice, a change to one would
+    make the report quietly describe a different run than the one that
+    happens.
+
+    Args:
+        cfg: The ``[tool.forge.smart_test]`` table.
+
+    Returns:
+        The window in days; the default when the value is not numeric.
+    """
+    raw = cfg.get("lifecycle_skip_days", DEFAULT_SKIP_DAYS)
+    return float(raw) if isinstance(raw, (int, float)) else float(DEFAULT_SKIP_DAYS)
+
+
 def development_marked_files(repo_root: Path, test_files: set[str]) -> set[str]:
     """Return the subset of *test_files* classified as development tests.
 
@@ -85,7 +104,9 @@ def development_marked_files(repo_root: Path, test_files: set[str]) -> set[str]:
         path = repo_root / rel
         try:
             text = path.read_text(encoding="utf-8")
-        except OSError:
+        except (OSError, UnicodeDecodeError):
+            # A file we cannot decode carries no marker we can read; it
+            # is a behavior test by default, which is the safe class.
             continue
         if _has_development_pytestmark(text):
             marked.add(rel)
