@@ -541,8 +541,8 @@ def ensure_claude_hooks_dir(hooks_dir: Path) -> bool:
 # ---------------------------------------------------------------------------
 
 
-# Forge upstream branch names — channels used by the dual-track release
-# model. ``_FORGE_GITHUB_REPO`` lives in ``forge.git_utils`` (canonical).
+# Forge upstream branch names — the two channels the upgrade check
+# compares. ``_FORGE_GITHUB_REPO`` lives in ``forge.git_utils`` (canonical).
 _FORGE_MAIN_BRANCH = "main"
 _FORGE_DEV_BRANCH = "dev"
 _UPSTREAM_CACHE_FILENAME = "upstream_check.json"
@@ -598,10 +598,10 @@ def _read_upstream_cache(
 ) -> ChannelTags | None:
     """Return the cached channel tags if the cache is still fresh.
 
-    Old single-channel caches (``{"latest_tag": ...}`` from before the
-    dual-track rollout) are silently treated as a cache miss so the
-    next call re-fetches under the new schema. This avoids forcing
-    consumers to delete the cache file by hand.
+    A single-channel cache (``{"latest_tag": ...}``) is silently treated
+    as a cache miss so the next call re-fetches under the two-channel
+    schema. This avoids forcing consumers to delete the cache file by
+    hand.
 
     Args:
         cache_path: Cache file location.

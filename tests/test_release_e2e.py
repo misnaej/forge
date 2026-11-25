@@ -1,9 +1,10 @@
 """End-to-end exercise of the single-track consumer release path.
 
-Forge itself is manifest-versioned (rolling-next), so ``forge-release``
-structurally never runs against this repo — the consumer path would
-ship with unit tests only. These tests build a real single-track
-consumer repo (work tree + bare origin, setuptools-scm shape, canonical
+Forge's own releases are cut per merge by ``forge-changelog auto-tag``,
+so ``forge-release`` is the by-hand fallback here rather than the
+routine path — the consumer path would ship with unit tests only. These
+tests build a real single-track consumer repo (work tree + bare origin,
+setuptools-scm shape, canonical
 CHANGELOG per ``docs/consumer-release.md``) and drive the documented
 recipes end to end: the manual ``--bump`` flow, the ``--from-changelog``
 tag-on-merge flow, and the two opt-in changelog pre-commit steps against

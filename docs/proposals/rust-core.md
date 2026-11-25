@@ -173,8 +173,8 @@ matrix triggered by the tag.
 
 ### 6.3 Three versioned artifacts, not two
 
-Forge already coordinates a pip version and a rolling-next plugin
-version. The binary adds a third axis:
+Forge already coordinates a pip version, derived from its `v*` tags.
+The binary adds a second axis:
 
 - **binary version** × **`forge-analysis` version** × **plugin
   version**.
@@ -324,7 +324,7 @@ time-boxed spike to validate the pipeline regardless.
 - npm scope/name for the binary package, and whether the PyPI package
   renames to `forge-analysis` or keeps `forge-scripts` with a slimmed
   surface.
-- Whether `forge-next-prep`'s dual-track tag logic stays in the binary
+- Whether `forge-next-prep`'s sync and prune logic stays in the binary
   or is simple enough to remain a thin script.
 - How the Claude plugin pins/declares the minimum binary version it
   needs (plugin → binary compatibility is a fourth edge).
