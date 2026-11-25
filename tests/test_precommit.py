@@ -3138,6 +3138,221 @@ def test_generator_check_steps_launch_running_install_not_path_decoy(
 
 
 # ---------------------------------------------------------------------------
+# Typecheck file_set feature (#1024)
+# ---------------------------------------------------------------------------
+
+
+def test_typecheck_file_set_roots_default_unchanged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Typecheck with file_set='roots' (default) passes resolved root dirs to _run.
+
+    behavior class: behavior
+    Justification: Baseline behaviour unchanged — roots are passed to pyrefly.
+
+    Args:
+        tmp_path: Temporary repo root.
+        monkeypatch: Pytest fixture for mocking.
+    """
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    _write_pyproject(tmp_path, "[tool.forge.typecheck]\n")
+    _present(monkeypatch)
+    captured: dict[str, list[str]] = {}
+
+    def _run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        captured["cmd"] = cmd
+        return True, "0 errors"
+
+    monkeypatch.setattr(precommit, "_run", _run)
+    result = precommit.step_typecheck(tmp_path)
+
+    assert result.passed
+    assert captured["cmd"][:3] == ["pyrefly", "check", "--"]
+    # Should pass the root directory
+    assert captured["cmd"][3:] == ["src"]
+
+
+def test_typecheck_file_set_tracked_mode_filters_gitignored_and_includes_dotdirs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """file_set='tracked' includes tracked dot-dirs, excludes gitignored paths.
+
+    behavior class: behavior
+    Justification: tracked mode selects git-tracked files, excluding gitignored.
+
+    Args:
+        tmp_path: Temporary repo root.
+        monkeypatch: Pytest fixture for mocking.
+    """
+    # Configure typecheck with file_set='tracked' first
+    _write_pyproject(
+        tmp_path,
+        '[tool.forge.typecheck]\nfile_set = "tracked"\npaths = ["src"]\n',
+    )
+
+    # Create src directory
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+
+    # Create a gitignored directory with a file
+    ignored_dir = tmp_path / "ignored_dir"
+    ignored_dir.mkdir()
+    (ignored_dir / "ignored.py").write_text("# ignored\n", encoding="utf-8")
+
+    # Create a tracked file in src
+    (src_dir / "main.py").write_text("# main\n", encoding="utf-8")
+
+    # Create .gitignore listing ignored_dir
+    (tmp_path / ".gitignore").write_text("ignored_dir/\n", encoding="utf-8")
+
+    # Initialize git repo and commit everything including pyproject.toml
+    init_git_repo(tmp_path)
+    commit_all(tmp_path, "Initial commit")
+
+    _present(monkeypatch)
+    captured_paths: dict[str, list[str]] = {}
+
+    def _run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        captured_paths["cmd"] = cmd
+        return True, "0 errors"
+
+    monkeypatch.setattr(precommit, "_run", _run)
+
+    # Run the step
+    result = precommit.step_typecheck(tmp_path)
+
+    # Should pass
+    assert result.passed
+    # Paths passed to pyrefly should include tracked files and exclude gitignored
+    assert captured_paths["cmd"][3:] == ["src/main.py"]
+
+
+def test_typecheck_file_set_unknown_value_fails_loudly(
+    tmp_path: Path,
+) -> None:
+    """An unknown file_set value fails loudly (passed=False, names the bad value).
+
+    behavior class: behavior
+    Justification: Unknown file_set must fail loudly, not silently fall back.
+
+    Args:
+        tmp_path: Temporary repo root.
+    """
+    _write_pyproject(
+        tmp_path,
+        '[tool.forge.typecheck]\nfile_set = "invalid_value"\n',
+    )
+
+    result = precommit.step_typecheck(tmp_path)
+
+    assert not result.passed
+    assert "invalid [tool.forge.typecheck].file_set: 'invalid_value'" in result.output
+
+
+def test_typecheck_list_files_prints_paths_and_respects_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--list-files prints '<step>: <path>' lines the step would pass.
+
+    behavior class: behavior
+    Justification: --list-files is read-only inspection; runs nothing, respects --only.
+
+    Args:
+        tmp_path: Temporary repo root.
+        monkeypatch: Pytest fixture for mocking.
+    """
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "lib").mkdir()
+    (tmp_path / "lib" / "b.py").write_text("y = 2\n", encoding="utf-8")
+
+    # Configure typecheck with roots mode
+    _write_pyproject(
+        tmp_path,
+        '[tool.forge.typecheck]\npaths = ["src", "lib"]\n',
+    )
+
+    # Mock get_repo_root to return tmp_path
+    monkeypatch.setattr(precommit, "get_repo_root", lambda: tmp_path)
+
+    # Capture output
+    captured: list[str] = []
+
+    def _capture_emit(msg: str) -> None:
+        captured.append(msg)
+
+    monkeypatch.setattr(precommit, "emit", _capture_emit)
+
+    # Run _report_list_files with no --only (all enabled steps)
+    rc = precommit._report_list_files(tmp_path, [])
+
+    assert rc == 0
+    # Should print typecheck paths
+    assert any("typecheck: src" in line for line in captured)
+    assert any("typecheck: lib" in line for line in captured)
+
+    # Test --only filtering
+    captured.clear()
+    rc = precommit._report_list_files(tmp_path, ["typecheck"])
+    assert rc == 0
+    assert len(captured) > 0
+
+    # Verify it runs nothing (no _run, no require_cli)
+    # The function is read-only, so no side effects
+
+
+def test_typecheck_diff_scope_unchanged_with_file_set_config(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Scope 'diff' selects modified files under roots regardless of file_set.
+
+    behavior class: behavior
+    Justification: diff scope selects modified files first; file_set does not apply.
+
+    Args:
+        tmp_path: Temporary repo root.
+        monkeypatch: Pytest fixture for mocking.
+    """
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "src" / "b.py").write_text("y = 2\n", encoding="utf-8")
+
+    # Configure with scope diff and file_set tracked
+    _write_pyproject(
+        tmp_path,
+        '[tool.forge.precommit]\nscope = "diff"\n'
+        '[tool.forge.typecheck]\nfile_set = "tracked"\npaths = ["src"]\n',
+    )
+
+    init_git_repo(tmp_path)
+    commit_all(tmp_path, "Initial commit")
+
+    # Modify one file
+    (tmp_path / "src" / "a.py").write_text("x = 100\n", encoding="utf-8")
+
+    _present(monkeypatch)
+    captured_paths: dict[str, list[str]] = {}
+
+    def _run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        captured_paths["cmd"] = cmd
+        return True, "0 errors"
+
+    monkeypatch.setattr(precommit, "_run", _run)
+    monkeypatch.setattr(config, "get_modified_files", lambda **_kw: ["src/a.py"])
+
+    result = precommit.step_typecheck(tmp_path)
+
+    assert result.passed
+    # Should only check the modified file
+    assert captured_paths["cmd"][3:] == ["src/a.py"]
+
+
+# ---------------------------------------------------------------------------
 # step_foundation_md_check
 # ---------------------------------------------------------------------------
 

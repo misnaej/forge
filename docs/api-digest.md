@@ -2049,6 +2049,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `step_agent_doc(repo_root: Path) -> StepResult` — Run ``verify-forge-agent-doc`` — keep a hand-maintained agent doc in sync.
 - `_cfg_str_list(cfg: dict[str, object], key: str, default: list[str]) -> list[str]` _(internal)_ — Return a ``[tool.forge.*]`` list-valued key narrowed to ``list[str]``.
 - `step_doctest(repo_root: Path) -> StepResult` — Run ``pytest --doctest-modules`` over docstring examples (opt-in).
+- `_typecheck_file_set(repo_root: Path) -> str` _(internal)_ — Return the configured ``[tool.forge.typecheck].file_set`` mode.
+- `_file_set_for_step(repo_root: Path, step: str) -> list[str] | None` _(internal)_ — Return the exact paths *step* would hand its tool, or ``None``.
 - `step_typecheck(repo_root: Path) -> StepResult` — Run pyrefly over the resolved scope (opt-in).
 - `step_doc_consistency(repo_root: Path) -> StepResult` — Run ``verify-forge-doc-consistency`` — doc claims vs repo state (opt-in).
 - `step_regen_docs(repo_root: Path) -> StepResult` — Keep the generated docs fresh: regenerate what the commit feeds.
@@ -2093,11 +2095,13 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `freshness_verdicts(root: Path) -> dict[str, str]` — Return each ``code_health/`` log's freshness verdict against the working tree.
 - `verdict(root: Path) -> tuple[bool, list[str]]` — Return whether every enabled step passed on the current tree.
 - `_verdict_closing_line(*, stale: bool, failing: list[str], missing: list[str], unchecked: list[str]) -> str` _(internal)_ — Return the verdict's closing line, naming the cause of a FAIL.
+- `_report_list_files(root: Path, only: list[str]) -> int` _(internal)_ — Print each selected step's file set, one ``<step>: <path>`` per line.
 - `_report_freshness(only: list[str], *, as_json: bool) -> int` _(internal)_ — Report each ``code_health/`` log's freshness against the working tree.
 - `_attempt_outcome(results: Sequence[StepResult]) -> str` _(internal)_ — Name a finished run's result for the continuation status panel.
 - `_write_continuation_panel(outcome: str) -> None` _(internal)_ — Record this commit attempt in ``.plan/CONTINUATION.md``'s status panel.
 - `_worktree_dirs(root: Path) -> tuple[str, str] | None` _(internal)_ — Return ``(common_dir, git_dir)`` when *root* is a linked worktree.
 - `_sync_short_circuit(root: Path) -> int | None` _(internal)_ — Return the exit code for a merge/wip sync that skips the gate.
+- `_read_only_report(args: argparse.Namespace) -> int | None` _(internal)_ — Run the read-only report selected by *args*' report flags, if any.
 - `main() -> int` — CLI entry point.
 
 ## `forge.regen_docs`

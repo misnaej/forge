@@ -1824,6 +1824,56 @@ def step_doctest(repo_root: Path) -> StepResult:
     )
 
 
+def _typecheck_file_set(repo_root: Path) -> str:
+    """Return the configured ``[tool.forge.typecheck].file_set`` mode.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``"roots"`` (the default) or ``"tracked"``.
+
+    Raises:
+        ValueError: On an unknown value — a typo must not silently fall
+            back to the default.
+    """
+    value = str(_forge_step_config(repo_root, "typecheck").get("file_set", "roots"))
+    if value not in ("roots", "tracked"):
+        msg = (
+            f"invalid [tool.forge.typecheck].file_set: {value!r} "
+            "(want 'roots' or 'tracked')"
+        )
+        raise ValueError(msg)
+    return value
+
+
+def _file_set_for_step(repo_root: Path, step: str) -> list[str] | None:
+    """Return the exact paths *step* would hand its tool, or ``None``.
+
+    The inspectability half of ``forge-precommit --list-files``: resolves
+    the step's file set without running anything. Only steps with a
+    file-set concept implement this today (typecheck); every other step
+    returns ``None``.
+
+    Args:
+        repo_root: Git repo root.
+        step: Registry step name.
+
+    Returns:
+        Repo-relative paths (or, for directory-walking modes, the roots)
+        the step would pass to its tool, or ``None`` when the step has no
+        file-set selection.
+    """
+    if step != "typecheck":
+        return None
+    roots = config.resolve_tool_roots(repo_root, "typecheck")
+    if _resolve_scope(repo_root, "typecheck") == SCOPE_DIFF:
+        return config.select_diff_files(repo_root, roots=roots)
+    if _typecheck_file_set(repo_root) == "tracked":
+        return config.tracked_files_under_roots(repo_root, roots)
+    return roots
+
+
 def step_typecheck(repo_root: Path) -> StepResult:
     """Run pyrefly over the resolved scope (opt-in).
 
@@ -1837,11 +1887,21 @@ def step_typecheck(repo_root: Path) -> StepResult:
     see :func:`_resolve_scope`. ``diff`` checks only the modified files
     *under those same roots* (unlike the sibling diff steps, which take the
     whole diff), so it always selects a subset of what ``all`` would check.
-    Caveat: pyrefly's explicit-file mode ignores ``project_excludes`` from
-    ``pyrefly.toml`` — a consumer relying on that key should keep this step
-    on ``all``. Non-blocking unless ``blocking = true``: a type-checker
-    false positive that refuses a commit trains ``--no-verify``, so the
-    gate is advisory by default.
+
+    In ``all`` scope the file set is chosen by
+    ``[tool.forge.typecheck].file_set``: ``"roots"`` (default) hands pyrefly
+    the root *directories* and pyrefly walks them itself — gitignore and
+    dot-directory handling is then pyrefly's walk, not forge's.
+    ``"tracked"`` makes forge select the git-tracked files under the roots
+    (:func:`forge.config.tracked_files_under_roots`) and pass them
+    explicitly — gitignored paths are never selected and tracked files in
+    dot-directories are included. In explicit-file mode pyrefly ignores
+    ``project_excludes`` from ``pyrefly.toml``; in both modes forge's
+    ``[tool.forge].exclude`` applies in ``tracked`` mode, so consumers
+    relying on pyrefly's own excludes should stay on ``"roots"``.
+    Non-blocking unless ``blocking = true``: a type-checker false positive
+    that refuses a commit trains ``--no-verify``, so the gate is advisory
+    by default.
 
     Opt-in only — runs when listed in ``[tool.forge.precommit] enable``.
     When opted in but ``pyrefly`` is absent, fails loudly (the consumer
@@ -1853,12 +1913,18 @@ def step_typecheck(repo_root: Path) -> StepResult:
     Returns:
         ``StepResult`` mirroring pyrefly's exit code; ``non_blocking`` is
         the inverse of ``blocking``. Skipped (passing) when no source dirs
-        resolve, or in ``diff`` scope when no modified files fall under them.
+        resolve, or when the selected file set is empty (``diff`` scope with
+        no modified files under the roots, ``tracked`` mode with no tracked
+        files under them).
 
     Raises:
         SystemExit: If ``pyrefly`` is not on PATH.
     """
     blocking = bool(_forge_step_config(repo_root, "typecheck").get("blocking", False))
+    try:
+        file_set = _typecheck_file_set(repo_root)
+    except ValueError as exc:
+        return StepResult(name="typecheck", passed=False, output=str(exc))
     paths = config.resolve_tool_roots(repo_root, "typecheck")
     if not paths:
         return StepResult(
@@ -1874,6 +1940,15 @@ def step_typecheck(repo_root: Path) -> StepResult:
                 name="typecheck",
                 passed=True,
                 output="(no modified files in scope — skipped)",
+                skipped=True,
+            )
+    elif file_set == "tracked":
+        paths = config.tracked_files_under_roots(repo_root, paths)
+        if not paths:
+            return StepResult(
+                name="typecheck",
+                passed=True,
+                output="(no tracked files in scope — skipped)",
                 skipped=True,
             )
     require_cli("pyrefly", caller="forge-precommit", extra="typecheck")
@@ -3763,6 +3838,34 @@ def _verdict_closing_line(
     return "verdict: PASS"
 
 
+def _report_list_files(root: Path, only: list[str]) -> int:
+    """Print each selected step's file set, one ``<step>: <path>`` per line.
+
+    Runs nothing and requires no tool binaries — the inspectability
+    counterpart of a step run (``forge-precommit --list-files``). Steps
+    without a file-set selection contribute no lines.
+
+    Args:
+        root: Repo root.
+        only: Step names to report; empty reports every registered step
+            that has a file-set selection, enabled or not.
+
+    Returns:
+        ``0`` — the report informs; it never gates.
+    """
+    registry = {step.name for step in _STEP_REGISTRY}
+    names = only or sorted(registry)
+    for name in names:
+        if name not in registry:
+            continue
+        files = _file_set_for_step(root, name)
+        if files is None:
+            continue
+        for path in files:
+            emit(f"{name}: {path}")
+    return 0
+
+
 def _report_freshness(only: list[str], *, as_json: bool) -> int:
     """Report each ``code_health/`` log's freshness against the working tree.
 
@@ -3897,6 +4000,28 @@ def _sync_short_circuit(root: Path) -> int | None:
     return None
 
 
+def _read_only_report(args: argparse.Namespace) -> int | None:
+    """Run the read-only report selected by *args*' report flags, if any.
+
+    Args:
+        args: Parsed CLI arguments (``freshness``, ``verdict``,
+            ``list_files``, ``only``, ``json``).
+
+    Returns:
+        The report's exit code, or ``None`` when no report flag was given.
+    """
+    if args.freshness:
+        return _report_freshness(_split_csv(args.only), as_json=args.json)
+    if args.verdict:
+        passed, lines = verdict(get_repo_root())
+        for line in lines:
+            emit(line)
+        return 0 if passed else 1
+    if args.list_files:
+        return _report_list_files(get_repo_root(), _split_csv(args.only))
+    return None
+
+
 def main() -> int:
     """CLI entry point.
 
@@ -3969,6 +4094,17 @@ def main() -> int:
             "Paste its output instead of summarising pre-commit results."
         ),
     )
+    parser.add_argument(
+        "--list-files",
+        action="store_true",
+        help=(
+            "Run no steps and require no tool binaries: print each selected "
+            "step's file set as '<step>: <path>' lines (steps named in "
+            "--only, or every step with a file-set selection), i.e. exactly "
+            "what the step would hand its tool. Steps without a file-set "
+            "selection print nothing. Always exits 0."
+        ),
+    )
     args = parser.parse_args()
 
     # In a linked worktree repo_root() resolves to the worktree, so hooks
@@ -3986,13 +4122,8 @@ def main() -> int:
 
     # Read-only reports: they must not reach the wip-sync banner or the
     # step-forcing environment below.
-    if args.freshness:
-        return _report_freshness(_split_csv(args.only), as_json=args.json)
-    if args.verdict:
-        passed, lines = verdict(get_repo_root())
-        for line in lines:
-            emit(line)
-        return 0 if passed else 1
+    if (rc := _read_only_report(args)) is not None:
+        return rc
 
     if (rc := _sync_short_circuit(get_repo_root())) is not None:
         return rc

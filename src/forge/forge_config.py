@@ -232,6 +232,15 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "error (default: non-blocking WARN).",
     ),
     ConfigKey(
+        ("tool", "forge", "typecheck", "file_set"),
+        default="roots",
+        description="Which files the typecheck step checks in `all` scope: "
+        "'roots' (default) hands pyrefly the root directories and lets it "
+        "walk them itself; 'tracked' hands it the git-tracked files under "
+        "the roots, so gitignored paths are never selected and tracked "
+        "files in dot-directories are included.",
+    ),
+    ConfigKey(
         ("tool", "forge", "pip_audit", "blocking"),
         default=False,
         description="Make the pip_audit step fail the commit on a CVE "
