@@ -48,7 +48,7 @@ SLACK = 200
 # Per-page ceilings for the pages FOUNDATION points at, rounded up from
 # each page's size when ceilings were introduced. A ceiling, never a
 # target: the shortest page carrying its detail is the right one
-# (`forge-docs/foundation-compaction.md`). Lower one when a page
+# (`forge-docs/instruction-compaction.md`). Lower one when a page
 # shrinks; raise one only when the added detail is worth naming in the
 # PR that raises it.
 FORGE_DOCS_CEILINGS: dict[str, int] = {

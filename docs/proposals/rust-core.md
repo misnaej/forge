@@ -120,11 +120,9 @@ meaningful on a Python repo), so it stays in the Python pack initially.
 | `forge-config` | **Rust core** | Reads `[tool.forge.*]` config — language-agnostic |
 | `forge-post-merge` / `-post-checkout` | **Rust core** | Drift check + backgrounded self-refresh |
 | `forge-doctor` | **Rust core** | Environment diagnostics |
-| `forge-next-prep` | **Rust core** | `git` orchestration (refresh, tag, prune) |
+| `forge-next-prep` | **Rust core** | `git` orchestration (refresh, prune) |
 | `forge-upgrade` | **Rust core** | Pin/version management (semantics change — see §6) |
 | `verify-forge-repo-structure` | **Rust core** | Tree walk + markdown diff, language-agnostic |
-| `verify-forge-manifest` | **Rust core** | JSON validation (`serde_json`) |
-| `verify-forge-plugin-version` | **Rust core** | Semver compare vs git tags |
 | `forge-pr-squash-comment` | **Rust core** | Message validation + `gh` post |
 | `forge-gen-commit-types` / `forge-gen-cli-reference` | **Rust core** | Generation/parity checks |
 | `forge-continuation` | **Rust core** | Status-panel string work |

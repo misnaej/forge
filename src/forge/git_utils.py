@@ -142,9 +142,8 @@ def parse_semver(version: str) -> tuple[int, int, int] | None:
     setuptools-scm) — only the major / minor / patch triple matters for
     forge's version comparisons.
 
-    Single source of truth: ``forge.verify_plugin_version``,
-    ``forge.next_prep``, and ``forge.install_claudemd`` all import this
-    helper instead of carrying their own copies.
+    Single source of truth: every forge module that compares versions
+    imports this helper instead of carrying its own copy.
 
     Args:
         version: Version string from ``importlib.metadata.version`` or a
@@ -213,10 +212,9 @@ def classify_bump(
 ) -> str | None:
     """Classify the semver increment from *old* to *new*.
 
-    The one place that maps a version delta onto a bump class — shared
-    by the promotion-pending advisory (``forge-next-prep``) and the
-    version-slot resolver (``forge-rebump``) so the MAJOR/MINOR/PATCH
-    reading of a manifest delta cannot drift between them.
+    The one place that maps a version delta onto a bump class, so the
+    MAJOR/MINOR/PATCH reading of a version delta cannot drift between
+    callers.
 
     Args:
         old: Baseline ``(major, minor, patch)`` tuple, or ``None``.
@@ -241,13 +239,13 @@ def latest_v_tag(root: Path) -> str | None:
 
     Resolves the latest release **globally** — ``git tag --list "v*"
     --sort=-v:refname`` — independent of ``HEAD``'s ancestry. This is the
-    single source of truth for "latest release tag", shared by the
-    rolling-next pre-commit guard (``verify-forge-plugin-version``) and
-    the auto-tagger (``forge-next-prep``). A branch-independent resolution
-    is required in the dual-track (dev/main) model: a release tagged on
-    one branch is not in the other's history, so an ancestry-scoped
-    ``git describe`` would disagree with the auto-tagger and let a stale
-    manifest slip past the guard.
+    single source of truth for "latest release tag", shared by
+    ``forge.changelog_fragments`` (version computation, auto-tagging),
+    ``forge.release`` and the ``changelog_version`` pre-commit step. A
+    branch-independent resolution is required in the dual-track
+    (dev/main) model: a release tagged on one branch is not in the
+    other's history, so an ancestry-scoped ``git describe`` would
+    disagree with the auto-tagger.
 
     Args:
         root: Repo root (cwd for the git invocation).
@@ -967,8 +965,8 @@ def create_annotated_tag(
     """Create annotated *tag* at *commit*, surviving identity-less runners.
 
     The one tag-creation seam shared by every forge CLI that cuts an
-    annotated tag (``forge-release``, ``forge-next-prep --tag``,
-    ``forge-changelog auto-tag``). Injects a fallback tagger identity
+    annotated tag (``forge-release``, ``forge-changelog auto-tag``).
+    Injects a fallback tagger identity
     only when git has none (see :func:`_fallback_identity_args`) — an
     annotated tag requires one, and a fresh CI runner configures none.
 
@@ -1332,9 +1330,9 @@ def unmerged_paths(repo_root: Path) -> list[str]:
 
     The conflicted set of an in-progress merge — what ``git status`` lists
     as "both modified". Shared by every tool that resolves a known class
-    of conflict mechanically (``forge-rebump`` for the version slot,
-    ``forge-update-branch`` for generated artifacts and already-merged
-    files) so they agree on what "conflicted" means.
+    of conflict mechanically (``forge-update-branch`` for generated
+    artifacts and already-merged files) so they agree on what
+    "conflicted" means.
 
     Args:
         repo_root: Git repo root.
@@ -2220,8 +2218,9 @@ def get_tree_sha(repo_root: Path, ref: str) -> str | None:
     release tag and the squash commit that reproduces it on another
     branch: a promotion squashes dev's history into a new commit whose
     *tree* equals the tagged dev commit's tree even though the commit
-    SHA, parents, and message differ. Consumed by the rolling-next guard
-    (:func:`forge.verify_plugin_version._is_release_commit`).
+    SHA, parents, and message differ. Consumed by
+    :mod:`forge.ci_tree_gate`, which recognises a validated tree across
+    such a rewrite.
 
     Args:
         repo_root: Working directory for the git invocation.
@@ -2570,11 +2569,9 @@ def release_tree_fingerprint(repo_root: Path, ref: str) -> str | None:
     authored in the ``release/vX.Y.Z`` branch, where fragments-mode
     assembly also deletes the pending fragments — so a release branch's
     tree never byte-matches the tagged release's tree, yet it is the
-    *same release*. The rolling-next guard
-    (:func:`forge.verify_plugin_version._is_release_commit`) compares on
-    this fingerprint so curated-changelog divergence is tolerated while
-    any other file difference still counts (the match stays
-    release-exact).
+    *same release*. Comparing on this fingerprint tolerates
+    curated-changelog divergence while any other file difference still
+    counts (the match stays release-exact).
 
     The value is the SHA-256 of ``git ls-tree -r <ref>`` (mode, type, blob
     SHA, path per file) with the ignored entries removed. Excluding

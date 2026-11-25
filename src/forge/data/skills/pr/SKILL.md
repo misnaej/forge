@@ -74,14 +74,11 @@ silently merge.** Which variant depends on Step 0:
 
 - **`mergeable: CONFLICTING`** → do not finalize yet. Run
   **`forge-update-branch --base <base>`**: it resolves generated
-  artifacts, the version slot and files the branch already holds (every
-  stacked child after its parent's squash), and commits. Exit 3 → spawn
+  artifacts and files the branch already holds (every stacked child
+  after its parent's squash), and commits. Exit 3 → spawn
   `forge:merge-resolver` for the listed files (FOUNDATION §6's
   resolution rule), which finishes with `--continue`; then re-run from
-  Step 0.5. **Fragments mode**: a manifest conflict is a racing release
-  PR, which the version-slot resolver refuses by design; follow its
-  recovery (base side of both files, restore consumed fragments from the
-  merge base, re-run `forge-changelog release`).
+  Step 0.5.
 - **Behind but clean** (left count > 0, not conflicting) → run
   `forge-update-branch --base <base>` (commits the merge locally), then
   push via `forge-commit --push-only`, and proceed, saying what was done — **no confirmation
@@ -99,8 +96,7 @@ the convention doesn't apply). A `stranded` finding means: run
 `forge-changelog restrand` (mechanical — moves this PR's entries under
 the next open `## vX.Y.Z` heading and stages the result; `--bump
 minor|major` when the change deserves more than a patch slot), commit,
-and re-run from Step 0.5. (`forge-rebump` is the plugin-repo tool —
-rolling-next manifest repos only; manifest-less repos use `restrand`.)
+and re-run from Step 0.5.
 
 The base can move while verification runs, so `forge-pr-create` repeats
 this check at publication and refuses a branch behind or conflicting with
@@ -152,12 +148,11 @@ do not re-derive the classification in prose.
 |---|---|---|---|
 | `light-docs` | `docs-types-checker` only | `forge-precommit --only <precommit_scope>` (changelog + doc gates; add other path-relevant steps as applicable) | Whole diff is doc-shaped, nothing high-blast-radius. Steps 3–4 run as normal; `compose` marks the skipped reporters `SKIPPED (light-docs)`. Residuals documented in `pr_delta.docs_only_diff`: path-string classification only — docs-types-checker + human review stay reviewers of record. |
 | `light-regen` | none — **after earning it** | The provenance gates in `precommit_scope` | **Eligibility only** (resync PRs: every path in `pr_delta.MANAGED_REGEN_PATHS`). **Earn** the escape: `forge-precommit --only foundation_md_check,cli_reference_check,api_digest_check`. Every gate passes (absent-file skips fine) → skip all three reporters; `compose` re-runs the gates and embeds their output verbatim as evidence (it refuses when a gate fails). **Any gate FAILS → full round, no exceptions** (covers the editable-install self-reference case and hand-edits to managed files — the byte check exists to catch exactly that). Steps 3–4 run as normal. |
-| `light-release` | `docs-types-checker` only | `forge-precommit --only <precommit_scope>` (the docs-only gates plus `plugin_version` and `manifest_json`) | A release-assembly PR (`forge-changelog release-pr`): every path is in `pr_delta.RELEASE_ASSEMBLY_PATHS`, every `changelog.d/` change is a deletion, and the `plugin.json` change is its version value alone — checked against the diff content, so a manifest that also rewires hooks or agents takes the full round. **Design and security review are skipped**; only the changelog prose is read. `compose` writes `wrapup-mode: light-release`, marks the skipped reporters `SKIPPED (light-release)` and leaves the Recommendation for the author to write; `forge-pr-create` re-runs `forge-pr-plan` before publishing and refuses unless it still reads `light-release`. Residuals documented in `pr_delta.release_assembly_diff`. |
 | `light-code` | none | Strict whole-tree battery (empty `precommit_scope`) | Small code diff (`pr_delta.light_wrapup_decision`: under `LIGHT_WRAPUP_LINE_THRESHOLD`, **no added files bar `changelog.d/` fragments and intake records** — the prior-art gate stays independent, and neither poses it a placement question — no `src/` path, nothing high-blast-radius). Reporters skipped; Step 3.92's `compose` writes the light wrap-up (`wrapup-mode: light`, reporter sections `SKIPPED (light-code)`, a one-line Recommendation while `compose` prints the classifier's reasons; squash message still mandatory). Never agent discretion: `forge-pr-create` re-runs `forge-pr-plan` before publishing and refuses unless it agrees — classifier missing/erroring/disagreeing → full wrap-up applies. Skip the `/code-review` offer (no reporter round to overlap); say so in the wrap-up. |
 | `delta` | none | none | An existing PR's prior wrap-up carries a `verified-at:` SHA and the diff since it is small and out of high-blast-radius paths — **skip Step 1 entirely**, jump to Step 3.92 with `compose --base origin/<base> --pr <PR#>` (it renders the delta wrap-up), then Step 4 posts it and a refreshed squash comment. |
 | `full` | all three below | Strict whole-tree battery (empty `precommit_scope`) | The default round. |
 
-Whenever a reporter runs (`full`, `light-docs`, `light-release`, or after a failed
+Whenever a reporter runs (`full`, `light-docs`, or after a failed
 `light-regen` earn), first write the evidence pack the reporters start
 from — the plan JSON and exit code do not change:
 
@@ -170,7 +165,7 @@ audits, generated artifacts, public surface, wiring); an item that
 fails or times out reads `unavailable: <reason>` and the rest stands.
 
 On `mode: full` (and after a failed `light-regen` earn), run the three
-reporters (`light-docs` and `light-release`: `docs-types-checker` only):
+reporters (`light-docs`: `docs-types-checker` only):
 
 1. **`design-checker`** — design compliance report
 2. **`security-checker`** — security review report
@@ -378,9 +373,9 @@ changed and what the reader must decide.
 `forge-pr-create` enforces this: it refuses unless the wrap-up in the
 checkout it publishes names that checkout's `HEAD` — authoring at one
 SHA and publishing another re-runs this step. On `mode: light-code`
-`compose` writes `wrapup-mode: light` (on `mode: light-release`,
-`wrapup-mode: light-release`), and the command re-runs `forge-pr-plan`
-fail-closed before publishing, refusing unless it reproduces that mode. The hook now refuses the
+`compose` writes `wrapup-mode: light`, and the command re-runs
+`forge-pr-plan` fail-closed before publishing, refusing unless it
+reproduces that mode. The hook now refuses the
 raw form outright, so the command is the only way through. When the
 user explicitly asks to skip the gate, prefix the create command with
 `FORGE_SKIP_WRAPUP_GATE=1` — never on the agent's own judgment.

@@ -544,8 +544,8 @@ def main() -> int:
         prog="forge-next-prep",
         description=(
             "Prepare main for the next task: fetch + pull --ff-only, "
-            "optionally tag the rolling-next release, prune stale local "
-            "branches. Used by the /forge-next skill."
+            "prune stale local branches. Cuts no tag. Used by the "
+            "/forge-next skill."
         ),
     )
     parser.add_argument(

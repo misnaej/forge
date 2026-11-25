@@ -36,8 +36,7 @@ You read `code_health/*.log` after `forge-precommit` writes them — with the **
   | Regenerating `docs/api-digest.md` when `api_digest_check` fails | `forge-gen-api-digest` | no |
 
   Step CLIs: `fix-forge-ruff`, `verify-forge-docstrings`,
-  `verify-forge-repo-structure`, `verify-forge-test-naming`,
-  `verify-forge-manifest`, `verify-forge-plugin-version`. A step CLI is
+  `verify-forge-repo-structure`, `verify-forge-test-naming`. A step CLI is
   never a re-verification — that is `--only`'s job; the hook does not
   check this, so it is yours to keep.
 - **The logs are the only evidence** — never ad-hoc command output.
@@ -91,8 +90,6 @@ Ruff residue is not auto-fixable. Dispatch by step:
 | `docstring_coverage.log` — `MISSING: <path>:<line>:<name>` | **Edit** a one-line Google-style docstring at each `<path>:<line>` in a file this change touched; elsewhere report it (non-blocking — Scope contract). |
 | `test_naming_check.log` | **Edit** — rename per `expected → actual`; update keyword call sites. |
 | `repo_structure_check.log` | **Edit** `REPO_STRUCTURE.md` per the log diff. |
-| `manifest_json.log` | **Edit** `.claude-plugin/plugin.json` per the error. |
-| `plugin_version.log` | **Edit** `plugin.json["version"]` to the version the log states. |
 | `changelog_version.log` — "N fragments added since this branch's base" | **REPORT ONLY.** Never touch a `changelog.d/` file this change did not create, nor ask the caller to; report the names and that the branch looks stacked. |
 | `pip_audit.log` | **REPORT ONLY — never Edit pins.** Report each advisory's pin, suggested version, and pin location. |
 | Anything that looks like a secret leak | **STOP.** Escalate to the human. Never rewrite history. |
@@ -161,9 +158,9 @@ it is mine to change.
 - Review design or security broadly → **Use `forge:design-checker` / `forge:security-checker`**
 - **Run any release action (`forge-next-prep`, `git tag`, `git push`,
   `gh release`) or switch branches, EVER — even when a step's message
-  names one as the cure.** Such a step (`release_tag_guard`, cures
-  needing tags or merges) is REPORT-ONLY: name it, quote its output,
-  stop. Delegating it via Task is the same violation.
+  names one as the cure.** Any step whose cure needs a tag or a merge is
+  REPORT-ONLY: name it, quote its output, stop. Delegating it via Task
+  is the same violation.
 
 ### If a Caller Asks Me to Commit
 

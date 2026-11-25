@@ -2321,8 +2321,8 @@ def test_unmerged_paths_lists_conflicted_files_mid_merge(tmp_path: Path) -> None
     Same diverged-branches shape as ``merge_in_progress`` above, except
     both branches edit the SAME file (``shared.txt``) so the merge
     actually conflicts rather than auto-merging cleanly —
-    ``forge-rebump`` and ``forge-update-branch`` both read
-    this list to agree on what "conflicted" means.
+    ``forge-update-branch`` reads this list to decide what "conflicted"
+    means.
     """
     _init_git_repo(tmp_path)
     (tmp_path / "shared.txt").write_text("base\n")
@@ -3502,7 +3502,7 @@ def test_write_tree_none_when_not_a_git_repo(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# read_plugin_version_at_ref
+# stage_modified_paths
 # ---------------------------------------------------------------------------
 
 
@@ -4024,8 +4024,7 @@ def test_classify_bump_reads_highest_order_differing_component(
 ) -> None:
     """The highest-order differing component wins; equal or missing sides → None.
 
-    Shared by ``forge-next-prep``'s promotion advisory and ``forge-rebump``'s
-    intent classifier — one table pins the mapping both depend on.
+    One table pins the mapping every caller of the classifier depends on.
 
     Args:
         old: Baseline semver tuple fed to the classifier.

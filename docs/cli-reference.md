@@ -694,9 +694,8 @@ options:
 ```text
 usage: forge-next-prep [-h] [--no-prune-branches] [--prune-remote] [--no-sync]
 
-Prepare main for the next task: fetch + pull --ff-only, optionally tag the
-rolling-next release, prune stale local branches. Used by the /forge-next
-skill.
+Prepare main for the next task: fetch + pull --ff-only, prune stale local
+branches. Cuts no tag. Used by the /forge-next skill.
 
 options:
   -h, --help           show this help message and exit
@@ -922,12 +921,11 @@ usage: forge-precommit [-h] [--json] [--skip STEP[,STEP...]]
 Run the forge pre-commit check sequence: ruff (format + check, self-healing
 with --unsafe-fixes on failure; report-only in CI) + docstring verification
 (diff vs main) + test-name verification (diff vs main) + repo-structure
-verification (REPO_STRUCTURE.md vs the tree) + plugin manifest JSON + plugin
-version drift guard + pip-audit (non-blocking) — when applicable. Locally,
-ruff fixes apply automatically on every run and fixed files are re-staged; in
-CI ruff only reports. Pytest is not in the default sequence — run it in CI or
-wire it into .githooks/pre-commit explicitly. Used by any repo that adopts
-forge via install-forge-githooks.
+verification (REPO_STRUCTURE.md vs the tree) + pip-audit (non-blocking) — when
+applicable. Locally, ruff fixes apply automatically on every run and fixed
+files are re-staged; in CI ruff only reports. Pytest is not in the default
+sequence — run it in CI or wire it into .githooks/pre-commit explicitly. Used
+by any repo that adopts forge via install-forge-githooks.
 
 options:
   -h, --help            show this help message and exit

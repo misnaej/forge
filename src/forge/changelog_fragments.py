@@ -31,9 +31,7 @@ Usage:
 
 - ``forge-changelog auto-tag`` — tag-per-merge CI seam: cut and push an
   annotated tag from the fragments merged since the last tag (tag-tree
-  membership marks consumption); never touches the base branch. Never
-  tags a repo with a plugin manifest — its release tag is cut at the
-  assembly merge (``forge-next-prep --tag``).
+  membership marks consumption); never touches the base branch.
 - ``forge-changelog release-pr`` — unattended counterpart of
   ``release``: branch ``chore/assemble-vX.Y.Z``, stage, commit, push,
   and open the assembly PR with in-body gate evidence; idempotent and
@@ -615,9 +613,8 @@ def check_pending(root: Path) -> list[str]:
     """Validate every pending fragment under *root*.
 
     The shared gate seam: the ``changelog_version`` pre-commit step (in
-    fragment mode), the fragment-mode branch of
-    ``verify-forge-plugin-version``, and the ``check`` subcommand all
-    consume this, so the gate cannot drift between them.
+    fragment mode) and the ``check`` subcommand both consume this, so
+    the gate cannot drift between them.
 
     Args:
         root: Repository root directory.
