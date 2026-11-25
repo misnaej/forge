@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from forge import git_utils
+from forge.git_utils import _STAMP_RE
 from tests.conftest import (
     GIT_ENV as _GIT_ENV,
 )
@@ -4543,25 +4544,33 @@ def test_working_tree_sha_returns_none_when_index_copy_raises_permission_error(
 
 
 def test_build_stamp_clean_tree_matches_format_and_carries_the_given_time() -> None:
-    """A clean call renders `tree=<hex> head=<head> <time>`, no `+dirty` suffix.
+    """A clean call renders `tree=<hex> index=<hex> head=<head> <time>`.
 
-    ``now``'s date must appear verbatim in the rendered timestamp — pins
-    that the render uses the injected clock, not wall-clock time.
+    No `+dirty` suffix on a clean tree; ``now``'s date must appear verbatim
+    in the rendered timestamp — pins that the render uses the injected
+    clock, not wall-clock time.
     """
     now = datetime(2024, 3, 5, 12, 30, 45, tzinfo=UTC)
     tree = "a" * 40
-    stamp = git_utils.build_stamp(tree, "abc1234", dirty=False, now=now)
+    index = "b" * 40
+    stamp = git_utils.build_stamp(tree, "abc1234", dirty=False, now=now, index=index)
     match = PRODUCED_AT_RE.fullmatch(stamp)
     assert match is not None
     assert match["tree"] == tree
+    assert match["index"] == index
     assert match["head"] == "abc1234"
     assert "2024-03-05" in match["when"]
 
 
 def test_build_stamp_dirty_appends_suffix_to_head() -> None:
     """``dirty=True`` appends ``+dirty`` directly after the head token."""
+    index = "c" * 40
     stamp = git_utils.build_stamp(
-        "a" * 40, "abc1234", dirty=True, now=datetime(2024, 1, 1, tzinfo=UTC)
+        "a" * 40,
+        "abc1234",
+        dirty=True,
+        now=datetime(2024, 1, 1, tzinfo=UTC),
+        index=index,
     )
     match = PRODUCED_AT_RE.fullmatch(stamp)
     assert match is not None
@@ -4571,7 +4580,7 @@ def test_build_stamp_dirty_appends_suffix_to_head() -> None:
 def test_build_stamp_none_tree_renders_unknown() -> None:
     """``tree=None`` renders the literal ``unknown`` token, not a blank."""
     stamp = git_utils.build_stamp(
-        None, "abc1234", dirty=False, now=datetime(2024, 1, 1, tzinfo=UTC)
+        None, "abc1234", dirty=False, now=datetime(2024, 1, 1, tzinfo=UTC), index=None
     )
     match = PRODUCED_AT_RE.fullmatch(stamp)
     assert match is not None
@@ -4734,9 +4743,10 @@ def test_log_freshness_stamp_not_on_first_line_is_unstamped(tmp_path: Path) -> N
     hand-written literal line, not the builder's own render.
     """
     tree = "a" * 40
+    index = "c" * 40
     log_path = tmp_path / "x.log"
     log_path.write_text(
-        f"some preceding line\n# produced-at: tree={tree} head=abc "
+        f"some preceding line\n# produced-at: tree={tree} index={index} head=abc "
         "2024-01-01T00:00:00Z\n"
     )
     assert git_utils.log_freshness(log_path, tree) == "unstamped"
@@ -4745,27 +4755,33 @@ def test_log_freshness_stamp_not_on_first_line_is_unstamped(tmp_path: Path) -> N
 def test_log_freshness_matching_tree_is_fresh(tmp_path: Path) -> None:
     """The stamp's tree matching the current tree reads fresh."""
     tree = "a" * 40
+    index = "c" * 40
     log_path = tmp_path / "x.log"
     log_path.write_text(
-        f"# produced-at: tree={tree} head=abc1234 2024-01-01T00:00:00Z\nbody\n"
+        f"# produced-at: tree={tree} index={index} "
+        "head=abc1234 2024-01-01T00:00:00Z\nbody\n"
     )
     assert git_utils.log_freshness(log_path, tree) == "fresh"
 
 
 def test_log_freshness_mismatched_tree_is_stale(tmp_path: Path) -> None:
     """A stamp tree differing from the current tree reads stale."""
+    index = "c" * 40
     log_path = tmp_path / "x.log"
     log_path.write_text(
-        f"# produced-at: tree={'a' * 40} head=abc1234 2024-01-01T00:00:00Z\nbody\n"
+        f"# produced-at: tree={'a' * 40} index={index} "
+        "head=abc1234 2024-01-01T00:00:00Z\nbody\n"
     )
     assert git_utils.log_freshness(log_path, "b" * 40) == "stale"
 
 
 def test_log_freshness_stamp_tree_unknown_is_unknown(tmp_path: Path) -> None:
     """A stamp recording `tree=unknown` reads unknown, even with a real current tree."""
+    index = "c" * 40
     log_path = tmp_path / "x.log"
     log_path.write_text(
-        "# produced-at: tree=unknown head=abc1234 2024-01-01T00:00:00Z\nbody\n"
+        f"# produced-at: tree=unknown index={index} "
+        "head=abc1234 2024-01-01T00:00:00Z\nbody\n"
     )
     assert git_utils.log_freshness(log_path, "a" * 40) == "unknown"
 
@@ -4778,9 +4794,11 @@ def test_log_freshness_none_current_tree_is_unknown_even_with_real_stamp(
     An unresolvable *current* state is never comparably fresh or stale.
     """
     tree = "a" * 40
+    index = "c" * 40
     log_path = tmp_path / "x.log"
     log_path.write_text(
-        f"# produced-at: tree={tree} head=abc1234 2024-01-01T00:00:00Z\nbody\n"
+        f"# produced-at: tree={tree} index={index} "
+        "head=abc1234 2024-01-01T00:00:00Z\nbody\n"
     )
     assert git_utils.log_freshness(log_path, None) == "unknown"
 
@@ -4798,22 +4816,236 @@ def test_log_freshness_reads_a_real_build_stamp_line(tmp_path: Path) -> None:
     """
     now = datetime(2024, 1, 1, tzinfo=UTC)
     tree = "a" * 40
+    index = "c" * 40
     log_path = tmp_path / "x.log"
 
     log_path.write_text(
-        git_utils.build_stamp(tree, "abc1234", dirty=False, now=now) + "\nbody\n"
+        git_utils.build_stamp(tree, "abc1234", dirty=False, now=now, index=index)
+        + "\nbody\n"
     )
     assert git_utils.log_freshness(log_path, tree) == "fresh"
 
     log_path.write_text(
-        git_utils.build_stamp(tree, "abc1234", dirty=True, now=now) + "\nbody\n"
+        git_utils.build_stamp(tree, "abc1234", dirty=True, now=now, index=index)
+        + "\nbody\n"
     )
     assert git_utils.log_freshness(log_path, tree) == "fresh"
 
     log_path.write_text(
-        git_utils.build_stamp(None, "abc1234", dirty=False, now=now) + "\nbody\n"
+        git_utils.build_stamp(None, "abc1234", dirty=False, now=now, index=index)
+        + "\nbody\n"
     )
     assert git_utils.log_freshness(log_path, tree) == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# index_sha / build_stamp index component / log_freshness require_index (#1092)
+# ---------------------------------------------------------------------------
+
+
+def test_index_sha_outside_repo_returns_none(tmp_path: Path) -> None:
+    """behavior: index_sha returns None outside a git repo.
+
+    One-line justification: mirrors working_tree_sha's contract.
+    """
+    assert git_utils.index_sha(tmp_path) is None
+
+
+def test_index_sha_matches_write_tree_after_add(tmp_path: Path) -> None:
+    """behavior: index_sha mirrors the real index's write-tree.
+
+    One-line justification: a staged file changes the index SHA, not a
+    working-tree-only edit.
+    """
+    _init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+    expected = git_utils.index_sha(tmp_path)
+    assert expected is not None
+    assert re.fullmatch(r"[0-9a-f]{40}", expected)
+
+    # Edit only the working tree: index unchanged
+    (tmp_path / "tracked.txt").write_text("v2\n")
+    assert git_utils.index_sha(tmp_path) == expected
+
+    # Stage the edit: index SHA changes
+    subprocess.run(
+        ["git", "add", "tracked.txt"], cwd=tmp_path, env=_GIT_ENV, check=True
+    )
+    staged = git_utils.index_sha(tmp_path)
+    assert staged is not None
+    assert staged != expected
+
+
+def test_index_sha_returns_none_on_unmerged_paths(tmp_path: Path) -> None:
+    """behavior: index_sha returns None while paths are unmerged.
+
+    One-line justification: mirrors working_tree_sha's contract.
+    """
+    _init_git_repo(tmp_path)
+    (tmp_path / "conflict.txt").write_text("base\n")
+    commit_all(tmp_path, "seed")
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feature"],
+        cwd=tmp_path,
+        env=_GIT_ENV,
+        check=True,
+    )
+    (tmp_path / "conflict.txt").write_text("feature change\n")
+    commit_all(tmp_path, "feature change")
+    subprocess.run(
+        ["git", "checkout", "-q", "main"], cwd=tmp_path, env=_GIT_ENV, check=True
+    )
+    (tmp_path / "conflict.txt").write_text("main change\n")
+    commit_all(tmp_path, "main change")
+    subprocess.run(
+        ["git", "merge", "--no-ff", "feature"], cwd=tmp_path, env=_GIT_ENV, check=False
+    )
+    assert git_utils.index_sha(tmp_path) is None
+
+
+def test_build_stamp_renders_index_component(tmp_path: Path) -> None:
+    """behavior: build_stamp always renders the index component.
+
+    One-line justification: new contract — old logs lack it, new logs
+    carry it.
+    """
+    now = datetime(2024, 1, 1, tzinfo=UTC)
+    tree = "a" * 40
+    index = "b" * 40
+    stamp = git_utils.build_stamp(tree, "abc1234", dirty=False, now=now, index=index)
+    assert f"index={index}" in stamp
+
+
+def test_stamp_re_parses_both_old_and_new_formats(tmp_path: Path) -> None:
+    """behavior: _STAMP_RE parses both old (no index) and new (with index) formats.
+
+    One-line justification: backward compatibility — old stamps must still
+    parse for existing logs.
+    """
+    old_format = (
+        "# produced-at: tree=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        " head=abc1234 2024-01-01T00:00:00+00:00"
+    )
+    new_format = (
+        "# produced-at: tree=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        " index=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        " head=abc1234 2024-01-01T00:00:00+00:00"
+    )
+
+    old_match = _STAMP_RE.match(old_format)
+    assert old_match is not None
+    assert old_match.group("tree") == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    assert old_match.group("index") is None  # Old format has no index group
+
+    new_match = _STAMP_RE.match(new_format)
+    assert new_match is not None
+    assert new_match.group("tree") == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    assert new_match.group("index") == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+
+def test_log_freshness_require_index_old_stamp_without_index_is_unknown(
+    tmp_path: Path,
+) -> None:
+    """require_index=True treats old stamps (no index) as unknown.
+
+    One-line justification: an index-dependent step cannot verify against
+    an index-less stamp.
+    """
+    tree = "a" * 40
+    log_path = tmp_path / "x.log"
+    # Old format stamp without index component
+    log_path.write_text(
+        f"# produced-at: tree={tree} head=abc1234 2024-01-01T00:00:00+00:00\nbody\n"
+    )
+    assert git_utils.log_freshness(log_path, tree, require_index=True) == "unknown"
+
+
+def test_log_freshness_require_index_mismatched_index_is_stale(tmp_path: Path) -> None:
+    """behavior: require_index=True returns stale when index differs.
+
+    One-line justification: index-dependent steps must match both tree
+    and index.
+    """
+    tree = "a" * 40
+    index = "b" * 40
+    log_path = tmp_path / "x.log"
+    log_path.write_text(
+        f"# produced-at: tree={tree} index={index} "
+        "head=abc1234 2024-01-01T00:00:00+00:00\nbody\n"
+    )
+    current_index = "c" * 40
+    assert (
+        git_utils.log_freshness(
+            log_path, tree, current_index=current_index, require_index=True
+        )
+        == "stale"
+    )
+
+
+def test_log_freshness_require_index_matching_index_is_fresh(tmp_path: Path) -> None:
+    """behavior: require_index=True returns fresh when tree and index match.
+
+    One-line justification: both components must align for an index step.
+    """
+    tree = "a" * 40
+    index = "b" * 40
+    log_path = tmp_path / "x.log"
+    log_path.write_text(
+        f"# produced-at: tree={tree} index={index} "
+        "head=abc1234 2024-01-01T00:00:00+00:00\nbody\n"
+    )
+    assert (
+        git_utils.log_freshness(log_path, tree, current_index=index, require_index=True)
+        == "fresh"
+    )
+
+
+def test_log_freshness_require_index_tree_stale_even_when_index_matches(
+    tmp_path: Path,
+) -> None:
+    """require_index=True is stale when the tree differs, even if index matches.
+
+    One-line justification: tree mismatch dominates index match for
+    correctness.
+    """
+    tree = "a" * 40
+    index = "b" * 40
+    log_path = tmp_path / "x.log"
+    log_path.write_text(
+        f"# produced-at: tree={tree} index={index} "
+        "head=abc1234 2024-01-01T00:00:00+00:00\nbody\n"
+    )
+    stale_tree = "c" * 40
+    assert (
+        git_utils.log_freshness(
+            log_path, stale_tree, current_index=index, require_index=True
+        )
+        == "stale"
+    )
+
+
+def test_log_freshness_require_index_false_ignores_index_completely(
+    tmp_path: Path,
+) -> None:
+    """behavior: require_index=False ignores the index component entirely.
+
+    One-line justification: non-index steps don't care about the index.
+    """
+    tree = "a" * 40
+    index = "b" * 40
+    log_path = tmp_path / "x.log"
+    log_path.write_text(
+        f"# produced-at: tree={tree} index={index} "
+        "head=abc1234 2024-01-01T00:00:00+00:00\nbody\n"
+    )
+    # Even with a mismatched index, require_index=False should return fresh
+    assert (
+        git_utils.log_freshness(
+            log_path, tree, current_index="z" * 40, require_index=False
+        )
+        == "fresh"
+    )
 
 
 # ---------------------------------------------------------------------------

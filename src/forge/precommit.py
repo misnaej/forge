@@ -118,6 +118,7 @@ from forge.git_utils import (
     fork_point_time,
     get_modified_files,
     get_untracked_files,
+    index_sha,
     is_ancestor,
     latest_v_tag,
     log_freshness,
@@ -233,12 +234,17 @@ class StepDef:
             for steps that check the installed environment: their log's
             tree stamp says nothing about their result, so
             ``--freshness`` reports them ``n/a``.
+        reads_index: Whether the step reads staged (index) state rather than
+            only the working tree. ``True`` makes the log's stamp carry an
+            ``index=`` component and ``--freshness`` compare it, so staging
+            a file invalidates the step's verdict.
     """
 
     name: str
     fn: StepFn
     default_on: bool = True
     checks_files: bool = True
+    reads_index: bool = False
 
 
 def _forge_step_config(repo_root: Path, step: str) -> dict[str, object]:
@@ -3052,7 +3058,7 @@ def timing_markers(text: str) -> dict[str, str]:
 _STEP_REGISTRY: tuple[StepDef, ...] = (
     StepDef("auto_rebuild", step_auto_rebuild, checks_files=False),
     StepDef("env_sync", step_env_sync, checks_files=False),
-    StepDef("regen_docs", step_regen_docs),
+    StepDef("regen_docs", step_regen_docs, reads_index=True),
     StepDef("ruff", step_ruff),
     StepDef("docstring_verification", step_docstrings),
     StepDef("docstring_coverage", step_docstring_coverage),
@@ -3091,6 +3097,7 @@ _STEP_REGISTRY: tuple[StepDef, ...] = (
         "changelog_updated",
         step_changelog_updated,
         default_on=False,
+        reads_index=True,
     ),
 )
 
@@ -3627,6 +3634,8 @@ def freshness_verdicts(root: Path) -> dict[str, str]:
     current = working_tree_sha(root)
     step_names = frozenset(step.name for step in _STEP_REGISTRY)
     environment_steps = {step.name for step in _STEP_REGISTRY if not step.checks_files}
+    index_steps = {step.name for step in _STEP_REGISTRY if step.reads_index}
+    current_index = index_sha(root) if index_steps else None
     verdicts: dict[str, str] = {}
     for path in sorted(log_dir.glob("*.log")):
         if path.name.endswith(_HISTORY_LOG_SUFFIX) or path.name.startswith(
@@ -3637,6 +3646,10 @@ def freshness_verdicts(root: Path) -> dict[str, str]:
             verdicts[path.stem] = "n/a"
         elif not _log_has_producer(path.stem, step_names):
             verdicts[path.stem] = "orphaned"
+        elif path.stem in index_steps:
+            verdicts[path.stem] = log_freshness(
+                path, current, current_index=current_index, require_index=True
+            )
         else:
             verdicts[path.stem] = log_freshness(path, current)
     return verdicts
@@ -3700,8 +3713,12 @@ def verdict(root: Path) -> tuple[bool, list[str]]:
             continue
         lines.append(f"{marker} {step.name}")
         # A skipped step checked nothing on this tree, so its log is a
-        # leftover from an earlier run, not evidence that went stale.
-        if marker != "SKIP" and verdicts.get(step.name) in NOT_VERIFIED:
+        # leftover from an earlier run — unless the step reads the index:
+        # its SKIP still vouches for the index it ran against, so a moved
+        # index fails it.
+        if (marker != "SKIP" or step.reads_index) and verdicts.get(
+            step.name
+        ) in NOT_VERIFIED:
             stale = True
             lines.append(f"STALE {step.name}")
     # Computed now, not read from the run: the question is what the current

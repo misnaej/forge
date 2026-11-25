@@ -7713,7 +7713,12 @@ def test_run_all_invokes_selected_step(
 
 
 def _write_log_with_stamp(
-    repo: Path, name: str, *, tree: str, body: str = "log body\n"
+    repo: Path,
+    name: str,
+    *,
+    tree: str,
+    body: str = "log body\n",
+    index: str | None = None,
 ) -> Path:
     """Write ``code_health/<name>.log`` with a produced-at stamp for *tree*.
 
@@ -7724,6 +7729,8 @@ def _write_log_with_stamp(
             ``"unknown"``, or any other string (the reader treats
             anything but a match to the current tree as stale).
         body: Content following the stamp line.
+        index: Value for the optional ``index=`` field; omitted when
+            ``None``, so old-format stamps can be written too.
 
     Returns:
         The written log path.
@@ -7731,8 +7738,10 @@ def _write_log_with_stamp(
     log_dir = git_utils.code_health_dir(repo)
     log_dir.mkdir(parents=True, exist_ok=True)
     path = log_dir / f"{name}.log"
+    index_part = f" index={index}" if index is not None else ""
     path.write_text(
-        f"# produced-at: tree={tree} head=abc1234 2024-01-01T00:00:00Z\n{body}"
+        f"# produced-at: tree={tree}{index_part} "
+        f"head=abc1234 2024-01-01T00:00:00Z\n{body}"
     )
     return path
 
@@ -8401,6 +8410,144 @@ def test_verdict_skipped_step_with_old_log_is_not_stale(
     assert ok is True
     assert f"SKIP {step}" in lines
     assert f"STALE {step}" not in lines
+    assert lines[-1] == "verdict: PASS"
+
+
+def test_freshness_verdicts_reads_index_step_stale_when_index_moves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """behavior: freshness_verdicts marks reads_index steps stale when index moves.
+
+    One-line justification: index-dependent steps must match both tree
+    and index state.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+    head_tree = git_utils.get_tree_sha(tmp_path, "HEAD")
+
+    # Create a tmp code_health dir for isolated logs
+    health_dir = tmp_path / "health"
+    health_dir.mkdir()
+    monkeypatch.setenv(git_utils.CODE_HEALTH_ENV, str(health_dir))
+
+    # Write a log for a reads_index step (regen_docs) with current tree/index
+    regen_docs_log = health_dir / "regen_docs.log"
+    regen_docs_log.write_text(
+        git_utils.build_stamp(
+            head_tree,
+            "abc1234",
+            dirty=False,
+            now=_dt.datetime.now(_dt.UTC),
+            index="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        + "\nPASS regen_docs\n"
+    )
+
+    # Move the index by staging a file
+    subprocess.run(["git", "add", "tracked.txt"], cwd=tmp_path, env=GIT_ENV, check=True)
+    moved_index = git_utils.index_sha(tmp_path)
+    assert moved_index is not None
+    assert moved_index != "a" * 40
+
+    # regen_docs is a reads_index step
+    verdicts = precommit.freshness_verdicts(tmp_path)
+    assert verdicts["regen_docs"] == "stale"
+
+
+def test_freshness_verdicts_non_index_step_ignores_index_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """behavior: freshness_verdicts ignores index for non-reads_index steps.
+
+    One-line justification: tree-only steps don't care about the index.
+    """
+    init_git_repo(tmp_path)
+    (tmp_path / "tracked.txt").write_text("v1\n")
+    commit_all(tmp_path, "seed")
+    head_tree = git_utils.get_tree_sha(tmp_path, "HEAD")
+
+    # Create a tmp code_health dir for isolated logs
+    health_dir = tmp_path / "health"
+    health_dir.mkdir()
+    monkeypatch.setenv(git_utils.CODE_HEALTH_ENV, str(health_dir))
+
+    # Write a log for a non-index step (ruff) with current tree
+    ruff_log = health_dir / "ruff.log"
+    ruff_log.write_text(
+        git_utils.build_stamp(
+            head_tree,
+            "abc1234",
+            dirty=False,
+            now=_dt.datetime.now(_dt.UTC),
+            index="a" * 40,
+        )
+        + "\nPASS ruff\n"
+    )
+
+    # Move the index by staging a file
+    subprocess.run(["git", "add", "tracked.txt"], cwd=tmp_path, env=GIT_ENV, check=True)
+
+    # ruff is not a reads_index step, so it should still be fresh
+    verdicts = precommit.freshness_verdicts(tmp_path)
+    assert verdicts["ruff"] == "fresh"
+
+
+def test_verdict_skip_on_reads_index_step_with_stale_index_log_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """behavior: verdict() FAILs when a reads_index step has a stale-index log.
+
+    One-line justification: SKIP on an index-dependent step with stale
+    evidence is not acceptable — the step must re-run.
+    """
+    init_git_repo(tmp_path)
+    rows = _all_rows(tmp_path)
+    step = next(
+        name
+        for name in rows
+        if next(s for s in precommit._STEP_REGISTRY if s.name == name).reads_index
+    )
+    rows[step] = "SKIP"
+    _verdict_repo(tmp_path, monkeypatch, rows=rows)
+    # Write a stale log for the reads_index step
+    _write_log_with_stamp(
+        tmp_path, step, tree=git_utils.get_tree_sha(tmp_path, "HEAD"), index="0" * 40
+    )
+
+    ok, lines = precommit.verdict(tmp_path)
+
+    assert ok is False
+    assert f"SKIP {step}" in lines
+    assert f"STALE {step}" in lines
+    assert lines[-1].startswith("verdict: FAIL")
+
+
+def test_verdict_skip_on_non_index_step_with_stale_log_remains_exempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """behavior: verdict() still passes when a non-index step has a stale log.
+
+    One-line justification: tree-only steps with stale logs are exempt
+    from freshness checks.
+    """
+    init_git_repo(tmp_path)
+    rows = _all_rows(tmp_path)
+    # Find a non-reads_index step
+    step = next(
+        name
+        for name in rows
+        if not next(s for s in precommit._STEP_REGISTRY if s.name == name).reads_index
+    )
+    rows[step] = "SKIP"
+    _verdict_repo(tmp_path, monkeypatch, rows=rows)
+    # Write a stale log for the non-index step
+    _write_log_with_stamp(tmp_path, step, tree="0" * 40)
+
+    ok, lines = precommit.verdict(tmp_path)
+
+    assert ok is True
+    assert f"SKIP {step}" in lines
     assert lines[-1] == "verdict: PASS"
 
 
