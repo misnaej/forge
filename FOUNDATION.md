@@ -714,7 +714,8 @@ Reviewed by `forge-design-checker`.
   prose carrying every rule is the right length. Never move an
   imperative, never merge two rules into one vaguer one, never renumber
   a section. How to compact:
-  [`forge-docs/foundation-compaction.md`](forge-docs/foundation-compaction.md).
+  [`forge-docs/instruction-compaction.md`](forge-docs/instruction-compaction.md)
+  — which applies to a consumer's own `CLAUDE.md` too.
 - **Lessons enter through an intake, and earn their way into the rules.**
   True, shareable lesson in memory (`/forge-memory-audit` SHOULD-SHIP verdict) →
   first to the intake (never auto-loaded): lesson for this repo, finding

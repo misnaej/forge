@@ -394,7 +394,7 @@ repos by `install-forge-claude-md` (guarded there by a README notice + the
 - continuation.md: the continuation-note protocol (FOUNDATION §10 points here) — panel vs written section, line/item budgets, the keep/drop questions, `Detail:` pointer files, orphan check, `forge-continuation clean`
 - ci-recipe.md: consumer CI recipe (channel pin + per-PR workflow + scheduled upgrade PR)
 - smart-test.md: usage guide for `forge-smart-test` — depth model, consumer guarantees, opt-in correctness extensions
-- foundation-compaction.md: what belongs in FOUNDATION.md and what moves out (FOUNDATION §12 points here) — the opt-in/role/always-loaded questions, the four destinations, the three prohibitions, per-page budgets
+- instruction-compaction.md: what belongs in an always-loaded instruction file — FOUNDATION.md and a consumer's own CLAUDE.md (FOUNDATION §12 points here) — the opt-in/role/always-loaded questions, the four destinations, the three prohibitions, per-page budgets
 - backlog-tracks.md: backlog tracks — `track:<name>` naming, the `track:` plan line, membership via `forge-plan-check track-members`, placement limits, hub-file evidence, first run vs re-align
 - precommit-fixer.md: rationale behind `forge-precommit-fixer`'s rules — the loop and its evidence, narrow re-verify vs closing run, why tests re-run after a code or test edit, test-code caution, report-only steps
 - git-safety.md: procedure behind FOUNDATION §2's git rules — gate kinds, guard bypass, destructive git forms, base sync (`forge-update-branch`, stacked branches)

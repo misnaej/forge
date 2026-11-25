@@ -1,32 +1,37 @@
-# Compacting FOUNDATION
+# Compacting an always-loaded instruction file
 
-What belongs in `FOUNDATION.md` and what belongs elsewhere. FOUNDATION
-states the rule and links here (§12); this page holds the procedure —
-the rule applying to itself.
+What belongs in a file every agent session loads, and what belongs
+elsewhere. Two files in your repo work this way:
+
+- **`FOUNDATION.md`** — forge's, shipped and overwritten on upgrade. You
+  never edit it; a rule you want changed goes upstream (FOUNDATION §12).
+  It states the rule and links here (§12); this page holds the procedure.
+- **`CLAUDE.md`** (or `AGENTS.md`) — **yours**. Same cost per session,
+  same growth, and you own every word. This page is for that file too;
+  see "Your own CLAUDE.md" below.
 
 ## The target is "as short as possible". The budget is a ceiling.
 
-`tests/test_foundation_budget.py` warns past a word count. That number is
-a **ceiling, never a target**: text at 90% of it is not thereby correct,
-and no word earns its place by fitting. The shortest prose carrying every
-rule is the right length.
-
-The check warns and never fails. A document that grew because a real rule
-arrived is doing its job; one that grew because prose accumulated is not,
-and only reading it tells you which.
+A word count warns; the number is a **ceiling, never a target**. No word
+earns its place by fitting, and the shortest prose carrying every rule is
+the right length. Forge's check (`tests/test_foundation_budget.py`) warns
+and never fails: growth because a real rule arrived is the file doing its
+job, growth because prose accumulated is not, and only reading it tells
+you which.
 
 ## Who pays
 
-FOUNDATION loads into every session of every agent in every consumer
-repo. A rule one role uses, or one an opted-out repo cannot act on, is
-paid for by all of them. Three questions, in order.
+An always-loaded file loads into every session of every agent. A rule one
+role uses, or one an opted-out repo cannot act on, is paid for by all of
+them. Three questions, in order.
 
 ### 1. Did this repo opt into the feature the rule serves?
 
-No → it does not belong in FOUNDATION at all. An optional scheme keeps
-its rules with the thing that implements it: the selector's cadence in
-the selector's spec, a logging convention with the module. A repo that
-never enabled a feature must not carry its policy every session.
+No → it does not belong in an always-loaded file at all. An optional
+scheme keeps its rules with the thing that implements it: the selector's
+cadence in the selector's spec, a logging convention with the module. A
+repo that never enabled a feature must not carry its policy every
+session.
 
 ### 2. Which role acts on it?
 
@@ -47,9 +52,9 @@ Second cut for what survives: does the passage **change a decision** or
 
 | Where | Loaded | Holds |
 |---|---|---|
-| `FOUNDATION.md` | every session, every agent | universal decision rules |
+| `FOUNDATION.md` / `CLAUDE.md` | every session, every agent | universal decision rules |
 | an agent doc | whenever that agent runs | role-specific rules |
-| a `forge-docs/` page | on demand, possibly never | enumerations, mechanics, rationale |
+| a referenced page | on demand, possibly never | enumerations, mechanics, rationale |
 | a CLI or pre-commit step | every run, mechanically | anything computable from tree and config (§7) |
 
 Prefer the lowest row that fits. A check nobody has to remember beats a
@@ -100,17 +105,43 @@ rule" is load-bearing: strip it and the rule reads as negotiable.
 1. **Delete what another file already owns.** Check before moving: a
    passage that names its own spec is usually a duplicate, not a summary.
 2. **Route what is left** by the three questions above.
-3. **Compress what stays** — §8's terse rule applies to FOUNDATION
-   itself. Same rules, fewer words.
+3. **Compress what stays** — §8's terse rule applies to the file itself.
+   Same rules, fewer words.
 4. **Stop.** A document as short as it can be while carrying every rule
    is finished, over the ceiling or not.
 
-## Pointed pages have budgets too
+## Referenced pages have budgets too
 
-Every `forge-docs/` page carries its own ceiling, checked and warned the
-same way. Without one, "move it out" hides growth instead of reducing it,
-and the detail an agent reads on demand decays where nothing measures it.
+Give every page you point at its own ceiling, warned the same way —
+without one, "move it out" hides growth instead of reducing it, and the
+detail decays where nothing measures it. Forge's pattern: a dict of
+page → ceiling, warning and never failing.
 
-A pointed page opens with the rule it serves, so a reader arriving cold
-knows what the detail is for. FOUNDATION's pointer states the rule too —
+A referenced page opens with the rule it serves, so a reader arriving
+cold knows what the detail is for. The pointer states the rule too —
 never only the link — so the page is never load-bearing alone.
+
+## Your own CLAUDE.md
+
+Everything above applies, more sharply: `FOUNDATION.md` is reviewed by
+whoever ships forge, while your `CLAUDE.md` is reviewed by nobody but
+you, and it grows every time someone corrects an agent.
+
+Run the three questions over it. Two findings are usual:
+
+- **Rules for one role.** A convention only your test-writer or your
+  deploy agent needs belongs in that agent's doc (`.claude/agents/…`),
+  where it loads on use and costs the others nothing. §16's wrapper
+  patterns exist for exactly this.
+- **Rules for a tool you no longer run.** Config and process notes for a
+  retired tool keep loading forever. Delete them; nothing warns you.
+
+Keep in `CLAUDE.md` what no agent could act correctly without: your
+layout, your release and branching rules, your logging entry point
+(FOUNDATION §9 requires naming it there if you do not adopt
+`common.logging`), your documented exceptions. Push the rest down a row
+in the destinations table.
+
+And never paste a shipped rule into it to be safe. A copy drifts from the
+original on the next upgrade, and §12's conflict rule means your stale
+copy then silently wins.

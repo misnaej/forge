@@ -56,7 +56,7 @@ FORGE_DOCS_CEILINGS: dict[str, int] = {
     "ci-recipe.md": 4400,
     "configuration.md": 9800,
     "continuation.md": 800,
-    "foundation-compaction.md": 900,
+    "instruction-compaction.md": 1200,
     "git-safety.md": 2500,
     "integration-staleness.md": 800,
     "metrics.md": 2400,
