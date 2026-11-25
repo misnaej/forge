@@ -210,11 +210,10 @@ exempt_paths = ["docs/intake/"]
 auto = "merge"
 
 [tool.forge.smart_test]
-# Dogfood the depth model: commits run depth-2 selection; the
-# tracked .forge-full-run stamp escalates to a truly-all run every 48h
-# (defaults for lifecycle_skip_days / full_run_max_age_hours /
-# nonpython_ignore apply — see forge-config --list).
-precommit_depth = "2"
+# No tests run at commit time. CI runs the full suite on every push and
+# PR (.github/workflows/ci.yml), so it carries the truly-all guarantee
+# that makes lifecycle deselection safe. Defaults apply for
+# lifecycle_skip_days / nonpython_ignore — see forge-config --list.
 
 [tool.forge.env_sync]
 # Dogfood step_auto_rebuild: when a pulled change adds a [project.scripts] CLI

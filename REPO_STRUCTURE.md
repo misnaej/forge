@@ -117,7 +117,7 @@ Checked on every commit by `verify-forge-repo-structure`: every listed file and 
    - dependencies.py: reverse test→source import graph (built on `import_graph`) + depth expansion; `SelectionPlan`, `render_plan`
    - runner.py: import-cache hygiene + a single deterministic `pytest` invocation per batch (coverage only on `full`)
    - run_log.py: single-writer lock (refuses a concurrent run, takes over a dead holder) and the incremental log sink — stamped at run start, appended per tier, closed with a `# complete:` line
-   - lifecycle.py: test-lifecycle mechanics — development-marker detection, 30d lifecycle-skip filter, the tracked `.forge-full-run` 48h stamp, full-run history ledger, depth-2 differential check
+   - lifecycle.py: test-lifecycle mechanics — development-marker detection, 30d lifecycle-skip filter, full-run history ledger, depth-2 differential check (CI carries the periodic truly-all run; no stamp)
    - coverage.py: opt-in coverage-validated selection — maps changed lines → covering tests via per-test coverage contexts (json or `.coverage` DB); unioned into the static pass
    - cli.py: `forge-smart-test` — `--depth 0/1/2/full`, `--show-files`, `--coverage`, `--base`, `--coverage-db`, `--from-commit-message`; depth batching with fail-fast; writes `code_health/smart_test.log`
 
@@ -394,6 +394,7 @@ repos by `install-forge-claude-md` (guarded there by a README notice + the
 - continuation.md: the continuation-note protocol (FOUNDATION §10 points here) — panel vs written section, line/item budgets, the keep/drop questions, `Detail:` pointer files, orphan check, `forge-continuation clean`
 - ci-recipe.md: consumer CI recipe (channel pin + per-PR workflow + scheduled upgrade PR)
 - smart-test.md: usage guide for `forge-smart-test` — depth model, consumer guarantees, opt-in correctness extensions
+- foundation-compaction.md: what belongs in FOUNDATION.md and what moves out (FOUNDATION §12 points here) — the opt-in/role/always-loaded questions, the four destinations, the three prohibitions, per-page budgets
 - backlog-tracks.md: backlog tracks — `track:<name>` naming, the `track:` plan line, membership via `forge-plan-check track-members`, placement limits, hub-file evidence, first run vs re-align
 - precommit-fixer.md: rationale behind `forge-precommit-fixer`'s rules — the loop and its evidence, narrow re-verify vs closing run, why tests re-run after a code or test edit, test-code caution, report-only steps
 - git-safety.md: procedure behind FOUNDATION §2's git rules — gate kinds, guard bypass, destructive git forms, base sync (`forge-update-branch`, stacked branches)
@@ -448,7 +449,6 @@ Architecture RFCs and research reports — aspirational or advisory, not descrip
    - ruff.toml: ruff lint and format configuration (strict, ALL rules)
    - pyrefly.toml: pyrefly type-checker config for the opt-in `typecheck` step (strict return-type checking; interrogate's attrs `__init__` silenced via `replace-imports-with-any`)
    - c4.toml: standalone C4 architecture-model skeleton consumed by `forge-gen-c4` (kept out of pyproject; pointed at by `[tool.forge.c4].config`)
-   - .forge-full-run: tracked one-line ISO stamp of the last truly-all test run — the 48h full-run cadence guarantee, rewritten and restaged by the `smart_test` pre-commit step
 
 3. **Documentation**
    - CLAUDE.md: project guidance for Claude Code and developers

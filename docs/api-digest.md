@@ -2046,8 +2046,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `step_cli_wiring(repo_root: Path) -> StepResult` — Run ``verify-forge-cli-wiring`` — assert every script has a real caller.
 - `_cli_wiring_enabled(repo_root: Path) -> bool` _(internal)_ — Return True when the repo has opted into the cli_wiring check.
 - `step_agent_doc(repo_root: Path) -> StepResult` — Run ``verify-forge-agent-doc`` — keep a hand-maintained agent doc in sync.
-- `step_smart_test(repo_root: Path) -> StepResult` — Run smart-test depth-N selection when opted in (off by default).
-- `_cadence_note(mode: str, *, age: float | None, age_txt: str, max_age: float) -> str` _(internal)_ — Return the informational cadence line for a non-escalating mode.
 - `_cfg_str_list(cfg: dict[str, object], key: str, default: list[str]) -> list[str]` _(internal)_ — Return a ``[tool.forge.*]`` list-valued key narrowed to ``list[str]``.
 - `step_doctest(repo_root: Path) -> StepResult` — Run ``pytest --doctest-modules`` over docstring examples (opt-in).
 - `step_typecheck(repo_root: Path) -> StepResult` — Run pyrefly over the resolved scope (opt-in).
@@ -2286,9 +2284,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_has_development_pytestmark(text: str) -> bool` _(internal)_ — Return whether *text* carries a top-level development pytestmark.
 - `days_since_last_touch(repo_root: Path, rel_path: str) -> float` — Return days since *rel_path*'s last commit.
 - `lifecycle_skippable(repo_root: Path, test_files: set[str], changed: set[str], *, skip_days: float = DEFAULT_SKIP_DAYS) -> set[str]` — Return development files an ordinary full run may deselect.
-- `read_stamp(repo_root: Path) -> _dt.datetime | None` — Return the last truly-all run's timestamp, or ``None``.
-- `write_stamp(repo_root: Path) -> Path` — Write the stamp with the current UTC time.
-- `stamp_age_hours(repo_root: Path) -> float | None` — Return the stamp's age in hours, or ``None`` when unreadable.
 - `failed_files(pytest_output: str) -> set[str]` — Extract failing test-file paths from pytest output.
 - `append_history(repo_root: Path, metrics: RunMetrics) -> None` — Append one record-only metrics line for a full run.
 

@@ -101,20 +101,21 @@ full pass. Config reference:
   collect no tests (pytest exit 5), the run fails with an explanation
   instead of passing; a run with nothing selected, or a whole-suite run,
   still treats "no tests" as success.
-- **Full-run cadence.** The tracked one-line stamp `.forge-full-run`
-  records the last *truly-all* run; when it exceeds
-  `full_run_max_age_hours` (default 48), the `smart_test` pre-commit step
-  escalates that commit to `--depth full --all-tests` and stages the
-  refreshed stamp into the same commit — the guarantee travels through git
-  to every contributor and CI. That escalation is what
-  `cadence_mode = "commit"` does; see "Who carries the cadence" below for
-  the CI-fleet modes.
+- **Full-run cadence is CI's.** A periodic truly-all run is what makes
+  deselection safe, and it belongs where the suite already runs: one
+  scheduled or default-branch-push job calling
+  `forge-smart-test --depth full --all-tests` (see
+  [`ci-recipe.md`](ci-recipe.md)). Nothing times it locally. A tracked
+  `.forge-full-run` stamp refreshed by a commit-time step used to carry
+  this; that stamp sat 86 days stale in forge's own repo because its only
+  reader was a step nobody had enabled, so the guarantee moved to the one
+  place that cannot quietly stop running.
 - **Lifecycle deselection is loud, bounded, and reversible.** Ordinary
   `full` runs deselect development-marked files
   (module-level `pytestmark = pytest.mark.development`) untouched for
   `lifecycle_skip_days` (default 30) — always reported as
-  `lifecycle-skipped: N`; any edit to the file re-includes it, the cadence
-  run executes truly everything, and `--all-tests` forces it manually.
+  `lifecycle-skipped: N`; any edit to the file re-includes it, CI's
+  truly-all job executes everything, and `--all-tests` forces it manually.
   Deletion is not part of the model (FOUNDATION §8 "Test lifecycle").
 - **Differential check, record-only.** After each full run, failing files
   outside the would-be depth-2 selection are counted into
@@ -122,39 +123,25 @@ full pass. Config reference:
   the development fraction) — evidence the tiers lose nothing; never a
   gate.
 
-It writes `code_health/smart_test.log` (FOUNDATION §13). The optional
-`smart_test` pre-commit step is **off by default** (self-skips unless
-`[tool.forge.smart_test].precommit_depth` is set) and **non-blocking**
-unless `blocking = true`. Pytest stays out of the default sequence (too
-slow); smart-test is the opt-in change-scoped bridge.
+It writes `code_health/smart_test.log` (FOUNDATION §13). **No tests run at
+commit time.** There is no `smart_test` pre-commit step: a test run is too
+slow to sit in front of every commit, and the step that used to do it was
+also the only writer of the cadence stamp — which is why the guarantee is
+CI's now. Run it by hand, or through `/forge-smart-test`.
 
-## Who carries the cadence — `cadence_mode`
+## Who carries the cadence — CI
 
-The committed stamp is the right guarantee-carrier **only when
-workstations are the testing fleet**. For most repos, CI is the testing
-fleet — the **classic schema** is: tiered smart tests on PR CI + the
-full suite on every main-branch push (event-driven, no clock needed on
-the main path), with an optional scheduled run as the backstop for quiet
-periods. `[tool.forge.smart_test].cadence_mode` selects who owns the
-guarantee:
+CI, in every repo. The **classic schema** is two jobs: tiered smart tests
+on PRs, and the full suite on every default-branch push — event-driven, so
+the main path needs no clock. Add a `schedule:` trigger as a backstop for
+quiet periods. Ready-made snippets: [`ci-recipe.md`](ci-recipe.md), "Smart-test
+cadence in CI".
 
-| Mode | Who tests | Stale-stamp behavior |
-|---|---|---|
-| `commit` (default) | Workstations | Escalates the commit to `--depth full --all-tests`, restages the refreshed stamp |
-| `advisory` | Mixed | Warns only — never escalates; the run keeps its own `blocking` semantics (the note itself never gates) |
-| `external` | CI | Runs the configured depth; warns at **2x** the window as a broken-pipeline detector |
-
-Which mode is my repo?
-
-- **Local testing genuinely happens on commit** → `commit`.
-- **CI tests PRs, locals want speed** → `advisory` locally + the
-  classic-schema CI jobs.
-- **CI is the only testing fleet** → `external` + the classic-schema CI
-  jobs (see the CI recipe's "Smart-test cadence in CI" section for
-  ready-made snippets). The `external` detector assumes the CI cadence
-  job refreshes the stamp (the snippet includes the optional
-  write-permission step); without stamp refresh, expect the 2x-window
-  warning — it is telling the truth: nothing recorded a truly-all run.
+There is no mode to choose and nothing to configure. The guarantee is the
+job: if it stops running, the build goes red, which is a signal people
+already read — unlike a timestamp whose only reader was a pre-commit step.
+A repo whose CI already runs the whole suite on every pull request has the
+guarantee today and needs no extra job.
 
 ## Opt-in correctness extensions
 

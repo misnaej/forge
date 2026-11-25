@@ -18,9 +18,9 @@ standards). Recommends and reports; never writes or edits tests — that is
 
 ## Source of truth
 
-See the testing documentation standards in
-[FOUNDATION §8](../FOUNDATION.md#8-documentation-standards) (and §5 for the
-`tests/` layout). Read and apply; never restate.
+Review against the testing standards in `forge:test-writer`'s *Source of
+truth* section — that agent owns them. Lifecycle classes: FOUNDATION §8;
+`tests/` layout: FOUNDATION §5. Read and apply; never restate.
 
 ## Workflow
 

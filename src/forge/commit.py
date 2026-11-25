@@ -79,7 +79,6 @@ from forge.pr_squash_comment import TITLE_RE
 from forge.pr_wrapup import WRAPUP_NAME, wrapup_names_head
 from forge.precommit import verdict
 from forge.regen_docs import API_DIGEST_DOC, CLI_REFERENCE_DOC
-from forge.smart_test.lifecycle import STAMP_RELPATH
 from forge.text_budget import length_verdict, refusal_threshold
 
 
@@ -101,11 +100,9 @@ EXIT_PUSH_FAILED: Final = 2
 COMMIT_MAX_WORDS: Final = 45
 
 #: Files the pre-commit hook itself regenerates and stages into a commit it
-#: lets through (the generated docs, the full-run cadence stamp); a commit
-#: may hold these beyond the named files.
-HOOK_STAGED_PATHS: Final = frozenset(
-    {API_DIGEST_DOC, CLI_REFERENCE_DOC, str(STAMP_RELPATH)}
-)
+#: lets through (the generated docs); a commit may hold these beyond the
+#: named files.
+HOOK_STAGED_PATHS: Final = frozenset({API_DIGEST_DOC, CLI_REFERENCE_DOC})
 #: A push failing on these is GitHub being briefly unavailable, not a
 #: rejection; it is retried a few times before being reported.
 _TRANSIENT_PUSH: Final = re.compile(

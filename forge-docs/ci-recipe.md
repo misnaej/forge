@@ -299,11 +299,16 @@ that pre-merge, run the step as its own **required status check**:
 
 ### Smart-test cadence in CI (the classic schema)
 
-When CI is the testing fleet (most repos), pair
-`[tool.forge.smart_test].cadence_mode = "external"` (or `"advisory"`
-for mixed fleets) with two jobs: tiered smart tests on PRs, the full
-suite on every main-branch push. Event-driven — the main path needs no
-clock; add the `schedule:` trigger as a quiet-period backstop.
+CI carries the cadence, and these two jobs are how: tiered smart tests on
+PRs, the full suite on every main-branch push. Event-driven — the main
+path needs no clock; add the `schedule:` trigger as a quiet-period
+backstop. Nothing to configure: the jobs *are* the guarantee, and a job
+that stops running turns the build red.
+
+The full-suite job is what makes lifecycle deselection safe, so run it if
+your repo marks any test `pytestmark = pytest.mark.development`. A repo
+whose CI already runs the whole suite on every pull request has the
+guarantee and needs neither job.
 
 ```yaml
   smart-test-pr:            # PR job: change-scoped tiers
@@ -326,24 +331,15 @@ clock; add the `schedule:` trigger as a quiet-period backstop.
         with: { python-version: "3.12" }
       - run: pip install -e ".[dev]"
       - run: forge-smart-test --depth full --all-tests
-      # OPTIONAL stamp refresh — keeps `external` mode's 2x-window
-      # broken-pipeline detector honest. Needs `contents: write` on
-      # THIS job only; skip it and expect (truthful) stale-stamp WARNs.
-      # - run: |
-      #     git config user.name github-actions
-      #     git config user.email github-actions@github.com
-      #     git add .forge-full-run
-      #     git commit -m "chore: refresh full-run cadence stamp" || true
-      #     git push
 ```
 
 - Add `schedule: [{cron: "0 4 * * *"}]` to the workflow triggers if
   main can go quiet for days — the scheduler then owns the cadence
   clock instead of the merge stream.
-- Workstations in these repos set `cadence_mode = "advisory"` (or the
-  step stays unopted) — the committed-stamp escalation is for
-  repos whose testing genuinely happens locally. Decision table:
-  smart-test doc, "Who carries the cadence".
+- Nothing is written back to the repo. An earlier design had this job
+  push a refreshed `.forge-full-run` stamp; the stamp is gone, because a
+  timestamp whose only reader was a pre-commit step went stale unnoticed
+  while every PR was in fact running the full suite.
 
 ## 3. Scheduled `forge-upgrade --apply` workflow
 
