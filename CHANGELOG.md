@@ -20,6 +20,105 @@ fragment type (**Features / Changes / Fixes / Removed / Docs**).
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v15.2.1 — 2026-11-25
+
+### Changes
+- The PR wait's alert log and comment cursor moved to their own module.
+- Four agent docs lost prose that restated FOUNDATION, freeing headroom.
+- Forge's own issue gate checks author access before anything else.
+
+### Fixes
+- Waiting on a pull request no longer stops after one window.
+- It re-arms until the PR ends or `--total-bound` is spent, six hours by default.
+- `--bound` now sizes one window; `--once` keeps the old single wait.
+- `--interval` under 30 seconds is refused, as is a `--bound` below one interval or above `--total-bound`.
+
+## v15.2.0 — 2026-11-24
+
+### Changes
+- **`/memory-audit` is now dispatched to a background agent at implementation start** — `/next` at task pickup and `/sentinel` at plan pickup spawn it as a background child that runs propose-only and writes its report to `code_health/memory-audit-proposals.md` (gitignored, survives the session). No more competing for attention mid-task, and a decline no longer vanishes: the proposals file is the trace.
+- **One re-offer after the wrap-up posts**: `/pr` offers `/memory-audit` once more when pending proposals exist — the natural pause — never blocking, one re-ask only.
+- The rule-surface PR offer and the on-demand invocation are unchanged; interactive audits still confirm-first and never run silently.
+
+## v15.1.1 — 2026-11-24
+
+### Fixes
+- A wrap-up no longer reports a reviewer verdict nobody gave.
+- A refresh that re-runs no reporter now says so, instead of "PASS".
+- A verdict from an older commit says the head is unverified.
+- Waiting on a pull request no longer wakes you on your own comments.
+- `forge-pr-watch digest --prune-terminal` clears a settled PR's log once read.
+- A commit message may name forge's own CLIs again.
+
+## v15.1.0 — 2026-11-24
+
+### Features
+- **The continuation note's written section is now capped by items, not only lines.** `forge-continuation check` reports `N/12 items` alongside the line budget (`[tool.forge.continuation].judgment_max_items`, default 12); an item is a top-level heading or list bullet, fenced code excluded. Unlike lines, items cannot be reworded away — trimming means deleting an entry or rehoming it. `--strict` gates on both budgets.
+- **Detail pointer files with an orphan check in both directions.** Long detail moves to `.plan/<slug>.md`, named from the note with one `- Detail: .plan/<slug>.md` line; `check` reports dangling pointers and unreferenced files, and the file plus its bullet leave in the same edit when the work lands.
+- **New `forge-continuation clean [--days N] [--yes]`** deletes detail files that are unreferenced *and* older than N days (default 14); it only lists without `--yes`, refuses when non-interactive, and never touches `CONTINUATION.md`.
+- The full protocol now lives in `forge-docs/continuation.md` (self-contained); FOUNDATION §10 is a pointer to it.
+
+## v15.0.0 — 2026-11-24
+
+### ⚠️ Upgrade notes
+- If your own scripts or docs call `forge-pr-squash-comment` in a repo that uses changelog fragments, start each `--bullet` with the fragment bullets it covers, e.g. `--bullet "[1,2] text"`. Without that the post is refused until every fragment bullet is covered. Run `forge-pr-squash-comment --dry-run` to see the bullets numbered. The `[1,2]` never appears in the posted message. The forge-shipped agents and skills already do this.
+- A squash-merge message over 45 words now only warns and posts; it is no longer refused for length.
+- If you call `forge-pr-watch start`, `list` or `stop`, replace them: run `forge-pr-watch await --pr <N>` as a background job. It waits for a merge, CI failure, conflict or review comment, then exits, and that exit hands the event to your session. `forge-pr-watch digest` still shows what earlier waits logged.
+
+## v14.7.1 — 2026-11-20
+
+### Fixes
+- **fix-forge-ruff version-guards the ruff binary on PATH.** Before any `ruff format` / `ruff check` invocation (CI reporting mode included), `ruff --version` is checked against the repo's own ruff pin in `pyproject.toml` (FOUNDATION §5 one-minor pin). A foreign ruff now fails loudly with exit 2 and writes the refusal to `code_health/ruff.log` instead of rewriting files — ruff 0.11.x's N802 unsafe autofix renamed `ast.NodeVisitor.visit_*` dispatch methods in `verify_docstrings.py` / `verify_test_naming.py` and broke the verifiers at runtime while the step reported success.
+
+## v14.7.0 — 2026-11-20
+
+### Changes
+- An agent no longer claims a session runs stale definitions.
+- It says which surface reloaded and what a restart settles.
+- An agent stops at the edge of what was asked.
+- A status report mid-flow no longer ends a turn.
+- Length limits are ceilings, not lengths to write toward.
+- Text far past its ceiling is now refused, not just warned.
+- A long pull request description earns an advisory.
+- Skill instructions are measured against the agent length cap.
+- A regenerated integration installs the shared guard library too.
+- Guards no longer all refuse every command after an upgrade.
+
+## v14.6.1 — 2026-11-20
+
+### Fixes
+- **One shared command-segment reader for all guard hooks.** `claude-hooks/lib/command_utils.sh` now holds the command-positions scanner (moved verbatim from `git_anchor.sh`, which sources it) plus `parse_command_segment()`, the single extraction point for `.tool_input.command`; all 22 hooks use it instead of per-hook jq one-liners.
+- **`block_vibe_config.sh` blocks mutations, not mentions.** The Bash branch no longer substring-matches `.vibe`/`.agents`/`AGENTS.md` in the raw command, so read-only compound commands like `cat .vibe/hooks.toml && ls` or `grep -r AGENTS.md docs/ | wc -l` pass; a destructive verb with a protected path argument, a redirect into a protected path, or an indirected form (`D=.vibe; rm -rf "$D"`) still blocks, verified per verb form (rm, cp, mv, sed -i, tee, redirects, heredocs).
+
+## v14.6.0 — 2026-11-20
+
+### Changes
+- Merges to `main` no longer lose their release tag.
+- `forge-pr-watch digest` reports what a monitor saw; `/forge-next` reads it.
+- A monitor stops when its pull request is merged or closed.
+- A standing condition is reported once per revision, not every minute.
+- New comments are reported, including a second on the same revision.
+- Monitor text is flattened to one printable line.
+- Each report says how long ago it was written.
+- Starting a monitor without naming a pull request works again.
+- A detached checkout refuses rather than guessing a pull request.
+- Review reports label each point: shipped, fixed, verified, deferred, blocked.
+- Changelog bullets stay short; an advisory names any that run long.
+- A major release must carry upgrade notes.
+- Upgrading across a major with no notes says so.
+- Syncing a branch with no commits of its own fast-forwards.
+- A question no longer stops work when its answer was not needed.
+
+### Fixes
+- **Docstring rewraps no longer churn `docs/api-digest.md`.** The digest's summary now takes the first docstring paragraph with all internal whitespace collapsed, so a formatting-only rewrap leaves the digest unchanged instead of failing `api_digest_check` — and `forge-gen-api-digest` is now in the fixer's Allowed-CLIs, so it can regenerate the digest in-pass.
+- **The fixer doc states the PR-flow sequencing rule where it applies:** every content edit before the first `precommit-fixer` dispatch; an edit after its closing run stales every `code_health/` log and the commit is refused.
+
+## v14.5.3 — 2026-11-20
+
+### Fixes
+- **`forge-update-branch` says when a base merge left the PR's wrap-up stale.** A merge moves the head by construction, so a posted wrap-up's `verified-at:` stops naming it the moment the merge commits; the command now logs that verdict — stale SHA vs new head, with the `/forge-pr <N>` delta refresh as the remedy — while still exiting 0, instead of leaving the author to meet the refusal at the next gate.
+- **`forge-pr-wrapup post` refuses a wrap-up whose `verified-base:` no longer matches the PR's base**, mirroring the retarget check `forge-pr-plan --freshness` already reported: a wrap-up verified against another base describes a diff the PR does not have.
+
 ## v14.5.2 — 2026-11-19
 
 ### Fixes
