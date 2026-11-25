@@ -1,7 +1,6 @@
 """forge-release — cut an annotated ``vX.Y.Z`` release tag for tag-versioned repos.
 
-The single-track counterpart to forge's own rolling-next flow: for a
-repo whose version is *derived from* its ``v*`` tags (setuptools-scm)
+For a repo whose version is *derived from* its ``v*`` tags (setuptools-scm)
 rather than from any manifest, the tag IS the release. This CLI owns the
 orchestration so consumers don't reimplement it: guard checks, semver
 bump off the latest ``v*`` tag, a CHANGELOG gate, then annotated tag +
@@ -21,8 +20,7 @@ Two version sources, one orchestration:
 - ``--bump major|minor|patch`` — compute the tag off the latest ``v*``
   tag. The manual workstation path.
 - ``--from-changelog`` — cut the version the ``CHANGELOG.md`` top
-  heading *declares* (the single-track convention's rolling-next
-  analogue). Idempotent: already tagged → exit ``0`` "nothing to
+  heading *declares*. Idempotent: already tagged → exit ``0`` "nothing to
   release", so a tag-on-merge CI job and a manual cut can race safely —
   including after an assembly that backfilled notes under headings of
   versions already tagged. The one exception is stranded work: entries

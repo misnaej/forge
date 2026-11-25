@@ -17,28 +17,15 @@ Stop immediately and report if any step fails.
 1. **Check for uncommitted work**
    `git status --porcelain`. If ANY output (staged/unstaged/untracked), warn the user with the file list and **stop**.
 
-2. **Refresh main, optionally tag, prune stale branches** — one CLI
-   call. **Pick the command by repo class first:**
+2. **Refresh main and prune stale branches** — one CLI call:
 
    ```bash
-   # Plugin-manifest repo (e.g. forge itself):
-   forge-next-prep --tag --prune-remote
-
-   # Repo without a plugin manifest (the standard consumer case) —
-   # no --tag; release tags are cut only at release time via
-   # forge-release (docs/consumer-release.md):
    forge-next-prep --prune-remote
    ```
 
    - `git fetch --prune` → `git checkout main && git pull --ff-only`.
-   - With `--tag` (plugin repos only): if
-     `.claude-plugin/plugin.json["version"]` is strictly ahead of the
-     latest `v*` tag, tag the merge commit and push. Rationale and
-     cadence live in `docs/release-process.md` (forge-only). No-op when
-     the version equals the latest tag or is older (the `tag-main`
-     workflow job usually tags first; this is the idempotent manual
-     fallback). On a repo with no plugin manifest, the CLI warns and
-     skips the tag step — per-merge tagging is not a consumer pattern.
+   - **It cuts no tag.** A release tag is cut per merge in CI
+     (`forge-changelog auto-tag`); `forge-release` cuts one by hand.
    - Deletes local branches with `[origin/...: gone]` tracking via safe `git branch -d`. Branches with unmerged commits are reported, not deleted by the CLI — the skill then `-D`s any whose PR is confirmed merged (the squash-merge case `-d` cannot detect; see Important Rules). Use `--no-prune-branches` to skip.
    - `--prune-remote` (always passed): deletes origin branches whose same-repo PR merged into the base branch and whose tip is unchanged since, lease-pinned to the merged commit. Branches with an open PR, no merged PR, or a moved tip are reported and left alone; the base branch and the branch `origin/HEAD` names are never touched. A branch whose PR state `gh` cannot report is skipped with a warning; if `gh` is missing, unauthenticated or times out, the run stops there and deletes nothing further, and if `git ls-remote` fails nothing is deleted. At most 50 branches are examined per run — the rest are reported unexamined. A deleted branch is restorable from its PR page. Relay what it reports.
    - Exits non-zero (1) when main cannot fast-forward — stop and report.
@@ -262,7 +249,6 @@ task-selection precedence rule in Important Rules).
 ## Important Rules
 
 - **Always fetch from remote** before assuming branch / PR state.
-- **Tag the merge before pruning branches** — version-tracked repos need the release tag at the merge commit, not at some later commit. The tag step (Step 2's `--tag` bullet) runs after `git pull`, before stale-branch cleanup, so the tag points at the canonical release commit.
 - **Force-delete (`-D`) only `MERGED` branches.** `forge-next-prep` deletes merged branches with safe `-d` and reports any it skips for "unmerged commits." A squash-merge makes `-d` refuse (the squashed commits are not ancestors of the base), so for each skipped branch, confirm its PR state is `MERGED` (`gh pr view <n> --json state` → `MERGED`) and then `git branch -D <branch>`. A `CLOSED`-but-unmerged PR means the work never landed — **leave it for the user; never `-D` it.** Never `-D` a branch with no merged PR.
 - **Remote branches are pruned only by `forge-next-prep --prune-remote`**, which `/next` always passes. Any other remote delete — an unmerged or abandoned branch — is the user's, via `! git push origin --delete <branch>`; `forge-commit` never deletes, and `block_raw_git` refuses an agent-typed push.
 - **Never proceed with dirty git state** — always stop and let the user decide.

@@ -18,7 +18,7 @@ graph LR
     subgraph forge_scripts["forge-scripts"]
         pre_commit_dispatcher["<b>Pre-commit dispatcher</b><br/>[Python]<br/>The single quality gate — runs each step by shelling out, reading back exit code + code_health/&lt;step&gt;.log"]
         audit_suite["<b>Audit suite</b><br/>[Python (AST)]<br/>Deeper code-health audits: dependency graph, duplication, dead code, doc-claim checks"]
-        verifiers["<b>Verifiers</b><br/>[Python (AST)]<br/>Single-responsibility pre-commit checks: docstrings, naming, repo structure, manifest, wiring, CVE usage"]
+        verifiers["<b>Verifiers</b><br/>[Python (AST)]<br/>Single-responsibility pre-commit checks: docstrings, naming, repo structure, wiring, CVE usage"]
         installers["<b>Installers</b><br/>[Python + gh]<br/>Install/refresh git hooks, CLAUDE.md, labels, README badges, and Claude settings; bootstrap umbrella"]
         doc_generators["<b>Doc generators</b><br/>[Python]<br/>Generate drift-checked docs: API digest, CLI reference, and this C4 model"]
         git_hook_entrypoints["<b>Git-hook entrypoints</b><br/>[Python]<br/>Managed post-merge / post-checkout hooks: foundation drift check + backgrounded self-refresh"]

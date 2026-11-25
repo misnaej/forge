@@ -1,0 +1,8 @@
+bump: patch
+
+- Instructions no longer name machinery that was deleted with the plugin. The `/forge-pr` skill documented a `light-release` wrap-up mode that told the agent design and security review are skipped on a release-assembly PR; no such mode exists, and the classifier asks for the full round on those PRs. `/forge-next` told the agent to run `forge-next-prep --tag`, a flag that was removed, so the command errored on every task start.
+- `forge-precommit-fixer` no longer lists the retired `manifest_json` and `plugin_version` logs among the failures it fixes, nor two step CLIs that no longer ship; `forge-pr-manager` no longer prints a `forge-pr-squash-comment` invocation that the CLI rejects as contradictory; `forge-issue-triage`'s `deep-review` mode no longer asks for goal files through two skills that do not exist.
+- `forge-precommit --help` and `forge-next-prep --help` no longer advertise plugin manifest validation, plugin-version drift and release tagging that they do not perform.
+- Configuration, CI-recipe, release and step-invocation docs no longer reference the retired steps and CLIs, and the C4 model no longer lists two deleted verifier modules.
+- Two internal helpers the plugin's removal left without a caller are gone: `git_utils.release_tree_fingerprint`, which existed for the rolling-next release guard, and `git_utils.classify_bump`, which classified a manifest version delta. Both had only their own tests. Neither is on the documented public import surface.
+- A `changelog_version` docstring claimed the step self-skips on dual-track repos. No such skip exists, and the document section it cited is about cutting a release by hand.

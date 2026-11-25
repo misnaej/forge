@@ -7,7 +7,7 @@ workspace "Forge" "Python CI/CD & code-quality foundation: deterministic CLIs + 
             forge_scripts = container "forge-scripts" "Every forge CLI + the pre-commit dispatcher" "Python pip package" {
                 pre_commit_dispatcher = component "Pre-commit dispatcher" "The single quality gate — runs each step by shelling out, reading back exit code + code_health/<step>.log" "Python"
                 audit_suite = component "Audit suite" "Deeper code-health audits: dependency graph, duplication, dead code, doc-claim checks" "Python (AST)"
-                verifiers = component "Verifiers" "Single-responsibility pre-commit checks: docstrings, naming, repo structure, manifest, wiring, CVE usage" "Python (AST)"
+                verifiers = component "Verifiers" "Single-responsibility pre-commit checks: docstrings, naming, repo structure, wiring, CVE usage" "Python (AST)"
                 installers = component "Installers" "Install/refresh git hooks, CLAUDE.md, labels, README badges, and Claude settings; bootstrap umbrella" "Python + gh"
                 doc_generators = component "Doc generators" "Generate drift-checked docs: API digest, CLI reference, and this C4 model" "Python"
                 git_hook_entrypoints = component "Git-hook entrypoints" "Managed post-merge / post-checkout hooks: foundation drift check + backgrounded self-refresh" "Python"

@@ -628,10 +628,9 @@ waiting for them each morning are the case this supports.
 > and the `gh` step, solves both. Merging the assembly PR stays a human
 > decision either way.
 
-**Manifest-less (tag-versioned) repos: the assembly merge does not
-self-tag.** `forge-next-prep --tag` needs a manifest to be "ahead", and
-`auto-tag` no-ops on the assembly merge (the fragments were just
-deleted by it). The assembly PR body says so and names the cure: run
+**The assembly merge does not self-tag.** `auto-tag` no-ops on the
+assembly merge (the fragments were just deleted by it). The assembly PR
+body says so and names the cure: run
 `forge-release --from-changelog` after merging — it reads the heading
 the assembly just wrote. Wire it into your tag workflow as the
 post-assembly step if you want it automatic.

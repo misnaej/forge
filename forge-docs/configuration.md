@@ -286,8 +286,8 @@ typecheck = "diff"            # pyrefly only on changed files under its roots
 
 Resolution order per step: `scope_overrides.<step>` → `scope` → `"all"`. An
 unrecognised value falls back to `"all"`. The other steps are either
-inherently whole-repo (`repo_structure_check`, `cli_wiring`, `manifest_json`,
-…) or scoped by their own `paths` key (`doctest`) — `scope` does not apply
+inherently whole-repo (`repo_structure_check`, `cli_wiring`, …) or
+scoped by their own `paths` key (`doctest`) — `scope` does not apply
 to them. `forge-config --list` shows the resolved values.
 
 For `typecheck`, `diff` selects only the modified files **under its resolved
@@ -938,8 +938,7 @@ following the [consumer changelog convention](../docs/consumer-release.md)
   normal state right after a release is cut), and on a feature branch no
   entries gain content under an already-released heading since the merge
   base (the stranded-entries race). Self-skips without a root
-  `CHANGELOG.md` and on manifest-versioned repos
-  (`verify-forge-plugin-version` owns the invariant).
+  `CHANGELOG.md`; in fragments mode it becomes the fragment gate.
 - **`changelog_updated`** — the per-PR freshness gate: a change set that
   touches a changelog-requiring path without touching `CHANGELOG.md`
   fails (in fragments mode: without a `changelog.d/` fragment that is

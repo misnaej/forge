@@ -20,6 +20,43 @@ fragment type (**Features / Changes / Fixes / Removed / Docs**).
 Follows [Keep a Changelog](https://keepachangelog.com/) in spirit;
 versions follow forge's rolling-next convention.
 
+## v16.2.0 — 2026-11-25
+
+### Features
+- The `typecheck` step gains an opt-in `[tool.forge.typecheck].file_set = "tracked"` mode: forge selects the git-tracked files under the resolved roots (gitignored paths never selected, tracked dot-directory files included) instead of letting pyrefly walk the root directories itself. The default stays `"roots"`.
+- `forge-precommit --list-files [--only <steps>]` prints the exact paths a step would hand its tool, one `<step>: <path>` per line, running nothing.
+- The `typecheck` step's docstring and `configuration.md` now describe both modes accurately, including that pyrefly's `project_excludes` are ignored in explicit-file mode.
+
+## v16.1.1 — 2026-11-25
+
+### Fixes
+- `forge-precommit` freshness stamps now carry an `index=` component alongside `tree=`, and steps that read staged state (`regen_docs`, `changelog_updated`) are judged against it — staging a file no longer leaves a verdict reading `fresh` over stale evidence, and a `SKIP` from an index-reading step fails once the index moves. Old stamps without `index=` still parse and read `unknown` for those steps, forcing one full re-run.
+
+## v16.1.0 — 2026-11-25
+
+### Features
+- `forge-smart-test --history` prints the full-run history that forge has been recording all along: one line per run with wall time, file count, development fraction, lifecycle skips, and the files that failed outside a would-be depth-2 selection. The ledger at `code_health/smart_test_history.log` had a writer and no reader, so every full run appended a line that nothing ever read back. Read wall time against file count — a suite that is growing is not a suite that is getting slower.
+- `forge-smart-test --lifecycle` names the development-marked test files and how long each has gone untouched, flagging those past the quiet window as skipped. The history line counts how many files a run skipped; this says which, and how close the rest are. A skipped file re-enters the moment it changes, and CI's truly-all run executes every one of them.
+- Both read recorded state, run no tests, and never gate: they exit 0 whatever they find, including when the ledger is missing or unparsable. `/forge-perf` now reads both as part of its analyze mode.
+
+## v16.0.1 — 2026-11-25
+
+### Fixes
+- `forge-pr-watch` resolves `owner/repo` from `https://` and `ssh://` origins; an unparseable origin now says to pass `--repo` instead of failing later inside `gh`.
+- `block_fixer_recon` allows `forge-gen-api-digest`, matching the precommit-fixer agent's Allowed-CLIs table.
+- `configuration.md` states that only a committed or staged changelog fragment satisfies `changelog_updated`; a working-tree-only fragment is named in the refusal but does not count.
+
+## v16.0.0 — 2026-11-25
+
+### ⚠️ Upgrade notes
+- Pre-commit no longer runs tests, and cannot be configured to. The opt-in `smart_test` pre-commit step is gone, with the four settings that only existed to drive it: `precommit_depth`, `blocking`, `full_run_max_age_hours` and `cadence_mode`. Commits never wait for a test run.
+- **`forge-smart-test` never deselects in CI.** Lifecycle deselection skips development-marked test files that nothing has touched lately; it is safe only if something else runs them periodically. That something is now CI, enforced in code rather than documented: under `forge.run_context.is_ci()` the selector refuses to deselect, so any `full` job in CI is truly all and needs no `--all-tests`. Without this a CI job running plain `--depth full` would have skipped those files forever while reporting green.
+- The periodic truly-all run that makes lifecycle deselection safe is now CI's job, not a tracked timestamp's. The `.forge-full-run` stamp is deleted along with the code that read and wrote it. In forge's own repo that stamp had sat 86 days stale against a 48-hour guarantee, because its only reader was a step nobody had enabled — while CI was in fact running the whole suite on every pull request.
+- Adopting this in a consumer repo: delete `precommit_depth`, `blocking`, `full_run_max_age_hours` and `cadence_mode` from `[tool.forge.smart_test]`, and delete the `.forge-full-run` file if your repo tracks one. Then make sure CI runs the full suite — if it already does on every pull request, you have the guarantee and there is nothing more to add; otherwise add one job on default-branch pushes running `forge-smart-test --depth full`, with an optional `schedule:` trigger for quiet periods. Ready-made jobs are in `forge-docs/ci-recipe.md`. Leaving a removed key in place is harmless but ignored; leaving `"smart_test"` in `[tool.forge.precommit].enable` is a loud error naming the unknown step.
+- `forge-smart-test`, `/forge-smart-test`, depth-tier selection and lifecycle deselection are unchanged for local and CI use.
+- New page `forge-docs/instruction-compaction.md` says what belongs in a file every agent session loads: a passage earns its place only if it binds every repo whatever features they enabled, applies to more than one role, and would be acted on wrongly before anyone thought to open a pointer. **It is written for your own `CLAUDE.md` as much as for `FOUNDATION.md`** — same per-session cost, same growth, and unlike FOUNDATION you own every word of it. Its last section walks your file through the same three questions. Applying them to FOUNDATION's testing rules cut 292 words that every session carried for a scheme most repos never switch on.
+- Word budgets are ceilings, not targets, and every `forge-docs/` page now has its own, so moving detail out of FOUNDATION reduces it instead of hiding it somewhere unmeasured.
+
 ## v15.2.1 — 2026-11-25
 
 ### Changes
