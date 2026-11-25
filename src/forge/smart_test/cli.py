@@ -30,11 +30,12 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Final, cast
 
 from forge import config as _config
 from forge.git_utils import code_health_dir, configure_cli_logging
 from forge.ledger import parse_ledger
+from forge.pr_watch_log import flatten
 from forge.run_context import is_ci
 from forge.smart_test import coverage as cov_stage
 from forge.smart_test import lifecycle
@@ -202,12 +203,7 @@ def _run_full(
     """
     tests = all_test_files(repo_root)
     dev_files = lifecycle.development_marked_files(repo_root, tests)
-    skip_days_raw = cfg.get("lifecycle_skip_days", lifecycle.DEFAULT_SKIP_DAYS)
-    skip_days = (
-        float(skip_days_raw)
-        if isinstance(skip_days_raw, (int, float))
-        else lifecycle.DEFAULT_SKIP_DAYS
-    )
+    skip_days = lifecycle.skip_days_from(cfg)
     truly_all = all_tests or is_ci()
     skippable: set[str] = set()
     if not truly_all:
@@ -522,6 +518,88 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+#: Most trailing bytes of the history ledger read, and most rows shown.
+#: The ledger is append-only and world-writable: it grows a line per full
+#: run forever, and a corrupt or hostile one could otherwise be read whole
+#: into memory and flooded into an agent's context through `/forge-perf`.
+_HISTORY_TAIL_BYTES: Final = 256 * 1024
+_HISTORY_TAIL_ROWS: Final = 50
+#: Longest rendered field. A value is data from a file anyone can write
+#: (FOUNDATION §14), so it is flattened to one printable line and capped
+#: rather than printed as found — ANSI escapes could otherwise redraw or
+#: forge rows in the reader's terminal.
+_FIELD_MAX: Final = 32
+#: Longest rendered numeric cell. A count or a duration needs far less
+#: than a text field, and a shorter cap keeps one crafted row from
+#: widening every column.
+_NUM_MAX: Final = 12
+#: Longest rendered test path; a filename is also untrusted text.
+_PATH_MAX: Final = 120
+
+
+def _read_ledger_tail(path: Path) -> tuple[str, bool]:
+    """Return the ledger's trailing text and whether it was truncated.
+
+    Decodes with ``errors="replace"`` because a ledger with invalid bytes
+    must still render: this command reports and never gates, so a
+    ``UnicodeDecodeError`` traceback would be a worse answer than a row
+    of replacement characters.
+
+    Args:
+        path: The ledger file.
+
+    Returns:
+        ``(text, truncated)`` — the text decoded, and whether bytes
+        before it were skipped.
+    """
+    with path.open("rb") as fh:
+        if path.stat().st_size <= _HISTORY_TAIL_BYTES:
+            return fh.read().decode("utf-8", errors="replace"), False
+        fh.seek(-_HISTORY_TAIL_BYTES, 2)
+        raw = fh.read()
+    # Drop the leading partial line so no row is parsed from half of one.
+    _, _, rest = raw.partition(b"\n")
+    return rest.decode("utf-8", errors="replace"), True
+
+
+def _cell(row: dict[str, str], key: str, *, width: int = _FIELD_MAX) -> str:
+    """Return *key*'s value as one printable, capped cell.
+
+    Args:
+        row: One parsed ledger row.
+        key: Which field to render.
+        width: Longest result.
+
+    Returns:
+        The flattened value, or ``?`` when the field is absent.
+    """
+    return flatten(str(row.get(key, "?")), limit=width)
+
+
+def _num(row: dict[str, str], key: str) -> str:
+    """Return *key*'s value when it is a number, else ``?``.
+
+    Validating instead of escaping removes the free-text channel from
+    every numeric column: a crafted ledger can make a cell read ``?``,
+    but it cannot put arbitrary text in front of a reader (or an agent
+    summarising this output) through a column that is meant to hold a
+    count.
+
+    Args:
+        row: One parsed ledger row.
+        key: Which field to render.
+
+    Returns:
+        The value as written, or ``?`` when it is missing or not numeric.
+    """
+    raw = str(row.get(key, "?"))
+    try:
+        float(raw)
+    except ValueError:
+        return "?"
+    return raw[:_NUM_MAX]
+
+
 def _render_history(repo_root: Path) -> int:
     """Print the recorded full-run history and return ``0``.
 
@@ -545,22 +623,35 @@ def _render_history(repo_root: Path) -> int:
             path,
         )
         return 0
-    rows = parse_ledger(path.read_text(encoding="utf-8"))
+    try:
+        text, truncated = _read_ledger_tail(path)
+    except OSError as exc:
+        # Unreadable is not a verdict about the code, and this command
+        # reports rather than gates, so it says so and exits 0.
+        logger.info("Smart-test history at %s could not be read: %s", path, exc)
+        return 0
+    rows = parse_ledger(text)
     if not rows:
         logger.info("Smart-test history at %s holds no parsable runs.", path)
         return 0
+    shown = rows[-_HISTORY_TAIL_ROWS:]
     header = (
         f"{'ts':<26} {'label':<6} {'wall_s':>8} {'files':>6} "
         f"{'dev':>4} {'dev_frac':>9} {'skipped':>8} {'missed':>7}"
     )
-    lines = [f"Smart-test full-run history ({len(rows)} runs):", header]
+    count = (
+        f"{len(shown)} of {len(rows)} runs"
+        if len(shown) < len(rows) or truncated
+        else f"{len(rows)} runs"
+    )
+    lines = [f"Smart-test full-run history ({count}):", header]
     lines += [
-        f"{r.get('ts', '?'):<26} {r.get('label', '-'):<6} "
-        f"{r.get('wall_s', '?'):>8} {r.get('files', '?'):>6} "
-        f"{r.get('dev_files', '?'):>4} {r.get('dev_fraction', '?'):>9} "
-        f"{r.get('lifecycle_skipped', '?'):>8} "
-        f"{r.get('differential_mismatches', '?'):>7}"
-        for r in rows
+        f"{_cell(r, 'ts'):<26} {_cell(r, 'label', width=6):<6} "
+        f"{_num(r, 'wall_s'):>8} {_num(r, 'files'):>6} "
+        f"{_num(r, 'dev_files'):>4} {_num(r, 'dev_fraction'):>9} "
+        f"{_num(r, 'lifecycle_skipped'):>8} "
+        f"{_num(r, 'differential_mismatches'):>7}"
+        for r in shown
     ]
     lines.append(
         "`missed` counts files that failed outside a would-be depth-2 "
@@ -586,12 +677,7 @@ def _render_lifecycle(repo_root: Path, cfg: dict[str, object]) -> int:
     """
     tests = all_test_files(repo_root)
     marked = lifecycle.development_marked_files(repo_root, tests)
-    skip_days_raw = cfg.get("lifecycle_skip_days", lifecycle.DEFAULT_SKIP_DAYS)
-    skip_days = (
-        float(skip_days_raw)
-        if isinstance(skip_days_raw, (int, float))
-        else lifecycle.DEFAULT_SKIP_DAYS
-    )
+    skip_days = lifecycle.skip_days_from(cfg)
     if not marked:
         logger.info(
             "No development-marked test files among %d: every test is a "
@@ -611,12 +697,12 @@ def _render_lifecycle(repo_root: Path, cfg: dict[str, object]) -> int:
     ]
     lines += [
         f"  {'SKIPPED' if days >= skip_days else 'active ':<8} "
-        f"{days:>6.1f}d untouched  {path}"
+        f"{days:>6.1f}d since last commit  {flatten(path, limit=_PATH_MAX)}"
         for days, path in rows
     ]
     lines.append(
-        "A skipped file re-enters the moment it changes, and CI's truly-all "
-        "run executes every one of them. Deletion is not part of the model."
+        "Measured from the last commit, so a file edited since is run "
+        "regardless; CI's truly-all run executes every one of them."
     )
     logger.info("%s", "\n".join(lines))
     return 0

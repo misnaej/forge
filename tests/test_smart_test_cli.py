@@ -2284,3 +2284,169 @@ def test_lifecycle_honours_configured_skip_days(
     line = next(ln for ln in caplog.text.splitlines() if "test_mid.py" in ln)
     assert code == 0
     assert "SKIPPED" in line
+
+
+# ---------------------------------------------------------------------------
+# --history hardening: the ledger is world-writable, untrusted input
+# ---------------------------------------------------------------------------
+# Lifecycle class for every test below: behavior. Each pins one guarantee of
+# a read path that puts file contents in front of a terminal or an agent
+# (escape stripping, field caps, tail bound, never-raises); a regression in
+# any is a security or availability bug, not a formatting change.
+
+
+def _write_ledger(repo: Path, data: bytes) -> Path:
+    """Write raw bytes as the history ledger and return its path.
+
+    Args:
+        repo: Repo root whose code-health directory holds the ledger.
+        data: Exact bytes to write.
+
+    Returns:
+        The ledger path.
+    """
+    ledger = code_health_dir(repo) / lifecycle.HISTORY_NAME
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_bytes(data)
+    return ledger
+
+
+def _history_output(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    repo: Path,
+) -> tuple[int, str]:
+    """Run ``--history`` against *repo* and return ``(exit code, output)``.
+
+    Args:
+        monkeypatch: pytest monkeypatch fixture.
+        caplog: Log capture fixture.
+        repo: Repo root.
+
+    Returns:
+        The exit code and everything logged during the run.
+    """
+    _run_main(monkeypatch, repo, "--history")
+    monkeypatch.setattr(cli, "run_pytest", _FakeRunPytest())
+    with caplog.at_level(logging.INFO):
+        code = cli.main()
+    return code, caplog.text
+
+
+def test_history_ansi_escape_in_ledger_value_is_not_rendered(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An ESC byte in any ledger field never reaches the output; exit 0."""
+    esc = "\x1b[2J\x1b[31mRED"
+    _write_ledger(
+        tmp_path,
+        f"ts={esc} label={esc} wall_s=1.5 files={esc} dev_files=0\n".encode(),
+    )
+
+    code, text = _history_output(monkeypatch, caplog, tmp_path)
+
+    assert code == 0
+    assert "\x1b" not in text
+    assert "1.5" in text
+
+
+def test_history_non_numeric_value_in_numeric_column_renders_question_mark(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``files=NOTANUMBER`` shows ``?`` and the text itself never appears."""
+    _write_ledger(tmp_path, b"ts=T label=full wall_s=1.5 files=NOTANUMBER\n")
+
+    code, text = _history_output(monkeypatch, caplog, tmp_path)
+
+    assert code == 0
+    assert "NOTANUMBER" not in text
+    assert "1.5" in text
+    row = next(ln for ln in text.splitlines() if "1.5" in ln)
+    assert "?" in row
+
+
+def test_history_oversized_values_are_capped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A 10,000-character number or text value cannot widen the row."""
+    huge = "9" * 10_000
+    _write_ledger(
+        tmp_path,
+        f"ts={'x' * 10_000} label={'y' * 10_000} wall_s={huge} files={huge}\n".encode(),
+    )
+
+    code, text = _history_output(monkeypatch, caplog, tmp_path)
+
+    assert code == 0
+    row = next(ln for ln in text.splitlines() if "9" in ln)
+    longest_token = max(len(token) for token in row.split())
+    # +1: a truncated value carries a one-character ellipsis marker.
+    assert longest_token <= max(cli._FIELD_MAX, cli._NUM_MAX) + 1
+    assert len(row) < 10 * (cli._FIELD_MAX + cli._NUM_MAX)
+
+
+def test_history_invalid_utf8_ledger_returns_0_and_still_renders_a_row(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Bytes that are not UTF-8 are replaced, not raised on; the row survives."""
+    _write_ledger(
+        tmp_path, b"ts=T label=full wall_s=1.5 files=\xff\xfe\x80\ngarbage \xff\n"
+    )
+
+    code, text = _history_output(monkeypatch, caplog, tmp_path)
+
+    assert code == 0
+    assert "1 runs" in text
+    assert "1.5" in text
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0,
+    reason="mode 000 is not enforced for root",
+)
+def test_history_unreadable_ledger_returns_0_and_reports_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A ledger the user cannot read is reported, never a traceback."""
+    ledger = _write_ledger(tmp_path, b"ts=T label=full wall_s=1.5\n")
+    ledger.chmod(0o000)
+    try:
+        if os.access(ledger, os.R_OK):
+            pytest.skip("mode 000 is not enforced here")
+        code, text = _history_output(monkeypatch, caplog, tmp_path)
+    finally:
+        ledger.chmod(0o600)
+
+    assert code == 0
+    assert "could not be read" in text
+    assert str(ledger) in text
+
+
+def test_history_shows_only_the_newest_rows_and_says_so(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Beyond the row cap the oldest runs drop out and the header counts both."""
+    total = cli._HISTORY_TAIL_ROWS + 10
+    lines = [f"ts=T label=full wall_s={1000 + i}.0 files=1\n" for i in range(total)]
+    _write_ledger(tmp_path, "".join(lines).encode())
+
+    code, text = _history_output(monkeypatch, caplog, tmp_path)
+
+    assert code == 0
+    assert f"{cli._HISTORY_TAIL_ROWS} of {total} runs" in text
+    assert f"{1000 + total - 1}.0" in text
+    assert "1000.0" not in text
+    assert f"{1000 + total - cli._HISTORY_TAIL_ROWS}.0" in text
+    assert f"{1000 + total - cli._HISTORY_TAIL_ROWS - 1}.0" not in text
