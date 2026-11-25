@@ -293,7 +293,12 @@ def _reporter_body(reporter: str, inputs: ComposeInputs) -> list[str]:
     line = _report_line(inputs.reports[reporter], inputs.head_sha)
     if line is not None:
         return [line]
-    return [slot(f"findings: {reporter}", f"~{FINDING_ALLOWANCE} words")]
+    return [
+        slot(
+            f"findings: {reporter}",
+            f"AS SHORT AS POSSIBLE, NEVER above {FINDING_ALLOWANCE} words",
+        )
+    ]
 
 
 def _recommendation(inputs: ComposeInputs) -> str:
@@ -315,7 +320,7 @@ def _recommendation(inputs: ComposeInputs) -> str:
         # The classifier's full reasons are printed by `compose` instead:
         # here they would spend most of the wrap-up's word budget.
         return LIGHT_CODE_RECOMMENDATION
-    return slot("recommendation", "one line")
+    return slot("recommendation", "ONE line, never two")
 
 
 def _check_evidence(inputs: ComposeInputs) -> None:
@@ -382,7 +387,12 @@ def render_wrapup(inputs: ComposeInputs) -> str:
         out.append(prior)
     out += [
         "",
-        slot("summary", f"labelled bullets — {', '.join(SUMMARY_LABELS)}"),
+        slot(
+            "summary",
+            f"labelled bullets — {', '.join(SUMMARY_LABELS)}; "
+            f"AS SHORT AS POSSIBLE, NEVER above {WORD_BUDGET} words "
+            "including the recommendation",
+        ),
         "",
     ]
     for title, reporter in REPORTER_SECTIONS:

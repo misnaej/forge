@@ -61,7 +61,7 @@ from forge.pr_delta import unlisted_closing_refs
 from forge.pr_plan import classify
 from forge.pr_wrapup import WRAPUP_NAME, base_sync_verdict, wrapup_names_head
 from forge.precommit import install_refresh_hint, resolve_steps
-from forge.text_budget import length_verdict, refusal_threshold
+from forge.text_budget import BUDGET_RULE, length_verdict, refusal_threshold
 
 
 configure_cli_logging()
@@ -571,18 +571,18 @@ def _body_length_refusal(body: str) -> str | None:
         return (
             f"PR description is {words} words, past the "
             f"{refusal_threshold(PR_BODY_WORD_CEILING)} allowed for a "
-            f"{PR_BODY_WORD_CEILING}-word ceiling (FOUNDATION §6). Summary "
-            "and Changes carry the change; release bookkeeping, check status "
-            "and word counts for this repo's own documents belong nowhere "
-            "in it."
+            f"{PR_BODY_WORD_CEILING}-word ceiling (FOUNDATION §6). "
+            f"{BUDGET_RULE} Summary and Changes carry the change; release "
+            "bookkeeping, check status and word counts for this repo's own "
+            "documents belong nowhere in it."
         )
     if verdict == "warn":
         logger.warning(
             "PR description is %d words, over the %d-word ceiling "
-            "(FOUNDATION §6) — publishing anyway. The ceiling is a limit, "
-            "not a length to aim for.",
+            "(FOUNDATION §6) — publishing anyway. %s",
             words,
             PR_BODY_WORD_CEILING,
+            BUDGET_RULE,
         )
     return None
 

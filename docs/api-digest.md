@@ -1895,7 +1895,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_check_pr_view(repo: str, pr: int, failures: list[str]) -> None` _(internal)_ — Parse one full gh pr view and append failures for missing signals.
 - `class PollOutcome` — One poll's alerts plus the state the loop decides from.
 - `_is_forge_comment(comment: dict[str, object]) -> bool` _(internal)_ — Return whether *comment* is one forge posted itself.
-- `_comment_alerts(pr: int, view: dict[str, object], seen: set[str], *, first_poll: bool) -> list[str]` _(internal)_ — Return alerts for comments not seen on an earlier poll.
+- `_review_feedback(repo: str, pr: int) -> list[dict[str, object]]` _(internal)_ — Return inline review comments and review bodies, comment-shaped.
+- `_comment_alerts(pr: int, view: dict[str, object], seen: set[str], *, first_poll: bool, extra: Sequence[dict[str, object]] = ()) -> list[str]` _(internal)_ — Return alerts for comments not seen on an earlier poll.
 - `_poll_once(repo: str, pr: int, seen_comments: set[str], *, first_poll: bool) -> PollOutcome` _(internal)_ — Run one poll cycle over all five signals.
 - `_stack_parent(repo: str, base_ref: str) -> bool` _(internal)_ — Return whether *base_ref* is another open PR's head branch.
 - `_state_alerts(pr: int, view: dict[str, object], *, stack_child: bool = False) -> list[str]` _(internal)_ — Return alerts for the PR's state and mergeable fields.

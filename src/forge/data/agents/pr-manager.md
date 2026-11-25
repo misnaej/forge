@@ -54,6 +54,13 @@ gh api repos/<owner>/<repo>/pulls/<PR#>/comments/<comment_id>/replies -X POST -f
 <brief explanation of what was done and where (file:line)>
 ```
 
+## Write to the budget
+
+**As short as possible. Never above the allowance.** An input, not a
+check: each marker carries its own. Rank, divide, write once — never
+draft then cut: cuts land on what is last, not least important. Over:
+drop the lowest-ranked item, say so.
+
 ## Task: Write PR Description
 
 Rules (sections, word cap, plain-English `## Summary` lead): [FOUNDATION §6 "PR descriptions"](../FOUNDATION.md#6-git--pr-workflow) — do not restate. Write each closed issue as a bare `Closes #N`/`Fixes #N`/`Resolves #N` on its own line: forge's style rule. GitHub closes on the keyword anywhere, so a partly delivered issue gets `Part of #N` (FOUNDATION §6).

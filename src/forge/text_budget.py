@@ -38,6 +38,20 @@ from typing import Final, Literal
 #: warned about, as a percentage of the ceiling.
 REFUSAL_PERCENT: Final[int] = 20
 
+#: The rule, in the voice every writer of budgeted text is told it in.
+#: One string so a commit message, a squash message, a PR description, a
+#: wrap-up slot and a changelog bullet all state it identically (§12) —
+#: and in this register, because "~N words" reads as a length to write
+#: toward and a mild ceiling gets treated as a target. Measured over one
+#: session: every budgeted artifact overshot on its first attempt and was
+#: cut afterwards, and a cut made last lands on whatever sits last rather
+#: than on what matters least.
+BUDGET_RULE: Final = (
+    "AS SHORT AS POSSIBLE, and NEVER above the ceiling: it is a limit, "
+    "not a length to write toward. Rank what must be said, divide the "
+    "words, write once — never draft and then cut."
+)
+
 
 def refusal_threshold(ceiling: int) -> int:
     """Return the word count past which text of this kind is refused.
