@@ -603,12 +603,11 @@ def _num(row: dict[str, str], key: str) -> str:
 def _render_history(repo_root: Path) -> int:
     """Print the recorded full-run history and return ``0``.
 
-    FOUNDATION §8 calls these metrics record-only, which is a statement
-    about what they may *gate*, not a reason to leave them unread. Every
-    full run appends a line and nothing read them back, so a suite
-    growing slower or a development fraction drifting was recorded and
-    invisible. Rendered newest-last so a trend reads top-to-bottom, like
-    ``forge-telemetry --history``.
+    FOUNDATION §8 calls these metrics record-only, which constrains what
+    they may *gate*, not whether anyone reads them: a suite growing
+    slower, or a development fraction drifting, is visible here and
+    nowhere else. Rendered newest-last so a trend reads top-to-bottom,
+    like ``forge-telemetry --history``.
 
     Args:
         repo_root: Git repo root.
