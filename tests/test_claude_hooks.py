@@ -110,3 +110,11 @@ def test_fixer_recon_guard_blocks_off_allowlist_command_for_scoped_agent() -> No
 
     assert result.returncode == 2
     assert "BLOCKED" in result.stderr
+
+
+def test_fixer_recon_guard_allows_api_digest_regen() -> None:
+    """Behavior: the fixer agent may run forge-gen-api-digest."""
+    result = _run_agent_guard(
+        "block_fixer_recon.sh", _FIXER, "forge-gen-api-digest", _FIXER
+    )
+    assert result.returncode == 0

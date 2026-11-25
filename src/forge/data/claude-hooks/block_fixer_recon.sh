@@ -14,7 +14,7 @@
 # file): the fourth bare `forge-precommit` is refused, `--only` refreshes
 # are free.
 #
-# Allowlist: forge-precommit, the six step CLIs, `cd` (navigation). No
+# Allowlist: forge-precommit, the seven step CLIs, `cd` (navigation). No
 # test runs of any kind: the fixer lists the tests covering its edits and
 # the caller runs them (agents/precommit-fixer.md "I run no tests").
 # Every segment of a compound command must pass. Substitution coverage:
@@ -140,7 +140,7 @@ _segment_ok() {
     seg="$STRIPPED"
     tok="${seg%%[[:space:]]*}"
     case "$tok" in
-        cd|forge-precommit|fix-forge-ruff|verify-forge-docstrings|verify-forge-repo-structure|verify-forge-test-naming|verify-forge-manifest|verify-forge-plugin-version)
+        cd|forge-precommit|fix-forge-ruff|forge-gen-api-digest|verify-forge-docstrings|verify-forge-repo-structure|verify-forge-test-naming|verify-forge-manifest|verify-forge-plugin-version)
             return 0 ;;
     esac
     return 1
