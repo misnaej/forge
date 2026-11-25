@@ -47,6 +47,18 @@ Read every perf surface that exists, then summarize:
    ```bash
    forge-telemetry --history
    ```
+3b. **Suite trend + lifecycle state**:
+   ```bash
+   forge-smart-test --history
+   forge-smart-test --lifecycle
+   ```
+   `--history` is one line per recorded full run: wall time, file count,
+   development fraction, lifecycle skips, and files that failed outside a
+   would-be depth-2 selection. Read wall time **against file count** — a
+   suite growing is not a suite getting slower. `--lifecycle` names the
+   development-marked files and their quiet time; a `SKIPPED` row leaves
+   ordinary runs until it changes, and CI's truly-all run still executes
+   it. Neither gates anything (FOUNDATION §8 "record-only").
 4. **Per-step pre-commit timing**: read `code_health/precommit_timing.log`
    (skip silently when absent).
 5. **Agent timing**:

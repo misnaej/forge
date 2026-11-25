@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from forge.git_utils import code_health_dir
-from forge.smart_test import cli, runner
+from forge.smart_test import cli, lifecycle, runner
 from forge.smart_test.dependencies import SelectionPlan
 from forge.smart_test.run_log import LOCK_NAME, RunLog
 from tests.conftest import (
@@ -37,6 +37,7 @@ from tests.conftest import (
     init_git_repo,
     log_body,
 )
+from tests.test_smart_test_lifecycle import _commit_file
 
 
 if TYPE_CHECKING:
@@ -2102,3 +2103,350 @@ def test_main_full_depth_labels_run_full(
     code = cli.main()
     assert code == 0
     assert fake.telemetry_labels == ["full"]
+
+
+# ---------------------------------------------------------------------------
+# --history / --lifecycle: read-only reporting modes
+# ---------------------------------------------------------------------------
+# Lifecycle class for every test below: behavior. They pin the observable
+# output and the never-runs-tests contract of two CLI flags; each detects a
+# distinct failure (missing file, bad ledger, flag threshold, suite run).
+
+_DEV_MARKER = "import pytest\n\npytestmark = pytest.mark.development\n"
+
+
+def _run_main(monkeypatch: pytest.MonkeyPatch, repo: Path, flag: str) -> None:
+    """Point ``main()`` at *repo* with *flag* and a ``run_pytest`` that records calls.
+
+    Args:
+        monkeypatch: pytest monkeypatch fixture.
+        repo: Directory used as the cwd (and so repo root).
+        flag: The reporting flag to pass.
+    """
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(sys, "argv", ["forge-smart-test", flag])
+
+
+def _history_metrics(wall_s: float, total_files: int) -> lifecycle.RunMetrics:
+    """Build one full-run metrics record.
+
+    Args:
+        wall_s: Wall time recorded.
+        total_files: File count recorded.
+
+    Returns:
+        A ``RunMetrics`` labelled ``full``.
+    """
+    return lifecycle.RunMetrics(
+        label="full",
+        wall_s=wall_s,
+        total_files=total_files,
+        dev_files=0,
+        lifecycle_skipped=0,
+        differential_mismatches=0,
+    )
+
+
+def test_history_without_ledger_names_path_and_creates_nothing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A missing ledger yields guidance naming its path, exit 0, no file made."""
+    _run_main(monkeypatch, tmp_path, "--history")
+    fake = _FakeRunPytest()
+    monkeypatch.setattr(cli, "run_pytest", fake)
+
+    with caplog.at_level(logging.INFO):
+        code = cli.main()
+
+    ledger = code_health_dir(tmp_path) / lifecycle.HISTORY_NAME
+    assert code == 0
+    assert str(ledger) in caplog.text
+    assert "--depth full" in caplog.text
+    assert not ledger.exists()
+    assert fake.calls == []
+
+
+def test_history_prints_every_run_in_file_order(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Each recorded run's values reach the output, oldest first."""
+    lifecycle.append_history(tmp_path, _history_metrics(106.0, 81))
+    lifecycle.append_history(tmp_path, _history_metrics(219.0, 112))
+    _run_main(monkeypatch, tmp_path, "--history")
+    fake = _FakeRunPytest()
+    monkeypatch.setattr(cli, "run_pytest", fake)
+
+    with caplog.at_level(logging.INFO):
+        code = cli.main()
+
+    assert code == 0
+    assert "2 runs" in caplog.text
+    assert "106.0" in caplog.text
+    assert "219.0" in caplog.text
+    assert caplog.text.index("106.0") < caplog.text.index("219.0")
+    assert fake.calls == []
+
+
+@pytest.mark.parametrize("content", ["", "garbage with no fields\n\n"])
+def test_history_with_unparsable_ledger_reports_none_without_raising(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    content: str,
+) -> None:
+    """An empty or garbage ledger says it holds no parsable runs; exit 0.
+
+    Args:
+        content: Raw text written to the history ledger before `--history` runs.
+    """
+    ledger = code_health_dir(tmp_path) / lifecycle.HISTORY_NAME
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_text(content, encoding="utf-8")
+    _run_main(monkeypatch, tmp_path, "--history")
+    monkeypatch.setattr(cli, "run_pytest", _FakeRunPytest())
+
+    with caplog.at_level(logging.INFO):
+        code = cli.main()
+
+    assert code == 0
+    assert "no parsable runs" in caplog.text
+
+
+def test_lifecycle_without_marked_files_reports_total_scanned(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """With no development-marked file the output says so and counts the suite."""
+    init_git_repo(tmp_path)
+    _commit_file(tmp_path, "tests/test_a.py", "def test_a():\n    pass\n")
+    _commit_file(tmp_path, "tests/test_b.py", "def test_b():\n    pass\n")
+    _run_main(monkeypatch, tmp_path, "--lifecycle")
+    fake = _FakeRunPytest()
+    monkeypatch.setattr(cli, "run_pytest", fake)
+
+    with caplog.at_level(logging.INFO):
+        code = cli.main()
+
+    assert code == 0
+    assert "No development-marked test files among 2" in caplog.text
+    assert fake.calls == []
+
+
+def test_lifecycle_flags_stale_skipped_and_recent_active(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A file past the default window is SKIPPED, one inside it is active."""
+    init_git_repo(tmp_path)
+    _commit_file(tmp_path, "tests/test_old.py", _DEV_MARKER, days_ago=60)
+    _commit_file(tmp_path, "tests/test_new.py", _DEV_MARKER, days_ago=2)
+    _run_main(monkeypatch, tmp_path, "--lifecycle")
+    fake = _FakeRunPytest()
+    monkeypatch.setattr(cli, "run_pytest", fake)
+
+    with caplog.at_level(logging.INFO):
+        code = cli.main()
+
+    by_file = {
+        name: next(line for line in caplog.text.splitlines() if name in line)
+        for name in ("test_old.py", "test_new.py")
+    }
+    assert code == 0
+    assert "SKIPPED" in by_file["test_old.py"]
+    assert "active" in by_file["test_new.py"]
+    assert "SKIPPED" not in by_file["test_new.py"]
+    assert fake.calls == []
+
+
+def test_lifecycle_honours_configured_skip_days(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A 10-day file is active by default but SKIPPED under a 5-day skip threshold."""
+    init_git_repo(tmp_path)
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.forge.smart_test]\nlifecycle_skip_days = 5\n", encoding="utf-8"
+    )
+    _commit_file(tmp_path, "tests/test_mid.py", _DEV_MARKER, days_ago=10)
+    _run_main(monkeypatch, tmp_path, "--lifecycle")
+    monkeypatch.setattr(cli, "run_pytest", _FakeRunPytest())
+
+    with caplog.at_level(logging.INFO):
+        code = cli.main()
+
+    line = next(ln for ln in caplog.text.splitlines() if "test_mid.py" in ln)
+    assert code == 0
+    assert "SKIPPED" in line
+
+
+# ---------------------------------------------------------------------------
+# --history hardening: the ledger is world-writable, untrusted input
+# ---------------------------------------------------------------------------
+# Lifecycle class for every test below: behavior. Each pins one guarantee of
+# a read path that puts file contents in front of a terminal or an agent
+# (escape stripping, field caps, tail bound, never-raises); a regression in
+# any is a security or availability bug, not a formatting change.
+
+
+def _write_ledger(repo: Path, data: bytes) -> Path:
+    """Write raw bytes as the history ledger and return its path.
+
+    Args:
+        repo: Repo root whose code-health directory holds the ledger.
+        data: Exact bytes to write.
+
+    Returns:
+        The ledger path.
+    """
+    ledger = code_health_dir(repo) / lifecycle.HISTORY_NAME
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    ledger.write_bytes(data)
+    return ledger
+
+
+def _history_output(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    repo: Path,
+) -> tuple[int, str]:
+    """Run ``--history`` against *repo* and return ``(exit code, output)``.
+
+    Args:
+        monkeypatch: pytest monkeypatch fixture.
+        caplog: Log capture fixture.
+        repo: Repo root.
+
+    Returns:
+        The exit code and everything logged during the run.
+    """
+    _run_main(monkeypatch, repo, "--history")
+    monkeypatch.setattr(cli, "run_pytest", _FakeRunPytest())
+    with caplog.at_level(logging.INFO):
+        code = cli.main()
+    return code, caplog.text
+
+
+def test_history_ansi_escape_in_ledger_value_is_not_rendered(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An ESC byte in any ledger field never reaches the output; exit 0."""
+    esc = "\x1b[2J\x1b[31mRED"
+    _write_ledger(
+        tmp_path,
+        f"ts={esc} label={esc} wall_s=1.5 files={esc} dev_files=0\n".encode(),
+    )
+
+    code, text = _history_output(monkeypatch, caplog, tmp_path)
+
+    assert code == 0
+    assert "\x1b" not in text
+    assert "1.5" in text
+
+
+def test_history_non_numeric_value_in_numeric_column_renders_question_mark(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``files=NOTANUMBER`` shows ``?`` and the text itself never appears."""
+    _write_ledger(tmp_path, b"ts=T label=full wall_s=1.5 files=NOTANUMBER\n")
+
+    code, text = _history_output(monkeypatch, caplog, tmp_path)
+
+    assert code == 0
+    assert "NOTANUMBER" not in text
+    assert "1.5" in text
+    row = next(ln for ln in text.splitlines() if "1.5" in ln)
+    assert "?" in row
+
+
+def test_history_oversized_values_are_capped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A 10,000-character number or text value cannot widen the row."""
+    huge = "9" * 10_000
+    _write_ledger(
+        tmp_path,
+        f"ts={'x' * 10_000} label={'y' * 10_000} wall_s={huge} files={huge}\n".encode(),
+    )
+
+    code, text = _history_output(monkeypatch, caplog, tmp_path)
+
+    assert code == 0
+    row = next(ln for ln in text.splitlines() if "9" in ln)
+    longest_token = max(len(token) for token in row.split())
+    # +1: a truncated value carries a one-character ellipsis marker.
+    assert longest_token <= max(cli._FIELD_MAX, cli._NUM_MAX) + 1
+    assert len(row) < 10 * (cli._FIELD_MAX + cli._NUM_MAX)
+
+
+def test_history_invalid_utf8_ledger_returns_0_and_still_renders_a_row(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Bytes that are not UTF-8 are replaced, not raised on; the row survives."""
+    _write_ledger(
+        tmp_path, b"ts=T label=full wall_s=1.5 files=\xff\xfe\x80\ngarbage \xff\n"
+    )
+
+    code, text = _history_output(monkeypatch, caplog, tmp_path)
+
+    assert code == 0
+    assert "1 runs" in text
+    assert "1.5" in text
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0,
+    reason="mode 000 is not enforced for root",
+)
+def test_history_unreadable_ledger_returns_0_and_reports_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A ledger the user cannot read is reported, never a traceback."""
+    ledger = _write_ledger(tmp_path, b"ts=T label=full wall_s=1.5\n")
+    ledger.chmod(0o000)
+    try:
+        if os.access(ledger, os.R_OK):
+            pytest.skip("mode 000 is not enforced here")
+        code, text = _history_output(monkeypatch, caplog, tmp_path)
+    finally:
+        ledger.chmod(0o600)
+
+    assert code == 0
+    assert "could not be read" in text
+    assert str(ledger) in text
+
+
+def test_history_shows_only_the_newest_rows_and_says_so(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Beyond the row cap the oldest runs drop out and the header counts both."""
+    total = cli._HISTORY_TAIL_ROWS + 10
+    lines = [f"ts=T label=full wall_s={1000 + i}.0 files=1\n" for i in range(total)]
+    _write_ledger(tmp_path, "".join(lines).encode())
+
+    code, text = _history_output(monkeypatch, caplog, tmp_path)
+
+    assert code == 0
+    assert f"{cli._HISTORY_TAIL_ROWS} of {total} runs" in text
+    assert f"{1000 + total - 1}.0" in text
+    assert "1000.0" not in text
+    assert f"{1000 + total - cli._HISTORY_TAIL_ROWS}.0" in text
+    assert f"{1000 + total - cli._HISTORY_TAIL_ROWS - 1}.0" not in text

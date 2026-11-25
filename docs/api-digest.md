@@ -2224,6 +2224,11 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_widening_notice(plan: SelectionPlan, depth: int, extra_depth0: set[str], changed: set[str]) -> str` _(internal)_ — Return a warning when this run selects nearly the whole suite.
 - `_run_tiers(repo_root: Path, depth: int, plan: SelectionPlan, config: _RunConfig, log: RunLog) -> tuple[int, str]` _(internal)_ — Run depth batches 0..*depth* with fail-fast between them.
 - `_build_parser() -> argparse.ArgumentParser` _(internal)_ — Construct the ``forge-smart-test`` argument parser.
+- `_read_ledger_tail(path: Path) -> tuple[str, bool]` _(internal)_ — Return the ledger's trailing text and whether it was truncated.
+- `_cell(row: dict[str, str], key: str, *, width: int = _FIELD_MAX) -> str` _(internal)_ — Return *key*'s value as one printable, capped cell.
+- `_num(row: dict[str, str], key: str) -> str` _(internal)_ — Return *key*'s value when it is a number, else ``?``.
+- `_render_history(repo_root: Path) -> int` _(internal)_ — Print the recorded full-run history and return ``0``.
+- `_render_lifecycle(repo_root: Path, cfg: dict[str, object]) -> int` _(internal)_ — Print development-marked files and their quiet time; return ``0``.
 - `_escalate_to_full(repo_root: Path, base_ref: str, changed: set[str], cfg: dict[str, object]) -> bool` _(internal)_ — Return whether the change set must run the full suite.
 - `_safe_fallback_mode(cfg: dict[str, object]) -> str` _(internal)_ — Resolve ``[tool.forge.smart_test].safe_fallback``.
 - `_resolve_run_inputs(args: argparse.Namespace, repo_root: Path, cfg: dict[str, object]) -> tuple[str | int, str, set[str]]` _(internal)_ — Resolve what a run needs: its depth, the ref it diffs against, the changes.
@@ -2281,6 +2286,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 > _Test-lifecycle mechanics for forge-smart-test (FOUNDATION §8)._
 
 - `class RunMetrics` — Per-run metrics appended to the smart-test history ledger.
+- `skip_days_from(cfg: dict[str, object]) -> float` — Return the quiet window from *cfg*, or the default.
 - `development_marked_files(repo_root: Path, test_files: set[str]) -> set[str]` — Return the subset of *test_files* classified as development tests.
 - `_has_development_pytestmark(text: str) -> bool` _(internal)_ — Return whether *text* carries a top-level development pytestmark.
 - `days_since_last_touch(repo_root: Path, rel_path: str) -> float` — Return days since *rel_path*'s last commit.

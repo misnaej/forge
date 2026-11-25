@@ -1,0 +1,5 @@
+bump: minor
+
+- `forge-smart-test --history` prints the full-run history that forge has been recording all along: one line per run with wall time, file count, development fraction, lifecycle skips, and the files that failed outside a would-be depth-2 selection. The ledger at `code_health/smart_test_history.log` had a writer and no reader, so every full run appended a line that nothing ever read back. Read wall time against file count — a suite that is growing is not a suite that is getting slower.
+- `forge-smart-test --lifecycle` names the development-marked test files and how long each has gone untouched, flagging those past the quiet window as skipped. The history line counts how many files a run skipped; this says which, and how close the rest are. A skipped file re-enters the moment it changes, and CI's truly-all run executes every one of them.
+- Both read recorded state, run no tests, and never gate: they exit 0 whatever they find, including when the ledger is missing or unparsable. `/forge-perf` now reads both as part of its analyze mode.

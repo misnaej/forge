@@ -1042,7 +1042,8 @@ options:
 usage: forge-smart-test [-h] [--depth {0,1,2,full}] [--show-files]
                         [--coverage] [--all-tests] [--telemetry] [--base BASE]
                         [--from-commit-message]
-                        [--coverage-json COVERAGE_JSON]
+                        [--coverage-json COVERAGE_JSON] [--history]
+                        [--lifecycle]
 
 Run only the tests a change set affects, in escalating import-depth tiers with
 fail-fast. Depth full runs the whole suite with coverage.
@@ -1069,6 +1070,13 @@ options:
                         Path to a `coverage json --show-contexts` export;
                         unions tests covering a changed line into the
                         selection (enables coverage validation).
+  --history             Print the recorded full-run history (wall time, file
+                        counts, development fraction, lifecycle skips,
+                        differential mismatches) and exit without running
+                        tests.
+  --lifecycle           Print which test files are development-marked and how
+                        long each has gone untouched, and exit without running
+                        tests.
 ```
 
 ## forge-telemetry

@@ -30,10 +30,12 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Final, cast
 
 from forge import config as _config
-from forge.git_utils import configure_cli_logging
+from forge.git_utils import code_health_dir, configure_cli_logging
+from forge.ledger import parse_ledger
+from forge.pr_watch_log import flatten
 from forge.run_context import is_ci
 from forge.smart_test import coverage as cov_stage
 from forge.smart_test import lifecycle
@@ -201,12 +203,7 @@ def _run_full(
     """
     tests = all_test_files(repo_root)
     dev_files = lifecycle.development_marked_files(repo_root, tests)
-    skip_days_raw = cfg.get("lifecycle_skip_days", lifecycle.DEFAULT_SKIP_DAYS)
-    skip_days = (
-        float(skip_days_raw)
-        if isinstance(skip_days_raw, (int, float))
-        else lifecycle.DEFAULT_SKIP_DAYS
-    )
+    skip_days = lifecycle.skip_days_from(cfg)
     truly_all = all_tests or is_ci()
     skippable: set[str] = set()
     if not truly_all:
@@ -505,7 +502,209 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to a `coverage json --show-contexts` export; unions tests "
         "covering a changed line into the selection (enables coverage validation).",
     )
+    parser.add_argument(
+        "--history",
+        action="store_true",
+        help="Print the recorded full-run history (wall time, file counts, "
+        "development fraction, lifecycle skips, differential mismatches) and "
+        "exit without running tests.",
+    )
+    parser.add_argument(
+        "--lifecycle",
+        action="store_true",
+        help="Print which test files are development-marked and how long each "
+        "has gone untouched, and exit without running tests.",
+    )
     return parser
+
+
+#: Most trailing bytes of the history ledger read, and most rows shown.
+#: The ledger is append-only and world-writable: it grows a line per full
+#: run forever, and a corrupt or hostile one could otherwise be read whole
+#: into memory and flooded into an agent's context through `/forge-perf`.
+_HISTORY_TAIL_BYTES: Final = 256 * 1024
+_HISTORY_TAIL_ROWS: Final = 50
+#: Longest rendered field. A value is data from a file anyone can write
+#: (FOUNDATION §14), so it is flattened to one printable line and capped
+#: rather than printed as found — ANSI escapes could otherwise redraw or
+#: forge rows in the reader's terminal.
+_FIELD_MAX: Final = 32
+#: Longest rendered numeric cell. A count or a duration needs far less
+#: than a text field, and a shorter cap keeps one crafted row from
+#: widening every column.
+_NUM_MAX: Final = 12
+#: Longest rendered test path; a filename is also untrusted text.
+_PATH_MAX: Final = 120
+
+
+def _read_ledger_tail(path: Path) -> tuple[str, bool]:
+    """Return the ledger's trailing text and whether it was truncated.
+
+    Decodes with ``errors="replace"`` because a ledger with invalid bytes
+    must still render: this command reports and never gates, so a
+    ``UnicodeDecodeError`` traceback would be a worse answer than a row
+    of replacement characters.
+
+    Args:
+        path: The ledger file.
+
+    Returns:
+        ``(text, truncated)`` — the text decoded, and whether bytes
+        before it were skipped.
+    """
+    with path.open("rb") as fh:
+        if path.stat().st_size <= _HISTORY_TAIL_BYTES:
+            return fh.read().decode("utf-8", errors="replace"), False
+        fh.seek(-_HISTORY_TAIL_BYTES, 2)
+        raw = fh.read()
+    # Drop the leading partial line so no row is parsed from half of one.
+    _, _, rest = raw.partition(b"\n")
+    return rest.decode("utf-8", errors="replace"), True
+
+
+def _cell(row: dict[str, str], key: str, *, width: int = _FIELD_MAX) -> str:
+    """Return *key*'s value as one printable, capped cell.
+
+    Args:
+        row: One parsed ledger row.
+        key: Which field to render.
+        width: Longest result.
+
+    Returns:
+        The flattened value, or ``?`` when the field is absent.
+    """
+    return flatten(str(row.get(key, "?")), limit=width)
+
+
+def _num(row: dict[str, str], key: str) -> str:
+    """Return *key*'s value when it is a number, else ``?``.
+
+    Validating instead of escaping removes the free-text channel from
+    every numeric column: a crafted ledger can make a cell read ``?``,
+    but it cannot put arbitrary text in front of a reader (or an agent
+    summarising this output) through a column that is meant to hold a
+    count.
+
+    Args:
+        row: One parsed ledger row.
+        key: Which field to render.
+
+    Returns:
+        The value as written, or ``?`` when it is missing or not numeric.
+    """
+    raw = str(row.get(key, "?"))
+    try:
+        float(raw)
+    except ValueError:
+        return "?"
+    return raw[:_NUM_MAX]
+
+
+def _render_history(repo_root: Path) -> int:
+    """Print the recorded full-run history and return ``0``.
+
+    FOUNDATION §8 calls these metrics record-only, which constrains what
+    they may *gate*, not whether anyone reads them: a suite growing
+    slower, or a development fraction drifting, is visible here and
+    nowhere else. Rendered newest-last so a trend reads top-to-bottom,
+    like ``forge-telemetry --history``.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``0`` always — reading history never gates.
+    """
+    path = code_health_dir(repo_root) / lifecycle.HISTORY_NAME
+    if not path.is_file():
+        logger.info(
+            "No smart-test history at %s — run `forge-smart-test --depth full` first.",
+            path,
+        )
+        return 0
+    try:
+        text, truncated = _read_ledger_tail(path)
+    except OSError as exc:
+        # Unreadable is not a verdict about the code, and this command
+        # reports rather than gates, so it says so and exits 0.
+        logger.info("Smart-test history at %s could not be read: %s", path, exc)
+        return 0
+    rows = parse_ledger(text)
+    if not rows:
+        logger.info("Smart-test history at %s holds no parsable runs.", path)
+        return 0
+    shown = rows[-_HISTORY_TAIL_ROWS:]
+    header = (
+        f"{'ts':<26} {'label':<6} {'wall_s':>8} {'files':>6} "
+        f"{'dev':>4} {'dev_frac':>9} {'skipped':>8} {'missed':>7}"
+    )
+    count = (
+        f"{len(shown)} of {len(rows)} runs"
+        if len(shown) < len(rows) or truncated
+        else f"{len(rows)} runs"
+    )
+    lines = [f"Smart-test full-run history ({count}):", header]
+    lines += [
+        f"{_cell(r, 'ts'):<26} {_cell(r, 'label', width=6):<6} "
+        f"{_num(r, 'wall_s'):>8} {_num(r, 'files'):>6} "
+        f"{_num(r, 'dev_files'):>4} {_num(r, 'dev_fraction'):>9} "
+        f"{_num(r, 'lifecycle_skipped'):>8} "
+        f"{_num(r, 'differential_mismatches'):>7}"
+        for r in shown
+    ]
+    lines.append(
+        "`missed` counts files that failed outside a would-be depth-2 "
+        "selection: evidence the tiers lose nothing. Nothing here gates."
+    )
+    logger.info("%s", "\n".join(lines))
+    return 0
+
+
+def _render_lifecycle(repo_root: Path, cfg: dict[str, object]) -> int:
+    """Print development-marked files and their quiet time; return ``0``.
+
+    Answers the question the ledger's ``lifecycle_skipped`` count raises
+    but cannot settle: *which* files, and how close each is to leaving
+    ordinary runs. A count alone gives nobody anything to act on.
+
+    Args:
+        repo_root: Git repo root.
+        cfg: The ``[tool.forge.smart_test]`` table.
+
+    Returns:
+        ``0`` always — reading state never gates.
+    """
+    tests = all_test_files(repo_root)
+    marked = lifecycle.development_marked_files(repo_root, tests)
+    skip_days = lifecycle.skip_days_from(cfg)
+    if not marked:
+        logger.info(
+            "No development-marked test files among %d: every test is a "
+            "behavior test, so nothing is ever deselected (FOUNDATION §8).",
+            len(tests),
+        )
+        return 0
+    rows = sorted(
+        ((lifecycle.days_since_last_touch(repo_root, p), p) for p in marked),
+        reverse=True,
+    )
+    lines = [
+        (
+            f"Development-marked test files ({len(marked)} of {len(tests)}; "
+            f"quiet window {skip_days:g}d):"
+        )
+    ]
+    lines += [
+        f"  {'SKIPPED' if days >= skip_days else 'active ':<8} "
+        f"{days:>6.1f}d since last commit  {flatten(path, limit=_PATH_MAX)}"
+        for days, path in rows
+    ]
+    lines.append(
+        "Measured from the last commit, so a file edited since is run "
+        "regardless; CI's truly-all run executes every one of them."
+    )
+    logger.info("%s", "\n".join(lines))
+    return 0
 
 
 def _escalate_to_full(
@@ -683,6 +882,12 @@ def main() -> int:
     args = _build_parser().parse_args()
     repo_root = Path.cwd()
     cfg = _smart_test_config(repo_root)
+    # Both read recorded state and run nothing, so they answer before any
+    # selection work, lock or log write happens.
+    if args.history:
+        return _render_history(repo_root)
+    if args.lifecycle:
+        return _render_lifecycle(repo_root, cfg)
     follow = bool(cfg.get("follow_mock_patches", False))
 
     depth_raw, base_ref, changed = _resolve_run_inputs(args, repo_root, cfg)
