@@ -27,7 +27,7 @@ from forge.smart_test.dependencies import (
     unscanned_conftests,
 )
 from forge.smart_test.git_helpers import visible_paths
-from tests.conftest import init_git_repo
+from tests.conftest import commit_all, init_git_repo
 
 
 if TYPE_CHECKING:
@@ -1234,3 +1234,228 @@ def test_all_test_files_outside_a_git_repo_fails_open(
         "tests/test_core.py",
         "tests/test_service.py",
     }
+
+
+# ---------------------------------------------------------------------------
+# Fixture-granular conftest edges — a changed non-autouse fixture reaches
+# only the tests naming it; anything else keeps the whole subtree (wide).
+# ---------------------------------------------------------------------------
+
+_CONFTEST_BASE = (
+    "import pytest\n"
+    "\n"
+    "@pytest.fixture\n"
+    "def alpha():\n"
+    "    return 1\n"
+    "\n"
+    "@pytest.fixture(autouse=True)\n"
+    "def _auto():\n"
+    "    yield\n"
+)
+
+_ALL_SUBTREE = {"tests/a/test_one.py", "tests/a/test_two.py", "tests/b/test_three.py"}
+
+
+@pytest.fixture
+def fixture_conftest_repo(tmp_path: Path) -> Path:
+    """Git-backed repo whose tests sit under a conftest with two fixtures.
+
+    Layout::
+
+        <root>/
+          pyproject.toml            # source_dirs = ["src"], test_dirs = ["tests"]
+          src/myapp/__init__.py, src/myapp/core.py
+          tests/conftest.py         # alpha (requested), _auto (autouse)
+          tests/a/test_one.py       # def test_one(alpha) — requests alpha
+          tests/a/test_two.py       # no fixture reference
+          tests/b/test_three.py     # no fixture reference
+
+    The base commit (HEAD) holds the initial conftest; tests edit the
+    working tree and select with ``base_ref="HEAD"`` so the diff is
+    base-vs-worktree.
+
+    Returns:
+        The repo root path.
+    """
+    root = tmp_path
+    (root / "pyproject.toml").write_text(
+        '[tool.forge]\nsource_dirs = ["src"]\ntest_dirs = ["tests"]\n',
+        encoding="utf-8",
+    )
+    pkg = root / "src" / "myapp"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("", encoding="utf-8")
+    (pkg / "core.py").write_text("x = 1\n", encoding="utf-8")
+    tests = root / "tests"
+    for folder in ("a", "b"):
+        (tests / folder).mkdir(parents=True)
+    (tests / "conftest.py").write_text(_CONFTEST_BASE, encoding="utf-8")
+    (tests / "a" / "test_one.py").write_text(
+        "from myapp.core import x\n\n\ndef test_one(alpha):\n"
+        "    assert x == 1 and alpha == 1\n",
+        encoding="utf-8",
+    )
+    for name in ("test_two", "test_three"):
+        folder = "a" if name == "test_two" else "b"
+        (tests / folder / f"{name}.py").write_text(
+            "from myapp.core import x\n\n\ndef test_x():\n    assert x == 1\n",
+            encoding="utf-8",
+        )
+    init_git_repo(root)
+    commit_all(root, "base")
+    return root
+
+
+def _select_with_base(
+    root: Path, changed: set[str], *, base_ref: str | None = "HEAD"
+) -> set[str]:
+    """Select depth-0 tests for *changed*, optionally with a base ref.
+
+    Args:
+        root: Repository root.
+        changed: Changed repo-relative paths.
+        base_ref: Base ref for conftest diffing, or None to disable narrowing.
+
+    Returns:
+        Selected test paths at depth 0.
+    """
+    plan = select_tests(root, changed, 0, base_ref=base_ref)
+    return set(plan.tests_up_to(0))
+
+
+def _edit_conftest(root: Path, new_source: str) -> None:
+    """Overwrite tests/conftest.py in the working tree.
+
+    Args:
+        root: Repository root.
+        new_source: The new conftest source.
+    """
+    (root / "tests" / "conftest.py").write_text(new_source, encoding="utf-8")
+
+
+def test_requested_fixture_change_selects_only_referencing_tests(
+    fixture_conftest_repo: Path,
+) -> None:
+    """A body change to non-autouse fixture alpha reaches only test_one."""
+    _edit_conftest(
+        fixture_conftest_repo, _CONFTEST_BASE.replace("return 1", "return 2")
+    )
+    assert _select_with_base(fixture_conftest_repo, {"tests/conftest.py"}) == {
+        "tests/a/test_one.py"
+    }
+
+
+def test_autouse_fixture_change_stays_wide(fixture_conftest_repo: Path) -> None:
+    """An autouse fixture runs for every test, so its change selects the subtree."""
+    _edit_conftest(
+        fixture_conftest_repo, _CONFTEST_BASE.replace("    yield\n", "    yield 1\n")
+    )
+    assert (
+        _select_with_base(fixture_conftest_repo, {"tests/conftest.py"}) == _ALL_SUBTREE
+    )
+
+
+def test_module_level_change_stays_wide(fixture_conftest_repo: Path) -> None:
+    """A new module-level statement can affect every test: stay wide."""
+    _edit_conftest(fixture_conftest_repo, "CONFIG = 42\n" + _CONFTEST_BASE)
+    assert (
+        _select_with_base(fixture_conftest_repo, {"tests/conftest.py"}) == _ALL_SUBTREE
+    )
+
+
+def test_decorator_change_stays_wide(fixture_conftest_repo: Path) -> None:
+    """Adding autouse to alpha changes who runs it: the subtree stays selected."""
+    _edit_conftest(
+        fixture_conftest_repo,
+        _CONFTEST_BASE.replace(
+            "@pytest.fixture\ndef alpha", "@pytest.fixture(autouse=True)\ndef alpha"
+        ),
+    )
+    assert (
+        _select_with_base(fixture_conftest_repo, {"tests/conftest.py"}) == _ALL_SUBTREE
+    )
+
+
+def test_new_conftest_stays_wide(fixture_conftest_repo: Path) -> None:
+    """A conftest with no base version is unknown: its subtree stays selected."""
+    (fixture_conftest_repo / "tests" / "b" / "conftest.py").write_text(
+        "import pytest\n", encoding="utf-8"
+    )
+    assert _select_with_base(fixture_conftest_repo, {"tests/b/conftest.py"}) == {
+        "tests/b/test_three.py"
+    }
+
+
+def test_conftest_unparseable_at_base_stays_wide(fixture_conftest_repo: Path) -> None:
+    """An old version that does not parse cannot be classified: stay wide."""
+    root = fixture_conftest_repo
+    _edit_conftest(root, "def broken(:\n")
+    commit_all(root, "break conftest")
+    _edit_conftest(root, _CONFTEST_BASE.replace("return 1", "return 2"))
+    assert _select_with_base(root, {"tests/conftest.py"}) == _ALL_SUBTREE
+
+
+def test_getfixturevalue_reference_counts(fixture_conftest_repo: Path) -> None:
+    """``request.getfixturevalue("alpha")`` is a name reference like a parameter."""
+    _edit_conftest(
+        fixture_conftest_repo, _CONFTEST_BASE.replace("return 1", "return 2")
+    )
+    (fixture_conftest_repo / "tests" / "a" / "test_two.py").write_text(
+        "def test_two(request):\n    assert request.getfixturevalue('alpha') == 2\n",
+        encoding="utf-8",
+    )
+    assert _select_with_base(fixture_conftest_repo, {"tests/conftest.py"}) == {
+        "tests/a/test_one.py",
+        "tests/a/test_two.py",
+    }
+
+
+def test_comment_only_conftest_change_selects_nothing(
+    fixture_conftest_repo: Path,
+) -> None:
+    """A comment cannot change behavior: no AST node changed, no test selected."""
+    _edit_conftest(fixture_conftest_repo, _CONFTEST_BASE + "\n# note\n")
+    assert _select_with_base(fixture_conftest_repo, {"tests/conftest.py"}) == set()
+
+
+def test_fixture_rename_selects_old_and_new_names(fixture_conftest_repo: Path) -> None:
+    """A rename collects both names: tests requesting either are selected."""
+    _edit_conftest(
+        fixture_conftest_repo, _CONFTEST_BASE.replace("def alpha(", "def beta(")
+    )
+    (fixture_conftest_repo / "tests" / "a" / "test_two.py").write_text(
+        "def test_two(beta):\n    assert beta == 1\n", encoding="utf-8"
+    )
+    assert _select_with_base(fixture_conftest_repo, {"tests/conftest.py"}) == {
+        "tests/a/test_one.py",
+        "tests/a/test_two.py",
+    }
+
+
+def test_pytest_generate_tests_stays_wide(fixture_conftest_repo: Path) -> None:
+    """Dynamic parametrization cannot be matched by name: stay wide."""
+    _edit_conftest(
+        fixture_conftest_repo, _CONFTEST_BASE.replace("return 1", "return 2")
+    )
+    (fixture_conftest_repo / "tests" / "b" / "test_three.py").write_text(
+        "import pytest\n\n\ndef pytest_generate_tests(metafunc):\n"
+        "    metafunc.parametrize('alpha', [1])\n\n\n"
+        "def test_three(alpha):\n    pass\n",
+        encoding="utf-8",
+    )
+    assert (
+        _select_with_base(fixture_conftest_repo, {"tests/conftest.py"}) == _ALL_SUBTREE
+    )
+
+
+def test_without_base_ref_conftest_edge_stays_blanket(
+    fixture_conftest_repo: Path,
+) -> None:
+    """base_ref=None (older callers) keeps the pre-narrowing behavior."""
+    _edit_conftest(
+        fixture_conftest_repo, _CONFTEST_BASE.replace("return 1", "return 2")
+    )
+    assert (
+        _select_with_base(fixture_conftest_repo, {"tests/conftest.py"}, base_ref=None)
+        == _ALL_SUBTREE
+    )

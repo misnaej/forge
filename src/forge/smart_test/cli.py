@@ -919,7 +919,9 @@ def main() -> int:
         return _with_run_log(repo_root, "", full)
 
     depth = cast("int", depth_raw)
-    plan = select_tests(repo_root, changed, depth, follow_mock_patches=follow)
+    plan = select_tests(
+        repo_root, changed, depth, follow_mock_patches=follow, base_ref=base_ref
+    )
 
     extra_depth0, coverage_validate = _coverage_additions(args, cfg, changed)
 

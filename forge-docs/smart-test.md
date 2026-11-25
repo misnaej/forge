@@ -52,10 +52,17 @@ full pass. Config reference:
   narrower run is honest about it.
 - **Conftests reach their tests.** A `conftest.py` is a dependency of
   every test in its folder and below, so editing it — or code it
-  imports — selects that subtree at depth 0. A changed conftest outside
-  the test roots (e.g. at the repo root) escalates to `full`. Only
-  `test_*.py` / `*_test.py` files are ever selected as tests; conftests
-  and helper modules are dependencies.
+  imports — selects that subtree at depth 0. One refinement: when the
+  diff against the base shows the edit confined to non-`autouse`
+  fixtures, only the subtree tests that reference those fixture names
+  (as a parameter or via `getfixturevalue`) are selected — an `autouse`
+  fixture, a decorator edit, any module-level change, a rename's other
+  side, `pytest_generate_tests` in the module, or anything unparseable
+  all keep the whole subtree, because the selector cannot prove narrower
+  is honest. A changed conftest outside the test roots (e.g. at the
+  repo root) escalates to `full`. Only `test_*.py` / `*_test.py` files
+  are ever selected as tests; conftests and helper modules are
+  dependencies.
 - **A test file git or pytest ignores is not selected.** Selection skips
   test files git ignores (a scratch copy, anything under an ignored
   directory) and those pytest's own config excludes — `--ignore`,
