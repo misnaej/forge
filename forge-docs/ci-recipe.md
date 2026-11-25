@@ -164,7 +164,7 @@ Notes:
   argument is that an identical tree gives an identical result, and that
   is a claim about *your tests*, not about tests in general. A suite that
   reads git history (a version derived from tag distance or commit SHA,
-  as setuptools-scm does), the clock, a cadence stamp, a lifecycle window,
+  as setuptools-scm does), the clock, a lifecycle window,
   or the network is not tree-determined, and skipping on `main` can hide
   a real failure in exactly those places. If that describes your suite,
   do not adopt the gate, or restrict it to jobs that are.
@@ -302,13 +302,19 @@ that pre-merge, run the step as its own **required status check**:
 CI carries the cadence, and these two jobs are how: tiered smart tests on
 PRs, the full suite on every main-branch push. Event-driven — the main
 path needs no clock; add the `schedule:` trigger as a quiet-period
-backstop. Nothing to configure: the jobs *are* the guarantee, and a job
-that stops running turns the build red.
+backstop. Nothing to configure.
 
 The full-suite job is what makes lifecycle deselection safe, so run it if
-your repo marks any test `pytestmark = pytest.mark.development`. A repo
-whose CI already runs the whole suite on every pull request has the
+your repo marks any test `pytestmark = pytest.mark.development`. It needs
+no `--all-tests`: the selector refuses to deselect under
+`forge.run_context.is_ci()`, so a `full` job in CI is always truly all. A
+repo whose CI already runs the whole suite on every pull request has the
 guarantee and needs neither job.
+
+What this does **not** catch: a job that is deleted, renamed or never
+triggered turns nothing red — it just stops happening. Only a *failing*
+job is a signal. Keep the push trigger (or the `schedule:`) rather than
+leaving the full run to whoever remembers.
 
 ```yaml
   smart-test-pr:            # PR job: change-scoped tiers
@@ -330,16 +336,14 @@ guarantee and needs neither job.
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: pip install -e ".[dev]"
-      - run: forge-smart-test --depth full --all-tests
+      - run: forge-smart-test --depth full
 ```
 
 - Add `schedule: [{cron: "0 4 * * *"}]` to the workflow triggers if
   main can go quiet for days — the scheduler then owns the cadence
   clock instead of the merge stream.
-- Nothing is written back to the repo. An earlier design had this job
-  push a refreshed `.forge-full-run` stamp; the stamp is gone, because a
-  timestamp whose only reader was a pre-commit step went stale unnoticed
-  while every PR was in fact running the full suite.
+- Nothing is written back to the repo: no stamp, no commit, no push, so
+  the job needs no `contents: write`.
 
 ## 3. Scheduled `forge-upgrade --apply` workflow
 

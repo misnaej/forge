@@ -18,8 +18,10 @@ import fnmatch
 import inspect
 import logging
 import os
+import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -28,7 +30,13 @@ from forge.git_utils import code_health_dir
 from forge.smart_test import cli, runner
 from forge.smart_test.dependencies import SelectionPlan
 from forge.smart_test.run_log import LOCK_NAME, RunLog
-from tests.conftest import PRODUCED_AT_RE, CapturedCalls, log_body
+from tests.conftest import (
+    GIT_ENV,
+    PRODUCED_AT_RE,
+    CapturedCalls,
+    init_git_repo,
+    log_body,
+)
 
 
 if TYPE_CHECKING:
@@ -1107,6 +1115,17 @@ def test_main_depth_batches_label_each_call_by_tier(
     assert captured.labels == ["depth0", "depth1"]
 
 
+@pytest.fixture(autouse=True)
+def _outside_ci_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin ``cli.is_ci`` false so no test inherits the runner's CI variables.
+
+    Under CI ``_run_full`` runs truly everything (label ``all``, no
+    deselection); a test asserting the ordinary ``full`` behaviour must not
+    depend on where it runs. Tests of the CI path re-patch it to true.
+    """
+    monkeypatch.setattr(cli, "is_ci", lambda: False)
+
+
 def _stub_run_full_deps(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -1548,6 +1567,81 @@ def test_run_full_all_tests_flag_includes_everything_no_skip_line(
     assert code == 0
     assert captured.calls == [[]]
     assert "lifecycle-skipped" not in out
+
+
+@pytest.fixture
+def repo_with_stale_development_file(tmp_path: Path) -> Path:
+    """Real git repo: one fresh plain test file, one development file 90 days stale."""
+    init_git_repo(tmp_path)
+    old = (datetime.now(tz=UTC) - timedelta(days=90)).isoformat()
+    for rel, body, when in (
+        ("tests/test_plain.py", "def test_ok():\n    assert True\n", None),
+        (
+            "tests/test_scaffold.py",
+            "import pytest\n\npytestmark = pytest.mark.development\n",
+            old,
+        ),
+    ):
+        path = tmp_path / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+        env = dict(GIT_ENV)
+        if when:
+            env["GIT_AUTHOR_DATE"] = env["GIT_COMMITTER_DATE"] = when
+        subprocess.run(["git", "add", rel], cwd=tmp_path, env=env, check=True)
+        subprocess.run(
+            ["git", "commit", "-q", "-m", f"add {rel}"],
+            cwd=tmp_path,
+            env=env,
+            check=True,
+        )
+    return tmp_path
+
+
+def test_run_full_under_ci_deselects_nothing_and_announces_it(
+    repo_with_stale_development_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Under CI a ``full`` run runs everything, stale development files included.
+
+    SCENARIO: real repo holding a development-marked file 90 days past the
+        30-day skip window; ``is_ci()`` true; ``all_tests`` left False.
+    MOCK SETUP: ``cli.is_ci`` forced True (patched in the ``cli`` namespace);
+        ``run_pytest`` faked to capture the batch. Discovery and lifecycle
+        run for real — the deselection decision is what is under test.
+    EXPECTED BEHAVIOR: empty batch (pytest runs everything), no
+        ``lifecycle-skipped`` line, and an INFO line saying CI widened it.
+    """
+    monkeypatch.setattr(cli, "is_ci", lambda: True)
+    captured = CapturedCalls()
+    monkeypatch.setattr(cli, "run_pytest", _FakeRunPytest(captured=captured))
+    with caplog.at_level(logging.INFO, logger=cli.logger.name):
+        code, out = cli._run_full(repo_with_stale_development_file, {}, set())
+    assert code == 0
+    assert captured.calls == [[]]
+    assert "lifecycle-skipped" not in out
+    assert "CI detected" in caplog.text
+
+
+def test_run_full_outside_ci_still_deselects_the_stale_development_file(
+    repo_with_stale_development_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Outside CI the same repo still deselects the stale development file.
+
+    SCENARIO: same repo as the CI test; ``is_ci()`` false.
+    MOCK SETUP: ``cli.is_ci`` forced False; ``run_pytest`` faked.
+    EXPECTED BEHAVIOR: batch omits ``tests/test_scaffold.py`` and the output
+        reports ``lifecycle-skipped: 1``.
+    """
+    monkeypatch.setattr(cli, "is_ci", lambda: False)
+    captured = CapturedCalls()
+    monkeypatch.setattr(cli, "run_pytest", _FakeRunPytest(captured=captured))
+    code, out = cli._run_full(repo_with_stale_development_file, {}, set())
+    assert code == 0
+    assert captured.calls == [["tests/test_plain.py"]]
+    assert "lifecycle-skipped: 1" in out
 
 
 def test_run_full_threads_lifecycle_skip_days_from_config(

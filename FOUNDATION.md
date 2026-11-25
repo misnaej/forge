@@ -1007,7 +1007,7 @@ model, consumer guarantees and opt-in correctness extensions: **[`forge-docs/sma
 
 ## 18. Cost Goals — Test Economy, Library Performance, Tokens
 
-§8 retires development tests, §17 selects by depth,
+§8 lifecycle-skips development tests, §17 selects by depth,
 `forge-slow-tests-report` warns on duration regressions. They serve three
 goals:
 
@@ -1039,7 +1039,7 @@ comparison.
 **Enforcement is a review lens, never a gate** — no build fails on a
 duration. `forge-design-checker` asks the cost question of diffs that add or
 edit tests or touch a known hot path; `forge-test-advisor`'s necessity gate
-(§8) carries the cost half of its question.
+carries the cost half of its question.
 
 The token-optimization runbook — provider cache pricing with sources,
 measurement, ranked levers — lives in `forge-docs/token-optimization.md`.

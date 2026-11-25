@@ -356,7 +356,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_release_tag_invariant.py: enforcing test for the release-tag invariant in `docs/release-process.md` (every tag's own tree carries its version in the manifest and the changelog)
    - test_slow_tests_report.py: tests for slow_tests_report
    - test_smart_test_coverage.py: tests for smart_test.coverage (coverage-validated selection)
-   - test_smart_test_lifecycle.py: tests for smart_test.lifecycle (development markers, lifecycle skips, full-run stamp and history)
+   - test_smart_test_lifecycle.py: tests for smart_test.lifecycle (development markers, lifecycle skips, history ledger)
    - test_smart_test_superset.py: regression harness checking the union of forge-smart-test's three selection channels covers every guaranteed test-to-code link
    - test_telemetry.py: tests for telemetry (the resource-profiling wrapper)
    - test_version_surfaces.py: tests for version_surfaces (install-version, install-record and global-install readers)

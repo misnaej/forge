@@ -9,8 +9,8 @@ still report green on the commit.
 
 **"Only the tree" is an assumption about the suite, not a fact about
 tests.** A suite can read what a squash changed: a version setuptools-scm
-derives from tag distance and commit SHA, tags, the clock, the 48-hour
-full-run stamp, the 30-day lifecycle window, the network. None of that is
+derives from tag distance and commit SHA, tags, the clock, the 30-day
+lifecycle window, the network. None of that is
 tree-determined. A repo whose tests assert on any of it should not adopt
 the skip, and ``forge-docs/ci-recipe.md`` says so where a consumer will
 read it. Why this repository adopts it anyway, and what that rests on:

@@ -25,7 +25,7 @@ git commands is enforced here (FOUNDATION §7: a CLI performing a
 - the message is conventional, under a 45-word ceiling (over it warns,
   far past it is refused), and carries no AI attribution;
 - the index must equal the named files before the commit, and the commit
-  may add only what the hook regenerates (generated docs, the cadence stamp);
+  may add only what the hook regenerates (the generated docs);
 - the pre-commit hook runs on the commit (git's per-process overrides
   that could skip it are dropped);
 - pushes never force and never delete; a rejected push is reported, the

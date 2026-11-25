@@ -80,9 +80,14 @@ rule" is load-bearing: strip it and the rule reads as negotiable.
 1. **Never move an imperative behind a pointer.** Forge's issue gate once
    stated two conditions in one paragraph, the expensive one inside a
    parenthetical; a run collapsed it to the cheap half and falsely
-   labelled 32 issues. A page may never be opened at all. Moving an
-   imperative into the agent that executes it is *not* this — that doc
-   loads whenever the rule applies.
+   labelled 32 issues. A page may never be opened at all.
+
+   Moving an imperative into the agent that executes it is *not* this,
+   but only when **exactly one role acts on it and that role always
+   loads the doc** — the Q2 case. Two roles, and one of them reaches the
+   rule through a pointer, which is this prohibition's own failure mode.
+   Then either keep it resident, or make the second role's pointer state
+   the rule rather than only its location.
 2. **Never merge two rules into one vaguer one** to save words. That is
    how "warns past the ceiling, never refuses" degrades into "has
    limits": shorter, and no longer a rule.

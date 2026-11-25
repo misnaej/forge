@@ -51,6 +51,7 @@ graph LR
   precommit_fixer["⚖️ forge-precommit-fixer<br/>AI agent"]
   security_checker["⚖️ forge-security-checker<br/>AI agent"]
   test_advisor["⚖️ forge-test-advisor<br/>AI agent"]
+  test_writer["⚖️ forge-test-writer<br/>AI agent"]
   docs_security_md(["docs/security.md<br/>[policy]"])
   _14_issue_schema(["§14 issue schema<br/>[policy]"])
   _4_pre_commit_gate(["§4 pre-commit gate<br/>[policy]"])
@@ -58,13 +59,14 @@ graph LR
   _5_ruff___complexity(["§5 ruff & complexity<br/>[policy]"])
   _7_design_principles(["§7 design principles<br/>[policy]"])
   _8_docs_standards(["§8 docs standards<br/>[policy]"])
-  _8_testing_standards(["§8 testing standards<br/>[policy]"])
+  _8_testing_standards(["testing standards<br/>(test-writer owns)<br/>[policy]"])
   design_checker -->|enforces| _7_design_principles
   design_checker -->|enforces| _5_ruff___complexity
   precommit_fixer -->|enforces| _4_pre_commit_gate
   precommit_fixer -->|enforces| _5_ruff
   docs_types_checker -->|enforces| _8_docs_standards
-  test_advisor -->|enforces| _8_testing_standards
+  test_writer -->|owns| _8_testing_standards
+  test_advisor -->|reviews against| _8_testing_standards
   security_checker -->|enforces| docs_security_md
   issue_triage -->|enforces| _14_issue_schema
   class design_checker agent
@@ -79,6 +81,8 @@ graph LR
   class security_checker reporter
   class test_advisor agent
   class test_advisor reporter
+  class test_writer agent
+  class test_writer mutator
   class docs_security_md policy
   class _14_issue_schema policy
   class _4_pre_commit_gate policy

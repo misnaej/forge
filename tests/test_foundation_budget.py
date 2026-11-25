@@ -56,8 +56,6 @@ FORGE_DOCS_CEILINGS: dict[str, int] = {
     "ci-recipe.md": 4400,
     "configuration.md": 9800,
     "continuation.md": 800,
-    # Raised from 800 when the opt-in and role axes were added: two
-    # routing questions and the destinations table, not accumulated prose.
     "foundation-compaction.md": 900,
     "git-safety.md": 2500,
     "integration-staleness.md": 800,

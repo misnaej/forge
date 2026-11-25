@@ -1,7 +1,7 @@
 """Test-lifecycle mechanics for forge-smart-test (FOUNDATION §8).
 
 Graph-independent support module (layering-exempt, like ``git_helpers``):
-owns the three lifecycle artifacts the depth model consumes —
+owns the lifecycle artifacts the depth model consumes —
 
 - **classification**: a test file whose module level carries
   ``pytestmark = pytest.mark.development`` (alone or in a list) is a
@@ -13,10 +13,10 @@ owns the three lifecycle artifacts the depth model consumes —
   file changes. Deletion is deliberately not implemented.
 
 Deselection is safe only because a periodic truly-all run executes what a
-skip left out. That run is CI's job — one scheduled or main-push
-``forge-smart-test --depth full --all-tests`` (``forge-docs/ci-recipe.md``).
-Nothing here times it: a stamp read only at commit time sat 86 days stale
-unnoticed, so the guarantee lives where the suite actually runs.
+skip left out, and that run is CI's: ``forge-smart-test`` never deselects
+under :func:`forge.run_context.is_ci`, so any CI ``full`` job is truly
+all. Nothing here times it — the guarantee is the job, not a timestamp
+(``forge-docs/ci-recipe.md``).
 
 A one-line history record per full run lands in
 ``code_health/smart_test_history.log`` (append-only, telemetry-history
