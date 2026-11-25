@@ -161,13 +161,19 @@ def test_build_graph_marks_test_modules(import_chain_repo: Path) -> None:
     assert "myapp.core" not in graph.test_modules
 
 
-def test_build_graph_skips_syntax_error(import_chain_repo: Path) -> None:
-    """Files with SyntaxError are skipped; the rest of the graph is intact."""
+def test_build_graph_keeps_syntax_error_with_no_edges(import_chain_repo: Path) -> None:
+    """Files with SyntaxError stay in the graph with empty targets.
+
+    Dropping them made a changed unparseable conftest or test vanish from
+    the selection entirely (a silent false green); keeping them with no
+    edges lets the reverse walk still reach what references them.
+    """
     bad_file = import_chain_repo / "src" / "myapp" / "broken.py"
     bad_file.write_text("def (:\n", encoding="utf-8")
     graph = build_graph(import_chain_repo)
-    # The broken module should not appear; others still do.
-    assert "myapp.broken" not in graph.path_of
+    assert graph.path_of["myapp.broken"] == "src/myapp/broken.py"
+    assert graph.imports["myapp.broken"] == set()
+    assert "myapp.broken" not in graph.fixture_refs
     assert "myapp.core" in graph.path_of
 
 
@@ -1459,3 +1465,27 @@ def test_without_base_ref_conftest_edge_stays_blanket(
         _select_with_base(fixture_conftest_repo, {"tests/conftest.py"}, base_ref=None)
         == _ALL_SUBTREE
     )
+
+
+def test_worktree_unparseable_conftest_stays_wide(fixture_conftest_repo: Path) -> None:
+    """A conftest that no longer parses keeps its subtree selected, not nothing.
+
+    Regression: an unparseable worktree conftest used to drop out of the
+    graph entirely, so the selection came back empty — a silent false green.
+    """
+    _edit_conftest(fixture_conftest_repo, "def broken(:\n")
+    assert (
+        _select_with_base(fixture_conftest_repo, {"tests/conftest.py"}) == _ALL_SUBTREE
+    )
+
+
+def test_unparseable_changed_test_file_still_selected(
+    fixture_conftest_repo: Path,
+) -> None:
+    """A changed test file that no longer parses still runs at depth 0."""
+    (fixture_conftest_repo / "tests" / "a" / "test_two.py").write_text(
+        "def broken(:\n", encoding="utf-8"
+    )
+    assert _select_with_base(fixture_conftest_repo, {"tests/a/test_two.py"}) == {
+        "tests/a/test_two.py"
+    }

@@ -428,7 +428,9 @@ def _parse_sources(
         ``(parsed, test_modules, fixture_refs, generate_tests)``: module
         name → ``(rel_path, targets)``, the names of collectable test
         modules, module → referenced fixture names, and the modules that
-        call ``pytest_generate_tests``.
+        call ``pytest_generate_tests``. Files that fail to parse stay in
+        ``parsed`` with empty targets (and out of ``fixture_refs``) so a
+        changed one is still reachable — wide, never silently dropped.
     """
     parsed: dict[str, tuple[str, set[str]]] = {}
     test_modules: set[str] = set()
@@ -447,23 +449,33 @@ def _parse_sources(
         )
         if not name:
             continue
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        except (SyntaxError, UnicodeDecodeError):
-            continue
         rel = path.relative_to(repo_root).as_posix()
-        targets = extract_import_targets(tree, name, include_type_checking=True)
-        refs, dynamic = _fixture_refs(tree)
-        fixture_refs[name] = refs
-        if dynamic:
-            generate_tests.add(name)
-        if is_test:
+        try:
+            tree: ast.Module | None = ast.parse(
+                path.read_text(encoding="utf-8"), filename=str(path)
+            )
+        except (SyntaxError, UnicodeDecodeError):
+            # An unparseable file still enters the graph with no edges: a
+            # changed conftest that no longer parses must keep its subtree
+            # selected (wide), and a changed test file must still run —
+            # dropping it would under-select, the one direction the
+            # selector must never fail in. Its fixture refs stay unknown
+            # (absent from fixture_refs), which the narrowing reads as wide.
+            tree = None
+        if tree is not None:
+            targets = extract_import_targets(tree, name, include_type_checking=True)
+            refs, dynamic = _fixture_refs(tree)
+            fixture_refs[name] = refs
+            if dynamic:
+                generate_tests.add(name)
+            if is_test and follow_mock_patches:
+                targets = targets | _patch_targets(tree)
+        else:
+            targets = set()
+        if is_test and _is_test_file(path):
             # Only files pytest collects are tests; a conftest or a helper
             # under a test root is a dependency, never a selected test.
-            if _is_test_file(path):
-                test_modules.add(name)
-            if follow_mock_patches:
-                targets = targets | _patch_targets(tree)
+            test_modules.add(name)
         parsed[name] = (rel, targets)
     return parsed, test_modules, fixture_refs, generate_tests
 
