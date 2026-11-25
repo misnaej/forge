@@ -13,8 +13,7 @@ non-blocking), ruff (``ruff format`` + ``ruff check --fix
 ``git add``; report-only in CI: ``--check`` / ``--no-fix``), docstring
 verification (over the diff vs main), test-name verification (over the
 diff vs main), repo-structure verification
-(``REPO_STRUCTURE.md`` vs the actual tree), plugin manifest JSON
-validation, Claude Code plugin-version drift guard (when applicable), a
+(``REPO_STRUCTURE.md`` vs the actual tree), a
 CHANGELOG-history guard (fires only on a branch that merged the base
 branch in — a promotion — so main's curated entries can't be dropped),
 a vendored-integrity gate (vendored ``data/*.js`` blobs must match their
@@ -2511,12 +2510,6 @@ def _changelog_version_skip_gate(repo_root: Path) -> StepResult | None:
         return StepResult(
             name=name, passed=True, output="No CHANGELOG.md — skipped.", skipped=True
         )
-    # Judged BEFORE the manifest short-circuit below: the fragment checks
-    # are per-PR hygiene, independent of the declared-version invariant
-    # verify-forge-plugin-version owns, and a repo carrying both a
-    # manifest and fragments needs them to run. Reaching them used to be
-    # impossible there — the manifest returned first and the gate never
-    # ran at all.
     if _forge_step_config(repo_root, "changelog").get("mode") == "fragments":
         # Fragment mode: CHANGELOG.md is an OUTPUT of release, never an
         # input — no declared-version/stranded checks apply. The step
@@ -2595,10 +2588,8 @@ def step_changelog_version(repo_root: Path) -> StepResult:
     the stale-but-green stranding race pre-merge (recipe:
     ``forge-docs/ci-recipe.md``).
 
-    Self-skips when there is no root ``CHANGELOG.md``, on
-    manifest-versioned repos (``verify-forge-plugin-version`` owns the
-    declared-version invariant there), and on dual-track repos (their
-    changelog is curated at promotion — ``docs/release-process.md`` §5).
+    Self-skips when there is no root ``CHANGELOG.md``. In fragments mode
+    it becomes the fragment gate instead of skipping.
 
     Args:
         repo_root: Git repo root.
@@ -4055,8 +4046,7 @@ def main() -> int:
             "report-only in CI) + docstring "
             "verification (diff vs main) + test-name verification (diff vs "
             "main) + repo-structure verification (REPO_STRUCTURE.md vs the "
-            "tree) + plugin manifest JSON + plugin version drift guard + "
-            "pip-audit (non-blocking) — when applicable. Locally, ruff "
+            "tree) + pip-audit (non-blocking) — when applicable. Locally, ruff "
             "fixes apply automatically on every run and fixed files are "
             "re-staged; in CI ruff only reports. Pytest "
             "is not in the default sequence — run it in CI or wire it into "

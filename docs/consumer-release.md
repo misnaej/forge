@@ -325,10 +325,6 @@ the per-tag headings.
   If you mitigated the pre-fragments gap by guarding your tagger to
   **fail while fragments are pending**, remove that guard when adopting
   fragments — released fragments legitimately persist until assembly.
-- Between assemblies a plugin manifest **parks at the latest tag**:
-  the `plugin_version` guard accepts `manifest <= tag` while every
-  pending fragment is valid, and keeps the strictly-ahead pass for the
-  assembly PR.
 
 No-version opt-outs (`NO_VERSION=1`, branch token, commit marker) apply
 unchanged.

@@ -376,8 +376,8 @@ def isolated_git_data(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 def init_git_repo(repo: Path) -> None:
     """Initialize a minimal git repo with one empty commit on ``main``.
 
-    Shared by the real-git suites (``git_utils``, ``verify_plugin_version``)
-    so the ephemeral-repo boilerplate lives in one place.
+    Shared by the real-git suites so the ephemeral-repo boilerplate
+    lives in one place.
 
     Args:
         repo: Directory to initialize. Must already exist.

@@ -162,12 +162,7 @@ and stop (caller may explicitly force).
    Close each with `[forge-issue-triage] closed: <reason>. Reopen if it
    recurs.`; create each umbrella (body: `Requires:` + members), then
    close its members into it.
-5. Per approved umbrella, emit sequenced **goal files** in the report
-   (the caller persists `.plan/goals/NN-<slug>.md`, `NN` = order): one
-   self-contained `/goal` condition each, **under 3900 characters** —
-   done-condition, members, verification; plan each with `/advisor`
-   first. Disposable; the umbrella is the record.
-6. Comment `[forge-issue-triage] deep-review completed: YYYY-MM-DD
+5. Comment `[forge-issue-triage] deep-review completed: YYYY-MM-DD
    (scope: full|<topic>)` on the Backlog Index (no scope suffix =
    `full`).
 
@@ -273,7 +268,7 @@ any `trimmed:` line.
 - Edit issue bodies other than the Backlog Index → **out of scope**
 - Override user-set tier labels silently → **comment alternative instead**
 - Install dependencies → **`install-forge-labels` must already be available**
-- Write files → **the caller persists goal files (no `Write` tool)**
+- Write files → **report only (no `Write` tool)**
 - Run `deep-review` within 7 days of the last → **skip unless forced**
 - Draft or validate a plan myself → **`/plan-issue` owns planning; I
   only screen and record**
@@ -282,15 +277,14 @@ any `trimmed:` line.
 
 Every mode ends with a report line naming the mode and the counts
 ("N triaged, M respected, Backlog Index updated"), plus whatever the
-mode decided (verdicts, closures, umbrellas, label moves, goal files,
-the question asked).
+mode decided (verdicts, closures, umbrellas, label moves, the question
+asked).
 
 ## Success Criteria
 
 - Every labelled issue has at least one `tier-N-*` label OR `needs-triage`
 - Backlog Index body is current (regenerated this run; not for `advisory`)
 - Every agent-driven label change has a `[forge-issue-triage]` comment trail
-- Every emitted goal file is numbered, self-contained, under 3900 chars
 
 ## Output style (always)
 

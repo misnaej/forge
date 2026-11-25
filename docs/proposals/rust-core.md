@@ -120,11 +120,9 @@ meaningful on a Python repo), so it stays in the Python pack initially.
 | `forge-config` | **Rust core** | Reads `[tool.forge.*]` config — language-agnostic |
 | `forge-post-merge` / `-post-checkout` | **Rust core** | Drift check + backgrounded self-refresh |
 | `forge-doctor` | **Rust core** | Environment diagnostics |
-| `forge-next-prep` | **Rust core** | `git` orchestration (refresh, tag, prune) |
+| `forge-next-prep` | **Rust core** | `git` orchestration (refresh, prune) |
 | `forge-upgrade` | **Rust core** | Pin/version management (semantics change — see §6) |
 | `verify-forge-repo-structure` | **Rust core** | Tree walk + markdown diff, language-agnostic |
-| `verify-forge-manifest` | **Rust core** | JSON validation (`serde_json`) |
-| `verify-forge-plugin-version` | **Rust core** | Semver compare vs git tags |
 | `forge-pr-squash-comment` | **Rust core** | Message validation + `gh` post |
 | `forge-gen-commit-types` / `forge-gen-cli-reference` | **Rust core** | Generation/parity checks |
 | `forge-continuation` | **Rust core** | Status-panel string work |
@@ -175,8 +173,8 @@ matrix triggered by the tag.
 
 ### 6.3 Three versioned artifacts, not two
 
-Forge already coordinates a pip version and a rolling-next plugin
-version. The binary adds a third axis:
+Forge already coordinates a pip version, derived from its `v*` tags.
+The binary adds a second axis:
 
 - **binary version** × **`forge-analysis` version** × **plugin
   version**.
@@ -326,7 +324,7 @@ time-boxed spike to validate the pipeline regardless.
 - npm scope/name for the binary package, and whether the PyPI package
   renames to `forge-analysis` or keeps `forge-scripts` with a slimmed
   surface.
-- Whether `forge-next-prep`'s dual-track tag logic stays in the binary
+- Whether `forge-next-prep`'s sync and prune logic stays in the binary
   or is simple enough to remain a thin script.
 - How the Claude plugin pins/declares the minimum binary version it
   needs (plugin → binary compatibility is a fourth edge).

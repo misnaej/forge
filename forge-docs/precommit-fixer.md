@@ -124,12 +124,9 @@ edit with no such list is still a false report.
   `changelog.d/` file this change did not create belongs to another PR —
   typically a stacked branch carrying its parent's entry. Editing it would
   rewrite someone else's release note.
-- **`plugin_version`.** The required version is a repo policy (the
-  consumer's `CLAUDE.md` documents it); the log states the version the
-  policy demands, and the fixer applies only that.
 - **Release actions.** A step whose cure is a tag, a merge or a release
-  (`release_tag_guard`, versioning cures that need tags) is reported, never
-  performed — delegating it to another agent is the same act.
+  is reported, never performed — delegating it to another agent is the
+  same act.
 
 ## Finding symbols
 

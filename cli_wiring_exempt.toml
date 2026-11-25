@@ -2,7 +2,7 @@
 # exempts these). Each needs a one-line reason.
 
 [exempt."forge-release"]
-reason = "Consumer-facing release orchestrator for single-track tag-versioned repos; run by a human at release time, not from a pre-commit/hook/bootstrap path (forge itself uses the rolling-next flow instead)."
+reason = "Consumer-facing release orchestrator for tag-versioned repos; run by a human at release time, not from a pre-commit/hook/bootstrap path (forge itself cuts a tag per merge via `forge-changelog auto-tag`)."
 
 [exempt."forge-tree-verified"]
 reason = "CI-only gate, called from .github/workflows/ci.yml and the shipped CI recipe; .github/ is not a wiring source, so reachability cannot be grepped."

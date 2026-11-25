@@ -77,7 +77,7 @@ Rules (sections, word cap, plain-English `## Summary` lead): [FOUNDATION §6 "PR
 2. **Write and post per [FOUNDATION §6 "Squash-merge messages"](../FOUNDATION.md#6-git--pr-workflow)** — content rules and the full `forge-pr-squash-comment` contract live there; never hand-construct the body.
 
    ```bash
-   forge-pr-squash-comment --pr <PR#> --dry-run   # numbers them
+   forge-pr-squash-comment --dry-run   # numbers the changelog bullets
    forge-pr-squash-comment --pr <PR#> \
        --title "<type>(<scope>)?: <subject>" \
        --bullet "[1,2] <key change>" --bullet "[3] <key change>"

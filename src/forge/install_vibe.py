@@ -128,9 +128,7 @@ def _generate_roster_sidecar(repo_root: Path) -> tuple[dict, list[str]]:
             matcher = matcher_config.get("matcher", "")
             # Extend, never replace: the roster keys hooks by matcher, so
             # assigning would drop the hooks of whichever group lost the
-            # key, in silence. verify-forge-manifest rejects a repeated
-            # matcher at the source; this keeps a manifest that slipped
-            # past it from costing a guard.
+            # key, in silence.
             matchers = roster["events"][event]["matchers"]
             if matcher in matchers:
                 warnings.append(
