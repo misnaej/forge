@@ -209,12 +209,6 @@ exempt_paths = ["docs/intake/"]
 # CHANGELOG.md prose follows separately (assemble-changelog.yml).
 auto = "merge"
 
-[tool.forge.smart_test]
-# No tests run at commit time. CI runs the full suite on every push and
-# PR (.github/workflows/ci.yml), so it carries the truly-all guarantee
-# that makes lifecycle deselection safe. Defaults apply for
-# lifecycle_skip_days / nonpython_ignore — see forge-config --list.
-
 [tool.forge.env_sync]
 # Dogfood step_auto_rebuild: when a pulled change adds a [project.scripts] CLI
 # and the editable install goes stale, the auto_rebuild pre-commit step runs
