@@ -75,6 +75,7 @@ by `forge-gen-config-doc`; the sections below explain each key.
 | `[tool.forge.doctest].blocking` | `False` |
 | `[tool.forge.typecheck].paths` | source_dirs (smart-detect) |
 | `[tool.forge.typecheck].blocking` | `False` |
+| `[tool.forge.typecheck].file_set` | `'roots'` |
 | `[tool.forge.pip_audit].blocking` | `False` |
 | `[tool.forge.pip_audit].cadence` | `'branch'` |
 | `[tool.forge.pip_audit].max_age_hours` | `24.0` |
@@ -291,9 +292,25 @@ to them. `forge-config --list` shows the resolved values.
 
 For `typecheck`, `diff` selects only the modified files **under its resolved
 roots** (`[tool.forge.typecheck].paths` → `source_dirs` → auto-detect), so it
-always checks a subset of what `all` would. Caveat: pyrefly's explicit-file
-mode ignores `project_excludes` from `pyrefly.toml` — keep `typecheck` on
-`all` if you rely on that key.
+always checks a subset of what `all` would.
+
+In `all` scope, `typecheck` picks its file set via
+`[tool.forge.typecheck].file_set`:
+
+- `"roots"` (default): pyrefly gets the root **directories** and walks them
+  itself — gitignore and dot-directory handling is then pyrefly's walk, not
+  forge's.
+- `"tracked"`: forge selects the git-tracked files under the roots and passes
+  them explicitly — gitignored paths are never selected, tracked files in
+  dot-directories (e.g. `.devcontainer/scripts/`) are included, and forge's
+  `[tool.forge].exclude` applies.
+
+Caveat: pyrefly's explicit-file mode ignores `project_excludes` from
+`pyrefly.toml`, so a consumer relying on that key should stay on `"roots"`.
+
+`forge-precommit --list-files [--only <steps>]` prints the exact paths a step
+would hand its tool (`<step>: <path>` per line) without running anything, so
+the selection is inspectable before you commit to a mode.
 
 **Untracked files.** Some steps take their files from git and so skip any
 file you have not `git add`-ed: in `diff` scope, the four steps above

@@ -917,6 +917,7 @@ options:
 ```text
 usage: forge-precommit [-h] [--json] [--skip STEP[,STEP...]]
                        [--only STEP[,STEP...]] [--freshness] [--verdict]
+                       [--list-files]
 
 Run the forge pre-commit check sequence: ruff (format + check, self-healing
 with --unsafe-fixes on failure; report-only in CI) + docstring verification
@@ -953,6 +954,12 @@ options:
                         unchecked. A NOTE line names those files and the steps
                         that skipped them. Paste its output instead of
                         summarising pre-commit results.
+  --list-files          Run no steps and require no tool binaries: print each
+                        selected step's file set as '<step>: <path>' lines
+                        (steps named in --only, or every step with a file-set
+                        selection), i.e. exactly what the step would hand its
+                        tool. Steps without a file-set selection print
+                        nothing. Always exits 0.
 ```
 
 ## forge-release
