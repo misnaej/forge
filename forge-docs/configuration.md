@@ -94,17 +94,13 @@ by `forge-gen-config-doc`; the sections below explain each key.
 | `[tool.forge.layering].layer` | unset (audit + step skipped) |
 | `[tool.forge.layering].require_all_classified` | `False` |
 | `[tool.forge.layering].unclassified_allow` | `[]` |
-| `[tool.forge.smart_test].precommit_depth` | unset (step skipped) |
-| `[tool.forge.smart_test].blocking` | `False` |
 | `[tool.forge.smart_test].paths` | source_dirs + test_dirs |
 | `[tool.forge.smart_test].follow_mock_patches` | `False` |
 | `[tool.forge.smart_test].coverage_validate` | `False` |
 | `[tool.forge.smart_test].coverage_json` | `'unset'` |
 | `[tool.forge.smart_test].commit_directive_re` | built-in [depth-N] / [full] regex |
 | `[tool.forge.smart_test].lifecycle_skip_days` | `30` |
-| `[tool.forge.smart_test].full_run_max_age_hours` | `48` |
-| `[tool.forge.smart_test].cadence_mode` | `'commit'` |
-| `[tool.forge.smart_test].nonpython_ignore` | built-in list (*.md, stamp, .plan/*, .gitignore) |
+| `[tool.forge.smart_test].nonpython_ignore` | built-in list (*.md, .plan/*, .gitignore) |
 | `[tool.forge.smart_test].safe_fallback` | `'escalate'` |
 | `[tool.forge.continuation].judgment_max_lines` | `60` |
 | `[tool.forge.continuation].judgment_max_items` | `12` |
@@ -467,27 +463,22 @@ warning; skipped when the directory does not exist.
 
 ---
 
-## `[tool.forge.smart_test]` — opt-in change-scoped test gate
+## `[tool.forge.smart_test]` — change-scoped test selection
 
-Drives the optional `smart_test` pre-commit step, which runs
-[`forge-smart-test`](../docs/cli-reference.md#forge-smart-test) at a fixed depth on
-every commit so only the tests your change set affects run. **Off by
-default** — the step self-skips entirely unless `precommit_depth` is set.
-The CLI itself (and the `/forge-smart-test` skill) work without any config;
-this table only governs the pre-commit integration. Depth model and the
+Tunes [`forge-smart-test`](../docs/cli-reference.md#forge-smart-test), which runs
+only the tests your change set affects. **No tests run at commit time** —
+there is no `smart_test` pre-commit step; the CLI and the
+`/forge-smart-test` skill work without any config, and CI carries the
+periodic truly-all run (see [`ci-recipe.md`](ci-recipe.md)). Depth model and the
 speed/coverage trade-off: [`forge-docs/smart-test.md`](smart-test.md).
 
 | Key | What it does | Set it when |
 |---|---|---|
-| `precommit_depth` | Depth the `smart_test` step runs on commit: `0` / `1` / `2` / `full`. Setting it opts the step in. | You want a change-scoped test gate on every commit (e.g. `0` for the fastest loop). |
-| `blocking` | Fail the commit on a test failure (else non-blocking WARN). | You want the gate to actually block, not just warn. |
 | `paths` | Scan roots for the import graph (per-tool override of the repo layout). | Your code/tests live outside the configured `source_dirs`/`test_dirs`. |
 | `follow_mock_patches` | Also treat `unittest.mock.patch("pkg.mod.attr")` string targets as dependency edges — `patch`/`patch.dict`/`mock.`/`mocker.` forms (`patch.object` is covered by its import). **Usually a no-op:** a test that patches `pkg.mod.attr` almost always also `import`s `pkg.mod`, so the patch edge duplicates an import edge that already selects the test. Changes selection only for the genuine patch-*only* case (chiefly `patch.dict("sys.modules", {…})` against a deferred import). Orthogonal to module naming — does not fix a source-dir/import-root mismatch. | Your tests couple to code purely through patching, with no import of the target (e.g. `sys.modules` injection). |
 | `coverage_validate` | After the static pass, union the tests whose recorded coverage **contexts** touch a changed line (needs `coverage_json`). Catches runtime-only links (fixtures, dynamic dispatch). | You have a fresh per-test coverage export and want belt-and-suspenders selection. |
 | `coverage_json` | Path to a `coverage json --show-contexts` export (recorded with `pytest --cov-context=test`) for `coverage_validate`. Also settable per-run via `--coverage-json`. A stale export under-selects — regenerate on `full` runs. | You enabled `coverage_validate`. |
 | `lifecycle_skip_days` | Quiet window (days) after which an untouched development-marked test file leaves ordinary full runs (lifecycle-skipped, always reported; `--all-tests` re-includes). | You want a faster/slower demotion clock for stale development tests. |
-| `full_run_max_age_hours` | Max age of the tracked `.forge-full-run` stamp before the cadence acts (per `cadence_mode`). | Your truly-all cadence should run more or less often. |
-| `cadence_mode` | Who carries the truly-all cadence: `commit` (stale stamp escalates the commit), `advisory` (warn only; run keeps its own `blocking` semantics), `external` (a scheduled CI job owns it; warn at 2x the window). | CI is your testing fleet — see the smart-test doc's "Who carries the cadence". |
 | `nonpython_ignore` | fnmatch globs for changed non-Python paths that cannot affect tests; anything else escalates the run to full (safe fallback). | You have non-Python paths the default list doesn't cover. |
 | `safe_fallback` | What a changed non-Python path outside `nonpython_ignore` does: `escalate` (run the full suite), `warn` (log every such path and keep the selected depth), `off` (ignore them; one warning says so). A changed conftest outside the test roots always escalates. An unknown value escalates with a warning. | Full-suite escalations cost more than the under-selection risk you accept — see the smart-test doc's "Safe fallback". |
 | `commit_directive_re` | Regex for `--from-commit-message` to read a depth directive from `HEAD`'s message (named groups `n` / `full`). | Your CI tags commits with a different directive syntax. |

@@ -1,0 +1,1 @@
+../../../../forge-docs/instruction-compaction.md

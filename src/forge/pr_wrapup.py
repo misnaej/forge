@@ -109,7 +109,7 @@ from forge.pr_wrapup_compose import (
     word_budget,
 )
 from forge.precommit import freshness_verdicts, resolve_steps
-from forge.text_budget import length_verdict, refusal_threshold
+from forge.text_budget import BUDGET_RULE, length_verdict, refusal_threshold
 
 
 if TYPE_CHECKING:
@@ -508,23 +508,23 @@ def _length_problems(
             (
                 f"wrap-up is {words} words, past the {refusal_threshold(ceiling)} "
                 f"allowed for a {ceiling}-word ceiling ({WORD_BUDGET} + "
-                f"{FINDING_ALLOWANCE} x {findings} findings). Cut process state "
-                "and bookkeeping first, then compress each findings section. "
-                "Drop no disposition."
+                f"{FINDING_ALLOWANCE} x {findings} findings). {BUDGET_RULE} Cut "
+                "process state and bookkeeping first, then compress each "
+                "findings section. Drop no disposition."
             )
         ]
     if verdict == "warn":
         logger.warning(
             "wrap-up is %d words, over the %d-word ceiling (%d + %d x %d "
-            "findings) — posting anyway. Cut it in the file and re-run: "
+            "findings) — posting anyway. %s Cut it in the file and re-run: "
             "process state and bookkeeping first, then compress each "
-            "findings section. Drop no disposition. The ceiling is a limit, "
-            "not a length to aim for.",
+            "findings section. Drop no disposition.",
             words,
             ceiling,
             WORD_BUDGET,
             FINDING_ALLOWANCE,
             findings,
+            BUDGET_RULE,
         )
     return []
 

@@ -18,9 +18,9 @@ standards). Recommends and reports; never writes or edits tests — that is
 
 ## Source of truth
 
-See the testing documentation standards in
-[FOUNDATION §8](../FOUNDATION.md#8-documentation-standards) (and §5 for the
-`tests/` layout). Read and apply; never restate.
+Review against the testing standards in `forge:test-writer`'s *Source of
+truth* section — that agent owns them. Lifecycle classes: FOUNDATION §8;
+`tests/` layout: FOUNDATION §5. Read and apply; never restate.
 
 ## Workflow
 
@@ -35,11 +35,12 @@ pr=$(gh pr view --json number --jq '.number' 2>/dev/null || echo "?")
 
 1. Read the target module(s): public functions, classes, branches, error
    conditions, I/O seams.
-2. **Necessity gate first** (§8 "Test lifecycle"): reject planned
+2. **Necessity gate first** (mine; FOUNDATION §8 routes it here): reject planned
    cases that duplicate existing coverage (cite the covering test —
    `code_health/audit_dup.log` is admissible evidence) or that mirror
    the implementation line-by-line; for each surviving case state what
-   it uniquely detects against what it costs every run (§18 "Cost
+   it uniquely detects against what it costs every run — not writing an
+   unneeded test beats retiring it later (§18 "Cost
    Goals"); classify each as behavior vs development.
 3. Emit a recommendation: mirrored test-file path
    (`src/foo/bar.py` → `tests/foo/test_bar.py`), suggested cases (at least a
@@ -50,12 +51,12 @@ pr=$(gh pr view --json number --jq '.number' 2>/dev/null || echo "?")
 
 **Review mode** (caller asks "are these tests good?"):
 
-4. Read the test file(s) and check each against the §8 testing
-   documentation standards (see *Source of truth*), including the
+4. Read the test file(s) and check each against the testing standards in
+   `forge:test-writer` (see *Source of truth*), including the
    lifecycle class: a wholly-scaffolding file missing its module-level
    `pytestmark = pytest.mark.development` is a finding.
 5. Emit a compliance report: ✅ / ⚠️ / ❌ per dimension with `file:line`,
-   naming the §8 rule each finding maps to; when the smart-test history
+   naming the standard each finding maps to; when the smart-test history
    ledger shows lifecycle-skip candidates, list them (report-only).
 6. Check new tests' cost with the techniques in test-writer's step 6
    (`agents/test-writer.md`), using the timings from its report or a

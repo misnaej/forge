@@ -341,8 +341,81 @@ def _is_forge_comment(comment: dict[str, object]) -> bool:
     return str(comment.get("authorAssociation", "")).upper() in _WRITE_ASSOCIATIONS
 
 
+def _review_feedback(repo: str, pr: int) -> list[dict[str, object]]:
+    """Return inline review comments and review bodies, comment-shaped.
+
+    ``gh pr view --json comments`` carries the issue-comment collection
+    only. An inline comment on a file and line lives in
+    ``pulls/{n}/comments`` and a submitted review's body in
+    ``pulls/{n}/reviews`` — neither appears there, so a poll reading
+    ``comments`` alone sees a reviewer's actual feedback not at all.
+    That is the loudest signal §6 asks this command to report, so both
+    collections are normalised to the keys
+    :func:`_comment_alerts` already consumes.
+
+    A review submitted with an empty body (an approval, or the wrapper
+    around inline comments) carries no text to read, so it is dropped;
+    its inline comments arrive on their own.
+
+    Args:
+        repo: ``owner/repo`` slug.
+        pr: PR number.
+
+    Returns:
+        Comment-shaped dicts, empty when both calls fail.
+    """
+    rows: list[dict[str, object]] = []
+    # One prefix per collection, never a shared one: GitHub numbers
+    # review comments and reviews independently, so a single `review:`
+    # namespace lets an equal id from the two collections collide, and
+    # the seen-set then treats the second arrival as already reported —
+    # the silent drop this whole function exists to end.
+    sources = (
+        (f"repos/{repo}/pulls/{pr}/comments", "review-comment"),
+        (f"repos/{repo}/pulls/{pr}/reviews", "review"),
+    )
+    for endpoint, prefix in sources:
+        try:
+            payload = json.loads(_gh("api", endpoint, "--paginate").stdout)
+        except (
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            json.JSONDecodeError,
+        ) as exc:
+            # Non-fatal: the issue-comment half of the poll still works.
+            # Logged rather than swallowed — a silent degradation here is
+            # the exact failure this function was added to end.
+            logger.warning(
+                "pr-watch: review feedback poll failed (%s): %s", endpoint, exc
+            )
+            continue
+        if not isinstance(payload, list):
+            continue
+        for row in payload:
+            if not isinstance(row, dict) or not str(row.get("body") or "").strip():
+                continue
+            user = row.get("user")
+            rows.append(
+                {
+                    "id": f"{prefix}:{row.get('id', '')}",
+                    "body": row.get("body", ""),
+                    "author": {
+                        "login": user.get("login", "") if isinstance(user, dict) else ""
+                    },
+                    "authorAssociation": row.get("author_association", ""),
+                    "createdAt": row.get("created_at", ""),
+                }
+            )
+    return rows
+
+
 def _comment_alerts(
-    pr: int, view: dict[str, object], seen: set[str], *, first_poll: bool
+    pr: int,
+    view: dict[str, object],
+    seen: set[str],
+    *,
+    first_poll: bool,
+    extra: Sequence[dict[str, object]] = (),
 ) -> list[str]:
     """Return alerts for comments not seen on an earlier poll.
 
@@ -362,12 +435,20 @@ def _comment_alerts(
         view: Decoded ``gh pr view`` JSON.
         seen: Comment identities already accounted for; mutated in place.
         first_poll: Whether this is the first poll of this PR, across waits.
+        extra: Comment-shaped rows from collections ``view`` does not
+            carry — inline review comments and review bodies, via
+            :func:`_review_feedback`. Passed in rather than fetched here
+            so this stays a pure function over its inputs.
 
     Returns:
         One alert line when new comments arrived, else none.
     """
-    comments = view.get("comments")
-    if not isinstance(comments, list):
+    issue_comments = view.get("comments")
+    comments = [
+        *(issue_comments if isinstance(issue_comments, list) else []),
+        *extra,
+    ]
+    if not comments:
         return []
     identities = [
         str(c.get("id") or f"{c.get('createdAt', '')}:{c.get('author', '')}")
@@ -440,7 +521,13 @@ def _poll_once(
     waking = [
         *_state_alerts(pr, view, stack_child=stack_child),
         *_ci_alerts(repo, pr, stack_child=stack_child, base_ref=base_ref),
-        *_comment_alerts(pr, view, seen_comments, first_poll=first_poll),
+        *_comment_alerts(
+            pr,
+            view,
+            seen_comments,
+            first_poll=first_poll,
+            extra=_review_feedback(repo, pr),
+        ),
     ]
     # Staleness is the one signal that ends no wait: a condition for the
     # next picker-up, not news. Left out of `waking` here, never filtered

@@ -1,7 +1,7 @@
 """Test-lifecycle mechanics for forge-smart-test (FOUNDATION §8).
 
 Graph-independent support module (layering-exempt, like ``git_helpers``):
-owns the three lifecycle artifacts the depth model consumes —
+owns the lifecycle artifacts the depth model consumes —
 
 - **classification**: a test file whose module level carries
   ``pytestmark = pytest.mark.development`` (alone or in a list) is a
@@ -11,10 +11,12 @@ owns the three lifecycle artifacts the depth model consumes —
   ``lifecycle_skip_days`` (default 30) leave ordinary full runs — always
   reported, never silent — and re-enter automatically the moment their
   file changes. Deletion is deliberately not implemented.
-- **the full-run stamp** ``.forge-full-run``: a tracked one-line ISO
-  timestamp giving every contributor and CI the shared age of the last
-  truly-all run; the pre-commit step escalates when it exceeds
-  ``full_run_max_age_hours`` (default 48).
+
+Deselection is safe only because a periodic truly-all run executes what a
+skip left out, and that run is CI's: ``forge-smart-test`` never deselects
+under :func:`forge.run_context.is_ci`, so any CI ``full`` job is truly
+all. Nothing here times it — the guarantee is the job, not a timestamp
+(``forge-docs/ci-recipe.md``).
 
 A one-line history record per full run lands in
 ``code_health/smart_test_history.log`` (append-only, telemetry-history
@@ -26,14 +28,17 @@ mismatches.
 from __future__ import annotations
 
 import ast
-import datetime as _dt
 import re
 import time
 from dataclasses import dataclass
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from forge.git_utils import code_health_dir, run_git
 from forge.ledger import append_ledger_line
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -48,25 +53,17 @@ class RunMetrics:
     differential_mismatches: int
 
 
-STAMP_RELPATH = Path(".forge-full-run")
 HISTORY_NAME = "smart_test_history.log"
 
 DEFAULT_SKIP_DAYS = 30
-DEFAULT_STAMP_MAX_AGE_HOURS = 48
 
 # Paths whose changes cannot affect test outcomes; everything else
 # non-Python escalates the run to full (the safe-fallback guarantee).
 DEFAULT_NONPYTHON_IGNORE = (
     "*.md",
-    str(STAMP_RELPATH),
     ".plan/*",
     ".gitignore",
 )
-
-# Tolerance for clock skew before a future-dated stamp is treated as
-# invalid — a forged or mis-merged future stamp must escalate, never
-# silently suppress the cadence guarantee (security review, #396).
-_STAMP_FUTURE_TOLERANCE_S = 300.0
 
 _FAILED_LINE_RE = re.compile(r"^FAILED ([^\s:]+\.py)", re.MULTILINE)
 
@@ -173,62 +170,6 @@ def lifecycle_skippable(
     """
     marked = development_marked_files(repo_root, test_files) - changed
     return {rel for rel in marked if days_since_last_touch(repo_root, rel) >= skip_days}
-
-
-def read_stamp(repo_root: Path) -> _dt.datetime | None:
-    """Return the last truly-all run's timestamp, or ``None``.
-
-    Args:
-        repo_root: Git repo root.
-
-    Returns:
-        The parsed UTC timestamp, or ``None`` when the stamp is missing
-        or unparsable (both mean: escalate).
-    """
-    try:
-        raw = (repo_root / STAMP_RELPATH).read_text(encoding="utf-8").strip()
-        return _dt.datetime.fromisoformat(raw)
-    except (OSError, ValueError):
-        return None
-
-
-def write_stamp(repo_root: Path) -> Path:
-    """Write the stamp with the current UTC time.
-
-    Args:
-        repo_root: Git repo root.
-
-    Returns:
-        The stamp path (for the caller to ``git add`` into the same
-        commit — the stamp rides the commit that earned it).
-    """
-    path = repo_root / STAMP_RELPATH
-    now = _dt.datetime.now(tz=_dt.UTC).replace(microsecond=0)
-    path.write_text(now.isoformat() + "\n", encoding="utf-8")
-    return path
-
-
-def stamp_age_hours(repo_root: Path) -> float | None:
-    """Return the stamp's age in hours, or ``None`` when unreadable.
-
-    Args:
-        repo_root: Git repo root.
-
-    Returns:
-        Hours since the last truly-all run, or ``None`` (escalate).
-    """
-    stamp = read_stamp(repo_root)
-    if stamp is None:
-        return None
-    if stamp.tzinfo is None:
-        stamp = stamp.replace(tzinfo=_dt.UTC)
-    now = _dt.datetime.now(tz=_dt.UTC)
-    delta_s = (now - stamp).total_seconds()
-    if delta_s < -_STAMP_FUTURE_TOLERANCE_S:
-        # A future-dated stamp would silently disable the cadence
-        # guarantee — treat it as invalid so the caller escalates.
-        return None
-    return max(0.0, delta_s / 3600.0)
 
 
 def failed_files(pytest_output: str) -> set[str]:

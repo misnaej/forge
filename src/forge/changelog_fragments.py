@@ -93,7 +93,7 @@ from forge.git_utils import (
     tag_on_remote,
     v_tags,
 )
-from forge.text_budget import length_verdict
+from forge.text_budget import BUDGET_RULE, length_verdict
 
 
 if TYPE_CHECKING:
@@ -422,9 +422,9 @@ def verbose_entry_note(body: str) -> str | None:
         worst = worst[:_NOTE_QUOTE_MAX] + "…"
     return (
         f"ADVISORY: {len(long)} bullet(s) run long, worst at {words} words "
-        f"against a ceiling of {BULLET_WORD_CEILING}. Say what changed in as few "
-        f"words as it takes and stop — the why belongs in the commit, not "
-        f"here. Longest: {worst}. Nothing refuses this."
+        f"against a ceiling of {BULLET_WORD_CEILING}. {BUDGET_RULE} The why "
+        f"belongs in the commit, not here. Longest: {worst}. Nothing "
+        f"refuses this."
     )
 
 

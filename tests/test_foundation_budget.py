@@ -18,8 +18,18 @@ The number still has to be visible, or the ratchet stops working: the
 warning names the overage so it shows in every run's summary, and a
 reviewer can ask whether the addition earned its words.
 
-forge-docs/ pages are deliberately uncapped by maintainer decision: they
-are opened on demand, not loaded every session.
+forge-docs/ pages carry ceilings too, by a later maintainer decision
+reversing the earlier one that left them uncapped. The reasoning that
+exempted them — they are read on demand, not loaded every session — is
+why their ceilings are generous rather than why they have none: without
+any, moving procedure out of FOUNDATION reduces the session cost and
+hides the growth somewhere nobody measures, and the detail an agent
+reads on demand gets worse in exactly that blind spot.
+
+Each page's ceiling is its own, seeded from its size when the ceilings
+were introduced, because a reference catalogue and a procedure page have
+no common right length. A new page must be added to the table, so
+growing the surface is deliberate rather than incidental.
 """
 
 import warnings
@@ -34,6 +44,26 @@ FOUNDATION_WORD_BASELINE = 8700
 # Headroom allowed between the baseline and the real count before the
 # baseline is considered stale and worth lowering.
 SLACK = 200
+
+# Per-page ceilings for the pages FOUNDATION points at, rounded up from
+# each page's size when ceilings were introduced. A ceiling, never a
+# target: the shortest page carrying its detail is the right one
+# (`forge-docs/foundation-compaction.md`). Lower one when a page
+# shrinks; raise one only when the added detail is worth naming in the
+# PR that raises it.
+FORGE_DOCS_CEILINGS: dict[str, int] = {
+    "backlog-tracks.md": 1300,
+    "ci-recipe.md": 4400,
+    "configuration.md": 9800,
+    "continuation.md": 800,
+    "instruction-compaction.md": 1200,
+    "git-safety.md": 2500,
+    "integration-staleness.md": 800,
+    "metrics.md": 2400,
+    "precommit-fixer.md": 1300,
+    "smart-test.md": 1700,
+    "token-optimization.md": 1400,
+}
 
 
 def _foundation_word_count() -> int:
@@ -80,3 +110,35 @@ def test_foundation_baseline_not_stale() -> None:
             f"FOUNDATION_WORD_BASELINE to {count}.",
             stacklevel=1,
         )
+
+
+def test_forge_docs_pages_report_their_own_budgets() -> None:
+    """Report each pointed page against its ceiling; never fail on it.
+
+    SCENARIO: a page under ``forge-docs/`` is at, under or over its own
+    ceiling, or is new and absent from the table.
+    EXPECTED BEHAVIOR: an overage or an untabled page warns, naming the
+    page, so moving procedure out of FOUNDATION cannot hide growth where
+    nothing measures it. Never fails — same standing as the FOUNDATION
+    budget above.
+    """
+    pages = sorted((REPO_ROOT / "forge-docs").glob("*.md"))
+    for page in pages:
+        count = len(page.read_text(encoding="utf-8").split())
+        ceiling = FORGE_DOCS_CEILINGS.get(page.name)
+        if ceiling is None:
+            warnings.warn(
+                f"forge-docs/{page.name} has no ceiling in "
+                f"FORGE_DOCS_CEILINGS ({count} words). Add one, so a new "
+                "pointed page is a deliberate addition to the surface.",
+                stacklevel=1,
+            )
+            continue
+        if count > ceiling:
+            warnings.warn(
+                f"forge-docs/{page.name} has {count} words, ceiling is "
+                f"{ceiling} (over by {count - ceiling}). Advisory: a "
+                "ceiling is not a target — condense, or say in the PR why "
+                "the added detail earns its words.",
+                stacklevel=1,
+            )

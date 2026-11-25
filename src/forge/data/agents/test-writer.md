@@ -20,9 +20,27 @@ runs `pytest` to verify. Does not review its own output — `forge:test-advisor`
 
 ## Source of truth
 
-Apply the testing documentation standards in
-[FOUNDATION §8](../FOUNDATION.md#8-documentation-standards) (and the §5
-`tests/` layout) in full. Do not improvise alternatives or restate them.
+These standards live here — this agent produces them, `forge:test-advisor`
+reviews against them. Test code is documented for **signal, not
+uniformly**:
+
+- **Injected fixtures are NOT documented as `Args`**; real (non-fixture)
+  params still are. `verify-forge-docstrings` is fixture-aware and is the
+  source of truth; ruff `D417` is ignored in `tests/**`.
+- **Trivial nested helpers / closures need no docstring** — a
+  self-describing name suffices.
+- **Fixtures are named for WHAT they contain**
+  (`dataset_with_missing_values`, not `data`).
+- **Mock-heavy tests carry a structured docstring** — `SCENARIO:` /
+  `MOCK SETUP:` / `EXPECTED BEHAVIOR:`; a heavily-mocking file carries a
+  module-level `# MOCKING STRATEGY:` overview.
+- **Prefer Null / Fake objects over `unittest.mock.Mock`**; `Mock` only
+  when a Null Object costs more than it saves.
+- **Coverage intent:** each public function gets a happy path plus an
+  edge/error case.
+
+Layout: the FOUNDATION §5 `tests/` convention. Lifecycle classes:
+FOUNDATION §8.
 
 ## Workflow
 
@@ -36,8 +54,8 @@ Apply the testing documentation standards in
    if the plan contains one, report it back instead of writing it. A
    wholly-scaffolding NEW file declares
    `pytestmark = pytest.mark.development` at module level.
-4. Write the tests, applying the §8 testing documentation standards in
-   full (see *Source of truth* above) — do not improvise alternatives.
+4. Write the tests, applying the standards in *Source of truth* above in
+   full — do not improvise alternatives.
 5. Run `pytest <file> -v` and iterate until green. To check whether a
    failure predates your change, read the base version
    (`git show <base>:<path>`) or run it in a

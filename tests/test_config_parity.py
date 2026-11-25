@@ -398,7 +398,7 @@ def source_with_all_read_patterns() -> str:
         "    if 'mode' in read_tool_forge_section(root, 'changelog'):\n"
         "        pass\n"
         "    alias = _forge_step_config(root, 'smart_test')\n"
-        "    alias.get('cadence_mode')\n"
+        "    alias.get('safe_fallback')\n"
         "    read_tool_forge_section(root).get('base_branch')\n"
         "    read_tool_forge_section(root, 'c4')\n"
         "    read_tool_forge_section(root)\n"
@@ -474,7 +474,7 @@ def test_scanner_finds_known_reads(
         ("doctest", "blocking"),
         ("pr", "docs_only_globs"),
         ("changelog", "mode"),
-        ("smart_test", "cadence_mode"),
+        ("smart_test", "safe_fallback"),
         ("", "base_branch"),
         ("c4", "*"),
         ("", "*"),

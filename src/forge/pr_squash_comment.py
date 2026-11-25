@@ -105,7 +105,7 @@ from forge.git_utils import (
     repo_root,
     resolve_pr_base_ref,
 )
-from forge.text_budget import length_verdict
+from forge.text_budget import BUDGET_RULE, length_verdict
 
 
 configure_cli_logging()
@@ -284,8 +284,8 @@ def word_cap_warning(title: str, bullets: list[str]) -> str | None:
         return None
     header = (
         f"squash-merge message is {total} words — over the {MAX_WORDS}-word "
-        f"ceiling (posting anyway; shorten the next one by dropping process "
-        f"state, not prose)"
+        f"ceiling (posting anyway). {BUDGET_RULE} Drop process state, not "
+        f"prose."
     )
     return "\n".join([header, *_word_breakdown(title, bullets)])
 

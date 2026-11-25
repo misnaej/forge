@@ -106,11 +106,9 @@ user-driven review loop.
 
 **A plan opens with context, not with a change list.** Before first file
 or option, state in plain English: problem solved, what happens today,
-what reader gets after. Written for product user, not codebase reader: no
-class, function, flag or hook names; consequence before mechanism. Same as
-§6's `## Summary` rule, one stage earlier: reader who can't tell what a
-change is *for* can't judge its shape. Context is part of the contract.
-Technical detail follows.
+what reader gets after. §6's `## Summary` rule, one stage earlier — a
+reader who can't tell what a change is *for* can't judge its shape.
+Context is part of the contract; technical detail follows.
 
 **And it closes with one line saying what will be done.** After detail,
 state whole intended change in one sentence reader can repeat back.
@@ -487,7 +485,7 @@ Rules (mechanics: the `/forge-pr` skill Step 4; enforcement: `forge-pr-squash-co
 
 ### PR review comments
 
-Reply to every comment: `✅ **Resolved in commit <hash>**` + what was done and where (file:line), via `gh api repos/<owner>/<repo>/pulls/<PR#>/comments/<comment_id>/replies`.
+Reply to **every** comment, naming the commit that resolved it and where (file:line). Endpoint and reply format: the `/forge-pr-comments` skill.
 
 ---
 ## 7. Design Principles
@@ -563,67 +561,23 @@ library's native config section; only forge-specific keys go under
 truth — `source_dirs` / `test_dirs`, read by every layout-aware tool.
 `forge-config --list` enumerates config surface.
 
-### Testing documentation standards
-
-Test code documented for **signal, not uniformly**. This is the canonical
-"what"; `forge-test-advisor` and `forge-test-writer` own the "how".
-
-- **Injected fixtures are NOT documented as `Args`**; real (non-fixture)
-  params still are. `verify-forge-docstrings` is fixture-aware, source of
-  truth; ruff `D417` ignored in `tests/**`.
-- **Trivial nested helpers / closures need no docstring**; self-describing name suffices.
-- **Fixtures are named for WHAT they contain** (`dataset_with_missing_values`, not `data`).
-- **Mock-heavy tests carry a structured docstring** — `SCENARIO:` /
-  `MOCK SETUP:` / `EXPECTED BEHAVIOR:`; heavily-mocking files carry a
-  module-level `# MOCKING STRATEGY:` overview. Unenforced;
-  `forge-test-writer` produces, `forge-test-advisor` reviews.
-- **Prefer Null / Fake objects over `unittest.mock.Mock`**; `Mock` only when
-  Null Object costs more than it saves.
-- **Coverage intent:** each public function gets happy path plus edge/error case.
-
-### Test lifecycle — behavior vs development tests
+### Test lifecycle
 
 Suite grows monotonically unless tests carry a lifecycle. Two classes,
-marked at authoring:
+marked at authoring: **behavior tests** (unmarked default) pin observable
+contracts — CLI output shapes, gate verdicts, invariants, every regression
+from a real bug — and are never retired; **development tests**
+(`pytestmark = pytest.mark.development`, file-level) drove an
+implementation to correctness, leave ordinary runs after inactivity, and
+are **never deleted**.
 
-- **Behavior tests** (unmarked default) pin observable contracts: CLI
-  output shapes, gate verdicts, invariants, every regression from a real
-  bug. Permanent; never retired.
-- **Development tests** drove an implementation to correctness: per-step
-  probes, near-duplicate variants, implementation-mirroring assertions.
-  Wholly-scaffolding file declares it at module level:
-  `pytestmark = pytest.mark.development` (file-level, matching selection
-  granularity).
-
-**The necessity gate comes first**: `forge-test-advisor` (advise mode)
-rejects planned tests duplicating existing coverage or mirroring
-implementation, asks what each survivor uniquely detects vs its per-run
-cost (§18); `forge-test-writer` states each test's class and one-line
-justification before writing. Not writing an unneeded test beats retiring it.
-
-**Lifecycle rule (skip, never delete)**: development file untouched 30 days
-(`[tool.forge.smart_test].lifecycle_skip_days`) leaves ordinary full runs —
-always reported as `lifecycle-skipped: N`, never silent — and re-enters the
-moment its file changes. 48-hour cadence run (below) executes everything.
-Deletion is not part of the policy.
-
-**Selection guarantees** (spec: [`forge-docs/smart-test.md`](forge-docs/smart-test.md)):
-- Depth-tier selection safe by contract: any changed non-Python path the
-  selector can't map escalates to `full` (default `safe_fallback =
-  "escalate"`; turning it down gives up exactly this guarantee).
-- Tracked `.forge-full-run` stamp guarantees a truly-all run at least every
-  48 hours (`full_run_max_age_hours`), staged into the commit that earned
-  it. That committed-stamp escalation is `cadence_mode = "commit"`, for
-  workstation-tested repos; CI-fleet repos use `advisory`/`external` with
-  classic PR-tiers + main-push-full CI schema (spec's "Who carries the
-  cadence").
-- After full runs, depth-2 differential check records (never gates) any
-  failing file selection would have missed.
-
-**Metrics are record-only**: wall time, file counts, development fraction,
-lifecycle skips, differential mismatches append to
-`code_health/smart_test_history.log` per full run. Trends inform reviews;
-nothing blocks on a health metric.
+Authoring standards — fixtures, mocks, docstring shape, coverage intent —
+and the necessity gate belong to `forge-test-writer` (produces) and
+`forge-test-advisor` (plans, reviews): §3 routes all test work through
+them, so the rules load with the agent applying them. Depth selection and
+lifecycle deselection: [`forge-docs/smart-test.md`](forge-docs/smart-test.md)
+(§17). **No tests run at commit time** — CI carries the periodic truly-all
+run that makes deselection safe.
 
 ---
 
@@ -752,6 +706,16 @@ Reviewed by `forge-design-checker`.
   content, an **upstream issue/PR against forge** (consumers never patch
   shipped files locally; upgrades overwrite them). Personal memory holds only
   what cannot ship: individual preferences, private context.
+- **This file is loaded every session; a pointed page is read on demand.**
+  So a passage stays here when an agent would act wrongly *before* it
+  thought to open the pointer, and moves when it would not. Decisions
+  stay; executions get a pointer that states the rule, never only a
+  link. Word budgets are **ceilings, never targets** — the shortest
+  prose carrying every rule is the right length. Never move an
+  imperative, never merge two rules into one vaguer one, never renumber
+  a section. How to compact:
+  [`forge-docs/instruction-compaction.md`](forge-docs/instruction-compaction.md)
+  — which applies to a consumer's own `CLAUDE.md` too.
 - **Lessons enter through an intake, and earn their way into the rules.**
   True, shareable lesson in memory (`/forge-memory-audit` SHOULD-SHIP verdict) →
   first to the intake (never auto-loaded): lesson for this repo, finding
@@ -1044,7 +1008,7 @@ model, consumer guarantees and opt-in correctness extensions: **[`forge-docs/sma
 
 ## 18. Cost Goals — Test Economy, Library Performance, Tokens
 
-§8 retires development tests, §17 selects by depth,
+§8 lifecycle-skips development tests, §17 selects by depth,
 `forge-slow-tests-report` warns on duration regressions. They serve three
 goals:
 
@@ -1076,7 +1040,7 @@ comparison.
 **Enforcement is a review lens, never a gate** — no build fails on a
 duration. `forge-design-checker` asks the cost question of diffs that add or
 edit tests or touch a known hot path; `forge-test-advisor`'s necessity gate
-(§8) carries the cost half of its question.
+carries the cost half of its question.
 
 The token-optimization runbook — provider cache pricing with sources,
 measurement, ranked levers — lives in `forge-docs/token-optimization.md`.

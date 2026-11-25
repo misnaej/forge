@@ -5,11 +5,11 @@ affects — `forge.import_graph` reverse reachability from changed source
 modules, unioned with directly-changed test files — and runs them in
 escalating **depth tiers**: fast local feedback, then a CI ladder before a
 full pass. Config reference:
-[`forge-docs/configuration.md`](configuration.md#toolforgesmart_test--opt-in-change-scoped-test-gate).
+[`forge-docs/configuration.md`](configuration.md#toolforgesmart_test--change-scoped-test-selection).
 
 | Depth | Runs | Coverage | Typical use |
 |---|---|---|---|
-| `0` | Tests importing a changed module **directly** | no | Pre-commit / tight loop |
+| `0` | Tests importing a changed module **directly** | no | Tight local loop |
 | `1` | Depth 0 + one import hop removed | no | First CI check on a PR push |
 | `2` | Depth 0/1 + two import hops removed | no | Pre-merge gate |
 | `full` | The **entire** suite | yes | Default-branch CI; release prep |
@@ -37,14 +37,14 @@ full pass. Config reference:
 - **Safe fallback.** A changed non-Python path the selector cannot map to
   tests escalates the run to `full` automatically — only paths matching
   `[tool.forge.smart_test].nonpython_ignore` (default: `*.md`, the plugin
-  manifest, `.plan/*`, `.gitignore`, the stamp itself) are exempt. A change
+  manifest, `.plan/*`, `.gitignore`) are exempt. A change
   the graph does not understand is never silently under-selected.
   The guarantee holds under the default `safe_fallback = "escalate"`; a
   repo can trade it away knowingly. `"warn"` keeps the selected depth and
   logs every unmappable path, so the under-selection is visible but not
   prevented; `"off"` ignores them, with one warning saying the fallback
-  is off. Both apply wherever the selector runs, CI included; the 48-hour
-  truly-all run still happens. The narrower hatch is `nonpython_ignore`, which exempts named
+  is off. Both apply wherever the selector runs, CI included; CI's
+  truly-all run is unaffected. The narrower hatch is `nonpython_ignore`, which exempts named
   globs; `nonpython_ignore = ["*"]` exempts every non-Python path, the
   same effect as `"off"` but silent. Neither setting reaches a
   changed conftest outside the test roots, which always escalates: it is
@@ -101,60 +101,50 @@ full pass. Config reference:
   collect no tests (pytest exit 5), the run fails with an explanation
   instead of passing; a run with nothing selected, or a whole-suite run,
   still treats "no tests" as success.
-- **Full-run cadence.** The tracked one-line stamp `.forge-full-run`
-  records the last *truly-all* run; when it exceeds
-  `full_run_max_age_hours` (default 48), the `smart_test` pre-commit step
-  escalates that commit to `--depth full --all-tests` and stages the
-  refreshed stamp into the same commit — the guarantee travels through git
-  to every contributor and CI. That escalation is what
-  `cadence_mode = "commit"` does; see "Who carries the cadence" below for
-  the CI-fleet modes.
+- **Full-run cadence is CI's.** A periodic truly-all run is what makes
+  deselection safe, and it belongs where the suite already runs: one
+  scheduled or default-branch-push job calling `forge-smart-test --depth
+  full` (see [`ci-recipe.md`](ci-recipe.md)). **In CI the selector never
+  deselects** — `forge.run_context.is_ci()` forces truly-all, so a CI job
+  cannot be the thing that skips, with or without `--all-tests`. Nothing
+  times the cadence locally.
 - **Lifecycle deselection is loud, bounded, and reversible.** Ordinary
   `full` runs deselect development-marked files
   (module-level `pytestmark = pytest.mark.development`) untouched for
   `lifecycle_skip_days` (default 30) — always reported as
-  `lifecycle-skipped: N`; any edit to the file re-includes it, the cadence
-  run executes truly everything, and `--all-tests` forces it manually.
+  `lifecycle-skipped: N`; any edit to the file re-includes it, CI's
+  truly-all job executes everything, and `--all-tests` forces it manually.
   Deletion is not part of the model (FOUNDATION §8 "Test lifecycle").
 - **Differential check, record-only.** After each full run, failing files
   outside the would-be depth-2 selection are counted into
   `code_health/smart_test_history.log` (with wall time, file counts, and
-  the development fraction) — evidence the tiers lose nothing; never a
-  gate.
+  the development fraction) — evidence the tiers lose nothing. **Nothing
+  in that ledger is a gate**: every figure in it is recorded for trends
+  and review, and no run fails on a health metric.
 
-It writes `code_health/smart_test.log` (FOUNDATION §13). The optional
-`smart_test` pre-commit step is **off by default** (self-skips unless
-`[tool.forge.smart_test].precommit_depth` is set) and **non-blocking**
-unless `blocking = true`. Pytest stays out of the default sequence (too
-slow); smart-test is the opt-in change-scoped bridge.
+It writes `code_health/smart_test.log` (FOUNDATION §13). **No tests run at
+commit time**, and there is no `smart_test` pre-commit step: a test run is
+too slow to sit in front of every commit. Run it by hand, or through
+`/forge-smart-test`.
 
-## Who carries the cadence — `cadence_mode`
+## Who carries the cadence — CI
 
-The committed stamp is the right guarantee-carrier **only when
-workstations are the testing fleet**. For most repos, CI is the testing
-fleet — the **classic schema** is: tiered smart tests on PR CI + the
-full suite on every main-branch push (event-driven, no clock needed on
-the main path), with an optional scheduled run as the backstop for quiet
-periods. `[tool.forge.smart_test].cadence_mode` selects who owns the
-guarantee:
+CI, in every repo. The **classic schema** is two jobs: tiered smart tests
+on PRs, and the full suite on every default-branch push — event-driven, so
+the main path needs no clock. Add a `schedule:` trigger as a backstop for
+quiet periods. Ready-made snippets: [`ci-recipe.md`](ci-recipe.md), "Smart-test
+cadence in CI".
 
-| Mode | Who tests | Stale-stamp behavior |
-|---|---|---|
-| `commit` (default) | Workstations | Escalates the commit to `--depth full --all-tests`, restages the refreshed stamp |
-| `advisory` | Mixed | Warns only — never escalates; the run keeps its own `blocking` semantics (the note itself never gates) |
-| `external` | CI | Runs the configured depth; warns at **2x** the window as a broken-pipeline detector |
+Nothing to choose and nothing to configure. Two halves carry it: in CI the
+selector refuses to deselect, so any `full` job is truly all; and a
+*failing* job turns the build red, which people already read.
 
-Which mode is my repo?
-
-- **Local testing genuinely happens on commit** → `commit`.
-- **CI tests PRs, locals want speed** → `advisory` locally + the
-  classic-schema CI jobs.
-- **CI is the only testing fleet** → `external` + the classic-schema CI
-  jobs (see the CI recipe's "Smart-test cadence in CI" section for
-  ready-made snippets). The `external` detector assumes the CI cadence
-  job refreshes the stamp (the snippet includes the optional
-  write-permission step); without stamp refresh, expect the 2x-window
-  warning — it is telling the truth: nothing recorded a truly-all run.
+Be precise about what that does not cover. A job that is deleted, renamed
+or never triggered turns nothing red — it simply stops happening, silently.
+That is the failure mode to watch, and the reason to keep the push trigger
+(or a `schedule:`) rather than relying on someone running the job by hand.
+A repo whose CI already runs the whole suite on every pull request has the
+guarantee today and needs no extra job.
 
 ## Opt-in correctness extensions
 

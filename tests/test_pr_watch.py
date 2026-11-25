@@ -740,6 +740,312 @@ def test_poll_once_feeds_the_comments_it_reads_to_the_comment_signal(
 
 
 # ---------------------------------------------------------------------------
+# Review feedback: inline review comments and review bodies are comments too
+#
+# Lifecycle class: behavior (permanent) for every test in this block. Each
+# pins the §6 reporting guarantee that failed silently — `gh pr view --json
+# comments` never carries inline review comments or review bodies, so a
+# reviewer's feedback produced no alert. No existing test reaches the
+# `pulls/{n}/comments` or `pulls/{n}/reviews` endpoints.
+#
+# MOCKING STRATEGY: one `_ReviewWorld` fake serves `pr view` and the two
+# `api` collections through the `_gh` seam. It matches the whole argv and
+# asserts on anything unexpected, so the real `_poll_once`,
+# `_review_feedback` and `_comment_alerts` run unmocked.
+# ---------------------------------------------------------------------------
+
+
+def _review_row(row_id: int, body: str, **extra: object) -> dict[str, object]:
+    """Build one row as the pulls comments/reviews REST endpoints return it.
+
+    Args:
+        row_id: The row's numeric id.
+        body: The comment or review text.
+        **extra: Fields overriding the defaults (a non-collaborator
+            ``author_association``, say).
+
+    Returns:
+        A REST-shaped dict.
+    """
+    row: dict[str, object] = {
+        "id": row_id,
+        "body": body,
+        "user": {"login": "reviewer"},
+        "author_association": "OWNER",
+        "created_at": "2026-01-01T00:00:00Z",
+    }
+    return row | extra
+
+
+class _ReviewWorld:
+    """Mutable GitHub state served through the ``_gh`` seam.
+
+    Issue comments, inline review comments and reviews are separate
+    collections, as on GitHub; tests change them between polls.
+
+    The whole ``api`` argv is compared, so a dropped ``--paginate`` or a
+    wrong repo slug fails loudly (``AssertionError`` is not caught by
+    ``_review_feedback``, so it is never mistaken for a failed poll).
+    """
+
+    INLINE_ARGV = ("api", "repos/o/r/pulls/9/comments", "--paginate")
+    REVIEWS_ARGV = ("api", "repos/o/r/pulls/9/reviews", "--paginate")
+
+    def __init__(self) -> None:
+        """Start with no canned replies and an empty call log."""
+        self.issue_comments: list[dict[str, object]] = []
+        self.inline: list[dict[str, object]] = []
+        self.reviews: list[dict[str, object]] = []
+        self.failing: set[tuple[str, ...]] = set()
+        self.api_calls: list[tuple[str, ...]] = []
+        self.seen: set[str] = set()
+
+    def gh(self, *argv: str, **_k: object) -> subprocess.CompletedProcess[str]:
+        """Answer ``pr view`` and the two ``api`` collections by exact argv.
+
+        Args:
+            *argv: The gh arguments.
+            **_k: Keyword options the caller passes to gh; ignored by the fake.
+
+        Returns:
+            The canned payload for that call.
+
+        Raises:
+            CalledProcessError: For an ``api`` call listed in ``failing``.
+        """
+        if argv[0] == "api":
+            self.api_calls.append(argv)
+            served = {
+                self.INLINE_ARGV: self.inline,
+                self.REVIEWS_ARGV: self.reviews,
+            }
+            assert argv in served, f"unexpected gh api call: {argv}"
+            if argv in self.failing:
+                raise subprocess.CalledProcessError(1, ["gh", *argv])
+            return _completed(json.dumps(served[argv]))
+        view = {"number": 9, "state": "OPEN", "mergeable": "MERGEABLE"}
+        view |= {"headRefOid": "abc", "baseRefName": "main"}
+        view["comments"] = self.issue_comments
+        return _completed(json.dumps(view))
+
+    def poll(self, *, first_poll: bool = False) -> pr_watch.PollOutcome:
+        """Run one real ``_poll_once`` against this world's cursor.
+
+        Args:
+            first_poll: Whether this is the baseline poll.
+
+        Returns:
+            The poll outcome.
+        """
+        return pr_watch._poll_once("o/r", 9, self.seen, first_poll=first_poll)
+
+    def news(self, *, first_poll: bool = False) -> list[str]:
+        """Poll once and return only the alerts.
+
+        Args:
+            first_poll: Whether this is the baseline poll.
+
+        Returns:
+            The alerts of that poll.
+        """
+        return self.poll(first_poll=first_poll).alerts
+
+
+@pytest.fixture
+def review_world(monkeypatch: pytest.MonkeyPatch) -> _ReviewWorld:
+    """A PR with no comments of any kind, behind the real ``_poll_once``.
+
+    Returns:
+        The world; mutate its collections between polls.
+    """
+    world = _ReviewWorld()
+    monkeypatch.setattr(pr_watch, "_gh", world.gh)
+    monkeypatch.setattr(pr_watch, "_stack_parent", lambda *_a, **_k: False)
+    monkeypatch.setattr(pr_watch, "_ci_alerts", lambda *_a, **_k: [])
+    monkeypatch.setattr(pr_watch, "_staleness_alerts", lambda *_a, **_k: [])
+    return world
+
+
+def _forge_issue_comment(comment_id: str) -> dict[str, object]:
+    """A forge-posted issue comment: marker plus write access.
+
+    Args:
+        comment_id: The comment id.
+
+    Returns:
+        A ``gh pr view`` comment-shaped dict.
+    """
+    return {
+        "id": comment_id,
+        "body": f"wrap-up {WRAPUP_MARKER}",
+        "authorAssociation": "OWNER",
+    }
+
+
+def test_an_inline_review_comment_alerts_though_no_issue_comment_is_new(
+    review_world: _ReviewWorld,
+) -> None:
+    """The production failure: an inline comment beside only forge comments.
+
+    SCENARIO: the PR holds three forge-authored issue comments (all
+    filtered); a reviewer then leaves one inline comment on a file line.
+
+    MOCK SETUP: ``_gh`` serves ``pr view`` and both ``api`` collections.
+
+    EXPECTED BEHAVIOR: baseline poll quiet; next poll raises one
+    "1 new comment" alert although ``pr view`` saw nothing new.
+    """
+    review_world.issue_comments = [_forge_issue_comment(c) for c in "abc"]
+    assert review_world.news(first_poll=True) == []
+    review_world.inline = [_review_row(101, "please rename this")]
+    alerts = review_world.news()
+    assert len(alerts) == 1
+    assert "1 new comment" in alerts[0]
+
+
+def test_a_review_body_alerts_and_an_empty_review_does_not(
+    review_world: _ReviewWorld,
+) -> None:
+    """A submitted review with text is feedback; an approval with none is not.
+
+    EXPECTED BEHAVIOR: a review with an empty body and one with only
+    whitespace leave the poll quiet; a review with text raises one alert.
+    """
+    review_world.news(first_poll=True)
+    review_world.reviews = [_review_row(1, ""), _review_row(2, "  \n")]
+    assert review_world.news() == []
+    review_world.reviews.append(_review_row(3, "changes requested: see inline"))
+    alerts = review_world.news()
+    assert len(alerts) == 1
+    assert "1 new comment" in alerts[0]
+
+
+def test_review_feedback_present_at_arming_is_baseline_not_news(
+    review_world: _ReviewWorld,
+) -> None:
+    """Review comments already on the PR when the wait arms are not announced.
+
+    EXPECTED BEHAVIOR: baseline poll over an inline comment and a review is
+    quiet; the next poll with nothing new is quiet; a later arrival alerts.
+    """
+    review_world.inline = [_review_row(101, "old inline")]
+    review_world.reviews = [_review_row(201, "old review")]
+    assert review_world.news(first_poll=True) == []
+    assert review_world.news() == []
+    review_world.inline.append(_review_row(102, "new inline"))
+    assert len(review_world.news()) == 1
+
+
+def test_a_review_comment_alerts_once_and_a_second_one_alerts_again(
+    review_world: _ReviewWorld,
+) -> None:
+    """The seen-cursor spans the merged set, and arrivals stay distinguishable.
+
+    The first comment is then deleted as the second arrives, so the
+    current set shrinks while the seen set must not: pruning ``seen`` would
+    render both alerts alike and the loop's text-keyed dedup would swallow
+    the second.
+
+    EXPECTED BEHAVIOR: one inline comment alerts once and not on re-poll;
+    after it is deleted and another arrives, that one alerts with a running
+    total of 2. Both ``api`` collections were requested with ``--paginate``
+    on the repo and PR the poll is about.
+    """
+    review_world.news(first_poll=True)
+    review_world.inline = [_review_row(101, "first")]
+    first = review_world.news()
+    assert len(first) == 1
+    assert "1 total" in first[0]
+    assert review_world.news() == []
+    review_world.inline = [_review_row(102, "second")]
+    second = review_world.news()
+    assert len(second) == 1
+    assert "2 total" in second[0]
+    assert second != first
+    assert set(review_world.api_calls) == {
+        _ReviewWorld.INLINE_ARGV,
+        _ReviewWorld.REVIEWS_ARGV,
+    }
+
+
+def test_an_inline_comment_and_a_review_with_the_same_id_both_alert(
+    review_world: _ReviewWorld,
+) -> None:
+    """GitHub numbers inline comments and reviews independently.
+
+    SCENARIO: an inline comment and a review both carry id 7. Sharing one
+    identity namespace read the second as already seen.
+
+    EXPECTED BEHAVIOR: one poll raises "2 new comment(s)".
+    """
+    review_world.news(first_poll=True)
+    review_world.inline = [_review_row(7, "inline remark")]
+    review_world.reviews = [_review_row(7, "review summary")]
+    alerts = review_world.news()
+    assert len(alerts) == 1
+    assert "2 new comment" in alerts[0]
+
+
+def test_review_rows_obey_the_marker_and_write_access_rule(
+    review_world: _ReviewWorld,
+) -> None:
+    """Forge's own review row is filtered; a stranger pasting the marker is not.
+
+    SCENARIO: ``_is_forge_comment`` needs marker AND write access. The new
+    rows must carry ``authorAssociation`` through for that to hold.
+
+    EXPECTED BEHAVIOR: marker + OWNER stays quiet; marker + NONE alerts;
+    write access without the marker alerts.
+    """
+    review_world.news(first_poll=True)
+    marked = f"auto note {WRAPUP_MARKER}"
+    review_world.inline = [_review_row(1, marked)]
+    assert review_world.news() == []
+    review_world.inline.append(_review_row(2, marked, author_association="NONE"))
+    assert len(review_world.news()) == 1
+    review_world.inline.append(_review_row(3, "plain human remark"))
+    assert len(review_world.news()) == 1
+
+
+def test_a_failing_inline_endpoint_does_not_hide_the_reviews_endpoint(
+    review_world: _ReviewWorld, caplog: pytest.LogCaptureFixture
+) -> None:
+    """One failed collection degrades loudly; the other is still read.
+
+    EXPECTED BEHAVIOR: with only ``/comments`` failing, a new review body
+    still alerts, the poll is not marked failed, and a warning is logged.
+    """
+    review_world.news(first_poll=True)
+    review_world.failing = {_ReviewWorld.INLINE_ARGV}
+    review_world.reviews = [_review_row(5, "please fix")]
+    with caplog.at_level(logging.WARNING):
+        outcome = review_world.poll()
+    assert outcome.ok is True
+    assert any("1 new comment" in a for a in outcome.alerts)
+    assert "review feedback poll failed" in caplog.text
+
+
+def test_both_review_endpoints_failing_still_reports_issue_comments(
+    review_world: _ReviewWorld, caplog: pytest.LogCaptureFixture
+) -> None:
+    """With both ``api`` calls failing, the issue-comment half still works.
+
+    EXPECTED BEHAVIOR: a new issue comment alerts, the poll is not marked
+    failed, and a warning is logged.
+    """
+    review_world.news(first_poll=True)
+    review_world.failing = {_ReviewWorld.INLINE_ARGV, _ReviewWorld.REVIEWS_ARGV}
+    review_world.issue_comments = [
+        {"id": "x", "body": "hi", "authorAssociation": "NONE"}
+    ]
+    with caplog.at_level(logging.WARNING):
+        outcome = review_world.poll()
+    assert outcome.ok is True
+    assert any("1 new comment" in a for a in outcome.alerts)
+    assert "review feedback poll failed" in caplog.text
+
+
+# ---------------------------------------------------------------------------
 # The wait: which alerts wake a session, the loop, the baseline, the command
 # ---------------------------------------------------------------------------
 

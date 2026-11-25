@@ -25,7 +25,7 @@ git commands is enforced here (FOUNDATION §7: a CLI performing a
 - the message is conventional, under a 45-word ceiling (over it warns,
   far past it is refused), and carries no AI attribution;
 - the index must equal the named files before the commit, and the commit
-  may add only what the hook regenerates (generated docs, the cadence stamp);
+  may add only what the hook regenerates (the generated docs);
 - the pre-commit hook runs on the commit (git's per-process overrides
   that could skip it are dropped);
 - pushes never force and never delete; a rejected push is reported, the
@@ -79,8 +79,7 @@ from forge.pr_squash_comment import TITLE_RE
 from forge.pr_wrapup import WRAPUP_NAME, wrapup_names_head
 from forge.precommit import verdict
 from forge.regen_docs import API_DIGEST_DOC, CLI_REFERENCE_DOC
-from forge.smart_test.lifecycle import STAMP_RELPATH
-from forge.text_budget import length_verdict, refusal_threshold
+from forge.text_budget import BUDGET_RULE, length_verdict, refusal_threshold
 
 
 if TYPE_CHECKING:
@@ -101,11 +100,9 @@ EXIT_PUSH_FAILED: Final = 2
 COMMIT_MAX_WORDS: Final = 45
 
 #: Files the pre-commit hook itself regenerates and stages into a commit it
-#: lets through (the generated docs, the full-run cadence stamp); a commit
-#: may hold these beyond the named files.
-HOOK_STAGED_PATHS: Final = frozenset(
-    {API_DIGEST_DOC, CLI_REFERENCE_DOC, str(STAMP_RELPATH)}
-)
+#: lets through (the generated docs); a commit may hold these beyond the
+#: named files.
+HOOK_STAGED_PATHS: Final = frozenset({API_DIGEST_DOC, CLI_REFERENCE_DOC})
 #: A push failing on these is GitHub being briefly unavailable, not a
 #: rejection; it is retried a few times before being reported.
 _TRANSIENT_PUSH: Final = re.compile(
@@ -179,8 +176,9 @@ def check_budget_and_attribution(message: str) -> None:
         msg = (
             f"forge-commit: message is {words} words, past the "
             f"{refusal_threshold(COMMIT_MAX_WORDS)} allowed for a "
-            f"{COMMIT_MAX_WORDS}-word ceiling. Cut process state (test counts, "
-            "green checks) and bookkeeping, never what changed or why."
+            f"{COMMIT_MAX_WORDS}-word ceiling. {BUDGET_RULE} Cut process state "
+            "(test counts, green checks) and bookkeeping, never what "
+            "changed or why."
         )
         raise CommitRefusedError(msg)
     if verdict == "warn":

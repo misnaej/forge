@@ -18,6 +18,7 @@ from forge.pr_wrapup_compose import (
     FINDING_ALLOWANCE,
     LIGHT_CODE_RECOMMENDATION,
     REPORTER_SECTIONS,
+    WORD_BUDGET,
     ComposeError,
     ComposeInputs,
     _report_line,
@@ -157,10 +158,13 @@ def test_render_wrapup_full_mode_with_one_finding_uses_a_findings_slot() -> None
 
 
 def test_render_wrapup_markers_state_their_allowance() -> None:
-    """Behavior test: the findings marker carries its allowance, others none.
+    """Behavior test: every fill marker states its limit as a hard ceiling.
 
-    Findings slots have a per-slot allowance; summary and recommendation
-    share the fixed overhead, so a number there would be false.
+    A soft or absent number is read as a target and overshot, and the
+    summary is the largest block, so it must carry one. Its budget is
+    shared with the recommendation, so the marker scopes the number
+    ("including the recommendation") rather than leaving it off. The
+    recommendation's limit is one line, not a word count.
     """
     inputs = _inputs(
         reports={
@@ -178,9 +182,16 @@ def test_render_wrapup_markers_state_their_allowance() -> None:
         )
     )
     assert set(markers) == {"summary", "findings: design-checker", "recommendation"}
-    assert f"~{FINDING_ALLOWANCE} words" in markers["findings: design-checker"]
-    assert not any(ch.isdigit() for ch in markers["summary"])
-    assert not any(ch.isdigit() for ch in markers["recommendation"])
+    findings = markers["findings: design-checker"]
+    assert str(FINDING_ALLOWANCE) in findings
+    assert "NEVER above" in findings
+    summary = markers["summary"]
+    assert str(WORD_BUDGET) in summary
+    assert "NEVER above" in summary
+    assert "including the recommendation" in summary
+    recommendation = markers["recommendation"]
+    assert "ONE line" in recommendation
+    assert not any(ch.isdigit() for ch in recommendation)
 
 
 def test_render_wrapup_light_code_mode_token_and_mechanical_recommendation() -> None:

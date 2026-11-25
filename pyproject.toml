@@ -209,13 +209,6 @@ exempt_paths = ["docs/intake/"]
 # CHANGELOG.md prose follows separately (assemble-changelog.yml).
 auto = "merge"
 
-[tool.forge.smart_test]
-# Dogfood the depth model: commits run depth-2 selection; the
-# tracked .forge-full-run stamp escalates to a truly-all run every 48h
-# (defaults for lifecycle_skip_days / full_run_max_age_hours /
-# nonpython_ignore apply — see forge-config --list).
-precommit_depth = "2"
-
 [tool.forge.env_sync]
 # Dogfood step_auto_rebuild: when a pulled change adds a [project.scripts] CLI
 # and the editable install goes stale, the auto_rebuild pre-commit step runs

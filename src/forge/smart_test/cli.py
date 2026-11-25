@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, cast
 
 from forge import config as _config
 from forge.git_utils import configure_cli_logging
+from forge.run_context import is_ci
 from forge.smart_test import coverage as cov_stage
 from forge.smart_test import lifecycle
 from forge.smart_test.dependencies import (
@@ -175,17 +176,24 @@ def _run_full(
     Coverage is unconditionally enabled for ``full`` — it is the tier's
     defining cost/coverage trade-off — so there is no opt-out parameter.
     Ordinary full runs deselect stale development-marked files (the
-    lifecycle rule, always reported); ``all_tests`` disables that — the
-    48h-cadence run and explicit ``--all-tests`` execute truly
-    everything. After the run a record-only metrics line (including the
-    depth-2 differential check) is appended to the history ledger.
+    lifecycle rule, always reported). Two things disable that and execute
+    truly everything: an explicit ``all_tests``, and running in CI.
+
+    CI is unconditional because CI *is* the guarantee that makes skipping
+    safe anywhere else: a job that quietly deselected would leave the
+    skipped tests unrun by anyone, while still reporting green. A
+    ``--depth full`` job therefore needs no extra flag to be truly all.
+
+    After the run a record-only metrics line (including the depth-2
+    differential check) is appended to the history ledger.
 
     Args:
         repo_root: Git repo root.
         cfg: The ``[tool.forge.smart_test]`` table.
         changed: Current change set (lifecycle re-inclusion trigger and
             differential input).
-        all_tests: Run truly everything — lifecycle deselection off.
+        all_tests: Run truly everything — lifecycle deselection off. CI
+            forces this on regardless of the flag.
         telemetry: Sample resource usage during the run.
 
     Returns:
@@ -199,12 +207,15 @@ def _run_full(
         if isinstance(skip_days_raw, (int, float))
         else lifecycle.DEFAULT_SKIP_DAYS
     )
+    truly_all = all_tests or is_ci()
     skippable: set[str] = set()
-    if not all_tests:
+    if not truly_all:
         skippable = lifecycle.lifecycle_skippable(
             repo_root, tests, changed, skip_days=skip_days
         )
-    label = "all" if all_tests else "full"
+    label = "all" if truly_all else "full"
+    if truly_all and not all_tests:
+        logger.info("CI detected: lifecycle deselection off, running truly everything.")
     logger.info("Running the full suite (depth=%s) with coverage.", label)
     batch = sorted(tests - skippable) if skippable else []
     started = time.monotonic()
