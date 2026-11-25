@@ -260,6 +260,30 @@ def test_resolve_repo_from_origin(
     assert pr_watch._resolve_repo(watch_repo, None) == "misnaej/forge"
 
 
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("git@github.com:misnaej/forge.git\n", "misnaej/forge"),
+        ("https://github.com/misnaej/forge.git\n", "misnaej/forge"),
+        ("ssh://git@github.com/misnaej/forge.git\n", "misnaej/forge"),
+        ("https://github.com/misnaej/forge\n", "misnaej/forge"),
+        ("not-a-url\n", None),
+        ("https://github.com\n", None),
+    ],
+)
+def test_resolve_repo_origin_url_forms(
+    watch_repo: Path, monkeypatch: pytest.MonkeyPatch, url: str, expected: str | None
+) -> None:
+    """_resolve_repo parses scp, https and ssh origins; garbage yields None.
+
+    Args:
+        url: Origin remote URL returned by the stubbed ``run_git``.
+        expected: The ``owner/repo`` slug, or ``None`` when unparseable.
+    """
+    monkeypatch.setattr(pr_watch, "run_git", lambda *_a, **_k: url)
+    assert pr_watch._resolve_repo(watch_repo, None) == expected
+
+
 def test_resolve_repo_explicit_arg(watch_repo: Path) -> None:
     """An explicit --repo wins over the remote."""
     assert pr_watch._resolve_repo(watch_repo, "foo/bar") == "foo/bar"

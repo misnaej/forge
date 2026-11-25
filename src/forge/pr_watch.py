@@ -46,6 +46,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import subprocess
 import sys
 import time
@@ -141,7 +142,8 @@ def _resolve_repo(root: Path, repo_arg: str | None) -> str | None:
         repo_arg: Explicit ``--repo`` value.
 
     Returns:
-        The ``owner/repo`` slug, or ``None`` when unresolvable.
+        The ``owner/repo`` slug, or ``None`` when the URL yields no
+        ``owner/repo`` pair.
     """
     if repo_arg:
         return repo_arg
@@ -149,15 +151,15 @@ def _resolve_repo(root: Path, repo_arg: str | None) -> str | None:
         url = run_git("remote", "get-url", "origin", cwd=root).strip()
     except subprocess.CalledProcessError:
         return None
-    # ssh (git@host:owner/repo.git) or https (https://host/owner/repo.git)
-    for sep in (":", "/"):
-        if sep in url:
-            slug = url.rsplit(sep, 1)[-1]
-            break
-    else:
-        return None
+    # Strip any scheme, a scp-style user@host: prefix, and the host, leaving
+    # owner/repo.git; a slug that is not exactly owner/repo fails closed, so
+    # the caller asks for --repo instead of a later gh error.
+    path = url.split("://", 1)[-1]
+    if ":" in path.split("/", 1)[0]:
+        path = path.replace(":", "/", 1)
+    slug = path.split("/", 1)[-1] if "/" in path else ""
     slug = slug.removesuffix(".git")
-    return slug if "/" in slug else None
+    return slug if re.fullmatch(r"[^/]+/[^/]+", slug) else None
 
 
 def _gh(*args: str, timeout: int = GH_TIMEOUT_S) -> subprocess.CompletedProcess[str]:
