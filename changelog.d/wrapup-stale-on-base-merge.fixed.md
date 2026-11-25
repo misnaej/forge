@@ -1,3 +1,0 @@
-bump: patch
-- **`forge-update-branch` says when a base merge left the PR's wrap-up stale.** A merge moves the head by construction, so a posted wrap-up's `verified-at:` stops naming it the moment the merge commits; the command now logs that verdict — stale SHA vs new head, with the `/forge-pr <N>` delta refresh as the remedy — while still exiting 0, instead of leaving the author to meet the refusal at the next gate.
-- **`forge-pr-wrapup post` refuses a wrap-up whose `verified-base:` no longer matches the PR's base**, mirroring the retarget check `forge-pr-plan --freshness` already reported: a wrap-up verified against another base describes a diff the PR does not have.
