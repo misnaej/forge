@@ -964,7 +964,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `parse_semver(version: str) -> tuple[int, int, int] | None` — Parse the leading ``X.Y.Z`` (optional ``v`` prefix) of a version string.
 - `release_of(version: str | None) -> str | None` — *version* as the release ``X.Y.Z`` it belongs to; ``None`` if none.
 - `next_version(latest_tag: str | None, bump: str) -> str` — Return the ``vX.Y.Z`` tag that follows *latest_tag* for a semver *bump*.
-- `classify_bump(old: tuple[int, int, int] | None, new: tuple[int, int, int] | None) -> str | None` — Classify the semver increment from *old* to *new*.
 - `latest_v_tag(root: Path) -> str | None` — Return the highest ``v*`` git tag by semver sort, or ``None`` if none.
 - `v_tags(root: Path, *, reachable_from: str | None = None, release_shape: bool = False) -> list[str]` — Return every ``v*`` git tag, highest semver first.
 - `tag_commit_date(root: Path, tag: str) -> str` — Return the ``YYYY-MM-DD`` committer date of the commit *tag* points at.
@@ -1034,8 +1033,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `build_stamp(tree: str | None, head: str, *, dirty: bool, now: datetime, index: str | None = None) -> str` — Render the ``# produced-at:`` first line of a ``code_health/`` log.
 - `produced_at_stamp(repo_root: Path) -> str` — Return the stamp line for a log produced now against *repo_root*.
 - `log_freshness(log_path: Path, current_tree: str | None, *, current_index: str | None = None, require_index: bool = False) -> LogFreshness` — Judge whether *log_path* was produced against *current_tree*.
-- `_release_ignored(path: str) -> bool` _(internal)_ — Return whether *path* is release-curated content (fingerprint-exempt).
-- `release_tree_fingerprint(repo_root: Path, ref: str) -> str | None` — Return a content fingerprint of *ref*'s tree, ignoring changelog paths.
 - `_filter_paths(files: list[str], *, suffix: str, prefix: str | tuple[str, ...] | None) -> list[str]` _(internal)_ — Keep the paths ending in *suffix* and, when given, starting with *prefix*.
 - `git_z_names(cwd: Path | None, *argv: str, check: bool = False) -> list[str]` — Return the paths a NUL-separated (``-z``) git listing names, verbatim.
 - `diff_names_z(cwd: Path | None, *diff_args: str, check: bool = False) -> list[str]` — Return the paths ``git diff --name-only`` reports, named exactly.
@@ -1328,7 +1325,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 ## `forge.next_prep`
 
-> _forge-next-prep — prepare main for the next task (fetch, pull, tag, prune)._
+> _forge-next-prep — prepare main for the next task (fetch, pull, prune)._
 
 - `_fetch_origin(repo_root: Path) -> bool` _(internal)_ — Run the bounded ``git fetch --prune`` the sync starts with.
 - `_gone_branches(repo_root: Path) -> list[str]` _(internal)_ — Return local branch names whose tracking remote is ``[origin/...: gone]``.

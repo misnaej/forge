@@ -1,8 +1,8 @@
-"""forge-next-prep — prepare main for the next task (fetch, pull, tag, prune).
+"""forge-next-prep — prepare main for the next task (fetch, pull, prune).
 
 Single source of truth for the mechanical git work the ``/forge-next`` skill
 runs at the start of a fresh task. Extracted from inline bash in the
-skill so the version-compare + tag-bump logic is testable and reusable.
+skill so the sync and prune logic is testable and reusable.
 
 The skill remains responsible for user-interaction: refusing to run on a
 dirty tree, confirming destructive steps, presenting the report.

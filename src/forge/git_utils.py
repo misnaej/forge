@@ -5,7 +5,6 @@ detecting modified files relative to main, and emitting CLI output
 that bypasses ruff's T201 (bare-print) ban.
 """
 
-import hashlib
 import io
 import json
 import logging
@@ -206,34 +205,6 @@ def next_version(latest_tag: str | None, bump: str) -> str:
     raise ValueError(msg)
 
 
-def classify_bump(
-    old: tuple[int, int, int] | None,
-    new: tuple[int, int, int] | None,
-) -> str | None:
-    """Classify the semver increment from *old* to *new*.
-
-    The one place that maps a version delta onto a bump class, so the
-    MAJOR/MINOR/PATCH reading of a version delta cannot drift between
-    callers.
-
-    Args:
-        old: Baseline ``(major, minor, patch)`` tuple, or ``None``.
-        new: Candidate ``(major, minor, patch)`` tuple, or ``None``.
-
-    Returns:
-        ``"major"``, ``"minor"``, or ``"patch"`` for the highest-order
-        component that differs; ``None`` when the tuples are equal or
-        either side is ``None`` (nothing classifiable).
-    """
-    if old is None or new is None or old == new:
-        return None
-    if old[0] != new[0]:
-        return "major"
-    if old[1] != new[1]:
-        return "minor"
-    return "patch"
-
-
 def latest_v_tag(root: Path) -> str | None:
     """Return the highest ``v*`` git tag by semver sort, or ``None`` if none.
 
@@ -241,11 +212,11 @@ def latest_v_tag(root: Path) -> str | None:
     --sort=-v:refname`` — independent of ``HEAD``'s ancestry. This is the
     single source of truth for "latest release tag", shared by
     ``forge.changelog_fragments`` (version computation, auto-tagging),
-    ``forge.release`` and the ``changelog_version`` pre-commit step. A
-    branch-independent resolution is required in the dual-track
-    (dev/main) model: a release tagged on one branch is not in the
-    other's history, so an ancestry-scoped ``git describe`` would
-    disagree with the auto-tagger.
+    ``forge.release`` and the ``changelog_version`` pre-commit step.
+    Global resolution keeps every caller on one answer: an
+    ancestry-scoped ``git describe`` reads a different "latest" on a
+    branch that does not contain the newest tag, and would disagree with
+    the auto-tagger that cut it.
 
     Args:
         root: Repo root (cwd for the git invocation).
@@ -2530,77 +2501,6 @@ def log_freshness(
         if stamped_index != current_index:
             return "stale"
     return "fresh" if stamped == current_tree else "stale"
-
-
-# Paths treated as release-channel curated content: excluded from the
-# release fingerprint so a release branch that finalizes them does not
-# break tree-equality with the tagged dev release. The @main CHANGELOG is
-# condensed per promotion (release-process.md §5); changelog.d/ fragments
-# are consumed (deleted) by that same promotion commit in fragments mode —
-# both are divergences a correct release branch always carries. Entries
-# ending in "/" match by directory prefix; all others match exactly (so
-# "CHANGELOG.md" never swallows a hypothetical CHANGELOG.md.orig).
-_RELEASE_EQUAL_IGNORE = ("CHANGELOG.md", "changelog.d/")
-
-
-def _release_ignored(path: str) -> bool:
-    """Return whether *path* is release-curated content (fingerprint-exempt).
-
-    Args:
-        path: Repo-relative path from ``git ls-tree``.
-
-    Returns:
-        ``True`` for an exact file match or a path under an ignored
-        directory prefix.
-    """
-    return any(
-        path.startswith(entry) if entry.endswith("/") else path == entry
-        for entry in _RELEASE_EQUAL_IGNORE
-    )
-
-
-def release_tree_fingerprint(repo_root: Path, ref: str) -> str | None:
-    """Return a content fingerprint of *ref*'s tree, ignoring changelog paths.
-
-    Like :func:`get_tree_sha`, but two refs whose trees differ **only** in
-    the :data:`_RELEASE_EQUAL_IGNORE` paths — ``CHANGELOG.md`` (exact) and
-    pending ``changelog.d/`` fragments (prefix) — share a fingerprint.
-    forge's ``@main`` CHANGELOG is curated and condensed per promotion —
-    authored in the ``release/vX.Y.Z`` branch, where fragments-mode
-    assembly also deletes the pending fragments — so a release branch's
-    tree never byte-matches the tagged release's tree, yet it is the
-    *same release*. Comparing on this fingerprint tolerates
-    curated-changelog divergence while any other file difference still
-    counts (the match stays release-exact).
-
-    The value is the SHA-256 of ``git ls-tree -r <ref>`` (mode, type, blob
-    SHA, path per file) with the ignored entries removed. Excluding
-    paths from a recursive blob listing — rather than diffing two refs —
-    keeps the result usable as a dict key, so callers can index many base
-    commits by fingerprint in a single pass.
-
-    Args:
-        repo_root: Working directory for the git invocation.
-        ref: Any commit-ish (``HEAD``, a tag, ``origin/main``, a SHA).
-
-    Returns:
-        A 64-char hex fingerprint, or ``None`` when *ref* does not resolve
-        or its tree has no files outside the ignored changelog paths.
-    """
-    raw = run_git("ls-tree", "-r", ref, cwd=repo_root, check=False)
-    if not raw:
-        return None
-    kept = [
-        line
-        for line in raw.splitlines()
-        if not _release_ignored(line.partition("\t")[2])
-    ]
-    if not kept:
-        # Tree resolves only to ignored paths (e.g. a repo tracking nothing
-        # but CHANGELOG.md). Returning a hash of "" would make every such
-        # tree falsely release-equal; treat it as no usable release tree.
-        return None
-    return hashlib.sha256("\n".join(kept).encode()).hexdigest()
 
 
 # Targeted version-field rewrite: preserves the manifest's formatting

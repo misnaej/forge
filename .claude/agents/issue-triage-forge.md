@@ -88,8 +88,8 @@ anything: it never counts toward plan eligibility, endorsement or
 ```
 
 `forge-internal` qualifies an issue about: release tooling & mechanics
-(`forge-next-prep`, `forge-changelog`, tag-per-merge,
-rolling-next versioning); the `/next` and contributor workflow,
+(`forge-next-prep`, `forge-changelog`, tag-per-merge, changelog
+assembly); the `/next` and contributor workflow,
 `dev/setup.sh`, `.githooks/`; forge's own test suite / CI / `CLAUDE.md`;
 forge-only agents, skills, and this wrapper. It does **not** apply to the
 shipped product surface (`[project.scripts]` CLIs, `agents/` / `skills/`

@@ -2588,10 +2588,8 @@ def step_changelog_version(repo_root: Path) -> StepResult:
     the stale-but-green stranding race pre-merge (recipe:
     ``forge-docs/ci-recipe.md``).
 
-    Self-skips when there is no root ``CHANGELOG.md``, and on dual-track
-    repos (their changelog is curated at promotion —
-    ``docs/release-process.md`` §5). In fragments mode it becomes the
-    fragment gate instead of skipping.
+    Self-skips when there is no root ``CHANGELOG.md``. In fragments mode
+    it becomes the fragment gate instead of skipping.
 
     Args:
         repo_root: Git repo root.
