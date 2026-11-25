@@ -1029,10 +1029,11 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `write_tree(repo_root: Path) -> str | None` — Return the tree SHA of the current **index** via ``git write-tree``.
 - `_stamp_excluded_paths(repo_root: Path) -> list[str]` _(internal)_ — Return the repo-relative log directories a tree stamp leaves out.
 - `working_tree_sha(repo_root: Path) -> str | None` — Return the tree SHA of the working tree as ``git add -A`` would commit it.
+- `index_sha(repo_root: Path) -> str | None` — Return the tree SHA of the current index — the staged content only.
 - `_tree_without_logs(repo_root: Path, populate: tuple[str, ...], *, source_index: Path | None) -> str | None` _(internal)_ — Write a tree from a scratch index with ``code_health/`` removed.
-- `build_stamp(tree: str | None, head: str, *, dirty: bool, now: datetime) -> str` — Render the ``# produced-at:`` first line of a ``code_health/`` log.
+- `build_stamp(tree: str | None, head: str, *, dirty: bool, now: datetime, index: str | None = None) -> str` — Render the ``# produced-at:`` first line of a ``code_health/`` log.
 - `produced_at_stamp(repo_root: Path) -> str` — Return the stamp line for a log produced now against *repo_root*.
-- `log_freshness(log_path: Path, current_tree: str | None) -> LogFreshness` — Judge whether *log_path* was produced against *current_tree*.
+- `log_freshness(log_path: Path, current_tree: str | None, *, current_index: str | None = None, require_index: bool = False) -> LogFreshness` — Judge whether *log_path* was produced against *current_tree*.
 - `_release_ignored(path: str) -> bool` _(internal)_ — Return whether *path* is release-curated content (fingerprint-exempt).
 - `release_tree_fingerprint(repo_root: Path, ref: str) -> str | None` — Return a content fingerprint of *ref*'s tree, ignoring changelog paths.
 - `_filter_paths(files: list[str], *, suffix: str, prefix: str | tuple[str, ...] | None) -> list[str]` _(internal)_ — Keep the paths ending in *suffix* and, when given, starting with *prefix*.

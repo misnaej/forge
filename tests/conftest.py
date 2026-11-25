@@ -70,6 +70,7 @@ GIT_ENV: dict[str, str] = {
 # ``tree`` / ``head`` / ``when`` fields out of a captured stamp line.
 PRODUCED_AT_RE = re.compile(
     r"# produced-at: tree=(?P<tree>[0-9a-f]{40}|unknown) "
+    r"index=(?P<index>[0-9a-f]{40}|unknown) "
     r"head=(?P<head>\S+) (?P<when>\S+)"
 )
 

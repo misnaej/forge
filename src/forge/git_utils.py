@@ -2264,7 +2264,8 @@ def write_tree(repo_root: Path) -> str | None:
 
 STAMP_PREFIX = "# produced-at: "
 _STAMP_RE = re.compile(
-    rf"^{re.escape(STAMP_PREFIX)}tree=(?P<tree>[0-9a-f]{{40}}|unknown) head=\S+ \S+$"
+    rf"^{re.escape(STAMP_PREFIX)}tree=(?P<tree>[0-9a-f]{{40}}|unknown)"
+    rf"(?: index=(?P<index>[0-9a-f]{{40}}|unknown))? head=\S+ \S+$"
 )
 # The logs themselves live here; dropping the directory from the scratch
 # index keeps one log's write from changing the tree a sibling log was
@@ -2329,6 +2330,30 @@ def working_tree_sha(repo_root: Path) -> str | None:
     return _tree_without_logs(repo_root, ("add", "-A"), source_index=index)
 
 
+def index_sha(repo_root: Path) -> str | None:
+    """Return the tree SHA of the current index — the staged content only.
+
+    The stamp's tree component (:func:`working_tree_sha`) is what
+    ``git add -A`` would commit, so it moves when a file is merely edited
+    on disk. A step that reads the index needs a stamp that moves when the
+    index moves instead: this copies the real index without staging
+    anything and writes its tree, under the same ``code_health/`` exclusion.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        The 40-char tree SHA of the index, or ``None`` outside a git repo,
+        while paths are unmerged, or when git fails.
+    """
+    if unmerged_paths(repo_root):
+        return None
+    index = git_path(repo_root, "index")
+    if index is None:
+        return None
+    return _tree_without_logs(repo_root, (), source_index=index)
+
+
 def _tree_without_logs(
     repo_root: Path, populate: tuple[str, ...], *, source_index: Path | None
 ) -> str | None:
@@ -2375,7 +2400,8 @@ def _tree_without_logs(
                 # as racily clean and re-hashes it; a fresh mtime would let
                 # a same-size edit read as unchanged.
                 shutil.copy2(source_index, scratch_index)
-            run_git(*populate, cwd=repo_root, env=env, log_errors=False)
+            if populate:
+                run_git(*populate, cwd=repo_root, env=env, log_errors=False)
             run_git(
                 "rm",
                 "-r",
@@ -2394,7 +2420,14 @@ def _tree_without_logs(
     return tree or None
 
 
-def build_stamp(tree: str | None, head: str, *, dirty: bool, now: datetime) -> str:
+def build_stamp(
+    tree: str | None,
+    head: str,
+    *,
+    dirty: bool,
+    now: datetime,
+    index: str | None = None,
+) -> str:
     """Render the ``# produced-at:`` first line of a ``code_health/`` log.
 
     Pure so the wire format — which :func:`log_freshness` and every agent
@@ -2406,15 +2439,19 @@ def build_stamp(tree: str | None, head: str, *, dirty: bool, now: datetime) -> s
             commit.
         dirty: Whether the working tree differs from ``HEAD``'s tree.
         now: Production time; rendered in UTC.
+        index: Index SHA from :func:`index_sha`, or ``None`` when it could
+            not be computed; always rendered, so a reader can tell "index
+            not part of this stamp" (old logs) from "computed and matched".
 
     Returns:
-        ``# produced-at: tree=<sha|unknown> head=<sha|unknown>[+dirty] <iso>``.
+        ``# produced-at: tree=<sha|unknown> index=<sha|unknown>``
+        `` head=<sha|unknown>[+dirty] <iso>``.
     """
     suffix = "+dirty" if dirty else ""
     stamp_time = now.astimezone(UTC).isoformat(timespec="seconds")
     return (
-        f"{STAMP_PREFIX}tree={tree or 'unknown'} head={head or 'unknown'}{suffix} "
-        f"{stamp_time}"
+        f"{STAMP_PREFIX}tree={tree or 'unknown'} index={index or 'unknown'} "
+        f"head={head or 'unknown'}{suffix} {stamp_time}"
     )
 
 
@@ -2426,9 +2463,10 @@ def produced_at_stamp(repo_root: Path) -> str:
             and head render as ``unknown``).
 
     Returns:
-        The :func:`build_stamp` line for the current working tree.
+        The :func:`build_stamp` line for the current working tree and index.
     """
     tree = working_tree_sha(repo_root)
+    index = index_sha(repo_root)
     head = run_git(
         "rev-parse",
         "--verify",
@@ -2446,21 +2484,34 @@ def produced_at_stamp(repo_root: Path) -> str:
         else None
     )
     dirty = tree is not None and head_tree is not None and tree != head_tree
-    return build_stamp(tree, head[:7], dirty=dirty, now=datetime.now(UTC))
+    return build_stamp(tree, head[:7], dirty=dirty, now=datetime.now(UTC), index=index)
 
 
-def log_freshness(log_path: Path, current_tree: str | None) -> LogFreshness:
+def log_freshness(
+    log_path: Path,
+    current_tree: str | None,
+    *,
+    current_index: str | None = None,
+    require_index: bool = False,
+) -> LogFreshness:
     """Judge whether *log_path* was produced against *current_tree*.
 
     Args:
         log_path: A ``code_health/`` log.
         current_tree: :func:`working_tree_sha` of the tree to judge against.
+        current_index: :func:`index_sha` of the index to judge against;
+            consulted only when *require_index* is set.
+        require_index: When ``True``, the stamp must also carry an index
+            component matching *current_index* - for a step that reads the
+            index, a tree match alone is not evidence.
 
     Returns:
-        ``"fresh"`` when the stamp names *current_tree*; ``"stale"`` when
-        it names another tree; ``"unstamped"`` when the first line is not a
-        stamp; ``"unknown"`` when either tree could not be computed or the
-        log cannot be read — never ``"fresh"`` without proof.
+        ``"fresh"`` when the stamp names *current_tree* (and *current_index*
+        when required); ``"stale"`` when it names another tree or index;
+        ``"unstamped"`` when the first line is not a stamp; ``"unknown"``
+        when either SHA could not be computed, a required index component
+        is missing, or the log cannot be read - never ``"fresh"`` without
+        proof.
     """
     try:
         with log_path.open(encoding="utf-8", errors="replace") as fh:
@@ -2473,6 +2524,12 @@ def log_freshness(log_path: Path, current_tree: str | None) -> LogFreshness:
     stamped = match.group("tree")
     if stamped == "unknown" or current_tree is None:
         return "unknown"
+    if require_index:
+        stamped_index = match.group("index")
+        if stamped_index is None or stamped_index == "unknown" or current_index is None:
+            return "unknown"
+        if stamped_index != current_index:
+            return "stale"
     return "fresh" if stamped == current_tree else "stale"
 
 
