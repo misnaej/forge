@@ -541,6 +541,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `check_verdict(root: Path) -> None` — Refuse unless the latest pre-commit verdict passed on this tree.
 - `_verdict_detail(lines: list[str]) -> str` _(internal)_ — Return the verdict rows a refusal must show, plus its closing line.
 - `_refresh_index_steps(root: Path, lines: list[str]) -> tuple[bool, list[str]]` _(internal)_ — Re-run the index-reading steps when staging alone staled them.
+- `_staged_blobs(root: Path) -> dict[str, str]` _(internal)_ — Return the blob hash the index holds for each staged path.
 - `_git_paths(root: Path, *args: str) -> set[str]` _(internal)_ — Run a ``-z`` path-listing git command and return its paths.
 - `_staged(root: Path, *diff_filter: str) -> set[str]` _(internal)_ — Paths currently staged, a rename counted as its old and new path.
 - `stage_exactly(root: Path, paths: tuple[str, ...]) -> None` — Stage *paths* and refuse when the index then holds anything else.

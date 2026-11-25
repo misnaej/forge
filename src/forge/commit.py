@@ -102,7 +102,9 @@ COMMIT_MAX_WORDS: Final = 45
 
 #: Files the pre-commit hook itself regenerates and stages into a commit it
 #: lets through (the generated docs); a commit may hold these beyond the
-#: named files.
+#: named files, and :func:`stage_exactly` tolerates them already staged
+#: without being named — forge stages them itself, and the hook rewrites
+#: whatever the index holds for them anyway.
 HOOK_STAGED_PATHS: Final = frozenset({API_DIGEST_DOC, CLI_REFERENCE_DOC})
 #: A push failing on these is GitHub being briefly unavailable, not a
 #: rejection; it is retried a few times before being reported.
@@ -311,20 +313,19 @@ def _refresh_index_steps(root: Path, lines: list[str]) -> tuple[bool, list[str]]
     run's own results rather than from the re-read verdict, where the
     stale full-run marker would still say PASS.
 
-    One of these steps regenerates rather than merely checks: ``regen_docs``
-    rewrites a generated doc whose sources moved, and that write stales
-    every tree-reading step at once. So the tree is fingerprinted across
-    the run, and a regeneration says so instead of leaving the caller to
-    read a cascade of ``STALE`` rows with no cause. The regenerated file is
-    staged by the step itself and belongs in this commit; only the full run
-    that re-checks the new tree is still owed.
+    ``regen_docs`` regenerates rather than checks, and that write stales
+    every tree-reading step at once — so the tree is fingerprinted across
+    the run and a regeneration is named, rather than leaving the caller a
+    cascade of ``STALE`` rows with no cause. Staged content is compared by
+    blob, not by path: a retry regenerates a doc that is already staged,
+    which changes no path at all.
 
     Args:
         root: Repo root.
         lines: The verdict rows that just failed.
 
     Returns:
-        The re-read verdict, or the original when nothing was re-runnable.
+        The re-read verdict, or the original when nothing was eligible.
     """
     stale = [line.split(" ", 1)[1] for line in lines if line.startswith("STALE ")]
     index_steps = index_reading_steps()
@@ -338,7 +339,7 @@ def _refresh_index_steps(root: Path, lines: list[str]) -> tuple[bool, list[str]]
         ", ".join(retryable),
     )
     before = working_tree_sha(root)
-    staged_before = _staged(root)
+    staged_before = _staged_blobs(root)
     results = run_all(root, print_progress=False, only=retryable)
     # Decided from the results, never from the re-read verdict: `verdict()`
     # reads its PASS/FAIL markers from the full-run timing log, and an
@@ -354,7 +355,10 @@ def _refresh_index_steps(root: Path, lines: list[str]) -> tuple[bool, list[str]]
     if broke:
         rows = [f"FAIL {name}" for name in broke]
         return False, [*rows, f"verdict: FAIL — failing: {', '.join(broke)}"]
-    regenerated = sorted(_staged(root) - staged_before)
+    staged_after = _staged_blobs(root)
+    regenerated = sorted(
+        path for path, blob in staged_after.items() if staged_before.get(path) != blob
+    )
     if working_tree_sha(root) != before:
         note = (
             f"NOTE the re-run regenerated and staged {', '.join(regenerated)}"
@@ -370,6 +374,32 @@ def _refresh_index_steps(root: Path, lines: list[str]) -> tuple[bool, list[str]]
         passed, lines = verdict(root)
         return passed, [note, *lines]
     return verdict(root)
+
+
+def _staged_blobs(root: Path) -> dict[str, str]:
+    """Return the blob hash the index holds for each staged path.
+
+    Content, not paths: a step that regenerates a doc already in the index
+    leaves the staged path set identical, so only the blob says the file
+    was rewritten.
+
+    Args:
+        root: Repo root.
+
+    Returns:
+        Repo-relative path to staged blob hash.
+    """
+    blobs: dict[str, str] = {}
+    for line in run_git("ls-files", "-s", cwd=root).splitlines():
+        # `<mode> <blob> <stage>\t<path>`; anything else is not an entry.
+        meta, _, path = line.partition("\t")
+        try:
+            _mode, blob, _stage = meta.split()
+        except ValueError:
+            continue
+        if path:
+            blobs[path] = blob
+    return blobs
 
 
 def _git_paths(root: Path, *args: str) -> set[str]:
