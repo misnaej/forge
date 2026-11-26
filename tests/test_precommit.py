@@ -9138,6 +9138,18 @@ def test_index_reading_steps_includes_a_newly_registered_step(
     )
 
 
+def test_changelog_version_is_index_reading() -> None:
+    """behavior: changelog_version reads the staged index, so it is index-stamped.
+
+    SCENARIO: the fragment gate validates the staged fragment body — staging
+    a fragment after a full run must stale its log, not leave it fresh
+    (the #1092 recurrence).
+    EXPECTED BEHAVIOR: the registry declares reads_index for changelog_version,
+    so freshness and forge-commit treat its log as index-dependent.
+    """
+    assert "changelog_version" in precommit.index_reading_steps()
+
+
 def test_verdict_staging_a_changed_file_stales_only_the_index_steps(
     tmp_path: Path,
 ) -> None:

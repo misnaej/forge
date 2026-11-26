@@ -3233,6 +3233,7 @@ _STEP_REGISTRY: tuple[StepDef, ...] = (
         "changelog_version",
         step_changelog_version,
         default_on=False,
+        reads_index=True,
     ),
     StepDef(
         "changelog_updated",
