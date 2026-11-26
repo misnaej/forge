@@ -1218,6 +1218,7 @@ def test_main_dry_run_prints_numbered_fragment_bullets_to_stderr(
     assert "changelog bullets to cover:" in err
     for i, item in enumerate(FRAGMENT_ITEMS, start=1):
         assert f"  {i}. {item}" in err
+    assert mod.REGISTER_RULE in err
 
 
 @pytest.mark.usefixtures("_cli_argv")

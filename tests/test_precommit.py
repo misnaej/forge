@@ -7598,6 +7598,28 @@ def test_fragment_gate_refuses_a_bullet_past_the_refusal_threshold(
     assert "ADVISORY" not in result.output
 
 
+def test_fragment_gate_refuses_the_staged_bullet_not_the_disk_copy(
+    tmp_path: Path,
+) -> None:
+    """BEHAVIOR: the gate reads the index, since a commit carries the index.
+
+    Detects a disk-only read: a long bullet is staged, the file is then
+    shortened without re-staging, and the commit would ship a bullet the
+    gate approved.
+    """
+    work = _init_fragments_mode_repo(tmp_path)
+    path = work / "changelog.d" / "a.added.md"
+    path.parent.mkdir()
+    path.write_text("bump: minor\n" + _bullet_line(BULLET_REFUSAL_WORDS + 1))
+    subprocess.run(
+        ["git", "add", "changelog.d/a.added.md"], cwd=work, env=GIT_ENV, check=True
+    )
+    path.write_text("bump: minor\n- short\n")
+    result = precommit.step_changelog_version(work)
+    assert not result.passed
+    assert "fragment(s) refused" in result.output
+
+
 def test_fragment_gate_ignores_a_long_bullet_the_branch_did_not_add(
     tmp_path: Path,
 ) -> None:

@@ -458,6 +458,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_collect_valid_fragments(root: Path) -> tuple[list[Fragment], list[str]]` _(internal)_ — Parse every pending fragment, splitting valid ones from errors.
 - `check_pending(root: Path) -> list[str]` — Validate every pending fragment under *root*.
 - `check_staged(root: Path, paths: list[str]) -> list[str]` — Validate the staged (index) copy of each fragment in *paths*.
+- `staged_fragment(root: Path, rel: str) -> tuple[Fragment | None, list[str]]` — Return the staged copy of the fragment at *rel*, parsed.
 - `branch_added_fragments(root: Path, *, base_ref: str | None = None) -> list[str]` — Return the fragment paths this branch adds and the base does not have.
 - `_fragments_in_tag_tree(root: Path, tag: str, *, check: bool = False) -> set[str]` _(internal)_ — Return the repo-relative fragment paths present in *tag*'s tree.
 - `class TagGap` — A default-branch commit that brought fragments no tag names.

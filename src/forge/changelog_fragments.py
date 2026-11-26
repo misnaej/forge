@@ -370,11 +370,7 @@ BULLET_WORD_CEILING: Final[int] = 12
 #: the ceiling, where a bullet has stopped being an entry and become
 #: prose. Stated outright rather than taken as a percentage of the
 #: ceiling, because :data:`~forge.text_budget.REFUSAL_PERCENT` of twelve
-#: words is two and nothing is served by refusing an entry two words
-#: long. Why it refuses at all: while this was advisory the advisory
-#: rode a passing step's output, where no reader looks, and every one of
-#: the 13 bullets then pending ran over the ceiling — worst at 111
-#: words, nine times it.
+#: words is two, and refusing an entry two words over buys nothing.
 BULLET_REFUSAL_WORDS: Final[int] = 2 * BULLET_WORD_CEILING
 
 #: Longest bullet excerpt quoted in the advisory, in characters.
@@ -513,9 +509,10 @@ def overlong_bullet_refusal(body: str) -> str | None:
     worst, words = _worst_quoted(refused)
     return (
         f"{len(refused)} bullet(s) past {BULLET_REFUSAL_WORDS} words, worst "
-        f"at {words} — that is prose, not an entry. Say what changed and "
-        f"stop: the why belongs in the commit, the PR or the code, each of "
-        f"which the reader can reach. {BUDGET_RULE} Longest: {worst}"
+        f"at {words} — that is prose, not an entry. Cut to the "
+        f"{BULLET_WORD_CEILING}-word ceiling: say what changed and stop, and "
+        f"leave the why to the commit, the PR or the code, each of which the "
+        f"reader can reach. Longest: {worst}"
     )
 
 
@@ -746,6 +743,30 @@ def check_staged(root: Path, paths: list[str]) -> list[str]:
             continue
         errors.extend(_validate_fragment_text(rel_path, text)[1])
     return errors
+
+
+def staged_fragment(root: Path, rel: str) -> tuple[Fragment | None, list[str]]:
+    """Return the staged copy of the fragment at *rel*, parsed.
+
+    A commit carries the index, not the disk: a bullet staged long and
+    then shortened on disk would pass a disk-only check while the commit
+    ships the long one — the same drift :func:`check_staged` guards for
+    structural errors.
+
+    Args:
+        root: Repository root directory.
+        rel: Repo-relative fragment path.
+
+    Returns:
+        The parsed fragment and its errors. ``(None, [])`` when the path
+        has no blob in the index, which is not an error: during an
+        ordinary pre-commit run nothing is staged yet.
+    """
+    try:
+        text = run_git("show", f":{rel}", cwd=root, log_errors=False)
+    except subprocess.CalledProcessError:
+        return None, []
+    return _validate_fragment_text(Path(rel), text)
 
 
 def branch_added_fragments(root: Path, *, base_ref: str | None = None) -> list[str]:

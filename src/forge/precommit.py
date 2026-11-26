@@ -97,7 +97,7 @@ from forge.changelog_fragments import (
     FRAGMENTS_DIR,
     branch_added_fragments,
     overlong_bullet_refusal,
-    validate_fragment,
+    staged_fragment,
     verbose_entry_note,
 )
 from forge.changelog_fragments import check_pending as check_pending_fragments
@@ -2471,11 +2471,12 @@ def _tag_only_on_base(repo_root: Path, tag: str, base_branch: str) -> bool:
 def _added_fragment_body(repo_root: Path, added: list[str]) -> str | None:
     """Return the body of the one fragment this branch adds, or ``None``.
 
-    Parsed once for both brevity checks below. ``None`` unless the branch
-    adds exactly one *valid* fragment: a length judgement on an entry
-    that does not parse would bury the error that matters, and the scope
-    is deliberately the added fragment alone — a long bullet already on
-    the base branch must not start refusing every later commit, and no
+    Parsed once for both brevity checks below, from the index, because
+    the index is what a commit carries. ``None`` unless the branch adds
+    exactly one *valid* fragment: a length judgement on an entry that
+    does not parse would bury the error that matters, and the scope is
+    deliberately the added fragment alone — a long bullet already on the
+    base branch must not start refusing every later commit, and no
     release or assembly path reads this.
 
     Args:
@@ -2487,7 +2488,12 @@ def _added_fragment_body(repo_root: Path, added: list[str]) -> str | None:
     """
     if len(added) != 1:
         return None
-    fragment, errors = validate_fragment(repo_root / added[0])
+    # The index is what a commit carries, so the index copy is judged: a
+    # bullet staged long and then shortened on disk must still refuse.
+    # Every path branch_added_fragments reports has an index entry — an
+    # untracked file never appears in its worktree diff — so there is no
+    # disk copy to fall back to.
+    fragment, errors = staged_fragment(repo_root, added[0])
     if fragment is None or errors:
         return None
     return fragment.body

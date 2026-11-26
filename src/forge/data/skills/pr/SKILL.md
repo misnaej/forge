@@ -488,11 +488,8 @@ Verification is done, fixes are committed, and the wrap-up is authored
   exists, forge's own document word counts, or a count of tests,
   suppressions, rows or files. This is what keeps a message short; the
   word count never was (FOUNDATION §6).
-- **Terse, not prose** (FOUNDATION §6). Drop articles, filler, hedging
-  and connective sentences; names, numbers and commands exact. Write
-  `Index-move refusal names the targeted --only refresh, not a full
-  run`, never `An index-move refusal now names the targeted --only
-  refresh instead of advising a full run.`
+- **Terse, not prose** (FOUNDATION §6) — `--dry-run` prints the rule
+  with a worked example beside the numbered bullets.
 - **3–5 bullet points**, each opening with the changelog bullets it
   covers (`[1,2]`); an unclaimed changelog bullet refuses.
 - **Conventional commit format** for the title line: `<type>: <brief description>`

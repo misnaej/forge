@@ -594,6 +594,43 @@ def test_check_pending_accepts_a_long_bullet(tmp_path: Path) -> None:
     assert check_pending(tmp_path) == []
 
 
+def test_staged_fragment_returns_the_index_copy_not_the_disk_copy(
+    tmp_path: Path,
+) -> None:
+    """BEHAVIOR: when index and disk differ, the parsed fragment is the index's.
+
+    A commit carries the index, so the staged text is the one a length
+    check must see. Uses one real-git repo: the index is the thing under
+    test, so no fake stands in for it.
+    """
+    init_git_repo(tmp_path)
+    rel = "changelog.d/a.added.md"
+    staged = "- " + " ".join(f"w{i}" for i in range(30))
+    path = _write_fragment(
+        tmp_path / "changelog.d", "a.added.md", f"bump: minor\n{staged}\n"
+    )
+    subprocess.run(["git", "add", rel], cwd=tmp_path, env=GIT_ENV, check=True)
+    path.write_text("bump: minor\n- short\n")
+
+    fragment, errors = changelog_fragments.staged_fragment(tmp_path, rel)
+
+    assert errors == []
+    assert fragment is not None
+    assert fragment.body == staged
+
+
+def test_staged_fragment_without_an_index_blob_is_not_an_error(
+    tmp_path: Path,
+) -> None:
+    """BEHAVIOR: a path absent from the index (on disk only) gives ``(None, [])``."""
+    init_git_repo(tmp_path)
+    _write_fragment(tmp_path / "changelog.d", "a.added.md", "bump: minor\n- x\n")
+    assert changelog_fragments.staged_fragment(tmp_path, "changelog.d/a.added.md") == (
+        None,
+        [],
+    )
+
+
 def test_check_pending_aggregates_errors_across_fragments(tmp_path: Path) -> None:
     """One valid plus two differently-invalid fragments — errors from both."""
     directory = tmp_path / "changelog.d"
@@ -2877,6 +2914,8 @@ def test_overlong_bullet_refusal_names_worst_and_caps_quote() -> None:
     assert refusal is not None
     assert "2 bullet(s)" in refusal
     assert f"worst at {REFUSAL + 5}" in refusal
+    assert str(CEIL) in refusal
+    assert str(REFUSAL) in refusal
     worst = body.splitlines()[1]
     assert len(worst) > _NOTE_QUOTE_MAX
     assert worst not in refusal
