@@ -478,6 +478,11 @@ Rules (mechanics: the `/forge-pr` skill Step 4; enforcement: `forge-pr-squash-co
   counts, never a count of tests, suppressions, rows or files. Measured
   over 60 merged messages: 26% carried such a bullet, 9% of all bullet
   words. That, not length, is what makes a message slow to read.
+- **Bullets are terse, not prose** — the one people-facing text §8
+  exempts. Drop articles, filler, hedging, connective sentences; names,
+  numbers, commands exact. The message is scanned in a list of merges,
+  never read as paragraphs. No check tells a clause from prose: this one
+  is the writer's.
 - 3–5 bullets; conventional-commit title; title + bullets only; no Claude/AI attribution.
 - Own comment, never embedded in wrap-up. Becomes permanent `main` commit.
 - **Two fences, one per field of the squash dialog**; posting **forces the PR title to match the title it posts**.
@@ -523,7 +528,8 @@ Reviewed by `forge-design-checker` (foundation) + per-repo wrappers.
   lines, details referenced; advisory pin's comment = its id; unpinned
   advisory → one line why. Exception: agent-generated issue bodies (e.g.
   the Backlog Index) are agent-facing, not people-facing — terse; size is
-  bounded, not voiced down.
+  bounded, not voiced down. Squash-merge bullets too — terse, scanned in
+  a list (§6).
 - **Google-style docstrings** for all public classes / functions / methods, incl. `__init__`.
 - **Args** match function signature exactly. Read implementation to confirm names.
 - **Returns** required for non-`None` returning functions. Omit for `None`-returning, `@property`, `@abstractmethod`.

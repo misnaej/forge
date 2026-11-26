@@ -83,7 +83,7 @@ Rules (sections, word cap, plain-English `## Summary` lead): [FOUNDATION §6 "PR
        --bullet "[1,2] <key change>" --bullet "[3] <key change>"
    ```
 
-   3–5 `--bullet`s, each opening with the changelog bullets it covers. **Every one must be claimed or the post is refused**; one may claim several. Length warns past the ceiling, never refuses; content rules are FOUNDATION §6's.
+   3–5 `--bullet`s, each opening with the changelog bullets it covers. **Every one must be claimed or the post is refused**; one may claim several. Length warns past the ceiling, never refuses; content rules are FOUNDATION §6's. Write each bullet terse — no articles, filler or connective sentences, names and numbers exact.
 
 3. **Never set the PR title by hand here** — the CLI forces the PR title to match the `--title` it posts (FOUNDATION §6), so the squash title is authored in one place. A non-zero exit naming a rejected title sync means the prefill is stale: report it, do not paper over it.
 
