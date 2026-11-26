@@ -76,6 +76,7 @@ by `forge-gen-config-doc`; the sections below explain each key.
 | `[tool.forge.typecheck].paths` | source_dirs (smart-detect) |
 | `[tool.forge.typecheck].blocking` | `False` |
 | `[tool.forge.typecheck].file_set` | `'roots'` |
+| `[tool.forge.typecheck].include_tests` | `False` |
 | `[tool.forge.pip_audit].blocking` | `False` |
 | `[tool.forge.pip_audit].cadence` | `'branch'` |
 | `[tool.forge.pip_audit].max_age_hours` | `24.0` |
@@ -291,7 +292,8 @@ scoped by their own `paths` key (`doctest`) — `scope` does not apply
 to them. `forge-config --list` shows the resolved values.
 
 For `typecheck`, `diff` selects only the modified files **under its resolved
-roots** (`[tool.forge.typecheck].paths` → `source_dirs` → auto-detect), so it
+roots** (`[tool.forge.typecheck].paths` → `source_dirs` → auto-detect, plus
+`test_dirs` when `include_tests = true`), so it
 always checks a subset of what `all` would.
 
 In `all` scope, `typecheck` picks its file set via
@@ -393,6 +395,7 @@ commit trains `--no-verify`.
 |---|---|---|
 | `paths` | Scan roots passed to pyrefly. | Your source lives elsewhere. |
 | `blocking` | Fail the commit on a type error (else non-blocking WARN). | Your type baseline is clean and you want it enforced. |
+| `include_tests` | Also scan `test_dirs` alongside `source_dirs` (ignored when `paths` is set). | You type-check your tests too. |
 
 **Which interpreter pyrefly checks against.** The step passes pyrefly no
 interpreter, so pyrefly finds one by its own discovery — and may find the
