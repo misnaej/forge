@@ -400,6 +400,7 @@ repos by `install-forge-claude-md` (guarded there by a README notice + the
 - git-safety.md: procedure behind FOUNDATION §2's git rules — gate kinds, guard bypass, destructive git forms, base sync (`forge-update-branch`, stacked branches)
 - integration-staleness.md: how a running session ends up on old generated agents, how to spot it, and how to recover
 - metrics.md: `forge-metrics` — what is recorded per merged PR, what is not stored, where the database and the repo-id map live, legacy migration
+- agent-contracts.md: the contracts an agent obeys while it runs (reporter `verified-at:` header, evidence pack, report-by-exception, wait-for-helpers, guard-block rule, report-only) — shipped because the agent authoring template, which holds the authoring half, is not installed on either harness
 - token-optimization.md: token/cost runbook — provider cache pricing with source URLs, cache scope and `/clear`/compaction, forge cache-hazard audit, measurement, ranked levers
 
 ## Documentation (`docs/`)

@@ -183,7 +183,7 @@ contract's "Supplied evidence pack" rule:
 | `docs-types-checker` | Log freshness, generated-artifact checks and the public-surface changes are in the pack. |
 
 Each report's first line MUST be the `verified-at:` header per the
-[reporter-agent contract](../../agents/_TEMPLATE.md#reporter-agent-header-contract);
+`forge-docs/agent-contracts.md` "Reporter header contract";
 that is the contract that makes future delta-mode runs possible.
 
 ### Optional second opinion: the `code-review` built-in
@@ -211,7 +211,7 @@ in the wrap-up rather than implying a second opinion was obtained).
 
 4. **`precommit-fixer`** (mode: `strict`) — clear every pre-commit failure (lint, docstrings, naming, structure, dep advisories). At PR finalization, `strict` also escalates remaining `pip_audit` advisories, forcing a fresh CVE scan as its Modes table specifies.
 5. If checkers report fixable issues, address and commit (use `/commit`).
-6. A checker finding this PR did not cause is handled by [FOUNDATION §1 "Every failure requires investigation"](../../FOUNDATION.md#every-failure-requires-investigation): in scope and unheld → fixed on the user's yes; otherwise filed (`gh issue create --label tech-debt,refactor`, BEFORE finalization) only if it happened or could plausibly be hit in normal work, and else **not filed**, its reason recorded. Every finding still carries a disposition in the wrap-up, per [`agents/_TEMPLATE.md` "Reporter-agent header contract"](../../agents/_TEMPLATE.md#reporter-agent-header-contract) ("Report by exception") — `filed as #N` in its exact machine-read form so Step 4.5 can place it, or accepted with reason (`not filed: <why>`). Cleanup this PR's own change made necessary — what it supersedes or leaves dead — is never a finding to dispose of: it is fixed in the PR (FOUNDATION §7 "A change removes what it supersedes").
+6. A checker finding this PR did not cause is handled by [FOUNDATION §1 "Every failure requires investigation"](../../FOUNDATION.md#every-failure-requires-investigation): in scope and unheld → fixed on the user's yes; otherwise filed (`gh issue create --label tech-debt,refactor`, BEFORE finalization) only if it happened or could plausibly be hit in normal work, and else **not filed**, its reason recorded. Every finding still carries a disposition in the wrap-up, per `forge-docs/agent-contracts.md` "Report shape" ("Report by exception") — `filed as #N` in its exact machine-read form so Step 4.5 can place it, or accepted with reason (`not filed: <why>`). Cleanup this PR's own change made necessary — what it supersedes or leaves dead — is never a finding to dispose of: it is fixed in the PR (FOUNDATION §7 "A change removes what it supersedes").
 
 If the user ran `code-review` and pasted its findings back, triage them
 into this same fix pass under an explicit contract: **advisory, never
@@ -328,7 +328,7 @@ prose is what makes that slow.
 - `verified` for a claim this run checked, and what the check showed —
   not that checks ran.
 - Each verifier finding and its disposition, in the forms
-  `agents/_TEMPLATE.md` "Report by exception" fixes, with one clause of
+  `forge-docs/agent-contracts.md` "Report shape" fixes, with one clause of
   reasoning; a finding fixed here is `fixed`, one accepted is
   `deferred` with its reason.
 - `deferred` for anything deliberately left, with its tracking issue

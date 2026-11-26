@@ -23,7 +23,7 @@ work / personal / per-project streams stay legible side by side.
 GitHub is canonical via `gh` (per
 [FOUNDATION §14](../FOUNDATION.md#14-issue-tracking--triage)).
 Reporter contract:
-[`_TEMPLATE.md` "Reporter-agent header contract"](_TEMPLATE.md#reporter-agent-header-contract).
+`forge-docs/agent-contracts.md` "Reporter header contract".
 
 ## Input
 
@@ -170,7 +170,7 @@ The agent produces two artifacts.
 ### (a) The summary file — `.plan/weekly_summary_<start>_to_<end>.md`
 
 First line is the `verified-at:` header per the
-[contract in _TEMPLATE.md](_TEMPLATE.md#reporter-agent-header-contract)
+`forge-docs/agent-contracts.md` "Reporter header contract"
 (capture snippet lives there).
 
 ```markdown

@@ -68,6 +68,7 @@ from forge.hook_registry import (
     validate_shipped_scripts,
 )
 from forge.instruction_files import (
+    AGENT_TEMPLATE,
     generated_name,
     renamed_frontmatter,
     shipped_path,
@@ -83,10 +84,6 @@ AGENTS_SUBDIR: Final = "agents"
 SKILLS_SUBDIR: Final = "skills"
 HOOKS_SUBDIR: Final = "hooks"
 SETTINGS_NAME: Final = "settings.json"
-
-# The template beside the shipped agents, which documents the agent
-# contract rather than defining a spawnable agent.
-AGENT_TEMPLATE: Final = "_TEMPLATE.md"
 
 # The command prefix that marks a hook registration as forge's own. Paths
 # are rooted at ${CLAUDE_PROJECT_DIR} because a hook fires with an

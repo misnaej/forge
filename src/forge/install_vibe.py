@@ -55,7 +55,7 @@ from forge.hook_registry import (
     rendered_hooks,
     validate_shipped_scripts,
 )
-from forge.instruction_files import generated_name, shipped_path
+from forge.instruction_files import AGENT_TEMPLATE, generated_name, shipped_path
 
 
 configure_cli_logging()
@@ -286,7 +286,7 @@ def _publish_subagents(
 
     for agent_file in sorted(agents_dir.glob("*.md")):
         # Skip template
-        if agent_file.name == "_TEMPLATE.md":
+        if agent_file.name == AGENT_TEMPLATE:
             continue
 
         # Generate TOML
