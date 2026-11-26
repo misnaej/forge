@@ -74,10 +74,11 @@ from forge.git_utils import (
     ref_exists,
     repo_root,
     run_git,
+    working_tree_sha,
 )
 from forge.pr_squash_comment import TITLE_RE
 from forge.pr_wrapup import WRAPUP_NAME, wrapup_names_head
-from forge.precommit import verdict
+from forge.precommit import index_reading_steps, run_all, verdict
 from forge.regen_docs import API_DIGEST_DOC, CLI_REFERENCE_DOC
 from forge.text_budget import BUDGET_RULE, length_verdict, refusal_threshold
 
@@ -101,7 +102,9 @@ COMMIT_MAX_WORDS: Final = 45
 
 #: Files the pre-commit hook itself regenerates and stages into a commit it
 #: lets through (the generated docs); a commit may hold these beyond the
-#: named files.
+#: named files, and :func:`stage_exactly` tolerates them already staged
+#: without being named — forge stages them itself, and the hook rewrites
+#: whatever the index holds for them anyway.
 HOOK_STAGED_PATHS: Final = frozenset({API_DIGEST_DOC, CLI_REFERENCE_DOC})
 #: A push failing on these is GitHub being briefly unavailable, not a
 #: rejection; it is retried a few times before being reported.
@@ -255,19 +258,148 @@ def check_verdict(root: Path) -> None:
             excuse it).
     """
     passed, lines = verdict(root)
+    if not passed:
+        passed, lines = _refresh_index_steps(root, lines)
     if passed:
         return
     failed = [line for line in lines if line.startswith("FAIL")]
     if active_state(root) is not None and not failed:
         logger.warning("forge-commit: emergency armed — committing on stale evidence.")
         return
-    detail = "\n".join(lines[-6:])
     msg = (
         "pre-commit verdict did not pass; run forge-precommit-fixer first, then "
         "rerun forge-commit (the named files are left staged; it stages them "
-        f"again).\n{detail}"
+        f"again).\n{_verdict_detail(lines)}"
     )
     raise CommitRefusedError(msg)
+
+
+def _verdict_detail(lines: list[str]) -> str:
+    """Return the verdict rows a refusal must show, plus its closing line.
+
+    Every row that explains the refusal is kept, however far up the
+    verdict it sits: a tail slice drops the ``STALE`` and ``FAIL`` rows
+    behind a wall of ``PASS`` rows and leaves the reader only the cause
+    line, which names steps they cannot see.
+
+    Args:
+        lines: The verdict's rows, closing line last.
+
+    Returns:
+        The explaining rows and the closing line, newline-joined.
+    """
+    kept = [
+        line
+        for line in lines[:-1]
+        if line.startswith(("FAIL", "STALE", "MISSING", "NOTE"))
+    ]
+    return "\n".join([*kept, lines[-1]])
+
+
+def _refresh_index_steps(root: Path, lines: list[str]) -> tuple[bool, list[str]]:
+    """Re-run the index-reading steps when staging alone staled them.
+
+    ``forge-commit`` stages before reading the verdict, so its own staging
+    moves the index that ``regen_docs`` and ``changelog_updated`` are
+    judged against — and a verdict that passed on the unstaged tree then
+    refuses the commit it was produced for. Nothing about the working tree
+    changed, so those two steps are re-run here rather than charging the
+    caller a full battery for an index move this command made itself.
+
+    Mechanical by FOUNDATION §7: the outcome is computed, not judged. A
+    ``--only`` run rewrites those steps' own logs and never the full-run
+    timing log, so the evidence stays honest about what ran
+    (FOUNDATION §13) — which is also why a failure here is read from the
+    run's own results rather than from the re-read verdict, where the
+    stale full-run marker would still say PASS.
+
+    ``regen_docs`` regenerates rather than checks, and that write stales
+    every tree-reading step at once — so the tree is fingerprinted across
+    the run and a regeneration is named, rather than leaving the caller a
+    cascade of ``STALE`` rows with no cause. Staged content is compared by
+    blob, not by path: a retry regenerates a doc that is already staged,
+    which changes no path at all.
+
+    Args:
+        root: Repo root.
+        lines: The verdict rows that just failed.
+
+    Returns:
+        The re-read verdict, or the original when nothing was eligible.
+    """
+    stale = [line.split(" ", 1)[1] for line in lines if line.startswith("STALE ")]
+    index_steps = index_reading_steps()
+    retryable = [name for name in stale if name in index_steps]
+    if not retryable or len(retryable) != len(stale):
+        return False, lines
+    if [line for line in lines if line.startswith(("FAIL", "MISSING"))]:
+        return False, lines
+    logger.info(
+        "forge-commit: staging moved the index; re-running %s",
+        ", ".join(retryable),
+    )
+    before = working_tree_sha(root)
+    staged_before = _staged_blobs(root)
+    results = run_all(root, print_progress=False, only=retryable)
+    # Decided from the results, never from the re-read verdict: `verdict()`
+    # reads its PASS/FAIL markers from the full-run timing log, and an
+    # `--only` run writes `precommit_only_timing.log`. So a step that fails
+    # here leaves the old full-run PASS standing while its own log turns
+    # fresh — the verdict would read pass and this command, the one that
+    # enforces the commit guards, would let the failure through.
+    broke = [
+        result.name
+        for result in results
+        if not result.passed and not result.skipped and not result.non_blocking
+    ]
+    if broke:
+        rows = [f"FAIL {name}" for name in broke]
+        return False, [*rows, f"verdict: FAIL — failing: {', '.join(broke)}"]
+    staged_after = _staged_blobs(root)
+    regenerated = sorted(
+        path for path, blob in staged_after.items() if staged_before.get(path) != blob
+    )
+    if working_tree_sha(root) != before:
+        note = (
+            f"NOTE the re-run regenerated and staged {', '.join(regenerated)}"
+            if regenerated
+            else "NOTE the re-run changed tracked files"
+        )
+        logger.warning(
+            "forge-commit: re-running %s changed the tree%s. Every step now "
+            "needs one full forge-precommit run before this commit.",
+            ", ".join(retryable),
+            f" ({', '.join(regenerated)} staged)" if regenerated else "",
+        )
+        passed, lines = verdict(root)
+        return passed, [note, *lines]
+    return verdict(root)
+
+
+def _staged_blobs(root: Path) -> dict[str, str]:
+    """Return the blob hash the index holds for each staged path.
+
+    Content, not paths: a step that regenerates a doc already in the index
+    leaves the staged path set identical, so only the blob says the file
+    was rewritten.
+
+    Args:
+        root: Repo root.
+
+    Returns:
+        Repo-relative path to staged blob hash.
+    """
+    blobs: dict[str, str] = {}
+    for line in run_git("ls-files", "-s", cwd=root).splitlines():
+        # `<mode> <blob> <stage>\t<path>`; anything else is not an entry.
+        meta, _, path = line.partition("\t")
+        try:
+            _mode, blob, _stage = meta.split()
+        except ValueError:
+            continue
+        if path:
+            blobs[path] = blob
+    return blobs
 
 
 def _git_paths(root: Path, *args: str) -> set[str]:
@@ -305,6 +437,14 @@ def _staged(root: Path, *diff_filter: str) -> set[str]:
 def stage_exactly(root: Path, paths: tuple[str, ...]) -> None:
     """Stage *paths* and refuse when the index then holds anything else.
 
+    The generated docs in :data:`HOOK_STAGED_PATHS` are exempt from the
+    "anything else" check, because forge itself stages them: the
+    pre-commit hook regenerates them on every commit, and a refused
+    attempt can leave one staged from its own re-run. Refusing a retry
+    over a file this command put in the index would make the refusal's
+    own advice — rerun, the named files are staged again — untrue. They
+    are still committed only as the post-commit check already allows.
+
     Args:
         root: Repo root.
         paths: The files to commit, repo-relative.
@@ -317,7 +457,7 @@ def stage_exactly(root: Path, paths: tuple[str, ...]) -> None:
     if not paths:
         msg = "name the files to commit."
         raise CommitRefusedError(msg)
-    already = _staged(root) - set(paths)
+    already = _staged(root) - set(paths) - HOOK_STAGED_PATHS
     if already:
         msg = f"other files are already staged: {sorted(already)}; unstage them first."
         if already & _staged(root, "--diff-filter=D") and set(paths) & _staged(
@@ -336,7 +476,10 @@ def stage_exactly(root: Path, paths: tuple[str, ...]) -> None:
         except subprocess.CalledProcessError as exc:
             msg = f"could not stage the named files (a path git does not know?): {exc}"
             raise CommitRefusedError(msg) from exc
-    staged = _staged(root)
+    # Same exemption as above, and only for a generated doc the caller did
+    # not name: one it did name must still match, or a missing change in it
+    # would pass unnoticed.
+    staged = _staged(root) - (HOOK_STAGED_PATHS - set(paths))
     if staged != set(paths):
         msg = (
             "staged files do not match the request: "

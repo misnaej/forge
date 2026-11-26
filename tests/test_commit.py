@@ -15,8 +15,9 @@ from pathlib import Path
 
 import pytest
 
-from forge import commit
+from forge import commit, precommit
 from forge.commit import CommitRefusedError, Request
+from forge.precommit import StepResult
 from tests.conftest import (
     GIT_ENV,
     commit_all,
@@ -228,6 +229,65 @@ def test_stage_exactly_stages_only_named(feature_repo: Path) -> None:
     assert git_stdout(feature_repo, "diff", "--cached", "--name-only").split() == [
         "a.txt"
     ]
+
+
+def _stage_digest(repo: Path) -> None:
+    """Add ``docs/api-digest.md`` to the index, as a refused attempt's re-run does.
+
+    Args:
+        repo: Root of the git repository whose index receives the digest.
+    """
+    digest = repo / "docs" / "api-digest.md"
+    digest.parent.mkdir(exist_ok=True)
+    digest.write_text("digest\n", encoding="utf-8")
+    git_stdout(repo, "add", "docs/api-digest.md")
+
+
+@pytest.mark.usefixtures("_fake_evidence")
+def test_stage_exactly_tolerates_an_unnamed_hook_staged_doc(
+    feature_repo: Path,
+) -> None:
+    """SCENARIO: digest left staged by a refusal; retry names only one file.
+
+    The doc is one forge itself stages (``HOOK_STAGED_PATHS``), so refusing
+    the retry over it would make the refusal's own advice untrue.
+    MOCK SETUP: none for staging; the commit leg uses the shared passing
+    evidence fixture and no push.
+    EXPECTED BEHAVIOR: ``stage_exactly`` returns instead of refusing, and
+    the commit that follows holds the named file plus only that generated doc.
+    """
+    _stage_digest(feature_repo)
+    (feature_repo / "a.txt").write_text("changed\n", encoding="utf-8")
+
+    commit.stage_exactly(feature_repo, ("a.txt",))
+    code = commit.commit_and_push(
+        feature_repo, Request("fix: change a", ("a.txt",), push=False)
+    )
+
+    assert code == commit.EXIT_OK
+    committed = git_stdout(
+        feature_repo, "show", "--name-only", "--format=", "HEAD"
+    ).split()
+    assert sorted(committed) == ["a.txt", "docs/api-digest.md"]
+
+
+def test_stage_exactly_still_refuses_a_named_hook_staged_doc_that_does_not_match(
+    feature_repo: Path,
+) -> None:
+    """SCENARIO: ``docs/api-digest.md`` is named but carries no change to stage.
+
+    The exemption covers only a generated doc the caller did not name; a
+    named one must match, or a missing change in it would pass unnoticed.
+    EXPECTED BEHAVIOR: refused with "do not match".
+    """
+    digest = feature_repo / "docs" / "api-digest.md"
+    digest.parent.mkdir()
+    digest.write_text("digest\n", encoding="utf-8")
+    commit_all(feature_repo, "chore: seed digest")
+    (feature_repo / "a.txt").write_text("changed\n", encoding="utf-8")
+
+    with pytest.raises(CommitRefusedError, match="do not match"):
+        commit.stage_exactly(feature_repo, ("a.txt", "docs/api-digest.md"))
 
 
 def test_stage_exactly_accepts_path_removed_with_git_rm(feature_repo: Path) -> None:
@@ -1237,3 +1297,388 @@ def test_push_allowed_with_skip_wrapup_gate_env(
 
     assert commit.push(feature_repo, "feat/x") == commit.EXIT_OK
     assert len(calls) == 1
+
+
+_INDEX_MOVED_CLOSING = (
+    "verdict: FAIL — the index moved since the run: regen_docs, changelog_updated "
+    "read staged state and no longer describe it. The working tree is unchanged, "
+    "so re-run those steps alone — forge-precommit --only "
+    "regen_docs,changelog_updated — not the whole battery"
+)
+_INDEX_STEPS = ["regen_docs", "changelog_updated"]
+_STALE_INDEX_ROWS = ["PASS ruff", "STALE regen_docs", "STALE changelog_updated"]
+
+
+def _passing_results(names: list[str]) -> list[StepResult]:
+    """Return one passing ``StepResult`` per name, as ``run_all`` would.
+
+    Args:
+        names: Pre-commit step names to build results for.
+
+    Returns:
+        One passing ``StepResult`` with empty output per name, in order.
+    """
+    return [StepResult(name, passed=True, output="") for name in names]
+
+
+@pytest.mark.usefixtures("_fake_evidence")
+def test_commit_and_push_reruns_index_steps_staging_staled(
+    feature_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: staging the named file staled only the index-reading steps.
+
+    MOCK SETUP: ``verdict`` fails with STALE rows for the two index steps
+    until ``run_all`` has been called, then passes; ``run_all`` is a
+    recording fake returning a passing ``StepResult`` per step. The real
+    step registry decides which steps may be retried.
+    EXPECTED BEHAVIOR: forge-commit re-runs exactly those two steps once,
+    quietly, re-reads the verdict, and commits the file.
+    """
+    run_calls: list[tuple[Path, dict[str, object]]] = []
+    verdict_calls: list[Path] = []
+
+    def fake_run_all(root: Path, **kwargs: object) -> list[StepResult]:
+        """Record the call and pass every index step.
+
+        Args:
+            root: Repository root the re-run targets.
+            **kwargs: Extra run options, recorded alongside ``root``.
+
+        Returns:
+            Passing results for every index step.
+        """
+        run_calls.append((root, kwargs))
+        return _passing_results(_INDEX_STEPS)
+
+    def fake_verdict(root: Path) -> tuple[bool, list[str]]:
+        """Report stale index rows until the re-run has happened.
+
+        Args:
+            root: Repository root, recorded in ``verdict_calls``.
+
+        Returns:
+            Passing verdict after the re-run, else failing with stale rows.
+        """
+        verdict_calls.append(root)
+        if run_calls:
+            return True, ["verdict: PASS"]
+        return False, [*_STALE_INDEX_ROWS, _INDEX_MOVED_CLOSING]
+
+    monkeypatch.setattr(commit, "run_all", fake_run_all)
+    monkeypatch.setattr(commit, "verdict", fake_verdict)
+    (feature_repo / "a.txt").write_text("changed\n", encoding="utf-8")
+
+    code = commit.commit_and_push(
+        feature_repo, Request("fix: change a", ("a.txt",), push=False)
+    )
+
+    assert code == commit.EXIT_OK
+    assert git_stdout(
+        feature_repo, "show", "--name-only", "--format=", "HEAD"
+    ).split() == ["a.txt"]
+    assert len(run_calls) == 1
+    assert run_calls[0][1]["only"] == _INDEX_STEPS
+    assert run_calls[0][1]["print_progress"] is False
+    assert len(verdict_calls) == 2
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        pytest.param(
+            ["FAIL ruff", *_STALE_INDEX_ROWS, "verdict: FAIL — failing: ruff"],
+            id="fail-beside-stale-index",
+        ),
+        pytest.param(
+            ["MISSING c4", *_STALE_INDEX_ROWS, "verdict: FAIL — missing: c4"],
+            id="missing-beside-stale-index",
+        ),
+        pytest.param(
+            ["STALE ruff", "STALE regen_docs", "verdict: FAIL — evidence moved"],
+            id="non-index-stale-mixed-in",
+        ),
+    ],
+)
+def test_check_verdict_does_not_rerun_when_more_than_the_index_is_wrong(
+    monkeypatch: pytest.MonkeyPatch, rows: list[str]
+) -> None:
+    """SCENARIO: the failed verdict has a cause a re-run of index steps cannot cure.
+
+    MOCK SETUP: ``verdict`` returns the failing rows; ``run_all`` records
+    calls; no emergency armed.
+    EXPECTED BEHAVIOR: ``run_all`` is never called and the commit is refused.
+
+    Args:
+        rows: The verdict rows, closing line last.
+    """
+    run_calls: list[object] = []
+    monkeypatch.setattr(commit, "verdict", lambda _r: (False, rows))
+    monkeypatch.setattr(commit, "active_state", lambda _r: None)
+    monkeypatch.setattr(commit, "run_all", lambda *a, **k: run_calls.append((a, k)))
+
+    with pytest.raises(CommitRefusedError):
+        commit.check_verdict(Path("unused-root"))
+
+    assert run_calls == []
+
+
+def test_check_verdict_refuses_when_an_index_step_fails_the_rerun(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SCENARIO: the re-run of an index step genuinely fails.
+
+    MOCK SETUP: ``run_all`` returns a failing ``StepResult`` for
+    ``regen_docs``. ``verdict`` shows STALE rows before the re-run and a
+    stale-marker PASS after it — what the real one reads, since an
+    ``--only`` run never rewrites the full-run marker — so only the
+    ``run_all`` result can produce the refusal. ``working_tree_sha`` and
+    ``_staged_blobs`` are stubbed because the root is fake and git is not
+    under test.
+    EXPECTED BEHAVIOR: refusal quotes ``FAIL regen_docs``; ``run_all`` ran
+    once, so there is no retry loop.
+    """
+    run_calls: list[object] = []
+    state = {"rerun": False}
+
+    def fake_run_all(*a: object, **k: object) -> list[StepResult]:
+        """Record the call, flag the re-run and fail ``regen_docs``.
+
+        Args:
+            *a: Positional arguments, recorded.
+            **k: Keyword arguments, recorded.
+
+        Returns:
+            A failing ``regen_docs`` result and a passing ``changelog_updated``.
+        """
+        run_calls.append((a, k))
+        state["rerun"] = True
+        return [
+            StepResult("regen_docs", passed=False, output="boom"),
+            StepResult("changelog_updated", passed=True, output=""),
+        ]
+
+    def fake_verdict(_root: Path) -> tuple[bool, list[str]]:
+        """Return stale rows before the re-run and a stale-marker PASS after.
+
+        Args:
+            _root: Repository root, ignored.
+
+        Returns:
+            Passing verdict after the re-run, else failing with stale rows.
+        """
+        if state["rerun"]:
+            return True, ["PASS regen_docs", "verdict: PASS"]
+        return False, [*_STALE_INDEX_ROWS, _INDEX_MOVED_CLOSING]
+
+    monkeypatch.setattr(commit, "verdict", fake_verdict)
+    monkeypatch.setattr(commit, "active_state", lambda _r: None)
+    monkeypatch.setattr(commit, "run_all", fake_run_all)
+    monkeypatch.setattr(commit, "working_tree_sha", lambda _r: "same-tree")
+    monkeypatch.setattr(commit, "_staged_blobs", lambda _r: {})
+
+    with pytest.raises(CommitRefusedError, match="FAIL regen_docs"):
+        commit.check_verdict(Path("unused-root"))
+
+    assert len(run_calls) == 1
+
+
+def test_check_verdict_reports_a_regeneration_during_the_rerun(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """SCENARIO: re-running an index step rewrites tracked files and moves the tree.
+
+    MOCK SETUP: ``run_all`` returns passing results; ``working_tree_sha``
+    returns a different value after the run than before, and
+    ``_staged_blobs`` shows ``docs/api-digest.md`` with a new blob hash
+    (its path present both times); ``verdict`` stays failing with tree-level
+    ``STALE`` rows afterwards; no emergency armed.
+    EXPECTED BEHAVIOR: the commit is refused on the re-read verdict, the
+    refusal carries a NOTE row naming the doc the re-run staged, and a
+    warning names the re-run steps, that file and the owed full run — the
+    regeneration is reported, not swallowed.
+    """
+    trees = iter(["tree-before", "tree-after"])
+    staged = iter(
+        [{"docs/api-digest.md": "blob-old"}, {"docs/api-digest.md": "blob-new"}]
+    )
+    stale_after = ["STALE ruff", "STALE regen_docs", "verdict: FAIL — evidence moved"]
+    verdicts = iter(
+        [
+            (False, [*_STALE_INDEX_ROWS, _INDEX_MOVED_CLOSING]),
+            (False, stale_after),
+        ]
+    )
+    run_calls: list[object] = []
+
+    def fake_run_all(*a: object, **k: object) -> list[StepResult]:
+        """Record the call and pass every index step.
+
+        Args:
+            *a: Positional arguments, recorded.
+            **k: Keyword arguments, recorded.
+
+        Returns:
+            Passing results for every index step.
+        """
+        run_calls.append((a, k))
+        return _passing_results(_INDEX_STEPS)
+
+    monkeypatch.setattr(commit, "verdict", lambda _r: next(verdicts))
+    monkeypatch.setattr(commit, "active_state", lambda _r: None)
+    monkeypatch.setattr(commit, "run_all", fake_run_all)
+    monkeypatch.setattr(commit, "working_tree_sha", lambda _r: next(trees))
+    monkeypatch.setattr(commit, "_staged_blobs", lambda _r: next(staged))
+
+    with (
+        caplog.at_level(logging.WARNING, logger="forge.commit"),
+        pytest.raises(CommitRefusedError, match="evidence moved") as excinfo,
+    ):
+        commit.check_verdict(Path("unused-root"))
+
+    assert len(run_calls) == 1
+    assert "NOTE the re-run regenerated and staged docs/api-digest.md" in str(
+        excinfo.value
+    )
+    assert "regen_docs" in caplog.text
+    assert "docs/api-digest.md" in caplog.text
+    assert "full forge-precommit run" in caplog.text
+
+
+def test_check_verdict_names_a_doc_already_staged_before_the_rerun(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """SCENARIO: a refused attempt left a generated doc staged; the retry rewrites it.
+
+    Regression: regeneration was detected by comparing the staged path set
+    before and after the re-run. A doc staged already stays in the set
+    when rewritten, so the filename was lost and the NOTE fell back to the
+    generic wording.
+    MOCK SETUP: ``_staged_blobs`` returns the same path set twice — the
+    API digest (a member of ``HOOK_STAGED_PATHS``) with a new blob the
+    second time, beside an unrelated staged file whose blob never moves;
+    ``working_tree_sha`` moves; ``verdict`` keeps failing afterwards.
+    EXPECTED BEHAVIOR: the NOTE row and the warning name the rewritten doc,
+    not the unchanged file, and the generic wording is absent.
+    """
+    doc = "docs/api-digest.md"
+    assert doc in commit.HOOK_STAGED_PATHS
+    trees = iter(["tree-before", "tree-after"])
+    staged = iter(
+        [
+            {doc: "blob-old", "src/other.py": "blob-same"},
+            {doc: "blob-new", "src/other.py": "blob-same"},
+        ]
+    )
+    verdicts = iter(
+        [
+            (False, [*_STALE_INDEX_ROWS, _INDEX_MOVED_CLOSING]),
+            (False, ["STALE ruff", "verdict: FAIL — evidence moved"]),
+        ]
+    )
+    monkeypatch.setattr(commit, "verdict", lambda _r: next(verdicts))
+    monkeypatch.setattr(commit, "active_state", lambda _r: None)
+    monkeypatch.setattr(
+        commit, "run_all", lambda *_a, **_k: _passing_results(_INDEX_STEPS)
+    )
+    monkeypatch.setattr(commit, "working_tree_sha", lambda _r: next(trees))
+    monkeypatch.setattr(commit, "_staged_blobs", lambda _r: next(staged))
+
+    with (
+        caplog.at_level(logging.WARNING, logger="forge.commit"),
+        pytest.raises(CommitRefusedError) as excinfo,
+    ):
+        commit.check_verdict(Path("unused-root"))
+
+    message = str(excinfo.value)
+    assert f"NOTE the re-run regenerated and staged {doc}" in message
+    assert "src/other.py" not in message
+    assert "changed tracked files" not in message
+    assert doc in caplog.text
+    assert "src/other.py" not in caplog.text
+
+
+def test_check_verdict_refuses_a_failing_index_step_read_by_the_real_verdict(
+    feature_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SCENARIO: staging stales ``regen_docs``, whose re-run then fails.
+
+    Regression: the re-run's verdict was re-read, and the real ``verdict``
+    takes its markers from the full-run timing log, which an ``--only``
+    run never writes — so the old PASS stood, the step's own log turned
+    fresh, and a failing step let ``forge-commit`` through. No fake can
+    see that; only the production marker-reading path can.
+    MOCK SETUP: ``verdict``, ``run_all`` and the freshness stamps are all
+    real, over a real git repo whose config leaves ``regen_docs`` as the
+    only enabled step. Only ``precommit.step_regen_docs`` is stubbed: it
+    passes for the recorded full run, then fails on the re-run.
+    EXPECTED BEHAVIOR: ``check_verdict`` raises ``CommitRefusedError``
+    naming ``regen_docs`` as failing.
+    """
+    others = [
+        step.name
+        for step in precommit.resolve_steps(feature_repo)
+        if step.name != "regen_docs"
+    ]
+    (feature_repo / "pyproject.toml").write_text(
+        f"[tool.forge.precommit]\ndisable = {others!r}\n".replace("'", '"'),
+        encoding="utf-8",
+    )
+    (feature_repo / ".gitignore").write_text("code_health/\n", encoding="utf-8")
+    commit_all(feature_repo, "chore: configure")
+    outcome = {"passed": True}
+
+    def step_regen_docs(_root: Path) -> StepResult:
+        """Pass or fail ``regen_docs`` as ``outcome`` says.
+
+        Args:
+            _root: Repository root, ignored.
+
+        Returns:
+            A ``regen_docs`` result whose ``passed`` follows ``outcome``.
+        """
+        return StepResult("regen_docs", passed=outcome["passed"], output="")
+
+    monkeypatch.setattr(precommit, "step_regen_docs", step_regen_docs)
+    # Edited before the full run, staged after: the tree the run describes
+    # is unchanged and only the index moves, as in forge-commit's own staging.
+    (feature_repo / "a.txt").write_text("changed\n", encoding="utf-8")
+    precommit.run_all(feature_repo, print_progress=False)
+    assert precommit.verdict(feature_repo)[0] is True
+    git_stdout(feature_repo, "add", "a.txt")
+    stale_ok, stale_rows = precommit.verdict(feature_repo)
+    assert stale_ok is False
+    assert "STALE regen_docs" in stale_rows
+    outcome["passed"] = False
+
+    with pytest.raises(CommitRefusedError, match="FAIL regen_docs"):
+        commit.check_verdict(feature_repo)
+
+
+def test_check_verdict_refusal_shows_far_up_stale_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SCENARIO: a refusal over a verdict with explaining rows behind many PASS rows.
+
+    MOCK SETUP: ``verdict`` fails; ``active_state`` is unarmed.
+    EXPECTED BEHAVIOR: the refusal text carries the STALE, MISSING and NOTE
+    rows and the closing line, and no PASS row.
+    """
+    rows = [
+        *(f"PASS step{i}" for i in range(30)),
+        "STALE ruff",
+        "MISSING mypy",
+        "NOTE untracked files unchecked: new.txt",
+        "verdict: FAIL — evidence describes another tree",
+    ]
+    monkeypatch.setattr(commit, "verdict", lambda _r: (False, rows))
+    monkeypatch.setattr(commit, "active_state", lambda _r: None)
+
+    with pytest.raises(CommitRefusedError) as excinfo:
+        commit.check_verdict(Path("unused-root"))
+
+    text = str(excinfo.value)
+    assert "STALE ruff" in text
+    assert "MISSING mypy" in text
+    assert "NOTE untracked files unchecked" in text
+    assert "evidence describes another tree" in text
+    assert "PASS step" not in text

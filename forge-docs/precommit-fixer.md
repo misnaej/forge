@@ -21,6 +21,13 @@ finish all edits, then one full run, then `forge-precommit --verdict`.
 `forge-precommit --freshness` (read-only, not counted) reports each log
 `fresh` or not.
 
+A moved **index** is the one staleness a full run does not answer. Only
+`regen_docs` and `changelog_updated` read staged state, so staging alone
+stales those two; the verdict names them and says to re-run just them.
+Staging is the caller's, never the fixer's, and `forge-commit` re-runs
+those steps itself after it stages — so a stale index never costs a
+full run.
+
 ## One command per situation
 
 The Allowed-CLIs table exists because both wrong moves have been made in
