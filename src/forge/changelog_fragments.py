@@ -759,8 +759,10 @@ def staged_fragment(root: Path, rel: str) -> tuple[Fragment | None, list[str]]:
 
     Returns:
         The parsed fragment and its errors. ``(None, [])`` when the path
-        has no blob in the index, which is not an error: during an
-        ordinary pre-commit run nothing is staged yet.
+        has no blob in the index, which is not an error. A fragment the
+        branch committed earlier has one, since the index matches
+        ``HEAD``; the case left is an intent-to-add entry, whose blob is
+        empty and so parses as errors instead.
     """
     try:
         text = run_git("show", f":{rel}", cwd=root, log_errors=False)

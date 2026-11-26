@@ -846,7 +846,10 @@ def main() -> int:
             f"  {i}. {item}" for i, item in enumerate(fragment_items, start=1)
         )
         sys.stderr.write(f"changelog bullets to cover:\n{numbered}\n")
-        sys.stderr.write(f"{REGISTER_RULE}\n")
+    # The register prints on every dry run, numbering or not: it is what
+    # the author is about to apply, and FOUNDATION §6 points here for it.
+    if args.dry_run:
+        sys.stderr.write(f"forge-pr-squash-comment: {REGISTER_RULE}\n")
 
     problems = validate(
         args.title, bullets, claims=claims, fragment_items=fragment_items

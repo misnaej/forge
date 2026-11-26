@@ -264,8 +264,9 @@ more than one, so writing a fragment means deciding these:
   commit carries — so an entry already on the base branch never starts
   refusing later commits, and no release or assembly path reads the
   check. Where the base cannot be resolved (a fresh clone with no
-  remote), the check degrades open alongside the one-fragment count. The commit message, wrap-up and PR description refuse
-  far past theirs too; the squash message never refuses on length — what
+  remote), the check degrades open alongside the one-fragment count. The
+  commit message, wrap-up and PR description refuse far past theirs too;
+  the squash message never refuses on length — what
   it must not do is leave part of the merge undescribed, and that is what
   its coverage check refuses.
   The bullet count is deliberately unchecked: how

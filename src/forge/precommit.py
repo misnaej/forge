@@ -2439,7 +2439,11 @@ def _changelog_blocking(repo_root: Path) -> bool:
     Returns:
         ``[tool.forge.changelog].blocking``, defaulting to ``True`` — a
         freshness/consistency gate that only warns defeats its purpose;
-        ``blocking = false`` exists for staged adoption.
+        ``blocking = false`` exists for staged adoption. In fragments
+        mode it covers the whole fragment gate, not the bullet ceiling
+        alone: structure, the one-fragment rule and version-shaped
+        strings warn too. Assembly and tagging still refuse a fragment
+        that cannot be read, so nothing reaches a release on a warning.
     """
     return bool(_forge_step_config(repo_root, "changelog").get("blocking", True))
 
@@ -2493,6 +2497,9 @@ def _added_fragment_body(repo_root: Path, added: list[str]) -> str | None:
     # Every path branch_added_fragments reports has an index entry — an
     # untracked file never appears in its worktree diff — so there is no
     # disk copy to fall back to.
+    # An intent-to-add entry is the exception: reported as added, empty
+    # blob, so it parses as errors here. forge-commit stages the named
+    # files properly, which turns it into a real blob before the commit.
     fragment, errors = staged_fragment(repo_root, added[0])
     if fragment is None or errors:
         return None

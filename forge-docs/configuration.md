@@ -950,7 +950,7 @@ following the [consumer changelog convention](../docs/consumer-release.md)
 
 | Key | What it does | Set it when |
 |---|---|---|
-| `blocking` | Findings fail the commit; `false` downgrades both steps to a WARN. | Staged adoption on a repo with a messy changelog history. |
+| `blocking` | Findings fail the commit; `false` downgrades both steps to a WARN. In fragments mode that covers the whole fragment gate — structure, the one-fragment rule and bullet length alike — while assembly and tagging still refuse a fragment they cannot read. | Staged adoption on a repo with a messy changelog history. |
 | `exempt_paths` | Path prefixes `changelog_updated` ignores. | Scratch/experimental dirs whose changes need no entry. |
 | `require_paths` | Prefixes that always require an entry, overriding `exempt_paths` (checked first). | A shipped subtree inside an otherwise exempt dir. |
 | `mode` | Changelog model: `headings` (shared top-heading bullets) or `fragments` (per-PR `changelog.d/` files, level-only bump, assembled once at release — zero merge conflicts; CHANGELOG becomes an output, and the release version is computed by the assembler: `forge-changelog release` / `next-version`). | Parallel PRs keep colliding on the changelog. |
