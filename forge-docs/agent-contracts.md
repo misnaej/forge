@@ -4,9 +4,10 @@ The rules a forge agent obeys **while it runs**, as opposed to the rules
 for authoring one. Four of them: how a reporter heads its report, when a
 delegating agent may hand back, what a guard block means, and what
 report-only forbids. Each agent that these bind states the rule in its
-own doc and points here for the full text; `agents/_TEMPLATE.md` holds
-the authoring template and does not ship to consumer repos, which is why
-these live on a page that does.
+own doc and points here for the full text. The authoring half ships
+separately as `forge-docs/agent-authoring.md` (canonical at
+`agents/_TEMPLATE.md` in forge's own repo), which no converter installs
+as a spawnable agent.
 
 ## Reporter header contract
 
@@ -60,11 +61,9 @@ comment**: GitHub comments render each newline as `<br>` (files collapse
 them), so wrapped prose posts as a ragged column. One line per
 paragraph; breaks only for lists, headings, fences, tables.
 
-**A report is not a turn end.** Hand back when the work is done or
-blocked, never to narrate progress: inside an authorized flow a status
-report ends no turn unless something is blocked or belongs to the human
-(FOUNDATION §1). A turn feels finished precisely while background work
-runs, which is when it is not.
+**A report is not a turn end**: hand back when the work is done or
+blocked, never to narrate progress (FOUNDATION §1 "The ask bounds the
+work, and the flow bounds the turn", which owns this rule).
 
 **Report by exception.** A clean check is ONE line — `PASS` after the
 `verified-at:` header, plus at most a scope note — never a narrative of
@@ -116,8 +115,7 @@ A reporter (pure Reporter or Reporter-with-artifact) **never commits,
 never pushes, and never posts PR comments** — findings return to the
 caller, which owns remediation and posting.
 
-Every agent that holds `Edit` or `Write` carries this rule in its own
-body: "Edit files only with the Edit/Write tools, never by a script or
-shell redirection; a refused edit is reported, never re-routed." A script
-edit escapes the Edit/Write-scoped hooks, and re-routing a refused edit is
+An agent that holds `Edit` or `Write` edits files only with those tools,
+never by a script or shell redirection, and reports a refused edit rather
+than re-routing it. A script edit escapes the Edit/Write-scoped hooks, and re-routing a refused edit is
 bypassing the guard that refused it (FOUNDATION §2).

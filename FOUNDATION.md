@@ -196,7 +196,7 @@ Git procedures (gate kinds, destructive forms, base sync):
   wait for explicit yes. Approval covers only work granted for; never an
   agent's shipped default. Absent it, ceiling is `opus` — step wanting more
   is first a prompt to sharpen. Per-role tiering:
-  `agents/_TEMPLATE.md` "Model per role".
+  `forge-docs/agent-authoring.md` "Model per role".
 - **NEVER use `--no-verify`** to bypass pre-commit hooks. Fix violations
   instead. `block_no_verify` enforces.
 - **Bypassing a guard: only on the user's word, confirmed once, recorded.**
@@ -641,7 +641,7 @@ tested, never relayed.
 
 ### Canonical agent shape
 
-Every forge-shipped agent follows `agents/_TEMPLATE.md`. Invariants:
+Every forge-shipped agent follows `forge-docs/agent-authoring.md`. Invariants:
 
 - **Ownership split.** FOUNDATION owns policy, numbers, principles; agents own
   enforcement protocol, cookbook, recipes. Neither duplicates; both link.
@@ -650,7 +650,7 @@ Every forge-shipped agent follows `agents/_TEMPLATE.md`. Invariants:
 - **Description = routing trigger**, not a role label ("Use proactively when X").
 - **Reporters do not have `Write` or `Edit`.** Exception: reporter-with-artifact
   agents may hold the single mutating tool their artifact needs — see
-  `agents/_TEMPLATE.md` "Tool sets per role".
+  `forge-docs/agent-authoring.md` "Tool sets per role".
 
 `forge-audit-agents` measures every agent against the template
 (`code_health/audit_agents.log`).

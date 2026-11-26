@@ -271,6 +271,7 @@ FORGE_DOCS_PAGES = (
     "token-optimization.md",
     "instruction-compaction.md",
     "agent-contracts.md",
+    "agent-authoring.md",
 )
 FORGE_DOCS_README = "README.md"
 # Distinct from BLOCK_NAME: the mirrored-docs README is its own managed

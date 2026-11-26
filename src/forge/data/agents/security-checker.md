@@ -233,7 +233,7 @@ This requires immediate attention before PR can be merged.
 ## Output
 
 `verified-at:` header (see contract in
-`forge-docs/agent-contracts.md` for the
+`forge-docs/agent-contracts.md` "Reporter header contract" for the
 SHA-capture snippet), then the [Report Format](#report-format) above.
 
 ## Success Criteria

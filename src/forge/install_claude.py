@@ -9,8 +9,8 @@ What it writes:
 
 1. ``.claude/agents/forge-<name>.md`` — every shipped agent, with each
    reference to another shipped agent or skill rewritten into this
-   harness's namespace. ``_TEMPLATE.md`` documents the agent contract
-   rather than defining an agent, and is never published.
+   harness's namespace. ``_TEMPLATE.md`` documents how to author an
+   agent rather than defining one, and is never published.
 2. ``.claude/skills/forge-<name>/SKILL.md`` — every shipped skill,
    rewritten the same way.
 3. ``.claude/hooks/<script>`` — every guard script the wiring
