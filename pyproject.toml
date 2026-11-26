@@ -169,7 +169,10 @@ precommit_fixer = ["block_fixer_recon", "require_fixer_verdict"]
 # c4 (architecture-diagram drift guard — keeps docs/architecture.dsl + the
 # C4 block in docs/architecture.md in sync with the import graph; self-skips without
 # [tool.forge.c4]), and layering (see [tool.forge.layering]).
-enable = ["typecheck", "c4", "layering"]
+# changelog_version is the fragment gate: structure, one fragment per PR,
+# and the per-bullet word ceiling. Warn-only here for now (see
+# [tool.forge.changelog] blocking).
+enable = ["typecheck", "c4", "layering", "changelog_version"]
 
 # Forge dogfoods its own layering gate. Two contracts: every audit script
 # composes the shared audit seam (audit.common — the log format / scope /
@@ -202,6 +205,11 @@ exempt = ["coverage", "git_helpers", "runner", "lifecycle", "run_log"]
 mode = "fragments"
 # Recording and retiring intake sightings is bookkeeping, never a release note.
 exempt_paths = ["docs/intake/"]
+# Staged adoption: the gate was never enabled here, so nothing had ever
+# checked a fragment in this repo — every pending bullet ran over the
+# word ceiling. It reports first and refuses later; raise this to true
+# once the entries written under it are consistently short.
+blocking = false
 
 [tool.forge.release]
 # Tag on every merge, from the fragments that merge brought. The tag is

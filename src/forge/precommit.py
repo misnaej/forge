@@ -2596,6 +2596,7 @@ def _changelog_version_skip_gate(repo_root: Path) -> StepResult | None:
                 else "Fragment mode — changelog.d/ fragment(s) refused:\n"
                 + "\n".join(errors)
             ),
+            non_blocking=not _changelog_blocking(repo_root),
         )
     return None
 

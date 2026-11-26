@@ -7598,6 +7598,30 @@ def test_fragment_gate_refuses_a_bullet_past_the_refusal_threshold(
     assert "ADVISORY" not in result.output
 
 
+def test_fragment_gate_warns_instead_of_refusing_when_blocking_is_false(
+    tmp_path: Path,
+) -> None:
+    """BEHAVIOR: ``[tool.forge.changelog].blocking = false`` makes refusal a warning.
+
+    Detects the fragments path ignoring a documented config key, which is
+    how a repo adopting the gate in stages gets blocked when it asked only
+    to be warned. Both halves matter: the failure is reported, and it does
+    not block.
+    """
+    work = _init_fragments_mode_repo(tmp_path)
+    (work / "pyproject.toml").write_text(
+        '[tool.forge]\nbase_branch = "main"\n\n'
+        '[tool.forge.changelog]\nmode = "fragments"\nblocking = false\n'
+    )
+    (work / "changelog.d").mkdir()
+    bullet = _bullet_line(BULLET_REFUSAL_WORDS + 1)
+    (work / "changelog.d" / "a.added.md").write_text(f"bump: minor\n{bullet}")
+    commit_all(work, "feat: one prose bullet, warn-only")
+    result = precommit.step_changelog_version(work)
+    assert not result.passed
+    assert result.non_blocking
+
+
 def test_fragment_gate_refuses_the_staged_bullet_not_the_disk_copy(
     tmp_path: Path,
 ) -> None:
