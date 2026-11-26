@@ -3253,6 +3253,163 @@ def test_typecheck_file_set_unknown_value_fails_loudly(
     assert "invalid [tool.forge.typecheck].file_set: 'invalid_value'" in result.output
 
 
+# Typecheck include_tests option (#1116)
+# ---------------------------------------------------------------------------
+
+
+def _make_src_and_tests(tmp_path: Path) -> None:
+    """Create a src/ and tests/ tree with one module in each.
+
+    Args:
+        tmp_path: Temporary repo root.
+    """
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_a.py").write_text(
+        "def test_a() -> None: ...\n", encoding="utf-8"
+    )
+
+
+def test_typecheck_include_tests_default_scans_source_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Default: roots are source dirs only; tests/ is not scanned.
+
+    behavior class: behavior
+    Justification: Baseline unchanged — include_tests defaults to false (#1116).
+
+    Args:
+        tmp_path: Temporary repo root.
+        monkeypatch: Pytest fixture for mocking.
+    """
+    _make_src_and_tests(tmp_path)
+    _write_pyproject(tmp_path, "[tool.forge.typecheck]\n")
+    _present(monkeypatch)
+    captured: dict[str, list[str]] = {}
+
+    def _run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        captured["cmd"] = cmd
+        return True, "0 errors"
+
+    monkeypatch.setattr(precommit, "_run", _run)
+    result = precommit.step_typecheck(tmp_path)
+
+    assert result.passed
+    assert captured["cmd"][3:] == ["src"]
+
+
+def test_typecheck_include_tests_true_adds_test_dirs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """include_tests=true: roots become source_dirs + test_dirs.
+
+    behavior class: behavior
+    Justification: The new option is the fix for #1116 — tests join the roots.
+
+    Args:
+        tmp_path: Temporary repo root.
+        monkeypatch: Pytest fixture for mocking.
+    """
+    _make_src_and_tests(tmp_path)
+    _write_pyproject(tmp_path, "[tool.forge.typecheck]\ninclude_tests = true\n")
+    _present(monkeypatch)
+    captured: dict[str, list[str]] = {}
+
+    def _run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        captured["cmd"] = cmd
+        return True, "0 errors"
+
+    monkeypatch.setattr(precommit, "_run", _run)
+    result = precommit.step_typecheck(tmp_path)
+
+    assert result.passed
+    assert captured["cmd"][3:] == ["src", "tests"]
+
+
+def test_typecheck_include_tests_tracked_mode_lists_test_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """file_set='tracked' + include_tests: tracked test files are passed explicitly.
+
+    behavior class: behavior
+    Justification: tracked mode must select test files too when the option is on.
+
+    Args:
+        tmp_path: Temporary repo root.
+        monkeypatch: Pytest fixture for mocking.
+    """
+    _write_pyproject(
+        tmp_path,
+        '[tool.forge.typecheck]\nfile_set = "tracked"\ninclude_tests = true\n',
+    )
+    _make_src_and_tests(tmp_path)
+    init_git_repo(tmp_path)
+    commit_all(tmp_path, "Initial commit")
+    _present(monkeypatch)
+    captured: dict[str, list[str]] = {}
+
+    def _run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        captured["cmd"] = cmd
+        return True, "0 errors"
+
+    monkeypatch.setattr(precommit, "_run", _run)
+    result = precommit.step_typecheck(tmp_path)
+
+    assert result.passed
+    assert captured["cmd"][3:] == ["src/a.py", "tests/test_a.py"]
+
+
+def test_typecheck_include_tests_ignored_when_paths_set(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Paths override is a full replacement: include_tests=true changes nothing.
+
+    behavior class: behavior
+    Justification: paths wins over source_dirs/test_dirs; tests are the caller's.
+
+    Args:
+        tmp_path: Temporary repo root.
+        monkeypatch: Pytest fixture for mocking.
+    """
+    _make_src_and_tests(tmp_path)
+    _write_pyproject(
+        tmp_path,
+        '[tool.forge.typecheck]\npaths = ["src"]\ninclude_tests = true\n',
+    )
+    _present(monkeypatch)
+    captured: dict[str, list[str]] = {}
+
+    def _run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
+        captured["cmd"] = cmd
+        return True, "0 errors"
+
+    monkeypatch.setattr(precommit, "_run", _run)
+    result = precommit.step_typecheck(tmp_path)
+
+    assert result.passed
+    assert captured["cmd"][3:] == ["src"]
+
+
+def test_typecheck_list_files_respects_include_tests(tmp_path: Path) -> None:
+    """--list-files (_file_set_for_step) reflects include_tests.
+
+    behavior class: behavior
+    Justification: The inspectability half must show the same roots the step runs.
+
+    Args:
+        tmp_path: Temporary repo root.
+    """
+    _make_src_and_tests(tmp_path)
+    _write_pyproject(tmp_path, "[tool.forge.typecheck]\ninclude_tests = true\n")
+
+    assert precommit._file_set_for_step(tmp_path, "typecheck") == ["src", "tests"]
+
+
 def test_typecheck_list_files_prints_paths_and_respects_only(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
