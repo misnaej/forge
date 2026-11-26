@@ -135,6 +135,22 @@ edit with no such list is still a false report.
   is reported, never performed — delegating it to another agent is the
   same act.
 
+## Why the fixer never rewrites logic
+
+- **Control flow.** A lint fix applied by restructuring — a statement
+  moved into a `try`, a comprehension rewritten as a loop — changes
+  behavior while the diff still looks like a fix. The fixer edits the
+  flagged line only; a fix needing a restructure goes to a human.
+- **Renames.** A top-level rename without every reference updated
+  leaves an unbound name the next import reveals. Repo-wide, or not
+  at all.
+- **Docstrings.** Rewriting a whole docstring to fix one flagged line
+  duplicates or drops text. One flagged line, one edited line; more is
+  `docs-types-checker`'s job.
+- **Self-inflicted breakage.** PASS over a parse error the fixer itself
+  introduced is a false report. The re-verify run includes
+  `typecheck`; new breakage means revert or STUCK.
+
 ## Finding symbols
 
 For an `F401` / `F841` / naming finding that needs a symbol lookup, the

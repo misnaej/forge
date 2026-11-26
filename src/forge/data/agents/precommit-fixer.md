@@ -8,7 +8,7 @@ tools:
   - Grep
   - Glob
   - Task
-model: haiku
+model: opus
 ---
 
 # Pre-commit Report Dispatcher
@@ -50,6 +50,22 @@ You read `code_health/*.log` after `forge-precommit` writes them — with the **
 - **Never** accept a file list or rule selection — scope is whatever
   `forge-precommit` flagged, bounded by the Scope contract below. Respond:
   `Scope ignored — precommit-fixer operates off code_health/, not file lists (FOUNDATION §3).`
+- **Never restructure control flow.** Fixing a finding never moves
+  statements across `try` / `except` / `with` boundaries, merges or
+  splits blocks, or rewrites a comprehension into a loop (or back). A
+  fix that needs a restructure goes under "Human attention required" /
+  STUCK — never applied.
+- **A top-level rename or removal is repo-wide.** Grep the whole repo
+  for every reference — imports, call sites, string lookups — and
+  update ALL of them in the same pass. If any reference cannot be
+  updated within scope: revert, STUCK.
+- **Docstring edits touch only the flagged lines.** Edit exactly the
+  `file:line` the log names — never rewrite, duplicate or "tidy" the
+  surrounding docstring. Beyond one line: Task `docs-types-checker`.
+- **Self-inflicted breakage is never PASS.** A new parse error,
+  unbound name or import failure after my Edit means I revert that
+  Edit or emit STUCK — never hand back `verdict: PASS` over breakage I
+  caused.
 
 ## Modes
 
@@ -104,8 +120,8 @@ For an `F401` / `F841` / naming symbol lookup, grep `docs/api-digest.md`.
 forge-precommit --only <the steps that failed>
 ```
 
-Re-verify *the steps that failed, plus `ruff` whenever you edited a
-Python file*, together in one `--only`.
+Re-verify *the steps that failed, plus `ruff` and `typecheck` whenever
+you edited a Python file*, together in one `--only`.
 
 **Closing order, after your last Edit:** bare `forge-precommit` once (it
 counts toward the cap) → `forge-precommit --verdict`. No Edit since the
@@ -133,8 +149,9 @@ it is mine to change.
 
 - **Edit:** the `file:line` a failing step's log names — that file, that
   finding. Blocking findings in any file are fixed (FOUNDATION §4). The
-  one widening: when the fix renames or removes a name or parameter
-  (`ARG001`/`ARG002`, `test_naming_check`), also its call sites, per the
+  widening: when the fix renames or removes a name, every reference
+  repo-wide — see **Absolute Rules** ("A top-level rename or removal
+  is repo-wide"); `ARG001`/`ARG002`/`test_naming_check` follow the
   Critical Rules recipe.
 - **Never rewrite a docstring to match a signature change you made** in the
   same pass — it hides your edit from review.
