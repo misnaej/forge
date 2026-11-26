@@ -23,6 +23,12 @@ decided:
   was *silent*, which made every stated number a floor and rewarded
   exactly the filling this convention forbids.
 
+A ceiling small enough that the percentage is narrower than one useful
+edit states its refusal threshold outright instead (``refuse_over``), so
+the band stays decided here rather than in the caller. A changelog
+bullet is the one such kind: 20% of twelve words is two, and refusing an
+entry two words long buys nothing.
+
 What makes a message quick to read is what it leaves out, which is a
 content rule (FOUNDATION §6, §8) rather than a count — the measured waste
 was process state and bookkeeping, not prose. A refusal is always
@@ -53,7 +59,7 @@ BUDGET_RULE: Final = (
 )
 
 
-def refusal_threshold(ceiling: int) -> int:
+def refusal_threshold(ceiling: int, *, refuse_over: int | None = None) -> int:
     """Return the word count past which text of this kind is refused.
 
     Integer arithmetic, rounded down, so the threshold never depends on
@@ -61,14 +67,33 @@ def refusal_threshold(ceiling: int) -> int:
 
     Args:
         ceiling: The stated limit for that kind of text.
+        refuse_over: The last acceptable count, stated outright, for a
+            ceiling small enough that :data:`REFUSAL_PERCENT` of it is
+            narrower than one useful edit. It is the threshold itself,
+            never a width added to the ceiling, so a reader of the
+            call site sees the number that refuses.
 
     Returns:
         The last acceptable count; one more than this is refused.
+
+    Raises:
+        ValueError: When *refuse_over* is below *ceiling*, which would
+            refuse text before it had been warned about.
     """
-    return ceiling + ceiling * REFUSAL_PERCENT // 100
+    if refuse_over is None:
+        return ceiling + ceiling * REFUSAL_PERCENT // 100
+    if refuse_over < ceiling:
+        msg = (
+            f"refuse_over={refuse_over} is below the ceiling {ceiling}: "
+            "text would be refused before it is warned about"
+        )
+        raise ValueError(msg)
+    return refuse_over
 
 
-def length_verdict(words: int, ceiling: int) -> Literal["ok", "warn", "refuse"]:
+def length_verdict(
+    words: int, ceiling: int, *, refuse_over: int | None = None
+) -> Literal["ok", "warn", "refuse"]:
     """Return which band *words* falls in for its *ceiling*.
 
     The one comparison every length check makes, so "over" and "too far
@@ -80,13 +105,22 @@ def length_verdict(words: int, ceiling: int) -> Literal["ok", "warn", "refuse"]:
     Args:
         words: Words counted in the text.
         ceiling: The stated limit for that kind of text.
+        refuse_over: The refusal threshold, where the percentage band
+            does not fit the ceiling; see :func:`refusal_threshold`.
 
     Returns:
         ``"ok"`` at or under the ceiling, ``"warn"`` above it, and
         ``"refuse"`` past :func:`refusal_threshold`.
+
+    Raises:
+        ValueError: When *refuse_over* is below *ceiling*. Checked
+            before the bands are, so an incoherent pair fails on the
+            first call rather than on the first text long enough to
+            reach the comparison.
     """
+    threshold = refusal_threshold(ceiling, refuse_over=refuse_over)
     if words <= ceiling:
         return "ok"
-    if words <= refusal_threshold(ceiling):
+    if words <= threshold:
         return "warn"
     return "refuse"

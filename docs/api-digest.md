@@ -443,8 +443,12 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_check_no_versions_or_headings(name: str, body: str, body_line: int) -> list[str]` _(internal)_ — Check for version-shaped strings and embedded headings.
 - `fragment_bullets(body: str) -> list[str]` — Return the body's bullets, one string each, continuations folded in.
 - `_check_bullets(name: str, body: str) -> list[str]` _(internal)_ — Check the body starts with a ``- `` bullet and every line continues one.
-- `long_bullets(body: str) -> list[tuple[str, int]]` — Return the fragment's bullets that run past the word ceiling.
+- `_bullet_verdicts(body: str) -> list[tuple[str, int, str]]` _(internal)_ — Return every bullet with its word count and its length verdict.
+- `advised_bullets(body: str) -> list[tuple[str, int]]` — Return the bullets over the ceiling that are still accepted.
+- `refused_bullets(body: str) -> list[tuple[str, int]]` — Return the bullets long enough to refuse the commit.
+- `_worst_quoted(bullets: list[tuple[str, int]]) -> tuple[str, int]` _(internal)_ — Return the longest bullet, quotable, with its word count.
 - `verbose_entry_note(body: str) -> str | None` — Return an advisory when a fragment's bullets are longer than needed.
+- `overlong_bullet_refusal(body: str) -> str | None` — Return the refusal for a fragment carrying a bullet of prose.
 - `_check_major_carries_upgrade_notes(name: str, ftype: str, level: str) -> list[str]` _(internal)_ — Require a ``major`` fragment to be the ``upgrade`` lane itself.
 - `validate_fragment(path: Path) -> tuple[Fragment | None, list[str]]` — Parse *path* into a :class:`Fragment`, collecting every violation.
 - `_validate_fragment_text(path: Path, text: str) -> tuple[Fragment | None, list[str]]` _(internal)_ — Apply :func:`validate_fragment`'s contract to *text* as *path*'s content.
@@ -2066,7 +2070,9 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `step_vendored_integrity(repo_root: Path) -> StepResult` — Verify each vendored ``data/*.js`` blob matches its ``VENDORED.md`` hash.
 - `_changelog_blocking(repo_root: Path) -> bool` _(internal)_ — Return whether the changelog steps block the commit (default yes).
 - `_tag_only_on_base(repo_root: Path, tag: str, base_branch: str) -> bool` _(internal)_ — Return whether *tag* is reachable from the base branch but not HEAD.
-- `_fragment_brevity_advisory(repo_root: Path, added: list[str]) -> str` _(internal)_ — Return a brevity advisory for this branch's fragment, or "".
+- `_added_fragment_body(repo_root: Path, added: list[str]) -> str | None` _(internal)_ — Return the body of the one fragment this branch adds, or ``None``.
+- `_fragment_brevity_advisory(body: str | None) -> str` _(internal)_ — Return a brevity advisory for this branch's fragment, or "".
+- `_fragment_brevity_errors(body: str | None) -> list[str]` _(internal)_ — Return the gate's refusal when a bullet has become prose, or [].
 - `_changelog_version_skip_gate(repo_root: Path) -> StepResult | None` _(internal)_ — Check all skip conditions for changelog_version step.
 - `step_changelog_version(repo_root: Path) -> StepResult` — Gate ``CHANGELOG.md`` release headings against git tags (opt-in).
 - `_changelog_updated_skip_gate(repo_root: Path, cfg: config.ForgeConfig) -> StepResult | None` _(internal)_ — Check all skip conditions for changelog_updated step.
@@ -2364,8 +2370,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _The one length convention for text an agent writes._
 
-- `refusal_threshold(ceiling: int) -> int` — Return the word count past which text of this kind is refused.
-- `length_verdict(words: int, ceiling: int) -> Literal['ok', 'warn', 'refuse']` — Return which band *words* falls in for its *ceiling*.
+- `refusal_threshold(ceiling: int, *, refuse_over: int | None = None) -> int` — Return the word count past which text of this kind is refused.
+- `length_verdict(words: int, ceiling: int, *, refuse_over: int | None = None) -> Literal['ok', 'warn', 'refuse']` — Return which band *words* falls in for its *ceiling*.
 
 ## `forge.text_clip`
 

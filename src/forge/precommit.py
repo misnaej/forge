@@ -96,6 +96,7 @@ from forge.changelog import (
 from forge.changelog_fragments import (
     FRAGMENTS_DIR,
     branch_added_fragments,
+    overlong_bullet_refusal,
     validate_fragment,
     verbose_entry_note,
 )
@@ -2467,29 +2468,63 @@ def _tag_only_on_base(repo_root: Path, tag: str, base_branch: str) -> bool:
     )
 
 
-def _fragment_brevity_advisory(repo_root: Path, added: list[str]) -> str:
-    """Return a brevity advisory for this branch's fragment, or "".
+def _added_fragment_body(repo_root: Path, added: list[str]) -> str | None:
+    """Return the body of the one fragment this branch adds, or ``None``.
 
-    Appended to the gate's own output rather than failing it: how short a
-    sentence can be is a judgement, and the gate's refusals are reserved
-    for what is checkable. Silent unless the branch adds exactly one
-    valid fragment — an advisory about an entry that does not parse would
-    bury the error that matters.
+    Parsed once for both brevity checks below. ``None`` unless the branch
+    adds exactly one *valid* fragment: a length judgement on an entry
+    that does not parse would bury the error that matters, and the scope
+    is deliberately the added fragment alone — a long bullet already on
+    the base branch must not start refusing every later commit, and no
+    release or assembly path reads this.
 
     Args:
         repo_root: Repository root directory.
         added: Fragment paths the branch adds, relative to the root.
 
     Returns:
-        A newline-prefixed advisory, or an empty string.
+        The fragment body, or ``None``.
     """
     if len(added) != 1:
-        return ""
+        return None
     fragment, errors = validate_fragment(repo_root / added[0])
     if fragment is None or errors:
-        return ""
-    note = verbose_entry_note(fragment.body)
+        return None
+    return fragment.body
+
+
+def _fragment_brevity_advisory(body: str | None) -> str:
+    """Return a brevity advisory for this branch's fragment, or "".
+
+    Appended to the gate's own output rather than failing it: over the
+    ceiling the entry is still an entry, and the question is worth asking
+    while it is cheap to cut.
+
+    Args:
+        body: The added fragment's body, or ``None``.
+
+    Returns:
+        A newline-prefixed advisory, or an empty string.
+    """
+    note = verbose_entry_note(body) if body else None
     return f"\n{note}" if note else ""
+
+
+def _fragment_brevity_errors(body: str | None) -> list[str]:
+    """Return the gate's refusal when a bullet has become prose, or [].
+
+    The checkable half of the brevity rule, so it may refuse where the
+    advisory may not: a bullet past twice its ceiling is prose whatever
+    it says, and the cut is always available.
+
+    Args:
+        body: The added fragment's body, or ``None``.
+
+    Returns:
+        A one-item list carrying the refusal, or an empty list.
+    """
+    refusal = overlong_bullet_refusal(body) if body else None
+    return [refusal] if refusal else []
 
 
 def _changelog_version_skip_gate(repo_root: Path) -> StepResult | None:
@@ -2539,7 +2574,9 @@ def _changelog_version_skip_gate(repo_root: Path) -> StepResult | None:
                 "the slug names the change, not the category — "
                 "`fixes.fixed.md` collides with another PR's)."
             )
-        advisory = _fragment_brevity_advisory(repo_root, added)
+        body = _added_fragment_body(repo_root, added)
+        errors.extend(_fragment_brevity_errors(body))
+        advisory = _fragment_brevity_advisory(body)
         return StepResult(
             name=name,
             passed=not errors,
@@ -2550,7 +2587,7 @@ def _changelog_version_skip_gate(repo_root: Path) -> StepResult | None:
                 "(CHANGELOG.md is assembled at release, never read as a "
                 "version signal)." + advisory
                 if not errors
-                else "Fragment mode — invalid changelog.d/ fragment(s):\n"
+                else "Fragment mode — changelog.d/ fragment(s) refused:\n"
                 + "\n".join(errors)
             ),
         )

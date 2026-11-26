@@ -39,6 +39,7 @@ from forge import (
     verify_test_naming,
 )
 from forge.audit import common as audit_common
+from forge.changelog_fragments import BULLET_REFUSAL_WORDS, BULLET_WORD_CEILING
 from forge.pip_audit_json import AuditRun
 from forge.run_context import _CI_MARKERS
 from tests.conftest import (
@@ -7559,18 +7560,78 @@ def test_fragment_gate_passes_single_branch_added_fragment(tmp_path: Path) -> No
     assert result.passed
 
 
-def test_fragment_gate_advises_on_overlong_bullet_but_passes(
+def _bullet_line(words: int) -> str:
+    """Return a ``- `` bullet line of exactly *words* words, newline-terminated.
+
+    Args:
+        words: Word count of the bullet text.
+    """
+    return "- " + " ".join(f"word{i}" for i in range(words)) + "\n"
+
+
+def test_fragment_gate_advises_but_passes_a_bullet_in_the_warn_band(
     tmp_path: Path,
 ) -> None:
-    """BEHAVIOR: one very long bullet is advised, never failed."""
+    """BEHAVIOR: a bullet one word over the ceiling is advised, never failed."""
     work = _init_fragments_mode_repo(tmp_path)
     (work / "changelog.d").mkdir()
-    bullet = "- " + " ".join(f"word{i}" for i in range(40)) + "\n"
+    bullet = _bullet_line(BULLET_WORD_CEILING + 1)
     (work / "changelog.d" / "a.added.md").write_text(f"bump: minor\n{bullet}")
     commit_all(work, "feat: one long bullet")
     result = precommit.step_changelog_version(work)
     assert result.passed
     assert "ADVISORY" in result.output
+
+
+def test_fragment_gate_refuses_a_bullet_past_the_refusal_threshold(
+    tmp_path: Path,
+) -> None:
+    """BEHAVIOR: a bullet past the refusal count fails with the refusal header."""
+    work = _init_fragments_mode_repo(tmp_path)
+    (work / "changelog.d").mkdir()
+    bullet = _bullet_line(BULLET_REFUSAL_WORDS + 1)
+    (work / "changelog.d" / "a.added.md").write_text(f"bump: minor\n{bullet}")
+    commit_all(work, "feat: one prose bullet")
+    result = precommit.step_changelog_version(work)
+    assert not result.passed
+    assert "fragment(s) refused" in result.output
+    assert "ADVISORY" not in result.output
+
+
+def test_fragment_gate_ignores_a_long_bullet_the_branch_did_not_add(
+    tmp_path: Path,
+) -> None:
+    """BEHAVIOR: a long bullet already on base never refuses a later commit.
+
+    Detects the gate scanning all of ``changelog.d/`` instead of the one
+    added fragment, and the ``--diff-filter=A`` filter admitting edits.
+    One repo build serves both cases in sequence: first the branch only
+    edits the long fragment (nothing added), then it adds a short one.
+    """
+    work = _init_fragments_mode_repo(tmp_path)
+    long_path = work / "changelog.d" / "long.added.md"
+    subprocess.run(["git", "checkout", "-q", "main"], cwd=work, env=GIT_ENV, check=True)
+    long_path.parent.mkdir()
+    long_path.write_text("bump: minor\n" + _bullet_line(3 * BULLET_REFUSAL_WORDS))
+    commit_all(work, "feat: long fragment on base")
+    subprocess.run(
+        ["git", "push", "-q", "origin", "main"], cwd=work, env=GIT_ENV, check=True
+    )
+    subprocess.run(
+        ["git", "checkout", "-q", "-b", "feat/y"], cwd=work, env=GIT_ENV, check=True
+    )
+
+    with long_path.open("a") as handle:
+        handle.write("- short\n")
+    commit_all(work, "feat: edit the long fragment")
+    edited = precommit.step_changelog_version(work)
+    assert edited.passed, edited.output
+
+    (work / "changelog.d" / "b.added.md").write_text("bump: patch\n- b\n")
+    commit_all(work, "feat: add a short fragment")
+    added = precommit.step_changelog_version(work)
+    assert added.passed, added.output
+    assert "ADVISORY" not in added.output
 
 
 def test_fragment_gate_no_advisory_for_short_bullets(tmp_path: Path) -> None:
