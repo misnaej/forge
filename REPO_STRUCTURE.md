@@ -430,6 +430,7 @@ Architecture RFCs and research reports — aspirational or advisory, not descrip
 
 - rust-core.md: RFC for splitting forge into a Rust governance-core binary + optional Python analysis pack
 - test-lifecycle.md: research report for the test-suite lifecycle policy (issue #396) — baseline profile, prior art, five proposals awaiting decision
+- agent-knowledge-architecture.md: status audit and goals for how instructional knowledge is split across FOUNDATION, CLAUDE.md, agents, skills, forge-docs and the two harness converters — 62 findings in six classes, eleven goals awaiting decision
 
 ## Shipped-source symlinks (repo root)
 
