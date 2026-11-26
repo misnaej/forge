@@ -15,6 +15,7 @@ Pure module-graph reachability; no runtime instrumentation.
 from __future__ import annotations
 
 import ast
+import difflib
 import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -27,7 +28,7 @@ from forge.import_graph import (
     resolve_module_name,
     resolve_package_module_name,
 )
-from forge.smart_test.git_helpers import visible_paths
+from forge.smart_test.git_helpers import file_at_ref, visible_paths
 
 
 if TYPE_CHECKING:
@@ -315,6 +316,77 @@ def _patch_targets(tree: ast.Module) -> set[str]:
     return targets
 
 
+def _arg_names(args: ast.arguments) -> set[str]:
+    """Return every parameter name of *args* — fixtures inject by name.
+
+    Args:
+        args: The ``arguments`` node of a function definition.
+
+    Returns:
+        All positional, keyword-only, ``*args`` and ``**kwargs`` names.
+    """
+    names = {a.arg for a in (*args.posonlyargs, *args.args, *args.kwonlyargs)}
+    if args.vararg is not None:
+        names.add(args.vararg.arg)
+    if args.kwarg is not None:
+        names.add(args.kwarg.arg)
+    return names
+
+
+def _call_fixture_ref(node: ast.Call) -> tuple[str | None, bool]:
+    """Classify one call node for fixture-name references.
+
+    Args:
+        node: An AST Call node.
+
+    Returns:
+        ``(fixture name or None, is pytest_generate_tests call)``.
+        ``getfixturevalue`` and ``parametrize`` take the fixture name as
+        their first string argument.
+    """
+    callee = _dotted(node.func)
+    if callee is None:
+        return None, False
+    if callee.endswith("pytest_generate_tests"):
+        return None, True
+    if callee.endswith(("getfixturevalue", "parametrize")):
+        strings = _string_literals(node.args)
+        return (strings[0] if strings else None), False
+    return None, False
+
+
+def _fixture_refs(tree: ast.Module) -> tuple[set[str], bool]:
+    """Return the fixture names *tree* references, plus its generate-tests flag.
+
+    A fixture is requested by being a function parameter (pytest injects
+    it by name) or dynamically via ``request.getfixturevalue("name")``.
+    Both are plain name references the selector can match; anything
+    fancier — ``pytest_generate_tests`` — cannot be matched by name, so
+    the module is flagged instead and its conftest edges stay wide.
+    Collecting every parameter name over-approximates (``tmp_path``,
+    ``self``), which is the safe direction for a selector.
+
+    Args:
+        tree: Parsed module.
+
+    Returns:
+        ``(referenced fixture names, uses pytest_generate_tests)``.
+    """
+    names: set[str] = set()
+    generate_tests = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            if node.name == "pytest_generate_tests":
+                generate_tests = True
+            names.update(_arg_names(node.args))
+        elif isinstance(node, ast.Call):
+            ref, dynamic = _call_fixture_ref(node)
+            generate_tests = generate_tests or dynamic
+            if ref is not None:
+                names.add(ref)
+    return names, generate_tests
+
+
 @dataclass
 class _Graph:
     """The internal import graph plus the name↔path mapping.
@@ -323,11 +395,18 @@ class _Graph:
         imports: ``{module: set(internal modules it imports)}``.
         path_of: ``{module: repo-relative path}``.
         test_modules: Subset of module names that are test files.
+        fixture_refs: ``{module: fixture names it references}`` — function
+            parameter names plus ``getfixturevalue("name")`` literals.
+        generate_tests: Modules calling ``pytest_generate_tests``; their
+            fixture use is parametrized dynamically and cannot be matched
+            by name, so conftest edges toward them stay wide.
     """
 
     imports: dict[str, set[str]] = field(default_factory=dict)
     path_of: dict[str, str] = field(default_factory=dict)
     test_modules: set[str] = field(default_factory=set)
+    fixture_refs: dict[str, set[str]] = field(default_factory=dict)
+    generate_tests: set[str] = field(default_factory=set)
 
 
 def _parse_sources(
@@ -336,7 +415,7 @@ def _parse_sources(
     test_roots: list[Path],
     *,
     follow_mock_patches: bool = False,
-) -> tuple[dict[str, tuple[str, set[str]]], set[str]]:
+) -> tuple[dict[str, tuple[str, set[str]]], set[str], dict[str, set[str]], set[str]]:
     """Parse all source and test files into an import target map.
 
     Args:
@@ -346,11 +425,17 @@ def _parse_sources(
         follow_mock_patches: Whether to follow mock.patch targets.
 
     Returns:
-        ``(parsed, test_modules)``: module name → ``(rel_path, targets)``,
-        and the names of collectable test modules.
+        ``(parsed, test_modules, fixture_refs, generate_tests)``: module
+        name → ``(rel_path, targets)``, the names of collectable test
+        modules, module → referenced fixture names, and the modules that
+        call ``pytest_generate_tests``. Files that fail to parse stay in
+        ``parsed`` with empty targets (and out of ``fixture_refs``) so a
+        changed one is still reachable — wide, never silently dropped.
     """
     parsed: dict[str, tuple[str, set[str]]] = {}
     test_modules: set[str] = set()
+    fixture_refs: dict[str, set[str]] = {}
+    generate_tests: set[str] = set()
     for path in _iter_py([*source_roots, *test_roots]):
         is_test = any(path.is_relative_to(tr) for tr in test_roots)
         # Source files are named by their real import root (package-walk) so
@@ -364,21 +449,35 @@ def _parse_sources(
         )
         if not name:
             continue
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        except (SyntaxError, UnicodeDecodeError):
-            continue
         rel = path.relative_to(repo_root).as_posix()
-        targets = extract_import_targets(tree, name, include_type_checking=True)
-        if is_test:
+        try:
+            tree: ast.Module | None = ast.parse(
+                path.read_text(encoding="utf-8"), filename=str(path)
+            )
+        except (SyntaxError, UnicodeDecodeError):
+            # An unparseable file still enters the graph with no edges: a
+            # changed conftest that no longer parses must keep its subtree
+            # selected (wide), and a changed test file must still run —
+            # dropping it would under-select, the one direction the
+            # selector must never fail in. Its fixture refs stay unknown
+            # (absent from fixture_refs), which the narrowing reads as wide.
+            tree = None
+        if tree is not None:
+            targets = extract_import_targets(tree, name, include_type_checking=True)
+            refs, dynamic = _fixture_refs(tree)
+            fixture_refs[name] = refs
+            if dynamic:
+                generate_tests.add(name)
+            if is_test and follow_mock_patches:
+                targets = targets | _patch_targets(tree)
+        else:
+            targets = set()
+        if is_test and _is_test_file(path):
             # Only files pytest collects are tests; a conftest or a helper
             # under a test root is a dependency, never a selected test.
-            if _is_test_file(path):
-                test_modules.add(name)
-            if follow_mock_patches:
-                targets = targets | _patch_targets(tree)
+            test_modules.add(name)
         parsed[name] = (rel, targets)
-    return parsed, test_modules
+    return parsed, test_modules, fixture_refs, generate_tests
 
 
 def build_graph(
@@ -417,12 +516,16 @@ def build_graph(
         The populated :class:`_Graph`.
     """
     source_roots, test_roots = _roots(repo_root)
-    parsed, test_modules = _parse_sources(
+    parsed, test_modules, fixture_refs, generate_tests = _parse_sources(
         repo_root, source_roots, test_roots, follow_mock_patches=follow_mock_patches
     )
 
     known = set(parsed)
-    graph = _Graph(test_modules=test_modules)
+    graph = _Graph(
+        test_modules=test_modules,
+        fixture_refs=fixture_refs,
+        generate_tests=generate_tests,
+    )
     for name, (rel, targets) in parsed.items():
         graph.path_of[name] = rel
         resolved = {m for t in targets if (m := closest_known(t, known)) and m != name}
@@ -493,12 +596,217 @@ def _conftest_edges(graph: _Graph) -> dict[str, set[str]]:
     return edges
 
 
+def _is_fixture_decorator(dec: ast.expr) -> bool:
+    """Return whether *dec* is a ``pytest.fixture`` decorator, called or not.
+
+    Args:
+        dec: A decorator expression.
+
+    Returns:
+        True for ``@fixture``, ``@pytest.fixture`` and their called forms.
+    """
+    target = dec.func if isinstance(dec, ast.Call) else dec
+    dotted = _dotted(target)
+    return dotted is not None and (dotted == "fixture" or dotted.endswith(".fixture"))
+
+
+def _fixture_is_autouse(dec: ast.expr) -> bool:
+    """Return whether a fixture decorator call sets ``autouse=True``.
+
+    Args:
+        dec: A decorator expression already known to be a fixture decorator.
+
+    Returns:
+        True when the decorator is a call with ``autouse=True``.
+    """
+    if not isinstance(dec, ast.Call):
+        return False
+    return any(
+        kw.arg == "autouse"
+        and isinstance(kw.value, ast.Constant)
+        and kw.value.value is True
+        for kw in dec.keywords
+    )
+
+
+def _changed_lines(old_src: str, new_src: str) -> tuple[set[int], set[int]]:
+    """Return the 1-based line numbers that differ between two sources.
+
+    Args:
+        old_src: The base version of a file.
+        new_src: The working-tree version.
+
+    Returns:
+        ``(changed old lines, changed new lines)``; deletions only touch
+        the old side, insertions only the new side.
+    """
+    matcher = difflib.SequenceMatcher(
+        None, old_src.splitlines(), new_src.splitlines(), autojunk=False
+    )
+    old_changed: set[int] = set()
+    new_changed: set[int] = set()
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        old_changed.update(range(i1 + 1, i2 + 1))
+        new_changed.update(range(j1 + 1, j2 + 1))
+    return old_changed, new_changed
+
+
+def _classify_conftest_change(
+    repo_root: Path, base_ref: str, rel: str
+) -> set[str] | None:
+    """Classify what changed inside one conftest: narrow fixture names, or ``None``.
+
+    ``None`` means escalate (the blanket subtree edge stays): an autouse
+    fixture, any non-fixture top-level change (module-level code, imports,
+    classes), a decorator that itself changed, an unparseable or deleted
+    file, or no old version at *base_ref* (a brand-new conftest). The
+    narrow result is the set of fixture names whose definitions changed —
+    old and new names both on a rename; a change touching no fixture (a
+    comment) yields an empty set, because no test can be affected by it.
+
+    Args:
+        repo_root: Git repo root.
+        base_ref: Ref holding the old version of the conftest.
+        rel: Repo-relative POSIX path of the conftest.
+
+    Returns:
+        The changed non-autouse fixture names, or ``None`` for wide.
+    """
+    old_src = file_at_ref(repo_root, base_ref, rel)
+    if old_src is None:
+        return None
+    try:
+        new_src = (repo_root / rel).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        old_tree = ast.parse(old_src)
+        new_tree = ast.parse(new_src)
+    except (SyntaxError, UnicodeDecodeError):
+        return None
+    old_changed, new_changed = _changed_lines(old_src, new_src)
+    names: set[str] = set()
+    if not _fold_conftest_side(old_tree, old_changed, names):
+        return None
+    if not _fold_conftest_side(new_tree, new_changed, names):
+        return None
+    return names
+
+
+def _fold_conftest_side(tree: ast.Module, changed: set[int], names: set[str]) -> bool:
+    """Fold one version's changed top-level nodes into *names*.
+
+    Args:
+        tree: The AST of one version of the conftest.
+        changed: That version's changed line numbers.
+        names: Set updated with each changed non-autouse fixture's name.
+
+    Returns:
+        False when a changed node is anything but an unchanged-decorator
+        non-autouse fixture (i.e. the change is wide).
+    """
+    for node in tree.body:
+        # A decorated function's span starts at its first decorator:
+        # decorator lines are part of the change surface even though
+        # they sit above ``node.lineno``.
+        decorators = getattr(node, "decorator_list", [])
+        lo = min([node.lineno, *(d.lineno for d in decorators)])
+        hi = node.end_lineno or node.lineno
+        if not changed.intersection(range(lo, hi + 1)):
+            continue
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and any(
+            _is_fixture_decorator(d) for d in node.decorator_list
+        ):
+            decorator_lines = {
+                line
+                for d in node.decorator_list
+                for line in range(d.lineno, (d.end_lineno or d.lineno) + 1)
+            }
+            if changed & decorator_lines:
+                return False
+            if any(_fixture_is_autouse(d) for d in node.decorator_list):
+                return False
+            names.add(node.name)
+        else:
+            return False
+    return True
+
+
+def _conftest_fixture_changes(
+    repo_root: Path, base_ref: str, changed: set[str], graph: _Graph
+) -> dict[str, set[str] | None]:
+    """Map each changed in-graph conftest module to its narrow fixture names.
+
+    Args:
+        repo_root: Git repo root.
+        base_ref: Ref holding the old versions.
+        changed: Repo-relative changed paths.
+        graph: The import graph (for module↔path mapping).
+
+    Returns:
+        Conftest module → changed non-autouse fixture names, or ``None``
+        when the change must stay wide.
+    """
+    module_of = {rel: name for name, rel in graph.path_of.items()}
+    return {
+        name: _classify_conftest_change(repo_root, base_ref, rel)
+        for rel in changed
+        if (name := module_of.get(rel)) is not None
+        and rel.rpartition("/")[2] == "conftest.py"
+    }
+
+
+def _narrow_conftest_edges(
+    repo_root: Path,
+    base_ref: str,
+    changed_files: set[str],
+    graph: _Graph,
+    importers: dict[str, set[str]],
+) -> None:
+    """Restrict changed conftests' reverse edges to fixture-referencing tests.
+
+    A changed conftest whose diff is confined to non-autouse fixtures
+    reaches only the subtree tests that reference those fixture names;
+    anything uncertain (wide classification, ``pytest_generate_tests`` in
+    a candidate test, an unparsed test module) keeps the blanket edge.
+    Mutates *importers* in place.
+
+    Args:
+        repo_root: Git repo root.
+        base_ref: Ref holding the pre-change versions.
+        changed_files: Repo-relative changed paths.
+        graph: The import graph.
+        importers: Reverse edge map, mutated in place.
+    """
+    for conftest, names in _conftest_fixture_changes(
+        repo_root, base_ref, changed_files, graph
+    ).items():
+        if names is None or conftest not in importers:
+            continue
+        subtree = importers[conftest]
+        # pytest_generate_tests parametrizes by name dynamically; a narrow
+        # edge cannot see those references, so stay wide.
+        if any(t in graph.generate_tests for t in subtree if t in graph.test_modules):
+            continue
+        importers[conftest] = {
+            m
+            for m in subtree
+            # An unparsed module's refs are unknown — keep it (wide).
+            if m not in graph.test_modules
+            or m not in graph.fixture_refs
+            or graph.fixture_refs[m] & names
+        }
+
+
 def select_tests(
     repo_root: Path,
     changed_files: set[str],
     max_depth: int,
     *,
     follow_mock_patches: bool = False,
+    base_ref: str | None = None,
 ) -> SelectionPlan:
     """Compute the depth-layered test selection for a change set.
 
@@ -508,12 +816,21 @@ def select_tests(
     Directly-changed test files are collected separately and always run at
     depth 0.
 
+    A changed conftest normally reaches its whole subtree (see
+    :func:`_conftest_edges`), but when *base_ref* is given and the diff
+    shows only non-autouse fixtures changed inside it
+    (:func:`_conftest_fixture_changes`), the edge narrows to the subtree
+    tests that reference those fixture names. Anything uncertain stays
+    wide — the depth-tier guarantee errs toward over-selection only.
+
     Args:
         repo_root: Git repo root.
         changed_files: Repo-relative ``.py`` paths that changed.
         max_depth: Highest depth to expand (0, 1, or 2).
         follow_mock_patches: Treat ``mock.patch`` string targets as edges
             (opt-in); forwarded to :func:`build_graph`.
+        base_ref: Ref holding the pre-change versions; enables conftest
+            fixture narrowing. ``None`` keeps the blanket conftest edges.
 
     Returns:
         A :class:`SelectionPlan` describing the selection.
@@ -552,6 +869,9 @@ def select_tests(
     for module, deps in graph.imports.items():
         for dep in deps:
             importers.setdefault(dep, set()).add(module)
+
+    if base_ref is not None:
+        _narrow_conftest_edges(repo_root, base_ref, changed_files, graph, importers)
 
     # Self-check: a changed *source* module that nothing imports is the
     # fingerprint of a source-dir/import-root mismatch — the dotted name we

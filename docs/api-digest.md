@@ -2262,12 +2262,22 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_classify_patch_call(node: ast.Call) -> str | None` _(internal)_ — Classify a call node as a patch variant: ``"patch"``, ``"dict"``, or ``None``.
 - `_collect_sys_modules_targets(node: ast.Call, targets: set[str]) -> None` _(internal)_ — Extract module names from a ``patch.dict("sys.modules", {…})`` call.
 - `_patch_targets(tree: ast.Module) -> set[str]` _(internal)_ — Return the dotted module-attribute targets of ``mock.patch`` calls.
+- `_arg_names(args: ast.arguments) -> set[str]` _(internal)_ — Return every parameter name of *args* — fixtures inject by name.
+- `_call_fixture_ref(node: ast.Call) -> tuple[str | None, bool]` _(internal)_ — Classify one call node for fixture-name references.
+- `_fixture_refs(tree: ast.Module) -> tuple[set[str], bool]` _(internal)_ — Return the fixture names *tree* references, plus its generate-tests flag.
 - `class _Graph` _(internal)_ — The internal import graph plus the name↔path mapping.
-- `_parse_sources(repo_root: Path, source_roots: list[Path], test_roots: list[Path], *, follow_mock_patches: bool = False) -> tuple[dict[str, tuple[str, set[str]]], set[str]]` _(internal)_ — Parse all source and test files into an import target map.
+- `_parse_sources(repo_root: Path, source_roots: list[Path], test_roots: list[Path], *, follow_mock_patches: bool = False) -> tuple[dict[str, tuple[str, set[str]]], set[str], dict[str, set[str]], set[str]]` _(internal)_ — Parse all source and test files into an import target map.
 - `build_graph(repo_root: Path, *, follow_mock_patches: bool = False, include_ancestor_edges: bool = False) -> _Graph` — Parse the repo into an internal import graph.
 - `unscanned_conftests(repo_root: Path, changed: set[str]) -> set[str]` — Return changed ``conftest.py`` files outside every test root.
 - `_conftest_edges(graph: _Graph) -> dict[str, set[str]]` _(internal)_ — Map each test module to the conftests pytest loads for it.
-- `select_tests(repo_root: Path, changed_files: set[str], max_depth: int, *, follow_mock_patches: bool = False) -> SelectionPlan` — Compute the depth-layered test selection for a change set.
+- `_is_fixture_decorator(dec: ast.expr) -> bool` _(internal)_ — Return whether *dec* is a ``pytest.fixture`` decorator, called or not.
+- `_fixture_is_autouse(dec: ast.expr) -> bool` _(internal)_ — Return whether a fixture decorator call sets ``autouse=True``.
+- `_changed_lines(old_src: str, new_src: str) -> tuple[set[int], set[int]]` _(internal)_ — Return the 1-based line numbers that differ between two sources.
+- `_classify_conftest_change(repo_root: Path, base_ref: str, rel: str) -> set[str] | None` _(internal)_ — Classify what changed inside one conftest: narrow fixture names, or ``None``.
+- `_fold_conftest_side(tree: ast.Module, changed: set[int], names: set[str]) -> bool` _(internal)_ — Fold one version's changed top-level nodes into *names*.
+- `_conftest_fixture_changes(repo_root: Path, base_ref: str, changed: set[str], graph: _Graph) -> dict[str, set[str] | None]` _(internal)_ — Map each changed in-graph conftest module to its narrow fixture names.
+- `_narrow_conftest_edges(repo_root: Path, base_ref: str, changed_files: set[str], graph: _Graph, importers: dict[str, set[str]]) -> None` _(internal)_ — Restrict changed conftests' reverse edges to fixture-referencing tests.
+- `select_tests(repo_root: Path, changed_files: set[str], max_depth: int, *, follow_mock_patches: bool = False, base_ref: str | None = None) -> SelectionPlan` — Compute the depth-layered test selection for a change set.
 - `render_plan(plan: SelectionPlan, depth: int) -> str` — Render a parseable ``--show-files`` plan for *depth*.
 
 ## `forge.smart_test.git_helpers`
@@ -2276,6 +2286,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 - `visible_paths(repo_root: Path) -> set[str] | None` — Return the repo-relative paths git can see, or None when unknown.
 - `_ref_exists(repo_root: Path, ref: str) -> bool` _(internal)_ — Return whether *ref* resolves to a commit in the repo.
+- `file_at_ref(repo_root: Path, ref: str, relpath: str) -> str | None` — Return *relpath*'s content at *ref*, or ``None`` when git cannot answer.
 - `resolve_base_ref(repo_root: Path, override: str | None = None) -> str` — Resolve the ref to diff ``HEAD`` against for change detection.
 - `effective_base_ref(repo_root: Path, base_ref: str, *, explicit: bool) -> tuple[str | None, str]` — Return the ref to diff against once ``HEAD`` itself is accounted for.
 - `head_commit_message(repo_root: Path) -> str` — Return ``HEAD``'s full commit message (subject + body).

@@ -93,6 +93,28 @@ def _ref_exists(repo_root: Path, ref: str) -> bool:
     return ref_exists(repo_root, ref)
 
 
+def file_at_ref(repo_root: Path, ref: str, relpath: str) -> str | None:
+    """Return *relpath*'s content at *ref*, or ``None`` when git cannot answer.
+
+    ``None`` covers a path that did not exist at *ref* (a new file) and a
+    git failure alike: both mean "no old version to diff against", which
+    callers treat as unknown — never as "unchanged".
+
+    Args:
+        repo_root: Git repo root.
+        ref: Any ref or revision expression.
+        relpath: Repo-relative POSIX path.
+
+    Returns:
+        The file content at *ref*, or ``None``.
+    """
+    try:
+        return run_git("show", f"{ref}:{relpath}", cwd=repo_root, check=False)
+    except (CalledProcessError, OSError) as exc:
+        logger.debug("smart-test: git show %s:%s failed (%s)", ref, relpath, exc)
+        return None
+
+
 def resolve_base_ref(repo_root: Path, override: str | None = None) -> str:
     """Resolve the ref to diff ``HEAD`` against for change detection.
 
