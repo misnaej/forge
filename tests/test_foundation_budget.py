@@ -52,6 +52,8 @@ SLACK = 200
 # shrinks; raise one only when the added detail is worth naming in the
 # PR that raises it.
 FORGE_DOCS_CEILINGS: dict[str, int] = {
+    "agent-authoring.md": 2100,
+    "agent-contracts.md": 1000,
     "backlog-tracks.md": 1300,
     "ci-recipe.md": 4400,
     "configuration.md": 9800,

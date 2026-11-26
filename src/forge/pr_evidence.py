@@ -6,7 +6,7 @@ match their generators, what the duplicate and layering audits found in
 the changed files, which issues the PR closes. The pack gathers those once
 into ``code_health/pr_evidence.log``, stamped with the tree it describes;
 each reviewer starts from it (the reporter contract in
-``agents/_TEMPLATE.md``) and re-derives only what it marks ``unavailable``
+``forge-docs/agent-contracts.md``) and re-derives only what it marks ``unavailable``
 or stale.
 
 Every item is isolated: one that fails — a tool that crashes, times out or

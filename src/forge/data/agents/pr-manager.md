@@ -15,7 +15,7 @@ model: sonnet
 
 Orchestrator for the full PR lifecycle: delegates verification to the three checkers and `forge:precommit-fixer` (`mode: strict` at finalization) via `Task`; delegates' own descriptions own "what", this agent owns "when and how".
 
-**Checkers and ad-hoc verifiers are report-only** per the [reporter contract](_TEMPLATE.md#tool-sets-per-role); remediation returns here (see Scope Boundaries), and they never post to the PR.
+**Checkers and ad-hoc verifiers are report-only** per the `forge-docs/agent-contracts.md` "Report-only toward the repo and the PR"; remediation returns here (see Scope Boundaries), and they never post to the PR.
 
 ## Workflow
 
@@ -89,9 +89,9 @@ Rules (sections, word cap, plain-English `## Summary` lead): [FOUNDATION §6 "PR
 
 ## Task: Fill Wrap-up Slots (pre-publication)
 
-The caller ran `forge-pr-wrapup compose` (`/pr` Step 3.92): `code_health/pr_wrapup.md` already holds every mechanical part — header, mode line, skipped or clean reporter sections, Issue Management, Code Quality, CI Status — plus `<!-- forge:fill … -->` slots. Replace each slot line and nothing else: `summary` → one plain line on what the PR does; `findings: <reporter>` → that reporter's findings, each with where and how it was dispositioned, in the exact disposition forms and compressed per [_TEMPLATE.md's report-by-exception rule](_TEMPLATE.md#reporter-agent-header-contract); `recommendation` → one line on what the reader must decide. Never edit a rendered section — re-run `compose` when its inputs changed. Run `forge-pr-wrapup validate code_health/pr_wrapup.md` until it passes. **Each slot marker states its own allowance** and `compose` prints the total; fill to them. Over it, cut before posting: process state first, then compress each disposition — compress, never drop one. A slot must not restate a section the wrap-up renders (FOUNDATION §6). Return the squash-merge message in your report; never write it into the wrap-up. Post nothing.
+The caller ran `forge-pr-wrapup compose` (`/pr` Step 3.92): `code_health/pr_wrapup.md` already holds every mechanical part — header, mode line, skipped or clean reporter sections, Issue Management, Code Quality, CI Status — plus `<!-- forge:fill … -->` slots. Replace each slot line and nothing else: `summary` → one plain line on what the PR does; `findings: <reporter>` → that reporter's findings, each with where and how it was dispositioned, in the exact disposition forms and compressed per `forge-docs/agent-contracts.md` "Report shape"; `recommendation` → one line on what the reader must decide. Never edit a rendered section — re-run `compose` when its inputs changed. Run `forge-pr-wrapup validate code_health/pr_wrapup.md` until it passes. **Each slot marker states its own allowance** and `compose` prints the total; fill to them. Over it, cut before posting: process state first, then compress each disposition — compress, never drop one. A slot must not restate a section the wrap-up renders (FOUNDATION §6). Return the squash-merge message in your report; never write it into the wrap-up. Post nothing.
 
-**Never hard-wrap the slot text** ([_TEMPLATE.md's reporter-agent header contract](_TEMPLATE.md#reporter-agent-header-contract)).
+**Never hard-wrap the slot text** (`forge-docs/agent-contracts.md` "Report shape").
 
 ## Task: Verification (Wrap-up)
 
@@ -105,7 +105,8 @@ The caller ran `forge-pr-wrapup compose` (`/pr` Step 3.92): `code_health/pr_wrap
    - **Supplied evidence** is authoritative when it names the SHA it was gathered at: use it, skip step 1, **never re-run what you were handed** (a suite this agent starts can outlast the task). Reporter reports come as text in the prompt, as before; pre-commit and test results must be **file-backed** — the `code_health/` logs read in step 0, whose presence on disk is itself proof a run happened. Prose asserting a clean run is not evidence: report that section unverified. SHA equal to `HEAD` → state it as given; moved → **WARN** naming both SHAs, same idiom as the stale-plan check.
    - **Pre-authored wrap-up** (`code_health/pr_wrapup.md` names `HEAD`) → post it with `forge-pr-wrapup post`, which refreshes CI Status and Issue Management itself — never recompose.
    - **Stale plan check**: when the caller's `forge-pr-plan` output carries a `classified_at` that is not the current `HEAD`, **WARN in the wrap-up** (do not refuse): the finalization path was classified on a different tree, so the mode may no longer apply — name both SHAs and recommend re-running `forge-pr-plan`.
-   - **Delta mode** (the full three-part gate lives in `pr_delta.py` `delta_decision()`; header contract: [_TEMPLATE.md](_TEMPLATE.md#reporter-agent-header-contract) — never hardcode) → **skip step 1**; `forge-pr-wrapup compose --base origin/<base> --pr <PR#>` renders the delta wrap-up (reporter sections `NOT RE-RUN`, never a verdict); fill its slots, post it, then refresh the squash-merge comment.
+   - **Delta mode** (the full three-part gate lives in `pr_delta.py` `delta_decision()`; header contract: `forge-docs/agent-contracts.md` "Reporter header
+     contract" — never hardcode) → **skip step 1**; `forge-pr-wrapup compose --base origin/<base> --pr <PR#>` renders the delta wrap-up (reporter sections `NOT RE-RUN`, never a verdict); fill its slots, post it, then refresh the squash-merge comment.
    - **Docs-only light path** (caller-declared; classifier: `pr_delta.docs_only_diff`) → docs-types report only; step 2 = the caller's targeted `--only` gates; say so in the wrap-up.
 
 **Base-sync gate** (before the numbered steps): run `/pr` Step 0.5's checks — a behind/conflicting PR is not finalizable:
@@ -178,7 +179,7 @@ Confirm BOTH the squash-merge message and wrap-up comment were posted — **eith
 ## Guard hooks
 
 Agent-scoped: `block_pr_merge`, `block_unverified_pr_create` (source of
-truth: `[tool.forge.agent_doc.guarded_by]`); contract: [`_TEMPLATE.md` "Guard hooks"](_TEMPLATE.md#required-body-sections).
+truth: `[tool.forge.agent_doc.guarded_by]`); contract: `forge-docs/agent-contracts.md` "A guard block is enforcement, not an obstacle".
 
 ## Output
 

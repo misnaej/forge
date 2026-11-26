@@ -41,7 +41,7 @@ Read `code_health/*.log` with the **Read tool** (Bash is forge-CLI-only; `cat`/`
 - **Edit files only with the Edit tool, never by a script or shell
   redirection; a refused edit is reported, never re-routed.**
 - Your Task tool exists for `docs-types-checker` / `design-checker` only,
-  under [`_TEMPLATE.md` "Delegating agents wait for their helpers"](_TEMPLATE.md).
+  under `forge-docs/agent-contracts.md` "Delegating agents wait for their helpers".
 - **No `# noqa`** except `E402` and those the consumer's `CLAUDE.md`
   documents.
 - **Never** accept a file list or rule selection — scope is what
@@ -193,7 +193,7 @@ NEXT STEP (caller): run `forge-commit -m "<msg>" <files>` yourself.
 
 Agent-scoped: `block_fixer_recon` and `require_fixer_verdict` (source of truth:
 `[tool.forge.agent_doc.guarded_by]`); contract (incl. the `ruff.toml`
-present-diff rule): [`_TEMPLATE.md` "Guard hooks"](_TEMPLATE.md#required-body-sections).
+present-diff rule): `forge-docs/agent-contracts.md` "A guard block is enforcement, not an obstacle".
 
 ## Output
 

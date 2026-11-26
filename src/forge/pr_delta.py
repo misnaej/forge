@@ -240,7 +240,7 @@ FRAGMENT_PATH_PREFIX: Final[str] = f"{FRAGMENTS_DIR.as_posix()}/"
 
 
 # Matches the reporter-agent header contract documented in
-# agents/_TEMPLATE.md "Reporter-agent header contract".
+# forge-docs/agent-contracts.md "Reporter header contract".
 # Example: `verified-at: 7ab3e4e   (PR #56, branch fix/foo)`
 VERIFIED_AT_RE: Final[re.Pattern[str]] = re.compile(
     r"^verified-at:\s*(?P<sha>[0-9a-f]{7,40})\b",
@@ -322,7 +322,7 @@ _CODE_SPAN_RE: Final[re.Pattern[str]] = re.compile(r"(?<!`)(`+)(?!`).+?(?<!`)\1(
 # past any real repository and keeps ``int()`` safe on untrusted text.
 ISSUE_REF_RE: Final[re.Pattern[str]] = re.compile(r"(?:\bPR\s*)?#(\d{1,7})\b")
 # A finding's disposition naming the issue it went to — the two exact,
-# machine-readable forms of the reporter contract (``agents/_TEMPLATE.md``).
+# machine-readable forms of the reporter contract (``forge-docs/agent-contracts.md``).
 # "deferred to a later PR" names no issue, so it does not match. Case is
 # ignored: a disposition opening a sentence ("Deferred to #5") is the same
 # disposition.

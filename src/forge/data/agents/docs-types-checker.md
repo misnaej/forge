@@ -26,7 +26,7 @@ Check and fix documentation issues in the specified file(s). Ensure docstrings m
    `code_health/audit_deps_tree.log` (if present) to understand where a
    module sits in the dependency graph.
 
-1. **Check `code_health/` logs first** (pre-commit hook writes these — avoid re-running if fresh). With a caller's evidence pack ([reporter contract](_TEMPLATE.md#reporter-agent-header-contract)), start there: it carries each log's freshness, the generated-artifact checks and the public-surface changes.
+1. **Check `code_health/` logs first** (pre-commit hook writes these — avoid re-running if fresh). With a caller's evidence pack (`forge-docs/agent-contracts.md` "Supplied evidence pack"), start there: it carries each log's freshness, the generated-artifact checks and the public-surface changes.
    ```bash
    forge-precommit --freshness --only docstring_verification   # read-only, runs no steps
    cat ./code_health/docstring_verification.log 2>/dev/null
@@ -270,8 +270,7 @@ issue/PR reference to the doc — it describes current state, not history
 
 ## Output
 
-`verified-at:` header per the [reporter-agent contract in
-_TEMPLATE.md](_TEMPLATE.md#reporter-agent-header-contract) (SHA-capture
+`verified-at:` header per the `forge-docs/agent-contracts.md` "Reporter header contract" (SHA-capture
 snippet lives there). Then the completion block:
 
 ```
@@ -288,7 +287,7 @@ If called by precommit-fixer, it will re-verify formatting.
 If called directly, consider running precommit-fixer to verify.
 ```
 
-Clean result → compact PASS report per _TEMPLATE.md's report-by-exception rule: one PASS line after the header; prose only for findings.
+Clean result → compact PASS report per `forge-docs/agent-contracts.md` "Report shape": one PASS line after the header; prose only for findings.
 
 ## Success Criteria
 

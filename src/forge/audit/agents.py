@@ -284,7 +284,7 @@ def _check_word_count(agent: AgentDoc) -> list[Finding]:
                 line=0,
                 message=(
                     f"word_count={count} exceeds hard cap {WORD_CAP_HIGH} "
-                    "— trim required (see agents/_TEMPLATE.md)"
+                    "— trim required (see forge-docs/agent-authoring.md)"
                 ),
             )
         ]
@@ -447,7 +447,7 @@ def _check_reporter_verified_at(
     Reporters must instruct the runtime to emit a ``verified-at:`` line
     at the top of their report so ``pr-manager`` can short-circuit a
     full re-verification on small follow-up commits. See
-    ``_TEMPLATE.md`` "Reporter-agent header contract".
+    ``forge-docs/agent-contracts.md`` "Reporter header contract".
 
     Args:
         agent: Parsed agent doc.
@@ -462,8 +462,8 @@ def _check_reporter_verified_at(
         reporters,
         header="verified-at:",
         rationale=(
-            "blocks pr-manager delta-mode (see _TEMPLATE.md "
-            "'Reporter-agent header contract')"
+            "blocks pr-manager delta-mode (see forge-docs/agent-contracts.md "
+            "'Reporter header contract')"
         ),
     )
 
@@ -1160,8 +1160,8 @@ def main() -> int:
         prog="forge-audit-agents",
         description=(
             "Measure forge agents against the canonical template in "
-            "agents/_TEMPLATE.md. Non-blocking initially; promoted after "
-            "Layer 3 trim PRs."
+            "forge-docs/agent-authoring.md. Non-blocking initially; "
+            "promoted after Layer 3 trim PRs."
         ),
         honours_scope=False,
     )

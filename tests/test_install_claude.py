@@ -28,7 +28,8 @@ from forge.install_claude import (
     is_forge_group,
     merge_settings,
 )
-from forge.instruction_files import generated_name, shipped_path
+from forge.install_claudemd import FORGE_DOCS_PAGES
+from forge.instruction_files import AGENT_TEMPLATE, generated_name, shipped_path
 from forge.plugin_roster import shipped_plugin_names
 from tests.conftest import init_git_repo
 
@@ -670,3 +671,170 @@ def test_consumer_file_at_forge_owned_hook_path_is_overwritten(
         encoding="utf-8"
     )
     assert own.read_text(encoding="utf-8") == "my own agent\n"
+
+
+# --- shipped bodies cite only what a consumer repo receives -----------------
+
+_SHIPPED_DATA = Path(ic.__file__).resolve().parent / "data"
+
+# Match the path itself, whatever wraps it (backticks, a markdown link, bare).
+_TEMPLATE_CITATION = re.compile(
+    r"(?<![\w/-])(?:[\w.-]+/)*" + re.escape(AGENT_TEMPLATE) + r"\b"
+)
+_DOCS_CITATION = re.compile(r"(?<![\w/-])(?:[\w.-]+/)*forge-docs/([\w.-]+\.md)\b")
+
+
+def _shipped_bodies(data_root: Path) -> list[Path]:
+    """Return shipped agent and skill bodies under *data_root*, deduplicated.
+
+    The template is excluded: it is authoring documentation no converter
+    installs, so its own self-references are not citations from a shipped body.
+    Paths are resolved first so a symlinked body is counted once.
+
+    Args:
+        data_root: Directory holding ``agents/`` and ``skills/`` sources.
+
+    Returns:
+        Sorted resolved paths.
+    """
+    found = {
+        p.resolve()
+        for p in (
+            *(data_root / "agents").glob("*.md"),
+            *(data_root / "skills").glob("**/*.md"),
+        )
+        if p.name != AGENT_TEMPLATE
+    }
+    return sorted(found)
+
+
+def _citation_hits(
+    bodies: list[Path], pattern: re.Pattern[str]
+) -> list[tuple[Path, int, str]]:
+    """Return ``(file, line number, matched text)`` for every match of *pattern*.
+
+    Args:
+        bodies: Files to scan.
+        pattern: Regex applied to the whole file text, so a markdown link whose
+            text wraps across lines is still seen.
+
+    Returns:
+        One entry per match, so a failure can name every offender.
+    """
+    hits = []
+    for body in bodies:
+        text = body.read_text(encoding="utf-8")
+        hits.extend(
+            (body, text.count("\n", 0, m.start()) + 1, m.group(0))
+            for m in pattern.finditer(text)
+        )
+    return hits
+
+
+def _undelivered_docs(bodies: list[Path]) -> list[str]:
+    """Return ``file:line page`` for each cited page not in ``FORGE_DOCS_PAGES``.
+
+    Args:
+        bodies: Files to scan.
+
+    Returns:
+        One string per offending citation.
+    """
+    allowed = set(FORGE_DOCS_PAGES)
+    return [
+        f"{body}:{number} {_DOCS_CITATION.search(text).group(1)}"
+        for body, number, text in _citation_hits(bodies, _DOCS_CITATION)
+        if _DOCS_CITATION.search(text).group(1) not in allowed
+    ]
+
+
+def test_no_shipped_body_cites_the_agent_template() -> None:
+    """No shipped agent or skill names a file no converter installs.
+
+    SCENARIO: the template documents authoring and is skipped by both
+    converters, so any mention of it (link, backticks, bare) is dead in every
+    consumer repo.
+
+    EXPECTED BEHAVIOR: zero mentions of the template path; every offender is
+    listed as ``file:line``.
+    """
+    assert _SHIPPED_DATA.parts[-3:] == ("src", "forge", "data")
+    bodies = _shipped_bodies(_SHIPPED_DATA)
+    assert len(bodies) > 0
+    offenders = [
+        f"{body}:{number}"
+        for body, number, _ in _citation_hits(bodies, _TEMPLATE_CITATION)
+    ]
+    assert not offenders, "cites " + AGENT_TEMPLATE + ": " + ", ".join(offenders)
+
+
+def test_every_cited_forge_docs_page_is_mirrored_to_consumers() -> None:
+    """Every ``forge-docs/<name>.md`` citation names a delivered page.
+
+    SCENARIO: forge has its own ``forge-docs/`` set, but a consumer gets only
+    the pages in ``FORGE_DOCS_PAGES``; checked against that set, never disk.
+
+    EXPECTED BEHAVIOR: citations exist (non-vacuous) and each names a listed
+    page; a miss names the file, line and page.
+    """
+    bodies = _shipped_bodies(_SHIPPED_DATA)
+    assert len(bodies) > 0
+    assert len(_citation_hits(bodies, _DOCS_CITATION)) > 0
+    missing = _undelivered_docs(bodies)
+    assert not missing, "not in FORGE_DOCS_PAGES: " + ", ".join(missing)
+
+
+def test_scanner_flags_every_form_of_a_template_mention(tmp_path: Path) -> None:
+    """The template scanner flags a path however it is wrapped, even bare.
+
+    SCENARIO: bodies name the template as a backticked path, a markdown link
+    (also one whose text wraps onto the previous line), and a bare name; one
+    body never names it.
+
+    EXPECTED BEHAVIOR: each mention is flagged with its line number; the clean
+    body is not.
+    """
+    ticks = tmp_path / "ticks.md"
+    ticks.write_text(f"intro\nSee `agents/{AGENT_TEMPLATE}` here.\n", encoding="utf-8")
+    link = tmp_path / "link.md"
+    link.write_text(
+        f"a\n[the contract in\n{AGENT_TEMPLATE}]({AGENT_TEMPLATE}#hdr)\n",
+        encoding="utf-8",
+    )
+    bare = tmp_path / "bare.md"
+    bare.write_text(
+        f"The template ({AGENT_TEMPLATE} is not shipped).\n", encoding="utf-8"
+    )
+    clean = tmp_path / "clean.md"
+    clean.write_text("The agent template is for authors.\n", encoding="utf-8")
+    hits = _citation_hits([ticks, link, bare, clean], _TEMPLATE_CITATION)
+    assert [(h[0], h[1]) for h in hits] == [
+        (ticks, 2),
+        (link, 3),
+        (link, 3),
+        (bare, 1),
+    ]
+
+
+def test_scanner_flags_a_page_missing_from_the_allowlist(tmp_path: Path) -> None:
+    """A citation of a page forge does not mirror is reported.
+
+    SCENARIO: bodies cite a nonexistent page as backticks, a markdown link and
+    a bare path, plus a real page.
+
+    EXPECTED BEHAVIOR: only the nonexistent pages are reported, with file, line
+    and name.
+    """
+    body = tmp_path / "body.md"
+    real = FORGE_DOCS_PAGES[0]
+    body.write_text(
+        f"See `forge-docs/nope.md` and `forge-docs/{real}`.\n"
+        "[x](../forge-docs/link.md)\n"
+        f"Bare forge-docs/bare.md and forge-docs/{real}.\n",
+        encoding="utf-8",
+    )
+    assert _undelivered_docs([body]) == [
+        f"{body}:1 nope.md",
+        f"{body}:2 link.md",
+        f"{body}:3 bare.md",
+    ]

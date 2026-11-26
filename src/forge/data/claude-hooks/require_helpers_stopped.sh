@@ -4,8 +4,8 @@
 # An agent that delegates (Task / Agent) and hands back before its helper
 # finishes returns a report about work still in progress — a "done" whose
 # edits keep landing, a test run with no result, a "placeholder". The
-# template rule (agents/_TEMPLATE.md "Delegating agents wait for their
-# helpers") is the contract; this SubagentStop hook is the mechanical half.
+# shipped rule (forge-docs/agent-contracts.md "Delegating agents wait
+# for their helpers") is the contract; this SubagentStop hook is the mechanical half.
 #
 # Evidence is the agent-timing ledger (code_health/agent_timing.jsonl):
 # log_agent_timing.sh records, on each Agent/Task launch, the launcher's
@@ -62,6 +62,6 @@ RUNNING=$(jq -rRn --arg a "$AGENT_ID" '
 # Mark before blocking; an unwritable mark allows the stop (once_mark.sh).
 once_mark_write handback_block "$SESSION_ID" "$AGENT_ID" "$AGENT_TYPE" || exit 0
 
-REASON="Helper(s) you launched are still running: $(printf '%s' "$RUNNING" | paste -sd ',' - | sed 's/,/, /g'). Wait for each result before handing back — your report is the caller's verdict, and one written while a helper still works describes work in progress (agents/_TEMPLATE.md \"Delegating agents wait for their helpers\")."
+REASON="Helper(s) you launched are still running: $(printf '%s' "$RUNNING" | paste -sd ',' - | sed 's/,/, /g'). Wait for each result before handing back — your report is the caller's verdict, and one written while a helper still works describes work in progress (forge-docs/agent-contracts.md \"Delegating agents wait for their helpers\")."
 jq -cn --arg r "$REASON" '{decision: "block", reason: $r}'
 exit 0
