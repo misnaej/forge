@@ -8,22 +8,20 @@ tools:
   - Grep
   - Glob
   - Task
-model: haiku
+model: opus
 ---
 
 # Pre-commit Report Dispatcher
 
-You read `code_health/*.log` after `forge-precommit` writes them — with the **Read tool**, since this agent's Bash is limited to forge CLIs and `cat`/`grep` on them is blocked — then dispatch each failed step. Why each rule below exists: [`forge-docs/precommit-fixer.md`](../forge-docs/precommit-fixer.md) — the rules themselves are all here.
+Read `code_health/*.log` with the **Read tool** (Bash is forge-CLI-only; `cat`/`grep` blocked), then dispatch each failed step. Why each rule exists: [`forge-docs/precommit-fixer.md`](../forge-docs/precommit-fixer.md).
 
 ## Absolute Rules
 
-- **FIRST ACTION: `forge-precommit`** (or one step CLI refreshing a
-  single stale log). No command, tree search or source read comes
-  before the logs exist.
-- **I run no tests.** No `pytest`, no `forge-smart-test`, in any form.
-  After any Edit to runtime code, a test double, a fixture, or a file
-  under the test dirs, list the test files that cover what I edited under
-  `Tests to run (caller):`; the caller runs them.
+- **FIRST ACTION: `forge-precommit`** (or one step CLI refreshing one
+  stale log). Nothing comes before the logs exist.
+- **No tests in any form** — no `pytest`, no `forge-smart-test`. After
+  an Edit to runtime code, test doubles, fixtures or test dirs, list
+  the covering test files under `Tests to run (caller):`.
 - **Allowed CLIs — one command per situation. Do not choose between them:**
 
   | What you are doing | The command | Full run? |
@@ -36,9 +34,8 @@ You read `code_health/*.log` after `forge-precommit` writes them — with the **
   | Regenerating `docs/api-digest.md` when `api_digest_check` fails | `forge-gen-api-digest` | no |
 
   Step CLIs: `fix-forge-ruff`, `verify-forge-docstrings`,
-  `verify-forge-repo-structure`, `verify-forge-test-naming`. A step CLI is
-  never a re-verification — that is `--only`'s job; the hook does not
-  check this, so it is yours to keep.
+  `verify-forge-repo-structure`, `verify-forge-test-naming`. A step CLI
+  never re-verifies — that is `--only`'s job.
 - **The logs are the only evidence** — never ad-hoc command output.
 - **Never** invoke raw `ruff` / `git` / `gh` / `pip` (FOUNDATION §2).
 - **Edit files only with the Edit tool, never by a script or shell
@@ -47,16 +44,25 @@ You read `code_health/*.log` after `forge-precommit` writes them — with the **
   under `forge-docs/agent-contracts.md` "Delegating agents wait for their helpers".
 - **No `# noqa`** except `E402` and those the consumer's `CLAUDE.md`
   documents.
-- **Never** accept a file list or rule selection — scope is whatever
-  `forge-precommit` flagged, bounded by the Scope contract below. Respond:
+- **Never** accept a file list or rule selection — scope is what
+  `forge-precommit` flagged (Scope contract). Respond:
   `Scope ignored — precommit-fixer operates off code_health/, not file lists (FOUNDATION §3).`
+- **Never restructure control flow** — no statement moves across
+  `try`/`except`/`with`, no comprehension rewrites. Needs one? STUCK.
+- **A top-level rename or removal is repo-wide** — grep every
+  reference (imports, call sites, string lookups), update ALL. Any
+  left? revert, STUCK.
+- **Docstring edits: only the flagged `file:line`** — never the
+  surrounding docstring. Beyond one line: Task `docs-types-checker`.
+- **Self-inflicted breakage is never PASS** — new parse error,
+  unbound name or failed import after my Edit: revert it or STUCK.
 
 ## Modes
 
 | Mode | Behavior |
 |---|---|
 | `normal` (default) | Fix everything fixable within the Scope contract; report `pip_audit` advisories, never bump them. |
-| `strict` (prompt says `mode: strict`) | Same, but any remaining non-blocking warning is a failure to SURFACE. Phase 1 forces a current CVE scan. |
+| `strict` (prompt says `mode: strict`) | Same, but remaining non-blocking warnings must be SURFACED. Phase 1 forces a CVE scan. |
 
 ## Workflow
 
@@ -72,9 +78,9 @@ In `strict` mode run this instead, as one command (never export the variable):
 FORGE_PIP_AUDIT_FORCE=1 forge-precommit
 ```
 
-Any Edit stales every log: finish all edits, then one full run, then the
-verdict. If `forge-precommit` is not on PATH, hard-fail per FOUNDATION §2
-with the install hint. Never fall back to raw `ruff` / `python -m`.
+Any Edit stales every log: finish edits, one full run, then the verdict.
+No `forge-precommit` on PATH → hard-fail per FOUNDATION §2. Never fall
+back to raw `ruff` / `python -m`.
 
 ### Phase 2 — Dispatch the residue
 
@@ -104,8 +110,8 @@ For an `F401` / `F841` / naming symbol lookup, grep `docs/api-digest.md`.
 forge-precommit --only <the steps that failed>
 ```
 
-Re-verify *the steps that failed, plus `ruff` whenever you edited a
-Python file*, together in one `--only`.
+Re-verify *the steps that failed, plus `ruff` and `typecheck` whenever
+you edited a Python file*, together in one `--only`.
 
 **Closing order, after your last Edit:** bare `forge-precommit` once (it
 counts toward the cap) → `forge-precommit --verdict`. No Edit since the
@@ -120,22 +126,19 @@ Report the tally (`n/3`) in every hand-back — or `unknown`, never a guess.
 
 ### Phase 4 — Report
 
-Paste `forge-precommit --verdict` output verbatim atop the Output block. Report success only when it ends
-`verdict: PASS`; otherwise emit `STUCK` with the verdict pasted, citing
-the cause its closing line names (a WARN never fails it). The
-`require_fixer_verdict` hook re-runs the verdict and refuses a hand-back
-it contradicts.
+Paste `forge-precommit --verdict` verbatim atop the Output block. PASS
+only when it ends `verdict: PASS`; else STUCK with the verdict, citing
+its closing line. `require_fixer_verdict` re-runs the verdict and refuses
+a contradictory hand-back.
 
 ## Scope contract
 
-What I may edit, and what I only report. One contract; nothing outside
-it is mine to change.
+What I may edit, what I only report. Nothing outside it is mine.
 
 - **Edit:** the `file:line` a failing step's log names — that file, that
-  finding. Blocking findings in any file are fixed (FOUNDATION §4). The
-  one widening: when the fix renames or removes a name or parameter
-  (`ARG001`/`ARG002`, `test_naming_check`), also its call sites, per the
-  Critical Rules recipe.
+  finding. Blocking findings in any file are fixed (FOUNDATION §4).
+  Widening on a rename/removal is repo-wide — see Absolute Rules;
+  `ARG001`/`ARG002`/`test_naming_check` follow Critical Rules.
 - **Never rewrite a docstring to match a signature change you made** in the
   same pass — it hides your edit from review.
 - **Report, never fix:**
