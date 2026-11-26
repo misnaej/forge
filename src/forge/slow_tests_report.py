@@ -47,7 +47,11 @@ second** per test function — statements no other test covers, over the
 test's summed wall time. A slow test with high unique coverage is kept
 and its inputs shrunk; a slow test whose coverage is entirely duplicated
 is a deletion candidate. Ratios rather than seconds: coverage shares are
-machine-invariant where wall-clock is not.
+machine-invariant where wall-clock is not. The export itself is streamed
+one file entry at a time (shared loader
+:func:`forge.smart_test.coverage.iter_export_files`), so peak memory does
+not scale with the export size; an export too large for the available
+memory is skipped with a diagnosable message instead of dying on a signal.
 """
 
 from __future__ import annotations
@@ -59,10 +63,15 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from forge.config import path_under_roots, resolve_tool_roots
 from forge.git_utils import code_health_dir, configure_cli_logging, repo_root
-from forge.smart_test.coverage import load_export
+from forge.smart_test.coverage import ExportUnavailableError, iter_export_files
+
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 configure_cli_logging()
@@ -350,15 +359,20 @@ def seconds_by_base(durations: list[Duration]) -> dict[str, float]:
 
 
 def unique_statements(
-    data: dict[str, object],
+    files: Iterable[tuple[str, object]],
     source_roots: list[str],
     *,
     repo_root: Path | None = None,
 ) -> tuple[dict[str, int], set[str]]:
     """Count statements covered by exactly one test function.
 
+    Consumes the export's ``(filename, file-info)`` entries one at a time
+    (see :func:`forge.smart_test.coverage.iter_export_files`), so peak
+    memory stays bounded by the largest single entry instead of the whole
+    document.
+
     Args:
-        data: A parsed ``coverage json --show-contexts`` document.
+        files: The export's per-file entries, streamed or materialized.
         source_roots: Repo-relative source roots to scope the statement
             universe to, so boilerplate in test files and other
             instrumented paths cannot pad a test's unique count. An empty
@@ -380,8 +394,7 @@ def unique_statements(
     """
     unique: dict[str, int] = {}
     seen: set[str] = set()
-    files = data.get("files")
-    for fname, info in (files if isinstance(files, dict) else {}).items():
+    for fname, info in files:
         if not isinstance(info, dict):
             continue
         in_scope = path_under_roots(
@@ -449,7 +462,7 @@ def _worth_row(
 
 def format_coverage_ranking(
     durations: list[Duration],
-    data: dict[str, object],
+    files: Iterable[tuple[str, object]],
     scope: CoverageScope,
     *,
     top: int,
@@ -463,7 +476,7 @@ def format_coverage_ranking(
 
     Args:
         durations: Parsed durations from the pytest log.
-        data: A parsed ``coverage json --show-contexts`` document.
+        files: The export's per-file entries, streamed or materialized.
         scope: The source roots and repo root the export is scoped to.
         top: Maximum rows to render.
         truncated: Whether pytest capped the durations section, making
@@ -475,7 +488,7 @@ def format_coverage_ranking(
         no-data notice when the log yielded no durations to rank.
     """
     unique, seen = unique_statements(
-        data, scope.source_roots, repo_root=scope.repo_root
+        files, scope.source_roots, repo_root=scope.repo_root
     )
     if not seen:
         return (
@@ -678,20 +691,21 @@ def main() -> int:
             else format_baseline_delta(durations, baseline)
         )
     if args.coverage_json:
-        data = load_export(Path(args.coverage_json))
-        roots, root = _coverage_scope() if data is not None else ([], None)
-        blocks.append(
-            f"Coverage worth: no usable coverage export at {args.coverage_json} "
-            "— ranking skipped."
-            if data is None
-            else format_coverage_ranking(
+        roots, root = _coverage_scope()
+        try:
+            block = format_coverage_ranking(
                 durations,
-                data,
+                iter_export_files(Path(args.coverage_json)),
                 CoverageScope(roots, root),
                 top=args.top,
                 truncated=durations_truncated(source),
             )
-        )
+        except ExportUnavailableError:
+            block = (
+                f"Coverage worth: no usable coverage export at {args.coverage_json} "
+                "— ranking skipped."
+            )
+        blocks.append(block)
     report = "\n\n".join(blocks)
     logger.info("%s", report)
     if args.update_baseline:

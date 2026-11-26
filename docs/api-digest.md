@@ -2202,9 +2202,9 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `format_baseline_delta(durations: list[Duration], baseline: dict[str, float]) -> str` — Render the regression block comparing *durations* to *baseline*.
 - `nodeid_base(nodeid: str) -> str` — Collapse a node id to the test function that owns it.
 - `seconds_by_base(durations: list[Duration]) -> dict[str, float]` — Sum every phase and every parametrized variant per test function.
-- `unique_statements(data: dict[str, object], source_roots: list[str], *, repo_root: Path | None = None) -> tuple[dict[str, int], set[str]]` — Count statements covered by exactly one test function.
+- `unique_statements(files: Iterable[tuple[str, object]], source_roots: list[str], *, repo_root: Path | None = None) -> tuple[dict[str, int], set[str]]` — Count statements covered by exactly one test function.
 - `_worth_row(base: str, seconds: float, unique: int | None) -> tuple[tuple[int, float], str]` _(internal)_ — Render one ranking row and the key it sorts on.
-- `format_coverage_ranking(durations: list[Duration], data: dict[str, object], scope: CoverageScope, *, top: int, truncated: bool) -> str` — Rank test functions by unique covered statements per second.
+- `format_coverage_ranking(durations: list[Duration], files: Iterable[tuple[str, object]], scope: CoverageScope, *, top: int, truncated: bool) -> str` — Rank test functions by unique covered statements per second.
 - `durations_truncated(text: str) -> bool` — Return whether pytest actually hid durations entries in *text*.
 - `_coverage_scope() -> tuple[list[str], Path | None]` _(internal)_ — Return the roots to scope counted statements to, and the repo they are in.
 - `_default_log() -> Path` _(internal)_ — Return the pytest log read when ``--log`` is not given.
@@ -2245,9 +2245,19 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _Coverage-validated test selection._
 
+- `class ExportUnavailableError` — A coverage export cannot be used (missing, malformed, or too large).
+- `_fmt_bytes(size: int) -> str` _(internal)_ — Render a byte count in human units, e.g. ``12.1 GB``.
+- `available_memory_bytes() -> int | None` — Return the best-effort available memory in bytes, or ``None``.
+- `class _StreamReader` _(internal)_ — Incrementally decode JSON values from a chunked text stream.
+  - `peek(self) -> str` — Return the next significant character, or ``""`` at EOF.
+  - `take(self) -> str` — Consume and return the next significant character.
+  - `expect(self, char: str) -> None` — Consume *char*, raising ``ValueError`` on anything else.
+  - `decode(self) -> object` — Decode one complete JSON value at the cursor.
+- `_iter_files_entries(reader: _StreamReader) -> Iterator[tuple[str, object]]` _(internal)_ — Yield ``(filename, entry)`` pairs from a ``files`` object member.
+- `_iter_top_level(reader: _StreamReader) -> Iterator[tuple[str, object]]` _(internal)_ — Yield ``(filename, entry)`` pairs from a coverage export's top level.
+- `iter_export_files(coverage_json: Path, *, chunk_size: int = READ_CHUNK_SIZE) -> Iterator[tuple[str, object]]` — Stream ``(filename, file-info)`` entries from a coverage export.
 - `_context_to_test(context: str) -> str | None` _(internal)_ — Reduce a coverage context to a repo-relative test file path.
-- `_from_json(data: dict[str, object], changed: set[str]) -> set[str]` _(internal)_ — Map a parsed coverage-JSON document to covering test files.
-- `load_export(coverage_json: Path) -> dict[str, object] | None` — Load a ``coverage json --show-contexts`` export, or ``None``.
+- `_entry_tests(info: dict[str, object]) -> set[str]` _(internal)_ — Map one file entry's contexts to the test files covering it.
 - `tests_covering(coverage_json: Path, changed_files: Iterable[str]) -> set[str]` — Return repo-relative test files whose coverage touches a changed file.
 
 ## `forge.smart_test.dependencies`
