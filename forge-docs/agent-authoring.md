@@ -1,9 +1,9 @@
 # Canonical agent shape
 
-**Not a forge agent.** Forge's own tooling skips underscore-prefixed files,
-but Claude Code does not: it lists this one as a spawnable `forge:_TEMPLATE`.
-Nothing routes to it: it has no frontmatter. Forge agents copy
-this structure; the `forge-audit-agents` CLI flags drift.
+**Author-time guidance, not an agent.** No converter installs this page as
+a spawnable agent on any harness. Forge agents copy the structure below,
+and the `forge-audit-agents` CLI flags drift from it. Repo-specific agents
+and §16 wrappers follow the same shape.
 
 See [FOUNDATION §11](../FOUNDATION.md#11-agent-boundary-protocol) for
 the policy this template implements.

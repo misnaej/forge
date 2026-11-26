@@ -5,9 +5,9 @@ for authoring one. Four of them: how a reporter heads its report, when a
 delegating agent may hand back, what a guard block means, and what
 report-only forbids. Each agent that these bind states the rule in its
 own doc and points here for the full text. The authoring half ships
-separately as `forge-docs/agent-authoring.md` (canonical at
-`agents/_TEMPLATE.md` in forge's own repo), which no converter installs
-as a spawnable agent.
+separately as `forge-docs/agent-authoring.md`, the real file; forge's own
+repo keeps `agents/_TEMPLATE.md` as a symlink to it, and no converter
+installs either as a spawnable agent.
 
 ## Reporter header contract
 
@@ -117,5 +117,6 @@ caller, which owns remediation and posting.
 
 An agent that holds `Edit` or `Write` edits files only with those tools,
 never by a script or shell redirection, and reports a refused edit rather
-than re-routing it. A script edit escapes the Edit/Write-scoped hooks, and re-routing a refused edit is
-bypassing the guard that refused it (FOUNDATION §2).
+than re-routing it. A script edit escapes the Edit/Write-scoped hooks,
+and re-routing a refused edit is bypassing the guard that refused it
+(FOUNDATION §2).

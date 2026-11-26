@@ -284,7 +284,7 @@ def _check_word_count(agent: AgentDoc) -> list[Finding]:
                 line=0,
                 message=(
                     f"word_count={count} exceeds hard cap {WORD_CAP_HIGH} "
-                    "— trim required (see agents/_TEMPLATE.md)"
+                    "— trim required (see forge-docs/agent-authoring.md)"
                 ),
             )
         ]
@@ -1160,8 +1160,8 @@ def main() -> int:
         prog="forge-audit-agents",
         description=(
             "Measure forge agents against the canonical template in "
-            "agents/_TEMPLATE.md. Non-blocking initially; promoted after "
-            "Layer 3 trim PRs."
+            "forge-docs/agent-authoring.md. Non-blocking initially; "
+            "promoted after Layer 3 trim PRs."
         ),
         honours_scope=False,
     )

@@ -144,7 +144,7 @@ Foundation agents, generated into each harness by its converter.
 documents the canonical agent shape (frontmatter, length budget,
 ownership model) — see [FOUNDATION §11](FOUNDATION.md#11-agent-boundary-protocol).
 
-- _TEMPLATE.md: symlink to `forge-docs/agent-authoring.md`, which holds the agent authoring template and ships to consumers; the path is kept because FOUNDATION, the audit and contributor docs name it. The underscore prefix excludes it from forge's own tooling only — Claude Code discovers it as a spawnable agent like every other file here, so it is listed as `forge:_TEMPLATE` (the `agents` manifest key cannot exclude it; nothing routes to it only because it has no frontmatter)
+- _TEMPLATE.md: symlink to `forge-docs/agent-authoring.md`, which holds the agent authoring template and ships to consumers; the path is kept because FOUNDATION, the audit and contributor docs name it. Editing this path edits the page. The underscore prefix excludes it from forge's own tooling, and both converters skip it by name, so no harness ever lists it as a spawnable agent
 - design-checker.md: design review agent
 - docs-types-checker.md: docs and type-hint checker agent
 - issue-triage.md: GitHub issue triage agent

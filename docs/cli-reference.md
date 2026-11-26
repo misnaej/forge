@@ -81,8 +81,8 @@ options:
 usage: forge-audit-agents [-h] [--scope {full,changed}] [--roots [ROOTS ...]]
                           [--output OUTPUT]
 
-Measure forge agents against the canonical template in agents/_TEMPLATE.md.
-Non-blocking initially; promoted after Layer 3 trim PRs.
+Measure forge agents against the canonical template in forge-docs/agent-
+authoring.md. Non-blocking initially; promoted after Layer 3 trim PRs.
 
 options:
   -h, --help            show this help message and exit

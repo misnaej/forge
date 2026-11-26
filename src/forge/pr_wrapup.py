@@ -5,7 +5,8 @@ reporters ran at which commit, what they found, how each finding was
 dispositioned. Two things go wrong when it is posted by hand. It grows —
 the report-by-exception rule (``forge-docs/agent-contracts.md``: "a clean
 check is ONE line") lives in agent prose, and prose is a remembered step —
-and it never gets retired, so every earlier wrap-up on the PR keeps reading as a current
+and it never gets retired, so every earlier wrap-up on the PR keeps
+reading as a current
 attestation of a tree that no longer exists. This CLI makes both
 mechanical: ``validate`` refuses a body that narrates clean checks (a long one
 only warns), and ``post`` stamps the new wrap-up with a marker,
@@ -16,7 +17,7 @@ squash-merge comment so it stays the PR's newest.
 The header contract (``verified-at:`` first line, optional
 ``wrapup-mode:`` and ``prior-art-searched:`` lines) is
 ``forge-docs/agent-contracts.md``'s, bar ``prior-art-searched:``, which
-the agent template still owns;``block_unverified_pr_create`` and
+the agent template still owns; ``block_unverified_pr_create`` and
 ``forge-pr-plan --freshness`` read the same lines, so the collapse keeps
 the original body — header included — verbatim inside the details block.
 
