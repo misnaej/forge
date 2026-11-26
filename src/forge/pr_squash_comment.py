@@ -140,6 +140,18 @@ TITLE_RE: Final[re.Pattern[str]] = re.compile(
 
 MIN_BULLETS: Final[int] = 3
 MAX_BULLETS: Final[int] = 5
+# The register, emitted where the author composes rather than only
+# stated in FOUNDATION §6: a rule met at the moment of writing is
+# applied, and one met in a document has to be remembered. Nothing can
+# check it — no parser separates a clause from prose — so the example
+# carries it.
+REGISTER_RULE: Final = (
+    "bullets are terse, not prose: drop articles, filler, hedging and "
+    "connective sentences; names, numbers and commands exact. Write "
+    "`Index-move refusal names the targeted --only refresh, not a full "
+    "run`, never `An index-move refusal now names the targeted --only "
+    "refresh instead of advising a full run.`"
+)
 # The ceiling, never a length to write toward, and what "cut N" is
 # measured against. Over it the message posts with a warning, and that is
 # all length ever does here: what a message must not do is leave part of
@@ -834,6 +846,10 @@ def main() -> int:
             f"  {i}. {item}" for i, item in enumerate(fragment_items, start=1)
         )
         sys.stderr.write(f"changelog bullets to cover:\n{numbered}\n")
+    # The register prints on every dry run, numbering or not: it is what
+    # the author is about to apply, and FOUNDATION §6 points here for it.
+    if args.dry_run:
+        sys.stderr.write(f"forge-pr-squash-comment: {REGISTER_RULE}\n")
 
     problems = validate(
         args.title, bullets, claims=claims, fragment_items=fragment_items

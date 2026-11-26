@@ -17,17 +17,21 @@ import pytest
 
 from forge import changelog_fragments, git_utils
 from forge.changelog_fragments import (
+    BULLET_REFUSAL_WORDS,
+    BULLET_WORD_CEILING,
     AssemblyPlan,
     Fragment,
+    advised_bullets,
     assemble_changelog,
     branch_added_fragments,
     check_pending,
     discover_fragments,
     fragment_bullets,
-    long_bullets,
     main,
     max_level,
+    overlong_bullet_refusal,
     plan_assembly,
+    refused_bullets,
     validate_fragment,
     verbose_entry_note,
 )
@@ -150,6 +154,22 @@ def test_validate_fragment_happy_path(tmp_path: Path) -> None:
     assert fragment == Fragment(
         path=path, slug="issue-229", type="added", level="minor", body="- did a thing"
     )
+
+
+def test_validate_fragment_accepts_a_long_bullet(tmp_path: Path) -> None:
+    """INVARIANT: ``validate_fragment`` never refuses over bullet length.
+
+    It is shared by ``check_pending``, ``forge-changelog auto-tag`` and
+    the assembler, so a refusal here would let a long bullet already on
+    main block a release tag or a weekly assembly. The length refusal
+    belongs to the pre-commit gate, scoped to the added fragment.
+    """
+    bullet = "- " + " ".join(f"w{i}" for i in range(60)) + "\n"
+    path = _write_fragment(tmp_path, "long.added.md", f"bump: minor\n{bullet}")
+    fragment, errors = validate_fragment(path)
+    assert errors == []
+    assert fragment is not None
+    assert fragment.level == "minor"
 
 
 @pytest.mark.parametrize(
@@ -561,6 +581,54 @@ def test_assemble_changelog_date_default_and_override(
 def test_check_pending_empty_when_no_fragments(tmp_path: Path) -> None:
     """No `changelog.d/` directory → no errors."""
     assert check_pending(tmp_path) == []
+
+
+def test_check_pending_accepts_a_long_bullet(tmp_path: Path) -> None:
+    """INVARIANT: ``check_pending`` raises no error over bullet length.
+
+    It is what ``forge-changelog auto-tag`` and the assembler call, so a
+    refusal here would block a release tag for a long bullet on main.
+    """
+    bullet = "- " + " ".join(f"w{i}" for i in range(60)) + "\n"
+    _write_fragment(tmp_path / "changelog.d", "long.added.md", f"bump: minor\n{bullet}")
+    assert check_pending(tmp_path) == []
+
+
+def test_staged_fragment_returns_the_index_copy_not_the_disk_copy(
+    tmp_path: Path,
+) -> None:
+    """BEHAVIOR: when index and disk differ, the parsed fragment is the index's.
+
+    A commit carries the index, so the staged text is the one a length
+    check must see. Uses one real-git repo: the index is the thing under
+    test, so no fake stands in for it.
+    """
+    init_git_repo(tmp_path)
+    rel = "changelog.d/a.added.md"
+    staged = "- " + " ".join(f"w{i}" for i in range(30))
+    path = _write_fragment(
+        tmp_path / "changelog.d", "a.added.md", f"bump: minor\n{staged}\n"
+    )
+    subprocess.run(["git", "add", rel], cwd=tmp_path, env=GIT_ENV, check=True)
+    path.write_text("bump: minor\n- short\n")
+
+    fragment, errors = changelog_fragments.staged_fragment(tmp_path, rel)
+
+    assert errors == []
+    assert fragment is not None
+    assert fragment.body == staged
+
+
+def test_staged_fragment_without_an_index_blob_is_not_an_error(
+    tmp_path: Path,
+) -> None:
+    """BEHAVIOR: a path absent from the index (on disk only) gives ``(None, [])``."""
+    init_git_repo(tmp_path)
+    _write_fragment(tmp_path / "changelog.d", "a.added.md", "bump: minor\n- x\n")
+    assert changelog_fragments.staged_fragment(tmp_path, "changelog.d/a.added.md") == (
+        None,
+        [],
+    )
 
 
 def test_check_pending_aggregates_errors_across_fragments(tmp_path: Path) -> None:
@@ -2738,22 +2806,38 @@ def _bullet_of(words: int) -> str:
     return "- " + " ".join(f"w{i}" for i in range(words)) + "\n"
 
 
-def test_long_bullets_boundary_twelve_ok_thirteen_flagged() -> None:
-    """BEHAVIOR: 12 words is within the ceiling, 13 is returned with its count."""
-    assert long_bullets(_bullet_of(12)) == []
-    found = long_bullets(_bullet_of(12) + _bullet_of(13))
-    assert [count for _bullet, count in found] == [13]
+_NOTE_QUOTE_MAX = changelog_fragments._NOTE_QUOTE_MAX
+CEIL = BULLET_WORD_CEILING
+REFUSAL = BULLET_REFUSAL_WORDS
 
 
-def test_long_bullets_flags_past_the_refusal_threshold_too() -> None:
-    """BEHAVIOR: 15 words (past 14) is flagged like 13 is; bullets never refuse."""
-    found = long_bullets(_bullet_of(14) + _bullet_of(15))
-    assert [count for _bullet, count in found] == [14, 15]
+def test_advised_bullets_boundary_twelve_ok_thirteen_advised() -> None:
+    """BEHAVIOR: a bullet at the ceiling is accepted, one word over is advised."""
+    assert advised_bullets(_bullet_of(CEIL)) == []
+    found = advised_bullets(_bullet_of(CEIL) + _bullet_of(CEIL + 1))
+    assert [count for _bullet, count in found] == [CEIL + 1]
 
 
-def test_long_bullets_ignores_non_bullet_lines() -> None:
-    """BEHAVIOR: long prose that is not a ``- `` bullet is not counted."""
-    assert long_bullets("bump: minor\n" + "word " * 40 + "\n") == []
+def test_bullet_bands_ceiling_advised_refused() -> None:
+    """BEHAVIOR: ceiling is ok, up to the refusal count advised, past it refused.
+
+    Every bullet lands in exactly one band: the at-ceiling bullet is in
+    neither list, and advised plus refused plus it account for all four.
+    """
+    counts = (CEIL, CEIL + 1, REFUSAL, REFUSAL + 1)
+    body = "".join(_bullet_of(n) for n in counts)
+    advised = [count for _bullet, count in advised_bullets(body)]
+    refused = [count for _bullet, count in refused_bullets(body)]
+    assert advised == [CEIL + 1, REFUSAL]
+    assert refused == [REFUSAL + 1]
+    assert sorted([CEIL, *advised, *refused]) == sorted(counts)
+
+
+def test_bullet_bands_ignore_non_bullet_lines() -> None:
+    """BEHAVIOR: long non-bullet prose is neither advised nor refused."""
+    body = "bump: minor\n" + "word " * 40 + "\n"
+    assert advised_bullets(body) == []
+    assert refused_bullets(body) == []
 
 
 def test_fragment_bullets_folds_indented_continuation_into_the_bullet() -> None:
@@ -2768,34 +2852,81 @@ def test_fragment_bullets_ignores_orphan_indented_line_and_prose() -> None:
     assert fragment_bullets(body) == ["real", "last"]
 
 
-def test_long_bullets_counts_the_whole_wrapped_bullet() -> None:
+@pytest.mark.parametrize(
+    ("lines", "advised_counts", "refused_counts"),
+    [(2, [2 * (CEIL // 2 + 1)], []), (3, [], [3 * (CEIL - 3)])],
+)
+def test_bullet_bands_count_the_whole_wrapped_bullet(
+    lines: int, advised_counts: list[int], refused_counts: list[int]
+) -> None:
     """BEHAVIOR: wrapped bullet is measured whole, not by its first line.
 
-    Pins the deliberate change: ``long_bullets`` once counted only the
-    first line, so a bullet wrapped into short lines escaped the advisory.
+    Every line alone is within the ceiling, so counting the first line
+    only would put the bullet in neither list.
+
+    Args:
+        lines: Number of lines the bullet wraps over.
+        advised_counts: Expected word counts of advised bullets.
+        refused_counts: Expected word counts of refused bullets.
     """
-    body = "- " + " ".join(["a"] * 8) + "\n  " + " ".join(["b"] * 8) + "\n"
-    found = long_bullets(body)
-    assert [count for _bullet, count in found] == [16]
+    line_words = CEIL // 2 + 1 if lines == 2 else CEIL - 3
+    assert line_words <= CEIL
+    assert lines * line_words > (CEIL if lines == 2 else REFUSAL)
+    body = "- " + "\n  ".join(" ".join(["w"] * line_words) for _ in range(lines))
+    assert [c for _b, c in advised_bullets(body)] == advised_counts
+    assert [c for _b, c in refused_bullets(body)] == refused_counts
 
 
 def test_verbose_entry_note_silent_for_short_or_bulletless_body() -> None:
     """BEHAVIOR: all-short bullets and a bullet-less body draw no advisory."""
-    assert verbose_entry_note(_bullet_of(5) + _bullet_of(12)) is None
+    assert verbose_entry_note(_bullet_of(5) + _bullet_of(CEIL)) is None
     assert verbose_entry_note("") is None
     assert verbose_entry_note("prose, no bullets at all\n") is None
 
 
 def test_verbose_entry_note_names_worst_count_and_truncates() -> None:
     """BEHAVIOR: advisory carries the worst word count and a truncated bullet."""
-    body = _bullet_of(15) + _bullet_of(40)
+    body = _bullet_of(CEIL + 1) + _bullet_of(REFUSAL)
     note = verbose_entry_note(body)
     assert note is not None
     assert "2 bullet(s)" in note
-    assert "40 words" in note
+    assert f"{REFUSAL} words" in note
+    assert str(REFUSAL) in note
     full_bullet = body.splitlines()[1]
+    assert len(full_bullet) > _NOTE_QUOTE_MAX
     assert full_bullet not in note
-    assert full_bullet[:80] in note
+    assert full_bullet[:_NOTE_QUOTE_MAX] in note
+
+
+def test_verbose_entry_note_says_nothing_about_a_refused_bullet() -> None:
+    """BEHAVIOR: the advisory covers advised bullets; refusals are not its."""
+    note = verbose_entry_note(_bullet_of(CEIL + 1) + _bullet_of(REFUSAL + 1))
+    assert note is not None
+    assert "1 bullet(s)" in note
+    assert f"worst at {CEIL + 1} words" in note
+    assert verbose_entry_note(_bullet_of(REFUSAL + 1)) is None
+
+
+def test_overlong_bullet_refusal_names_worst_and_caps_quote() -> None:
+    """BEHAVIOR: refusal counts refused bullets, names the worst, caps its quote."""
+    body = _bullet_of(REFUSAL + 1) + _bullet_of(REFUSAL + 5)
+    refusal = overlong_bullet_refusal(body)
+    assert refusal is not None
+    assert "2 bullet(s)" in refusal
+    assert f"worst at {REFUSAL + 5}" in refusal
+    assert str(CEIL) in refusal
+    assert str(REFUSAL) in refusal
+    worst = body.splitlines()[1]
+    assert len(worst) > _NOTE_QUOTE_MAX
+    assert worst not in refusal
+    assert worst[:_NOTE_QUOTE_MAX] + "…" in refusal
+
+
+def test_overlong_bullet_refusal_none_at_or_under_the_threshold() -> None:
+    """BEHAVIOR: a bullet at or under the refusal count is not refused."""
+    assert overlong_bullet_refusal(_bullet_of(REFUSAL)) is None
+    assert overlong_bullet_refusal(_bullet_of(CEIL + 1) + _bullet_of(5)) is None
+    assert overlong_bullet_refusal("") is None
 
 
 def test_verbose_entry_note_accepts_many_short_bullets() -> None:

@@ -59,3 +59,66 @@ def test_length_verdict_is_relative_to_the_ceiling_given(
         expected: The band it falls in.
     """
     assert length_verdict(words, 12) == expected
+
+
+@pytest.mark.parametrize(
+    ("ceiling", "refuse_over"), [(12, 24), (12, 13), (12, 12), (45, 100)]
+)
+def test_refusal_threshold_refuse_over_is_absolute(
+    ceiling: int, refuse_over: int
+) -> None:
+    """Behavior: refuse_over is the threshold, not a width added to the ceiling.
+
+    Args:
+        ceiling: Stated limit for a kind of text.
+        refuse_over: Last acceptable count, equal to the ceiling in one case.
+    """
+    assert refusal_threshold(ceiling, refuse_over=refuse_over) == refuse_over
+
+
+def test_refusal_threshold_rejects_refuse_over_below_ceiling() -> None:
+    """Behavior: a refusal threshold under the ceiling is rejected."""
+    with pytest.raises(ValueError, match="below the ceiling"):
+        refusal_threshold(12, refuse_over=11)
+
+
+@pytest.mark.parametrize("words", [5, 12, 13])
+def test_length_verdict_rejects_refuse_over_below_ceiling_at_any_length(
+    words: int,
+) -> None:
+    """Behavior: an incoherent refuse_over raises whatever the word count.
+
+    Detects the guard running after the band comparison: a wrong constant
+    must fail on the first call, not on the first text long enough to
+    reach it. Word counts at and under the ceiling are the cases an
+    early "ok" return would let through.
+
+    Args:
+        words: Word count under test, for a ceiling of 12.
+    """
+    with pytest.raises(ValueError, match="below the ceiling"):
+        length_verdict(words, 12, refuse_over=11)
+
+
+@pytest.mark.parametrize(
+    ("words", "refuse_over", "expected"),
+    [
+        (12, 24, "ok"),
+        (13, 24, "warn"),
+        (24, 24, "warn"),
+        (25, 24, "refuse"),
+        (12, 12, "ok"),
+        (13, 12, "refuse"),
+    ],
+)
+def test_length_verdict_bands_with_refuse_over(
+    words: int, refuse_over: int, expected: str
+) -> None:
+    """Behavior: with refuse_over, warn band is ceiling..refuse_over; equal: none.
+
+    Args:
+        words: Word count under test, for a ceiling of 12.
+        refuse_over: Last acceptable count.
+        expected: The band it falls in.
+    """
+    assert length_verdict(words, 12, refuse_over=refuse_over) == expected

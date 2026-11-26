@@ -251,16 +251,24 @@ more than one, so writing a fragment means deciding these:
 - **One bullet per thing that changed, each as short as it can be.** The
   count follows what changed in the repo, never the size of the diff — a
   one-line fix and a rewrite each earn one bullet per change. What the
-  gate checks is the half a program can see: a bullet past about
+  gate checks is the half a program can see: a bullet past
   `forge.changelog_fragments.BULLET_WORD_CEILING` words earns an advisory
-  naming the longest. Say what changed and stop; the why belongs in the
-  commit, the PR or the code, each of which the reader can reach and none
-  of which they should have to read first. **Advisory only here** — a
-  12-word ceiling's refusal band is three words wide, and a commit
-  blocked over that costs more than the prose does. The commit message,
-  wrap-up and PR description do refuse far past theirs; the squash
-  message never refuses on length — what it must not do is leave part of
-  the merge undescribed, and that is what its coverage check refuses.
+  naming the longest, and a bullet past twice it
+  (`BULLET_REFUSAL_WORDS`) **refuses the commit** — at that length it has
+  stopped being an entry whatever it says. Say what changed and stop; the
+  why belongs in the commit, the PR or the code, each of which the reader
+  can reach and none of which they should have to read first. The
+  refusal threshold is stated outright rather than taken as a percentage
+  of the ceiling, which at twelve words would be two. Only the fragment
+  the branch **adds** is judged — its staged copy, since that is what a
+  commit carries — so an entry already on the base branch never starts
+  refusing later commits, and no release or assembly path reads the
+  check. Where the base cannot be resolved (a fresh clone with no
+  remote), the check degrades open alongside the one-fragment count. The
+  commit message, wrap-up and PR description refuse far past theirs too;
+  the squash message never refuses on length — what
+  it must not do is leave part of the merge undescribed, and that is what
+  its coverage check refuses.
   The bullet count is deliberately unchecked: how
   many things changed is not derivable from a diff, and guessing it from
   one would nag the entries that are already right.

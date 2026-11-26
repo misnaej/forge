@@ -573,6 +573,31 @@ def _cli_argv(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 
 @pytest.mark.usefixtures("_cli_argv")
+def test_main_dry_run_prints_the_register_rule_without_fragment_items(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Behavior: ``--dry-run`` prints the rule even when no fragment items resolve.
+
+    Detects the rule reaching the author only when the numbering happens
+    to be available, which is the condition that made the documents'
+    unconditional claim false. The module's autouse fixture serves an
+    empty fragment set.
+    """
+    sys.argv.extend(
+        [
+            "--dry-run",
+            "--title",
+            VALID_TITLE,
+            *(item for b in VALID_BULLETS for item in ("--bullet", b)),
+        ]
+    )
+    assert mod.main() == 0
+    err = capsys.readouterr().err
+    assert "changelog bullets to cover:" not in err
+    assert mod.REGISTER_RULE in err
+
+
+@pytest.mark.usefixtures("_cli_argv")
 def test_main_dry_run_prints_body_and_returns_zero(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -635,7 +660,12 @@ def test_main_reports_every_failing_rule_prefixed_on_its_own_stderr_line(
     assert mod.main() == 1
     err = capsys.readouterr().err
     prefix = "forge-pr-squash-comment: "
-    prefixed_lines = [line for line in err.splitlines() if line.startswith(prefix)]
+    rule_line = f"{prefix}{mod.REGISTER_RULE}"
+    prefixed_lines = [
+        line
+        for line in err.splitlines()
+        if line.startswith(prefix) and line != rule_line
+    ]
     assert len(prefixed_lines) == 2
     assert any("conventional-commit" in line for line in prefixed_lines)
     assert any("requires 3-5" in line for line in prefixed_lines)
@@ -1218,6 +1248,7 @@ def test_main_dry_run_prints_numbered_fragment_bullets_to_stderr(
     assert "changelog bullets to cover:" in err
     for i, item in enumerate(FRAGMENT_ITEMS, start=1):
         assert f"  {i}. {item}" in err
+    assert mod.REGISTER_RULE in err
 
 
 @pytest.mark.usefixtures("_cli_argv")

@@ -362,67 +362,157 @@ def _check_bullets(name: str, body: str) -> list[str]:
 #: not scaled to the diff: a one-line fix and a rewrite each earn one
 #: bullet per thing that changed, and the bullet is short either way.
 #:
-#: A ceiling, never a length to write toward, and warn-only here: the
-#: refusal band that guards the message surfaces is three words wide at
-#: this size, and a commit blocked over three words in one bullet buys
-#: nothing (:mod:`forge.text_budget`).
+#: A ceiling, never a length to write toward: over it the entry is
+#: advised, and only past :data:`BULLET_REFUSAL_WORDS` is it refused.
 BULLET_WORD_CEILING: Final[int] = 12
+
+#: The count past which a bullet is refused rather than advised — twice
+#: the ceiling, where a bullet has stopped being an entry and become
+#: prose. Stated outright rather than taken as a percentage of the
+#: ceiling, because :data:`~forge.text_budget.REFUSAL_PERCENT` of twelve
+#: words is two, and refusing an entry two words over buys nothing.
+BULLET_REFUSAL_WORDS: Final[int] = 2 * BULLET_WORD_CEILING
 
 #: Longest bullet excerpt quoted in the advisory, in characters.
 _NOTE_QUOTE_MAX: Final[int] = 80
 
 
-def long_bullets(body: str) -> list[tuple[str, int]]:
-    """Return the fragment's bullets that run past the word ceiling.
+def _bullet_verdicts(body: str) -> list[tuple[str, int, str]]:
+    """Return every bullet with its word count and its length verdict.
+
+    One loop behind both :func:`advised_bullets` and
+    :func:`refused_bullets`, so the advised set and the refused set
+    cannot disagree about where a bullet sits.
 
     One bullet per thing that changed is the rule the author applies;
-    this checks only the part a program can see — that each bullet is as
-    short as it can be. A count of bullets is deliberately not checked:
-    how many things changed is not derivable from a diff, and guessing it
-    from one would nag the entries that are right.
+    this measures only the part a program can see — that each bullet is
+    as short as it can be. A count of bullets is deliberately not
+    checked: how many things changed is not derivable from a diff, and
+    guessing it from one would nag the entries that are right.
+
+    Args:
+        body: The fragment body, as validated.
+
+    Returns:
+        ``(bullet, word count, verdict)`` per bullet, in document order.
+        The bullet carries its ``- `` marker, and a wrapped bullet
+        counts whole.
+    """
+    verdicts: list[tuple[str, int, str]] = []
+    for bullet in fragment_bullets(body):
+        words = len(bullet.split())
+        verdict = length_verdict(
+            words, BULLET_WORD_CEILING, refuse_over=BULLET_REFUSAL_WORDS
+        )
+        verdicts.append((f"- {bullet}", words, verdict))
+    return verdicts
+
+
+def advised_bullets(body: str) -> list[tuple[str, int]]:
+    """Return the bullets over the ceiling that are still accepted.
 
     Args:
         body: The fragment body, as validated.
 
     Returns:
         ``(bullet, word count)`` for each bullet over
-        :data:`BULLET_WORD_CEILING`, in document order; a wrapped bullet
-        counts whole.
+        :data:`BULLET_WORD_CEILING` and at or under
+        :data:`BULLET_REFUSAL_WORDS`, in document order.
     """
-    long: list[tuple[str, int]] = []
-    for bullet in fragment_bullets(body):
-        words = len(bullet.split())
-        if length_verdict(words, BULLET_WORD_CEILING) != "ok":
-            long.append((f"- {bullet}", words))
-    return long
+    return [
+        (bullet, words)
+        for bullet, words, verdict in _bullet_verdicts(body)
+        if verdict == "warn"
+    ]
 
 
-def verbose_entry_note(body: str) -> str | None:
-    """Return an advisory when a fragment's bullets are longer than needed.
-
-    Advisory, never a refusal at this size: the refusal band for a
-    12-word ceiling is three words wide, and blocking a commit over that
-    costs more than the prose does (:mod:`forge.text_budget`). What it
-    buys is the question being asked while the entry is cheap to cut.
+def refused_bullets(body: str) -> list[tuple[str, int]]:
+    """Return the bullets long enough to refuse the commit.
 
     Args:
         body: The fragment body, as validated.
 
     Returns:
-        One advisory line, or ``None`` when every bullet is short.
+        ``(bullet, word count)`` for each bullet past
+        :data:`BULLET_REFUSAL_WORDS`, in document order.
     """
-    long = long_bullets(body)
-    if not long:
-        return None
+    return [
+        (bullet, words)
+        for bullet, words, verdict in _bullet_verdicts(body)
+        if verdict == "refuse"
+    ]
 
-    worst, words = max(long, key=lambda pair: pair[1])
+
+def _worst_quoted(bullets: list[tuple[str, int]]) -> tuple[str, int]:
+    """Return the longest bullet, quotable, with its word count.
+
+    Args:
+        bullets: ``(bullet, word count)`` pairs, never empty.
+
+    Returns:
+        The longest bullet capped at :data:`_NOTE_QUOTE_MAX` characters,
+        and its word count. Capped because the message naming it is read
+        in a terminal, where a 111-word quote buries its own advice.
+    """
+    worst, words = max(bullets, key=lambda pair: pair[1])
     if len(worst) > _NOTE_QUOTE_MAX:
         worst = worst[:_NOTE_QUOTE_MAX] + "…"
+    return worst, words
+
+
+def verbose_entry_note(body: str) -> str | None:
+    """Return an advisory when a fragment's bullets are longer than needed.
+
+    Advisory while the bullet is merely over the ceiling: what it buys is
+    the question being asked while the entry is still cheap to cut. Past
+    :data:`BULLET_REFUSAL_WORDS` the gate refuses instead, and that
+    refusal names the bullet, so this line says nothing about one.
+
+    Args:
+        body: The fragment body, as validated.
+
+    Returns:
+        One advisory line, or ``None`` when no bullet sits over the
+        ceiling without being refused.
+    """
+    advised = advised_bullets(body)
+    if not advised:
+        return None
+
+    worst, words = _worst_quoted(advised)
     return (
-        f"ADVISORY: {len(long)} bullet(s) run long, worst at {words} words "
+        f"ADVISORY: {len(advised)} bullet(s) run long, worst at {words} words "
         f"against a ceiling of {BULLET_WORD_CEILING}. {BUDGET_RULE} The why "
-        f"belongs in the commit, not here. Longest: {worst}. Nothing "
-        f"refuses this."
+        f"belongs in the commit, not here. Longest: {worst}. Past "
+        f"{BULLET_REFUSAL_WORDS} words a bullet is refused, not advised."
+    )
+
+
+def overlong_bullet_refusal(body: str) -> str | None:
+    """Return the refusal for a fragment carrying a bullet of prose.
+
+    The checkable half of "say what changed and stop": a bullet past
+    twice its ceiling has stopped being an entry, whatever it says. The
+    cut is always available, so nothing here needs a bypass.
+
+    Args:
+        body: The fragment body, as validated.
+
+    Returns:
+        One refusal line, or ``None`` when every bullet is within
+        :data:`BULLET_REFUSAL_WORDS`.
+    """
+    refused = refused_bullets(body)
+    if not refused:
+        return None
+
+    worst, words = _worst_quoted(refused)
+    return (
+        f"{len(refused)} bullet(s) past {BULLET_REFUSAL_WORDS} words, worst "
+        f"at {words} — that is prose, not an entry. Cut to the "
+        f"{BULLET_WORD_CEILING}-word ceiling: say what changed and stop, and "
+        f"leave the why to the commit, the PR or the code, each of which the "
+        f"reader can reach. Longest: {worst}"
     )
 
 
@@ -653,6 +743,32 @@ def check_staged(root: Path, paths: list[str]) -> list[str]:
             continue
         errors.extend(_validate_fragment_text(rel_path, text)[1])
     return errors
+
+
+def staged_fragment(root: Path, rel: str) -> tuple[Fragment | None, list[str]]:
+    """Return the staged copy of the fragment at *rel*, parsed.
+
+    A commit carries the index, not the disk: a bullet staged long and
+    then shortened on disk would pass a disk-only check while the commit
+    ships the long one — the same drift :func:`check_staged` guards for
+    structural errors.
+
+    Args:
+        root: Repository root directory.
+        rel: Repo-relative fragment path.
+
+    Returns:
+        The parsed fragment and its errors. ``(None, [])`` when the path
+        has no blob in the index, which is not an error. A fragment the
+        branch committed earlier has one, since the index matches
+        ``HEAD``; the case left is an intent-to-add entry, whose blob is
+        empty and so parses as errors instead.
+    """
+    try:
+        text = run_git("show", f":{rel}", cwd=root, log_errors=False)
+    except subprocess.CalledProcessError:
+        return None, []
+    return _validate_fragment_text(Path(rel), text)
 
 
 def branch_added_fragments(root: Path, *, base_ref: str | None = None) -> list[str]:
