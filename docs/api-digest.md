@@ -2056,6 +2056,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_cfg_str_list(cfg: dict[str, object], key: str, default: list[str]) -> list[str]` _(internal)_ — Return a ``[tool.forge.*]`` list-valued key narrowed to ``list[str]``.
 - `step_doctest(repo_root: Path) -> StepResult` — Run ``pytest --doctest-modules`` over docstring examples (opt-in).
 - `_typecheck_file_set(repo_root: Path) -> str` _(internal)_ — Return the configured ``[tool.forge.typecheck].file_set`` mode.
+- `_typecheck_include_tests(repo_root: Path) -> bool` _(internal)_ — Return whether typecheck scans test dirs alongside source dirs.
 - `_file_set_for_step(repo_root: Path, step: str) -> list[str] | None` _(internal)_ — Return the exact paths *step* would hand its tool, or ``None``.
 - `step_typecheck(repo_root: Path) -> StepResult` — Run pyrefly over the resolved scope (opt-in).
 - `step_doc_consistency(repo_root: Path) -> StepResult` — Run ``verify-forge-doc-consistency`` — doc claims vs repo state (opt-in).

@@ -241,6 +241,13 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "files in dot-directories are included.",
     ),
     ConfigKey(
+        ("tool", "forge", "typecheck", "include_tests"),
+        default=False,
+        description="Scan test_dirs alongside source_dirs as typecheck roots "
+        "(default: source only). Ignored when [tool.forge.typecheck].paths "
+        "is set — paths is a full replacement.",
+    ),
+    ConfigKey(
         ("tool", "forge", "pip_audit", "blocking"),
         default=False,
         description="Make the pip_audit step fail the commit on a CVE "

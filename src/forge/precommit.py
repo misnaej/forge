@@ -1853,6 +1853,24 @@ def _typecheck_file_set(repo_root: Path) -> str:
     return value
 
 
+def _typecheck_include_tests(repo_root: Path) -> bool:
+    """Return whether typecheck scans test dirs alongside source dirs.
+
+    Reads ``[tool.forge.typecheck].include_tests`` (default ``False``) and
+    feeds :func:`forge.config.resolve_tool_roots`'s ``include_tests``, so
+    ``source_dirs`` + ``test_dirs`` become the scan roots. Moot when
+    ``[tool.forge.typecheck].paths`` is set — ``paths`` is a full
+    replacement and tests are the caller's to include in it.
+
+    Args:
+        repo_root: Git repo root.
+
+    Returns:
+        ``True`` when test dirs join the typecheck roots.
+    """
+    return bool(_forge_step_config(repo_root, "typecheck").get("include_tests", False))
+
+
 def _file_set_for_step(repo_root: Path, step: str) -> list[str] | None:
     """Return the exact paths *step* would hand its tool, or ``None``.
 
@@ -1872,7 +1890,9 @@ def _file_set_for_step(repo_root: Path, step: str) -> list[str] | None:
     """
     if step != "typecheck":
         return None
-    roots = config.resolve_tool_roots(repo_root, "typecheck")
+    roots = config.resolve_tool_roots(
+        repo_root, "typecheck", include_tests=_typecheck_include_tests(repo_root)
+    )
     if _resolve_scope(repo_root, "typecheck") == SCOPE_DIFF:
         return config.select_diff_files(repo_root, roots=roots)
     if _typecheck_file_set(repo_root) == "tracked":
@@ -1889,7 +1909,9 @@ def step_typecheck(repo_root: Path) -> StepResult:
     Scope is ``all`` by default — the roots from
     :func:`forge.config.resolve_tool_roots` (granular
     ``[tool.forge.typecheck].paths`` → ``[tool.forge].source_dirs`` → smart
-    auto-detect) — and switchable to ``diff`` per ``[tool.forge.precommit]``,
+    auto-detect, plus ``[tool.forge].test_dirs`` when
+    ``[tool.forge.typecheck].include_tests`` is true) — and switchable to
+    ``diff`` per ``[tool.forge.precommit]``,
     see :func:`_resolve_scope`. ``diff`` checks only the modified files
     *under those same roots* (unlike the sibling diff steps, which take the
     whole diff), so it always selects a subset of what ``all`` would check.
@@ -1931,7 +1953,9 @@ def step_typecheck(repo_root: Path) -> StepResult:
         file_set = _typecheck_file_set(repo_root)
     except ValueError as exc:
         return StepResult(name="typecheck", passed=False, output=str(exc))
-    paths = config.resolve_tool_roots(repo_root, "typecheck")
+    paths = config.resolve_tool_roots(
+        repo_root, "typecheck", include_tests=_typecheck_include_tests(repo_root)
+    )
     if not paths:
         return StepResult(
             name="typecheck",
