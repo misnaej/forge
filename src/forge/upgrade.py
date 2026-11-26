@@ -26,8 +26,8 @@ shortcut via ``--apply``.
 ``forge-upgrade --check`` reports current vs latest without writing
 anything.
 
-Phase 2 and ``--apply`` both refuse a pin naming a release tag the
-shipped changelog doesn't document (exit ``2``) — see
+Phase 2, ``--apply`` and ``--check`` all warn when the target is a
+release tag the shipped changelog doesn't document yet — see
 :func:`_unassembled_notes_warning`.
 
 Pin detection scope: searches for a ``forge-scripts @ git+...`` line
@@ -58,8 +58,10 @@ from forge.changelog import action_items, top_release_heading
 from forge.git_utils import (
     _FORGE_GITHUB_REPO,
     configure_cli_logging,
+    network_git_env,
     parse_semver,
     repo_root,
+    run_git,
 )
 from forge.install_bootstrap import run_in_process as _bootstrap_run
 from forge.run_context import (
@@ -507,6 +509,11 @@ def _run_phase1(args: argparse.Namespace, root: Path) -> tuple[int, str | None]:
                     "installed forge — shown in full on --continue.",
                     pending,
                 )
+        unassembled = _unassembled_notes_warning(
+            target_hint, changelog_text, upstream_tags=_upstream_v_tags()
+        )
+        if unassembled is not None:
+            logger.warning("%s", unassembled)
         return 0, target_hint
 
     target_ref = _resolve_target_ref(args, current_ref)
@@ -826,9 +833,50 @@ def _pending_action_count(changelog_text: str) -> int:
 # explicit choice to track undocumented code, so it is never gated.
 _RELEASE_TAG_RE = re.compile(r"^v\d+\.\d+\.\d+$")
 
+_UPSTREAM_LS_REMOTE_TIMEOUT_S = 10
+
+_UPSTREAM_TAG_LINE_RE = re.compile(r"^[0-9a-f]+\trefs/tags/(v\d+\.\d+\.\d+)(\^\{\})?$")
+
+
+def _upstream_v_tags() -> list[str] | None:
+    """Best-effort list of forge's upstream release tags.
+
+    ``git ls-remote --tags`` against the upstream repo URL — the one query
+    that can name the releases a shipped changelog does not assemble yet.
+    ``None`` on any failure (offline, timeout, unreadable answer): an
+    unknowable input stays silent rather than guessing (FOUNDATION §1).
+
+    Returns:
+        Sorted ``vX.Y.Z`` tag names, or ``None`` when unknown.
+    """
+    url = f"https://github.com/{_FORGE_GITHUB_REPO}.git"
+    try:
+        listing = run_git(
+            "ls-remote",
+            "--tags",
+            url,
+            "refs/tags/v*",
+            env=network_git_env(None),
+            log_errors=False,
+            timeout=_UPSTREAM_LS_REMOTE_TIMEOUT_S,
+        )
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return None
+    tags = sorted(
+        {
+            match.group(1)
+            for line in listing.splitlines()
+            if (match := _UPSTREAM_TAG_LINE_RE.match(line))
+        }
+    )
+    return tags or None
+
 
 def _unassembled_notes_warning(
-    target_ref: str, changelog_text: str | None
+    target_ref: str,
+    changelog_text: str | None,
+    *,
+    upstream_tags: list[str] | None = None,
 ) -> str | None:
     """Return a warning when *target_ref*'s own notes are not written yet.
 
@@ -858,10 +906,15 @@ def _unassembled_notes_warning(
             release tag.
         changelog_text: The packaged changelog shipped *by that ref*, or
             ``None`` when it could not be read.
+        upstream_tags: Upstream ``vX.Y.Z`` tags from :func:`_upstream_v_tags`,
+            when known. When given, the releases in the gap are enumerated
+            in the warning; when ``None`` the warning names only the
+            boundary versions.
 
     Returns:
-        A warning naming both versions, or ``None`` when the shipped
-        notes already cover the ref.
+        A warning naming both versions (and every affected release when
+        *upstream_tags* is given), or ``None`` when the shipped notes
+        already cover the ref.
     """
     if not _RELEASE_TAG_RE.match(target_ref) or changelog_text is None:
         return None
@@ -871,13 +924,30 @@ def _unassembled_notes_warning(
     wanted, newest = parse_semver(target_ref), parse_semver(documented)
     if wanted is None or newest is None or wanted <= newest:
         return None
+    affected = ""
+    if upstream_tags:
+        between = [
+            tag
+            for tag in upstream_tags
+            if (parsed := parse_semver(tag)) is not None
+            and parsed > newest
+            and parsed <= wanted
+        ]
+        if between:
+            affected = (
+                " Releases in that span without an assembled entry yet: "
+                + ", ".join(between)
+                + "."
+            )
+    repo = f"https://github.com/{_FORGE_GITHUB_REPO}"
     return (
         f"{target_ref}'s own changelog entry is not assembled yet: the "
         f"changelog it ships stops at {documented}, so the upgrade notes "
-        "below cover up to there and not the changes you are adopting. The "
-        "entries are written by a later assembly run; read the repository's "
-        "CHANGELOG.md, or its pending changelog.d/ fragments, for what "
-        f"changed between {documented} and {target_ref}."
+        "below cover up to there and not the changes you are adopting."
+        f"{affected} The entries are written by a later assembly run; read "
+        f"{repo}/blob/main/CHANGELOG.md, or the pending fragments under "
+        f"{repo}/tree/main/changelog.d, for what changed between "
+        f"{documented} and {target_ref}."
     )
 
 
@@ -955,9 +1025,10 @@ def _run_phase2(root: Path) -> int:
     Returns:
         Exit code from ``install-forge-bootstrap``; ``1`` when the
         installed revision mismatches the pin (with the exact install
-        command to fix it); ``2`` when the pin names an undocumented
-        release. ``0`` plus a plugin-update reminder when bootstrap
-        succeeds.
+        command to fix it). ``0`` plus a plugin-update reminder when
+        bootstrap succeeds. A pin naming a release whose changelog entry
+        is not assembled yet only warns — see
+        :func:`_unassembled_notes_warning`.
     """
     mismatch = pin_revision_mismatch(root)
     if mismatch is not None:
@@ -1057,8 +1128,8 @@ def _finish_apply(target_ref: str, root: Path) -> int:
         root: Consumer repo root.
 
     Returns:
-        ``2`` when the target release is undocumented; otherwise phase 2's
-        exit code.
+        Phase 2's exit code. A target release whose changelog entry is not
+        assembled yet only warns — see :func:`_unassembled_notes_warning`.
     """
     installed = _installed_revision()
     if installed is not None and installed != target_ref:
