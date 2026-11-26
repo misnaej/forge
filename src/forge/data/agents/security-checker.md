@@ -85,7 +85,7 @@ Verify the changes follow:
 
 ## Workflow
 
-1. **Identify changed files**: from the caller's evidence pack when supplied ([reporter contract](_TEMPLATE.md#reporter-agent-header-contract)) — it names the base, diff stat, added files and the api-digest changes; otherwise `git diff --stat <base>...HEAD` against the PR's base, never an assumed `main`.
+1. **Identify changed files**: from the caller's evidence pack when supplied (`forge-docs/agent-contracts.md` "Supplied evidence pack") — it names the base, diff stat, added files and the api-digest changes; otherwise `git diff --stat <base>...HEAD` against the PR's base, never an assumed `main`.
 
 2. **Read `docs/api-digest.md` (when present)** — it indexes every
    top-level function and class with one-line summaries. One grep there
@@ -166,7 +166,7 @@ verified-at: <sha>   (PR #<num>, branch <branch>)
 2. <Specific actionable recommendation>
 ```
 
-Clean result → compact PASS report per _TEMPLATE.md's report-by-exception rule: one PASS line after the header; prose only for findings.
+Clean result → compact PASS report per `forge-docs/agent-contracts.md` "Report shape": one PASS line after the header; prose only for findings.
 
 ## OWASP Python Security Quick Reference
 
@@ -233,7 +233,7 @@ This requires immediate attention before PR can be merged.
 ## Output
 
 `verified-at:` header (see contract in
-[_TEMPLATE.md](_TEMPLATE.md#reporter-agent-header-contract) for the
+`forge-docs/agent-contracts.md` "Reporter header contract" for the
 SHA-capture snippet), then the [Report Format](#report-format) above.
 
 ## Success Criteria

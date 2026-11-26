@@ -25,6 +25,13 @@ from typing import Final
 #: What a generated agent or skill is called, on every harness.
 AGENT_NAME_PREFIX: Final = "forge-"
 
+#: The template beside the shipped agents: it documents how to author an
+#: agent rather than defining a spawnable one, so every converter skips
+#: it and no agent or skill may cite it (its run-time half lives in
+#: ``forge-docs/agent-contracts.md``, which consumers receive; FOUNDATION
+#: still points here for authoring guidance, which is forge-repo work).
+AGENT_TEMPLATE: Final = "_TEMPLATE.md"
+
 
 # A whole-line @-directive: optional whitespace, `@`, then a path token
 # that must look like a file reference (contains `/` or ends in `.md`) so

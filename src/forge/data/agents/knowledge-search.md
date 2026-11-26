@@ -112,7 +112,7 @@ publish a summary with VERIFIED-claiming-but-no-quote items.
 ### Phase 5 — Report
 
 First line: `verified-at:` header per the
-[contract in _TEMPLATE.md](_TEMPLATE.md#reporter-agent-header-contract)
+`forge-docs/agent-contracts.md` "Reporter header contract"
 (capture snippet lives there).
 
 ```markdown

@@ -144,7 +144,7 @@ Foundation agents, generated into each harness by its converter.
 documents the canonical agent shape (frontmatter, length budget,
 ownership model) — see [FOUNDATION §11](FOUNDATION.md#11-agent-boundary-protocol).
 
-- _TEMPLATE.md: canonical agent template; the underscore prefix excludes it from forge's own tooling only — Claude Code discovers it as a spawnable agent like every other file here, so it is listed as `forge:_TEMPLATE` (the `agents` manifest key cannot exclude it; nothing routes to it only because it has no frontmatter)
+- _TEMPLATE.md: symlink to `forge-docs/agent-authoring.md`, which holds the agent authoring template and ships to consumers; the path is kept because FOUNDATION, the audit and contributor docs name it. Editing this path edits the page. The underscore prefix excludes it from forge's own tooling, and both converters skip it by name, so no harness ever lists it as a spawnable agent
 - design-checker.md: design review agent
 - docs-types-checker.md: docs and type-hint checker agent
 - issue-triage.md: GitHub issue triage agent
@@ -400,6 +400,8 @@ repos by `install-forge-claude-md` (guarded there by a README notice + the
 - git-safety.md: procedure behind FOUNDATION §2's git rules — gate kinds, guard bypass, destructive git forms, base sync (`forge-update-branch`, stacked branches)
 - integration-staleness.md: how a running session ends up on old generated agents, how to spot it, and how to recover
 - metrics.md: `forge-metrics` — what is recorded per merged PR, what is not stored, where the database and the repo-id map live, legacy migration
+- agent-authoring.md: how to author an agent — required frontmatter and body sections, tool sets and model per role, the canonical skeleton (a symlink to the agent authoring template, which stays canonical at its own path for contributors)
+- agent-contracts.md: the contracts an agent obeys while it runs (reporter `verified-at:` header, evidence pack, report-by-exception, wait-for-helpers, guard-block rule, report-only) — shipped because the agent authoring template, which holds the authoring half, is not installed on either harness
 - token-optimization.md: token/cost runbook — provider cache pricing with source URLs, cache scope and `/clear`/compaction, forge cache-hazard audit, measurement, ranked levers
 
 ## Documentation (`docs/`)
@@ -430,6 +432,7 @@ Architecture RFCs and research reports — aspirational or advisory, not descrip
 
 - rust-core.md: RFC for splitting forge into a Rust governance-core binary + optional Python analysis pack
 - test-lifecycle.md: research report for the test-suite lifecycle policy (issue #396) — baseline profile, prior art, five proposals awaiting decision
+- agent-knowledge-architecture.md: status audit and goals for how instructional knowledge is split across FOUNDATION, CLAUDE.md, agents, skills, forge-docs and the two harness converters — 62 findings in six classes, eleven goals awaiting decision
 
 ## Shipped-source symlinks (repo root)
 

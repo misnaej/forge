@@ -196,7 +196,7 @@ Git procedures (gate kinds, destructive forms, base sync):
   wait for explicit yes. Approval covers only work granted for; never an
   agent's shipped default. Absent it, ceiling is `opus` — step wanting more
   is first a prompt to sharpen. Per-role tiering:
-  `agents/_TEMPLATE.md` "Model per role".
+  `forge-docs/agent-authoring.md` "Model per role".
 - **NEVER use `--no-verify`** to bypass pre-commit hooks. Fix violations
   instead. `block_no_verify` enforces.
 - **Bypassing a guard: only on the user's word, confirmed once, recorded.**
@@ -448,7 +448,7 @@ Mechanics (modes, commands, templates): the `/forge-pr` skill. Rules:
 - **The summary and Recommendation never restate a section the wrap-up renders.** `Code Quality` and `CI Status` come from the evidence; a slot repeating them ("suite green; pre-commit passes") says what the same comment says two lines down. Say what changed and what the reader must decide. Saying CI *disagrees* is required, not restating. `forge-pr-wrapup validate` warns, never refuses.
 - **An agent bounds every job it starts, and says so when the bound is hit.** "Waiting for the run to complete" is not a result. Declare the bound up front; exceeding it is a **finding** — what ran, how long, what remains — never silence. Evidence supplied with its SHA is authoritative. A bound limits *waiting*, not obligation: §4 and §1 outrank it.
 - **Before commissioning verification, establish what is already verified** — the prior `verified-at:`, and whether changes since fall inside it. That is **a CLI call, never prose** (`forge-pr-plan`), and **its verdict is stated in one line before any reporter starts**. Thresholds and modes: `/forge-pr`.
-- `verified-at:` header (reporter contract, `agents/_TEMPLATE.md`) makes wrap-up drift detectable.
+- `verified-at:` header (reporter contract, `forge-docs/agent-contracts.md`) makes wrap-up drift detectable.
 - **The flow does not end at posting — wait on the PR.** Canonical; skills state only call-site delta. Default: after wrap-up posts, wait on each open PR as a **background job** (`forge-pr-watch await --pr <N>`), which exits on the first event worth acting on:
   - **Merged / closed** → **report it**; the session reading that report does local cleanup (`/forge-next`) **and** `forge-issue-triage` `post-pr`, touching **only what the merge changed**, never hunting the next task (`recommend-next` owns that). The wait exits naming what is owed, and that exit re-invokes the session that does it.
   - **New review comments**, **CI run concluding in failure**, **`mergeable == CONFLICTING`** → report, never act. Resolution stays with whoever picks up the work: watcher never syncs a conflict, a CI failure is investigated (§1) never auto-pushed, a stale wrap-up refreshed by the picker-up. **Wrap-up staleness** is logged only and ends no wait; it reports **once per new head**, naming both SHAs; unknown is never a report. `warn_stale_wrapup` runs the same verdict at-the-cause, read-only; verdict is `forge-pr-plan --freshness`.
@@ -641,7 +641,7 @@ tested, never relayed.
 
 ### Canonical agent shape
 
-Every forge-shipped agent follows `agents/_TEMPLATE.md`. Invariants:
+Every forge-shipped agent follows `forge-docs/agent-authoring.md`. Invariants:
 
 - **Ownership split.** FOUNDATION owns policy, numbers, principles; agents own
   enforcement protocol, cookbook, recipes. Neither duplicates; both link.
@@ -650,7 +650,7 @@ Every forge-shipped agent follows `agents/_TEMPLATE.md`. Invariants:
 - **Description = routing trigger**, not a role label ("Use proactively when X").
 - **Reporters do not have `Write` or `Edit`.** Exception: reporter-with-artifact
   agents may hold the single mutating tool their artifact needs — see
-  `agents/_TEMPLATE.md` "Tool sets per role".
+  `forge-docs/agent-authoring.md` "Tool sets per role".
 
 `forge-audit-agents` measures every agent against the template
 (`code_health/audit_agents.log`).

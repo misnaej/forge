@@ -230,7 +230,7 @@ def _report_line(report_text: str, head_sha: str) -> str | None:
         report_sha = match.group("sha")
         lines = lines[1:]
     # No header, no verdict: every reporter report opens with
-    # `verified-at:` (`agents/_TEMPLATE.md`), and a header-less one-line
+    # `verified-at:` (`forge-docs/agent-contracts.md`), and a header-less one-line
     # "PASS" was the cheap way past this gate. A fill slot costs the
     # publisher a sentence; a forged sign-off costs the reader the truth.
     if report_sha is None:

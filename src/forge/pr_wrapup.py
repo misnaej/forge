@@ -3,9 +3,10 @@
 The wrap-up is the verification record a reviewer trusts most: which
 reporters ran at which commit, what they found, how each finding was
 dispositioned. Two things go wrong when it is posted by hand. It grows —
-``_TEMPLATE.md``'s report-by-exception rule ("a clean check is ONE line")
-lives in agent prose, and prose is a remembered step — and it never gets
-retired, so every earlier wrap-up on the PR keeps reading as a current
+the report-by-exception rule (``forge-docs/agent-contracts.md``: "a clean
+check is ONE line") lives in agent prose, and prose is a remembered step —
+and it never gets retired, so every earlier wrap-up on the PR keeps
+reading as a current
 attestation of a tree that no longer exists. This CLI makes both
 mechanical: ``validate`` refuses a body that narrates clean checks (a long one
 only warns), and ``post`` stamps the new wrap-up with a marker,
@@ -15,7 +16,8 @@ squash-merge comment so it stays the PR's newest.
 
 The header contract (``verified-at:`` first line, optional
 ``wrapup-mode:`` and ``prior-art-searched:`` lines) is
-``agents/_TEMPLATE.md``'s; ``block_unverified_pr_create`` and
+``forge-docs/agent-contracts.md``'s, bar ``prior-art-searched:``, which
+the agent template still owns; ``block_unverified_pr_create`` and
 ``forge-pr-plan --freshness`` read the same lines, so the collapse keeps
 the original body — header included — verbatim inside the details block.
 
@@ -601,8 +603,9 @@ def _warn_if_unlabelled(head: list[str]) -> None:
 def validate_wrapup(text: str) -> list[str]:
     """Return every rule the wrap-up *text* breaks (empty means valid).
 
-    Pure: text in, violations out — the rules are ``_TEMPLATE.md``'s
-    header contract and report-by-exception paragraph, made checkable.
+    Pure: text in, violations out — the rules are
+    ``forge-docs/agent-contracts.md``'s header contract and report-by-exception
+    paragraph, made checkable.
     Unfilled ``compose`` slots are reported first: they are the concrete
     cause of the vaguer header and budget messages that follow them.
 
