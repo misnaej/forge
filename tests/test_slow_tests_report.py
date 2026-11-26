@@ -555,13 +555,17 @@ COVERAGE_MIXED_OWNERSHIP_EXPORT: dict[str, object] = {
 
 def test_unique_statements_line_owned_by_one_test_counts_once() -> None:
     """A line whose only context is one test's counts once for that test."""
-    unique, _ = unique_statements(COVERAGE_MIXED_OWNERSHIP_EXPORT, ["src"])
+    unique, _ = unique_statements(
+        COVERAGE_MIXED_OWNERSHIP_EXPORT["files"].items(), ["src"]
+    )
     assert unique["tests/test_m.py::test_solo"] == 1
 
 
 def test_unique_statements_shared_line_excluded_from_unique_but_seen() -> None:
     """A line two tests both cover counts for neither, but both are seen."""
-    unique, seen = unique_statements(COVERAGE_MIXED_OWNERSHIP_EXPORT, ["src"])
+    unique, seen = unique_statements(
+        COVERAGE_MIXED_OWNERSHIP_EXPORT["files"].items(), ["src"]
+    )
     assert "tests/test_m.py::test_shared_a" not in unique
     assert "tests/test_m.py::test_shared_b" not in unique
     assert "tests/test_m.py::test_shared_a" in seen
@@ -570,7 +574,9 @@ def test_unique_statements_shared_line_excluded_from_unique_but_seen() -> None:
 
 def test_unique_statements_setup_and_run_phases_collapse_to_one_owner() -> None:
     """A line context-tagged for setup AND run of one test is still unique to it."""
-    unique, _ = unique_statements(COVERAGE_MIXED_OWNERSHIP_EXPORT, ["src"])
+    unique, _ = unique_statements(
+        COVERAGE_MIXED_OWNERSHIP_EXPORT["files"].items(), ["src"]
+    )
     assert unique["tests/test_m.py::test_phases"] == 1
 
 
@@ -582,7 +588,9 @@ def test_unique_statements_parametrized_variants_collapse_to_base() -> None:
     they share read as covered-by-two — so a parametrized test scores
     ~0 unique statements and the ranking advises deleting all of it.
     """
-    unique, _ = unique_statements(COVERAGE_MIXED_OWNERSHIP_EXPORT, ["src"])
+    unique, _ = unique_statements(
+        COVERAGE_MIXED_OWNERSHIP_EXPORT["files"].items(), ["src"]
+    )
     assert unique["tests/test_m.py::test_p"] == 1
 
 
@@ -593,7 +601,9 @@ def test_unique_statements_all_empty_context_contributes_nothing() -> None:
     phantom entry (e.g. the empty string itself, unfiltered), this set
     would contain one more member than the eight real test owners below.
     """
-    _, seen = unique_statements(COVERAGE_MIXED_OWNERSHIP_EXPORT, ["src"])
+    _, seen = unique_statements(
+        COVERAGE_MIXED_OWNERSHIP_EXPORT["files"].items(), ["src"]
+    )
     assert seen == {
         "tests/test_m.py::test_solo",
         "tests/test_m.py::test_shared_a",
@@ -608,7 +618,9 @@ def test_unique_statements_all_empty_context_contributes_nothing() -> None:
 
 def test_unique_statements_empty_context_mixed_with_real_attributes_to_test() -> None:
     """An empty context alongside a real one still attributes the line to the test."""
-    unique, seen = unique_statements(COVERAGE_MIXED_OWNERSHIP_EXPORT, ["src"])
+    unique, seen = unique_statements(
+        COVERAGE_MIXED_OWNERSHIP_EXPORT["files"].items(), ["src"]
+    )
     assert unique["tests/test_m.py::test_import_mixed"] == 1
     assert "tests/test_m.py::test_import_mixed" in seen
 
@@ -620,7 +632,9 @@ def test_unique_statements_absolute_path_matches_source_root() -> None:
     scoping must not silently drop every entry for a repo without it.
     """
     unique, _ = unique_statements(
-        COVERAGE_MIXED_OWNERSHIP_EXPORT, ["src"], repo_root=Path("/abs/repo")
+        COVERAGE_MIXED_OWNERSHIP_EXPORT["files"].items(),
+        ["src"],
+        repo_root=Path("/abs/repo"),
     )
     assert unique["tests/test_m.py::test_absolute_path"] == 1
 
@@ -631,7 +645,9 @@ def test_unique_statements_absolute_path_without_repo_root_is_out_of_scope() -> 
     Guards the over-match the old ``"/src/" in path`` test had: a file
     under any directory named ``src`` anywhere on disk counted as source.
     """
-    unique, seen = unique_statements(COVERAGE_MIXED_OWNERSHIP_EXPORT, ["src"])
+    unique, seen = unique_statements(
+        COVERAGE_MIXED_OWNERSHIP_EXPORT["files"].items(), ["src"]
+    )
     assert "tests/test_m.py::test_absolute_path" not in unique
     assert "tests/test_m.py::test_absolute_path" in seen
 
@@ -644,14 +660,16 @@ def test_unique_statements_scoped_out_test_still_recorded_in_seen() -> None:
     "(no coverage data)", which would misreport a scoping choice as a
     data gap.
     """
-    unique, seen = unique_statements(COVERAGE_MIXED_OWNERSHIP_EXPORT, ["src"])
+    unique, seen = unique_statements(
+        COVERAGE_MIXED_OWNERSHIP_EXPORT["files"].items(), ["src"]
+    )
     assert "tests/test_m.py::test_only_in_tests_file" not in unique
     assert "tests/test_m.py::test_only_in_tests_file" in seen
 
 
 def test_unique_statements_empty_roots_counts_everything() -> None:
     """An empty ``source_roots`` list scopes to nothing excluded — everything counts."""
-    unique, _ = unique_statements(COVERAGE_MIXED_OWNERSHIP_EXPORT, [])
+    unique, _ = unique_statements(COVERAGE_MIXED_OWNERSHIP_EXPORT["files"].items(), [])
     assert unique["tests/test_m.py::test_only_in_tests_file"] == 1
 
 
@@ -665,7 +683,9 @@ def test_unique_statements_non_list_context_value_degrades_instead_of_raising() 
     export_with_int_where_context_list_expected = {
         "files": {"src/a.py": {"contexts": {"1": 5}}}
     }
-    assert unique_statements(export_with_int_where_context_list_expected, ["src"]) == (
+    assert unique_statements(
+        export_with_int_where_context_list_expected["files"].items(), ["src"]
+    ) == (
         {},
         set(),
     )
@@ -682,7 +702,7 @@ def test_unique_statements_non_string_context_entry_filtered_not_whole_line() ->
         "files": {"src/a.py": {"contexts": {"1": [123, "t.py::test_x|run"]}}}
     }
     unique, seen = unique_statements(
-        export_with_junk_entry_beside_real_context, ["src"]
+        export_with_junk_entry_beside_real_context["files"].items(), ["src"]
     )
     assert unique["t.py::test_x"] == 1
     assert "t.py::test_x" in seen
@@ -739,7 +759,7 @@ def test_format_coverage_ranking_tiers_ratio_then_too_fast_then_no_data() -> Non
     """
     report = format_coverage_ranking(
         RANKING_DURATIONS,
-        COVERAGE_RANKING_EXPORT,
+        COVERAGE_RANKING_EXPORT["files"].items(),
         CoverageScope(["src"]),
         top=10,
         truncated=False,
@@ -775,7 +795,7 @@ def test_format_coverage_ranking_respects_top_and_reports_of_total() -> None:
     """``top=2`` keeps only the two lowest-worth rows and reports "2 of 6"."""
     report = format_coverage_ranking(
         RANKING_DURATIONS,
-        COVERAGE_RANKING_EXPORT,
+        COVERAGE_RANKING_EXPORT["files"].items(),
         CoverageScope(["src"]),
         top=2,
         truncated=False,
@@ -793,7 +813,7 @@ def test_format_coverage_ranking_truncated_note_present_when_true() -> None:
     """``truncated=True`` appends the lower-bound-seconds NOTE line."""
     report = format_coverage_ranking(
         RANKING_DURATIONS,
-        COVERAGE_RANKING_EXPORT,
+        COVERAGE_RANKING_EXPORT["files"].items(),
         CoverageScope(["src"]),
         top=10,
         truncated=True,
@@ -806,7 +826,7 @@ def test_format_coverage_ranking_truncated_note_absent_when_false() -> None:
     """``truncated=False`` omits the NOTE line entirely."""
     report = format_coverage_ranking(
         RANKING_DURATIONS,
-        COVERAGE_RANKING_EXPORT,
+        COVERAGE_RANKING_EXPORT["files"].items(),
         CoverageScope(["src"]),
         top=10,
         truncated=False,
@@ -833,7 +853,7 @@ def test_format_coverage_ranking_skip_when_no_per_test_contexts(
             every context list is the empty-string import-time marker).
     """
     report = format_coverage_ranking(
-        [], data, CoverageScope([]), top=25, truncated=False
+        [], data["files"].items(), CoverageScope([]), top=25, truncated=False
     )
     assert "no per-test contexts" in report
     assert len(report.splitlines()) == 1
@@ -845,7 +865,7 @@ def test_format_coverage_ranking_no_timing_data_when_seen_but_no_durations() -> 
         "files": {"src/pkg/m.py": {"contexts": {"1": ["t.py::test_x|run"]}}}
     }
     report = format_coverage_ranking(
-        [], data, CoverageScope([]), top=25, truncated=False
+        [], data["files"].items(), CoverageScope([]), top=25, truncated=False
     )
     assert "no timing data to rank" in report
 
@@ -1017,6 +1037,44 @@ def test_main_coverage_json_missing_export_degrades_gracefully(
     written = out.read_text(encoding="utf-8")
     assert "no usable coverage export" in written
     assert "ranking skipped" in written
+
+
+def test_main_coverage_json_oversized_export_declines_diagnosably(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An export too large for available memory skips with a message naming sizes.
+
+    The reporter's always-exit-0 contract holds, but the decline is
+    diagnosable: the loader's warning names the export size and the
+    available memory, instead of the process dying on a signal with no
+    output.
+    """
+    monkeypatch.setattr("forge.smart_test.coverage.available_memory_bytes", lambda: 8)
+    log = tmp_path / "pytest.log"
+    log.write_text(COVERAGE_JSON_LOG, encoding="utf-8")
+    coverage_json = tmp_path / "coverage.json"
+    coverage_json.write_text(json.dumps(COVERAGE_JSON_EXPORT), encoding="utf-8")
+    out = tmp_path / "slow_tests.log"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "forge-slow-tests-report",
+            "--log",
+            str(log),
+            "--coverage-json",
+            str(coverage_json),
+            "--out",
+            str(out),
+        ],
+    )
+    with caplog.at_level(logging.WARNING):
+        assert slow_tests_report.main() == 0
+    written = out.read_text(encoding="utf-8")
+    assert "no usable coverage export" in written
+    assert "ranking skipped" in written
+    assert "memory is available" in caplog.text
 
 
 # ---------------------------------------------------------------------------
