@@ -1060,26 +1060,42 @@ def step_c4(repo_root: Path) -> StepResult:
     regenerated fails the commit (and thus the PR). Self-skips when the repo
     has no ``[tool.forge.c4]`` model configured.
 
+    ``blocking = false`` downgrades a failure to an advisory ``WARN``, for a
+    repo restructuring its packages that wants drift reported without every
+    move refusing the commit. It is read from the resolved model table, so it
+    may sit inline under ``[tool.forge.c4]`` or in the model file beside
+    ``strict_coverage``, and it covers every non-zero exit of the check:
+    drift, an invalid model, and an unsatisfied ``required`` relationship
+    alike.
+
     Args:
         repo_root: Git repo root.
 
     Returns:
-        ``StepResult`` mirroring the CLI exit code, or a skipped result when
-        no C4 model is configured.
+        ``StepResult`` mirroring the CLI exit code — advisory when
+        ``blocking`` is false — or a skipped result when no C4 model is
+        configured.
 
     Raises:
         SystemExit: If the running forge-scripts does not declare
             ``forge-gen-c4``.
     """
-    if resolve_model_section(repo_root) is None:
+    model = resolve_model_section(repo_root)
+    if model is None:
         return StepResult(
             name="c4",
             passed=True,
             output="(no [tool.forge.c4] model — skipped)",
             skipped=True,
         )
+    blocking = bool(model.get("blocking", True))
     passed, output = _run_gen_check(repo_root, "docs/architecture.dsl")
-    return StepResult(name="c4", passed=passed, output=output)
+    return StepResult(
+        name="c4",
+        passed=passed,
+        output=output,
+        non_blocking=not blocking,
+    )
 
 
 def _layering_configured(repo_root: Path) -> bool:

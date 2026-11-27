@@ -34,6 +34,25 @@ CONFIG_DOC_START = "<!-- forge:config:start -->"
 CONFIG_DOC_END = "<!-- forge:config:end -->"
 
 
+def config_region_markers(group: str) -> tuple[str, str]:
+    """Return the start/end markers for a named config-doc region.
+
+    The index table uses the unsuffixed marker pair, which the pre-commit
+    step and its tests key on; every other region is named after its key
+    group.
+
+    Args:
+        group: Region name (a ``forge.forge_config.DOC_GROUPS`` member).
+
+    Returns:
+        ``(start marker, end marker)`` for that region.
+    """
+    return (
+        f"<!-- forge:config:{group}:start -->",
+        f"<!-- forge:config:{group}:end -->",
+    )
+
+
 def replace_region(text: str, start: str, end: str, body: str) -> str | None:
     """Replace what lies between the *start* and *end* markers in *text*.
 

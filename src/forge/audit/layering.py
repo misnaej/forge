@@ -90,6 +90,7 @@ from forge.config import (
     select_diff_files,
 )
 from forge.git_utils import added_or_moved_files, configure_cli_logging, repo_root
+from forge.import_graph import transitive_closure
 
 
 if TYPE_CHECKING:
@@ -270,26 +271,6 @@ def _direct_children(
     return children
 
 
-def _closure(graph: dict[str, set[str]], start: set[str]) -> set[str]:
-    """Return the transitive import closure of ``start`` (inclusive).
-
-    Args:
-        graph: Internal adjacency map (module → imported modules).
-        start: Seed module names.
-
-    Returns:
-        Every module reachable from the seeds, seeds included.
-    """
-    seen = set(start)
-    stack = list(start)
-    while stack:
-        for target in graph.get(stack.pop(), ()):
-            if target not in seen:
-                seen.add(target)
-                stack.append(target)
-    return seen
-
-
 def _child_finding_anchor(
     mods: set[str],
     modules: dict[str, ModuleNode],
@@ -353,7 +334,7 @@ def evaluate(
                     ),
                 )
                 continue
-            closure = _closure(graph, mods)
+            closure = transitive_closure(graph, mods)
             added_here = any(modules[m].path in escalate_paths for m in mods)
             for target in spec.composes_all_of:
                 if not layer_modules.get(target):

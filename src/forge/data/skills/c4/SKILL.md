@@ -94,3 +94,7 @@ ask — a wrong guess produces a confidently misleading diagram.
   confirm with the user.
 - Keep the model honest: a real relationship invisible to the import graph
   belongs in `[[relationship]]`; do not omit it.
+- A dependency that *must* exist can carry `required = true` — `--check` then
+  fails unless the source component's imports reach the destination's. Both
+  ends must be components. Propose it, never add it unasked: it turns a
+  drawing into a gate.

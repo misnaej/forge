@@ -67,6 +67,7 @@ from forge.audit.deps import build_module_graph
 from forge.config import resolve_model_section, resolve_tool_roots
 from forge.gen_common import check_doc_drift, replace_region
 from forge.git_utils import configure_cli_logging, repo_root
+from forge.import_graph import transitive_closure
 from forge.run_context import progress_logger
 
 
@@ -396,20 +397,27 @@ class Component:
 
 @dataclass(frozen=True)
 class Relationship:
-    """A human-declared component-to-component relationship.
+    """A human-declared relationship between two model elements.
 
     Captures runtime/subprocess "uses" edges that the import graph cannot
     see — e.g. the pre-commit dispatcher shelling out to each verifier.
 
     Attributes:
-        source: Source component display name.
-        destination: Destination component display name.
+        source: Source element display name.
+        destination: Destination element display name.
         description: Relationship label.
+        required: When True, the edge is a contract rather than a drawing:
+            ``forge-gen-c4 --check`` fails unless the source component's
+            modules reach the destination component's in the import graph.
+            Because it is answered from imports, it is meaningless on the
+            runtime and subprocess edges above, and both endpoints must be
+            components — the check rejects anything else at model load.
     """
 
     source: str
     destination: str
     description: str
+    required: bool = False
 
 
 @dataclass(frozen=True)
@@ -418,7 +426,11 @@ class RenderConfig:
 
     Each field maps to a key the generated page feeds into
     ``mermaid.initialize(...)`` — see :func:`_mermaid_init_options` for the
-    key→Mermaid-scope mapping. Defaults reproduce forge's shipped look (ELK
+    key→Mermaid-scope mapping. The consumer-facing reference for these keys
+    (default, mapping and prose) is generated from
+    :data:`forge.forge_config.CONFIG_KEYS`, so a new field here needs its
+    registry entry there; ``tests/test_gen_config_doc.py`` fails until it
+    has one. Defaults reproduce forge's shipped look (ELK
     layout tuning plus the label-wrap fix), so an absent section renders the
     bug-fixed default with no configuration. Pass-through fields default to a
     sentinel (``None`` / ``""`` / empty) that omits the key, leaving Mermaid's
@@ -859,8 +871,9 @@ def _parse_render_config(section: dict) -> RenderConfig:
 def load_c4_config(root: Path) -> C4Config | None:
     """Load the C4 model skeleton for the repo.
 
-    Reads the model table from an external ``c4.toml`` (preferred) or the
-    inline ``[tool.forge.c4]`` section — see :func:`resolve_model_section`.
+    Reads the model table from an external ``c4.toml`` (preferred) with any
+    inline ``[tool.forge.c4]`` keys overlaid on it, or from the inline table
+    alone — see :func:`resolve_model_section`.
 
     Args:
         root: Repository root directory.
@@ -870,7 +883,9 @@ def load_c4_config(root: Path) -> C4Config | None:
         not opted into or the model declares no ``system`` name.
 
     Raises:
-        ValueError: When a component names a container that is not declared.
+        ValueError: When a component names a container that is not declared,
+            or a ``required`` relationship names an endpoint that is not a
+            declared component.
     """
     section = resolve_model_section(root)
     if not section or not section.get("system"):
@@ -910,9 +925,11 @@ def load_c4_config(root: Path) -> C4Config | None:
             r.get("source", "?"),
             r.get("destination", "?"),
             r.get("description", "uses"),
+            required=bool(r.get("required", False)),
         )
         for r in _coerce_list(section.get("relationship"))
     )
+    _validate_required_relationships(relationships, components)
     edges = _resolve_edge_mode(section.get("edges", "imports"))
     direction = _resolve_direction(section.get("direction", "LR"))
     return C4Config(
@@ -933,6 +950,47 @@ def load_c4_config(root: Path) -> C4Config | None:
         render=_parse_render_config(section),
         strict_coverage=bool(section.get("strict_coverage", False)),
     )
+
+
+def _validate_required_relationships(
+    relationships: tuple[Relationship, ...],
+    components: tuple[Component, ...],
+) -> None:
+    """Reject a ``required`` relationship the import graph cannot answer.
+
+    A required edge is satisfied from module reachability, which exists only
+    between components. Naming a person, container, external system or the
+    system itself would make the assertion unanswerable, and a self-edge
+    would make it vacuously true — both pass silently if not caught here,
+    which is worse than a drawn edge going missing.
+
+    Args:
+        relationships: Declared relationships, already parsed.
+        components: Declared components, supplying the legal endpoint names.
+
+    Raises:
+        ValueError: When a required relationship names an endpoint that is
+            not a declared component, or names one component twice.
+    """
+    names = {comp.name for comp in components}
+    for rel in relationships:
+        if not rel.required:
+            continue
+        unknown = [end for end in (rel.source, rel.destination) if end not in names]
+        if unknown:
+            msg = (
+                f"required relationship {rel.source!r} -> {rel.destination!r} "
+                f"names {', '.join(repr(end) for end in unknown)}, which is not "
+                "a declared [[component]]. Reachability is only defined between "
+                "components, so drop `required` or name components."
+            )
+            raise ValueError(msg)
+        if rel.source == rel.destination:
+            msg = (
+                f"required relationship names {rel.source!r} as both ends; a "
+                "component always reaches itself, so the assertion is vacuous."
+            )
+            raise ValueError(msg)
 
 
 def _visible_config(
@@ -1427,11 +1485,31 @@ def _render_views(
     return lines
 
 
-def build_model(
-    root: Path,
-    roots: list[Path],
-) -> tuple[C4Config, set[tuple[str, str]], list[str], list[str]] | None:
-    """Assemble the C4 model: config, derived edges, unmatched + all modules.
+@dataclass(frozen=True)
+class BuiltModel:
+    """Everything one model build produces, for every consumer of it.
+
+    Attributes:
+        config: The loaded model skeleton.
+        edges: Derived component-to-component edges (one hop).
+        unmatched: Sorted module names matching no component prefix.
+        modules: Sorted full discovered-module list, backing the
+            strict-coverage dead-prefix check.
+        assigned: Module name → owning component display name.
+        graph: Module-level import adjacency, the only input that answers
+            transitive reach for a ``required`` relationship.
+    """
+
+    config: C4Config
+    edges: set[tuple[str, str]]
+    unmatched: list[str]
+    modules: list[str]
+    assigned: dict[str, str]
+    graph: dict[str, set[str]]
+
+
+def build_model(root: Path, roots: list[Path]) -> BuiltModel | None:
+    """Assemble the C4 model: config, edges, module assignment and import graph.
 
     The shared seam behind every output format — it loads the human model
     skeleton and derives the component-to-component edges from the import
@@ -1442,15 +1520,13 @@ def build_model(
         roots: Source-root directories to scan for the import graph.
 
     Returns:
-        Tuple of (config, derived component edges, sorted unmatched module
-        names, sorted full discovered-module list), or ``None`` when C4
-        generation is not opted into. The full module list backs the
-        strict-coverage dead-prefix check (:func:`_check_strict_coverage`).
+        The :class:`BuiltModel`, or ``None`` when C4 generation is not opted
+        into.
 
     Raises:
         ValueError: When the config is invalid (propagated from
             :func:`load_c4_config`), e.g. a component naming an unknown
-            container.
+            container or a ``required`` relationship naming a non-component.
     """
     config = load_c4_config(root)
     if config is None:
@@ -1459,7 +1535,14 @@ def build_model(
     sorted_modules = sorted(modules)
     assigned, unmatched = assign_components(sorted_modules, config.components)
     edges = derive_component_edges(graph, assigned)
-    return config, edges, unmatched, sorted_modules
+    return BuiltModel(
+        config=config,
+        edges=edges,
+        unmatched=unmatched,
+        modules=sorted_modules,
+        assigned=assigned,
+        graph=graph,
+    )
 
 
 def generate(root: Path, roots: list[Path]) -> tuple[str, list[str]] | None:
@@ -1476,8 +1559,7 @@ def generate(root: Path, roots: list[Path]) -> tuple[str, list[str]] | None:
     built = build_model(root, roots)
     if built is None:
         return None
-    config, edges, unmatched, _modules = built
-    return render_dsl(config, edges), unmatched
+    return render_dsl(built.config, built.edges), built.unmatched
 
 
 def _m(text: str) -> str:
@@ -2994,6 +3076,56 @@ def _check_strict_coverage(
     return rc
 
 
+def _check_required_relationships(built: BuiltModel) -> int:
+    """Fail ``--check`` on a ``required`` relationship the imports do not back.
+
+    The model's must-reach half: a declared edge marked ``required`` asserts
+    that the source component's code really is built on the destination's,
+    and this is what turns the assertion into a finding when it is not.
+    Reach is transitive and answered over the module import graph the C4
+    model is already built from — which counts ``if TYPE_CHECKING:`` imports,
+    unlike the layering audit's ``composes_all_of``.
+
+    Args:
+        built: The assembled model, for its relationships, module→component
+            assignment and import graph.
+
+    Returns:
+        ``1`` when any required relationship is unsatisfied, else ``0``.
+    """
+    required = [rel for rel in built.config.relationships if rel.required]
+    if not required:
+        return 0
+    modules_of: dict[str, set[str]] = {}
+    for module, name in built.assigned.items():
+        modules_of.setdefault(name, set()).add(module)
+    rc = 0
+    for rel in required:
+        sources = modules_of.get(rel.source, set())
+        targets = modules_of.get(rel.destination, set())
+        if not sources or not targets:
+            empty = rel.source if not sources else rel.destination
+            logger.error(
+                "required relationship %r -> %r: component %r matches no real "
+                "module, so the contract cannot be checked.",
+                rel.source,
+                rel.destination,
+                empty,
+            )
+            rc = 1
+            continue
+        if not transitive_closure(built.graph, sources) & targets:
+            logger.error(
+                "required relationship unsatisfied: no module of %r imports %r, "
+                "directly or transitively. Either the dependency is missing or "
+                "the contract is wrong.",
+                rel.source,
+                rel.destination,
+            )
+            rc = 1
+    return rc
+
+
 README_C4_START = "<!-- forge:c4:start -->"
 README_C4_END = "<!-- forge:c4:end -->"
 
@@ -3876,7 +4008,9 @@ def main() -> int:
         ``1`` on drift, a missing artifact, absent ``[tool.forge.c4]``,
         an invalid model configuration (e.g. an unknown container name),
         or — under ``--check`` with ``strict_coverage`` enabled — an
-        unmapped module or a dead component prefix.
+        unmapped module or a dead component prefix. Under ``--check`` an
+        unsatisfied ``required`` relationship also returns ``1``, with no
+        config gate.
     """
     args = _parse_args()
     root = repo_root()
@@ -3891,17 +4025,21 @@ def main() -> int:
             "c4.toml) to enable C4 generation (see docs/c4-architecture.md).",
         )
         return 1
-    config, edges, unmatched, modules = built
-    _warn_unmatched(unmatched)
+    config, edges = built.config, built.edges
+    _warn_unmatched(built.unmatched)
     # The strict-coverage gate is a --check-only concern and format-agnostic:
     # it validates the model↔import-graph mapping, not any rendered artifact.
     # Run it against the full (pre-visibility) module set so hidden elements
     # still count toward "every module accounted for".
     strict_rc = (
-        _check_strict_coverage(config, modules, unmatched)
+        _check_strict_coverage(config, built.modules, built.unmatched)
         if args.check and config.strict_coverage
         else 0
     )
+    # Same reasoning, but no config gate: `required` is already per-edge
+    # opt-in, the finest gate there is. Hidden and tag-filtered components
+    # still carry their contracts, so this runs pre-visibility too.
+    required_rc = _check_required_relationships(built) if args.check else 0
     # active/hidden filtering is model-level — it slims every output (DSL,
     # README, mermaid, HTML, PDF). Tag filtering is view-level and applied per
     # view emitter, so the committed DSL stays canonical.
@@ -3917,7 +4055,7 @@ def main() -> int:
         emit_rc = _emit_svg(root, config, edges, args)
     else:
         emit_rc = _emit_dsl(root, config, edges, args)
-    return max(strict_rc, emit_rc)
+    return max(strict_rc, required_rc, emit_rc)
 
 
 def _parse_args() -> argparse.Namespace:

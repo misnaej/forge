@@ -51,6 +51,30 @@ def closest_known(target: str, modules: AbstractSet[str]) -> str | None:
     return None
 
 
+def transitive_closure(graph: dict[str, set[str]], start: set[str]) -> set[str]:
+    """Return the transitive import closure of *start* (inclusive).
+
+    The shared reachability primitive: the layering audit answers
+    ``composes_all_of`` with it, and ``forge-gen-c4`` answers a ``required``
+    relationship with it, so both speak one definition of "reaches".
+
+    Args:
+        graph: Internal adjacency map (module → imported modules).
+        start: Seed module names.
+
+    Returns:
+        Every module reachable from the seeds, seeds included.
+    """
+    seen = set(start)
+    stack = list(start)
+    while stack:
+        for target in graph.get(stack.pop(), ()):
+            if target not in seen:
+                seen.add(target)
+                stack.append(target)
+    return seen
+
+
 def ancestor_edges(modules: AbstractSet[str]) -> dict[str, set[str]]:
     """Map each known module to its known ancestor packages.
 

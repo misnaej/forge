@@ -29,12 +29,46 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from forge.config import read_pyproject_raw
+from forge.config import read_pyproject_raw, resolve_model_section
 from forge.git_utils import configure_cli_logging
 
 
 configure_cli_logging()
 logger = logging.getLogger(__name__)
+
+
+# Generated regions in the config reference, in page order. A key naming one
+# renders into that region's richer table instead of being documented by hand
+# beside the generated index — so its default has one home, not two.
+DOC_GROUP_C4_PDF = "c4-pdf"
+DOC_GROUP_C4_RENDER = "c4-render"
+DOC_GROUP_C4_RENDER_ADVANCED = "c4-render-advanced"
+DOC_GROUPS: tuple[str, ...] = (
+    DOC_GROUP_C4_PDF,
+    DOC_GROUP_C4_RENDER,
+    DOC_GROUP_C4_RENDER_ADVANCED,
+)
+
+
+@dataclass(frozen=True)
+class KeyDoc:
+    """Reference-table copy for a key documented in a generated region.
+
+    Carried separately from :attr:`ConfigKey.description`, which is the
+    one-line text ``forge-config`` prints to a terminal: *detail* is
+    markdown with emphasis and links, and would render raw there.
+
+    Attributes:
+        group: Which generated region renders the key's row — one of
+            :data:`DOC_GROUPS`.
+        detail: Markdown prose for the region's "What it does" column.
+        mermaid: The underlying Mermaid setting and its scope, for regions
+            that document a pass-through. Empty when the key is not one.
+    """
+
+    group: str
+    detail: str
+    mermaid: str = ""
 
 
 @dataclass(frozen=True)
@@ -48,12 +82,15 @@ class ConfigKey:
         description: One-line purpose, shown beside the value.
         recommended: When ``True``, the advisor nudges the consumer to
             set the key if it is currently absent.
+        doc: Reference-table copy when the key is documented in a generated
+            region; ``None`` for a key the index table covers alone.
     """
 
     path: tuple[str, ...]
     default: object
     description: str
     recommended: bool = False
+    doc: KeyDoc | None = None
 
 
 # The forge config surface, declared once. ``forge-config`` is the single
@@ -581,6 +618,345 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "inherit edges",
         "Component-view override of edges.",
     ),
+    ConfigKey(
+        ("tool", "forge", "c4", "blocking"),
+        default=True,
+        description="Block the commit when the c4 step finds drift. Set false "
+        "to downgrade every non-zero forge-gen-c4 --check exit — drift, an "
+        "invalid model, an unsatisfied required relationship — to a "
+        "non-blocking WARN, for a repo mid-restructure that wants the drift "
+        "reported without it refusing each commit.",
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "render", "pdf_fit"),
+        "auto",
+        "How each PDF page is sized: 'auto' gives one tight page per view, "
+        "'contain' and 'width' fit a fixed page.",
+        doc=KeyDoc(
+            group=DOC_GROUP_C4_PDF,
+            detail=(
+                "`auto` (default) sizes **each page to its own diagram** — one tight "
+                "page per view (needs `pdfunite`/`qpdf`; falls back to `contain` "
+                "without them). `contain` scales every view to fit **one fixed page** "
+                "(uniform pages; a wide-short view letterboxes). `width` fits a fixed "
+                "page's width only (a tall view may span extra pages)."
+            ),
+        ),
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "render", "pdf_page_size"),
+        "A4",
+        "Fixed-page size for the 'contain' / 'width' PDF fits (A4, A3, A5, "
+        "Letter, Legal, Tabloid).",
+        doc=KeyDoc(
+            group=DOC_GROUP_C4_PDF,
+            detail=(
+                "Fixed-page size for `contain`/`width`: `A4`, `A3`, `A5`, `Letter`, "
+                "`Legal`, `Tabloid` (unknown → A4). Ignored by `auto`."
+            ),
+        ),
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "render", "pdf_orientation"),
+        "landscape",
+        "Fixed-page PDF orientation: 'landscape' or 'portrait'.",
+        doc=KeyDoc(
+            group=DOC_GROUP_C4_PDF,
+            detail="`landscape` or `portrait` — `contain`/`width` only.",
+        ),
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "render", "pdf_margin"),
+        10,
+        "PDF page margin, in millimetres.",
+        doc=KeyDoc(
+            group=DOC_GROUP_C4_PDF,
+            detail="Page margin in millimetres.",
+        ),
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "render", "wrapping_width"),
+        220,
+        "Pixel width a component description wraps at in the HTML view.",
+        doc=KeyDoc(
+            group=DOC_GROUP_C4_RENDER,
+            detail=(
+                "Px width the description wraps at; Mermaid auto-sizes the box. The "
+                "label-overflow fix."
+            ),
+            mermaid="`flowchart.wrappingWidth`",
+        ),
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "render", "html_labels"),
+        None,
+        "Render diagram labels as HTML; false avoids a Firefox empty-label bug.",
+        doc=KeyDoc(
+            group=DOC_GROUP_C4_RENDER,
+            detail=(
+                "Render labels as HTML. Set `false` to dodge the Firefox empty-label "
+                "bug (#5785)."
+            ),
+            mermaid="`htmlLabels` (root)",
+        ),
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "render", "font_family"),
+        "",
+        "Font stack for the HTML view (offline-safe stacks only, no web fonts).",
+        doc=KeyDoc(
+            group=DOC_GROUP_C4_RENDER,
+            detail="Font stack (offline-safe stacks only — no web fonts).",
+            mermaid="`fontFamily` (root)",
+        ),
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "render", "font_size"),
+        None,
+        "Base font size for the HTML view.",
+        doc=KeyDoc(
+            group=DOC_GROUP_C4_RENDER,
+            detail="Base font size.",
+            mermaid="`fontSize` (root)",
+        ),
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "render", "node_spacing"),
+        None,
+        "Gap between sibling nodes; honored under the dagre layout only.",
+        doc=KeyDoc(
+            group=DOC_GROUP_C4_RENDER,
+            detail=(
+                'Gap between sibling nodes. **Honored under `layout = "dagre"` only** '
+                "— the ELK engine ignores it; use `elk_node_spacing` for the ELK "
+                "default."
+            ),
+            mermaid="`flowchart.nodeSpacing`",
+        ),
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "render", "rank_spacing"),
+        None,
+        "Gap between ranks and layers; honored under the dagre layout only.",
+        doc=KeyDoc(
+            group=DOC_GROUP_C4_RENDER,
+            detail=(
+                'Gap between ranks/layers. **Honored under `layout = "dagre"` only** '
+                "— ELK ignores it; use `elk_layer_spacing` under ELK."
+            ),
+            mermaid="`flowchart.rankSpacing`",
+        ),
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "render", "elk_node_spacing"),
+        None,
+        "Gap between sibling nodes under the ELK layout.",
+        doc=KeyDoc(
+            group=DOC_GROUP_C4_RENDER,
+            detail=(
+                "Gap between sibling nodes under **ELK** (the ELK counterpart of "
+                "`node_spacing`). Raising it visibly widens within-layer gaps. "
+                "`unset` keeps the bundle default."
+            ),
+            mermaid="`elk.spacing.nodeNode`",
+        ),
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "render", "elk_layer_spacing"),
+        None,
+        "Gap between layers under the ELK layout.",
+        doc=KeyDoc(
+            group=DOC_GROUP_C4_RENDER,
+            detail="Gap between layers under **ELK** (counterpart of `rank_spacing`).",
+            mermaid="`elk.layered.spacing.nodeNodeBetweenLayers`",
+        ),
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "render", "elk_base_value"),
+        None,
+        "ELK master spacing that every unset per-pair spacing derives from.",
+        doc=KeyDoc(
+            group=DOC_GROUP_C4_RENDER,
+            detail=(
+                "ELK master spacing all unset per-pair spacings derive from — raises "
+                "every gap proportionally."
+            ),
+            mermaid="`elk.spacing.baseValue`",
+        ),
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "render", "padding"),
+        None,
+        "Inner padding of each node box.",
+        doc=KeyDoc(
+            group=DOC_GROUP_C4_RENDER,
+            detail="Inner node padding.",
+            mermaid="`flowchart.padding`",
+        ),
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "render", "custom_css"),
+        "",
+        "Raw CSS injected into the diagram; can style elements by their tag.",
+        doc=KeyDoc(
+            group=DOC_GROUP_C4_RENDER,
+            detail=(
+                "Raw-CSS escape hatch injected into the diagram. Every element's "
+                "`tags` are emitted as Mermaid CSS classes on its node (e.g. "
+                "`.agent`), so this can style by role — see the [element tag "
+                "vocabulary](../docs/c4-architecture.md) for the reserved tag set."
+            ),
+            mermaid="`themeCSS` (root)",
+        ),
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "render", "layout"),
+        "elk",
+        "Diagram layout engine: 'elk' or 'dagre'; the organic ELK engines "
+        "are rejected.",
+        doc=KeyDoc(
+            group=DOC_GROUP_C4_RENDER,
+            detail=(
+                "`elk` (= `elk.layered`) or `dagre` — the two supported, "
+                "**hierarchy-aware** engines (they keep C4's clusters separated and "
+                "route every edge). ELK routes dense cross-cluster edges more cleanly "
+                "and tunes spacing via `elk_node_spacing` / `elk_layer_spacing`; "
+                "`dagre` tunes `node_spacing` / `rank_spacing`. The organic ELK "
+                "engines (`elk.stress` / `elk.force` / `elk.radial`) are **rejected "
+                "at config-load** — they silently drop edges + overlap nodes on "
+                "multi-cluster views."
+            ),
+            mermaid="`layout` (root)",
+        ),
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "render", "node_placement_strategy"),
+        "NETWORK_SIMPLEX",
+        "ELK node-placement strategy.",
+        doc=KeyDoc(
+            group=DOC_GROUP_C4_RENDER,
+            detail="ELK node placement (`BRANDES_KOEPF`, `NETWORK_SIMPLEX`, …).",
+            mermaid="`elk.nodePlacementStrategy`",
+        ),
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "render", "force_node_model_order"),
+        default=True,
+        description="Keep nodes in their declared order.",
+        doc=KeyDoc(
+            group=DOC_GROUP_C4_RENDER,
+            detail="Preserve declared node order.",
+            mermaid="`elk.forceNodeModelOrder`",
+        ),
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "render", "theme"),
+        "neutral",
+        "Mermaid theme; must be 'base' for theme_colors to apply.",
+        doc=KeyDoc(
+            group=DOC_GROUP_C4_RENDER_ADVANCED,
+            detail='Must be `"base"` for `theme_colors` to apply.',
+            mermaid="`theme` (root)",
+        ),
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "render", "theme_colors"),
+        {},
+        "Hex colour overrides, applied only under theme = 'base'.",
+        doc=KeyDoc(
+            group=DOC_GROUP_C4_RENDER_ADVANCED,
+            detail=(
+                "Hex color overrides (e.g. `primaryColor`, `lineColor`, "
+                '`tertiaryColor`); applied only under `theme = "base"`.'
+            ),
+            mermaid="`themeVariables` (theme vars)",
+        ),
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "render", "diagram_padding"),
+        None,
+        "Padding around the whole diagram.",
+        doc=KeyDoc(
+            group=DOC_GROUP_C4_RENDER_ADVANCED,
+            detail="Padding around the whole diagram.",
+            mermaid="`flowchart.diagramPadding`",
+        ),
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "render", "consider_model_order"),
+        "",
+        "ELK ordering hint.",
+        doc=KeyDoc(
+            group=DOC_GROUP_C4_RENDER_ADVANCED,
+            detail="ELK ordering hint (e.g. `NODES_AND_EDGES`).",
+            mermaid="`elk.considerModelOrder`",
+        ),
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "render", "merge_edges"),
+        default=False,
+        description="Merge parallel edges into one.",
+        doc=KeyDoc(
+            group=DOC_GROUP_C4_RENDER_ADVANCED,
+            detail="Merge parallel edges.",
+            mermaid="`elk.mergeEdges`",
+        ),
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "render", "cycle_breaking_strategy"),
+        "",
+        "ELK cycle-breaking strategy.",
+        doc=KeyDoc(
+            group=DOC_GROUP_C4_RENDER_ADVANCED,
+            detail="ELK cycle-breaking (e.g. `GREEDY_MODEL_ORDER`).",
+            mermaid="`elk.cycleBreakingStrategy`",
+        ),
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "render", "include_tags"),
+        (),
+        "When set, the HTML and PDF views keep only elements carrying one of "
+        "these tags.",
+        doc=KeyDoc(
+            group=DOC_GROUP_C4_RENDER_ADVANCED,
+            detail=(
+                "When set, the HTML/PDF views keep only elements carrying one of "
+                "these tags. The DSL, README block, and `--format mermaid` are "
+                "canonical and unaffected."
+            ),
+            mermaid="_(HTML/PDF view filter)_",
+        ),
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "render", "exclude_tags"),
+        (),
+        "The HTML and PDF views drop elements carrying any of these tags.",
+        doc=KeyDoc(
+            group=DOC_GROUP_C4_RENDER_ADVANCED,
+            detail=(
+                "The HTML/PDF views drop elements carrying any of these tags (applied "
+                "after `include_tags`). The DSL / README / `--format mermaid` are "
+                "unaffected."
+            ),
+            mermaid="_(HTML/PDF view filter)_",
+        ),
+    ),
+    ConfigKey(
+        ("tool", "forge", "c4", "render", "route_views"),
+        (),
+        "Component names that each get an extra HTML/PDF tab scoped to them.",
+        doc=KeyDoc(
+            group=DOC_GROUP_C4_RENDER_ADVANCED,
+            detail=(
+                "List of component names; each adds one extra HTML/PDF tab scoped to "
+                "that component and the components one edge hop away — isolating a "
+                "single relationship path out of a dense Container view. A name "
+                "matching no connected component warns and is skipped. Unset adds no "
+                "tab (canonical view set unchanged)."
+            ),
+            mermaid="_(HTML/PDF extra tabs)_",
+        ),
+    ),
 )
 
 # Third-party tools forge reads from their OWN native section rather than
@@ -648,23 +1024,59 @@ def keys_by_section() -> list[tuple[str, list[ConfigKey]]]:
     return list(groups.items())
 
 
-def build_report(data: dict) -> list[str]:
-    """Build the ``forge-config`` report lines from parsed pyproject data.
+_C4_PREFIX = ("tool", "forge", "c4")
+_C4_NOTE = (
+    "  (this section and [tool.forge.c4.render] are read from the resolved "
+    "model table: a model file — c4.toml, or the path in config — with any "
+    "inline keys overlaid on it)"
+)
+
+
+def _c4_model_path(key: ConfigKey) -> tuple[str, ...] | None:
+    """Return *key*'s path inside the resolved C4 model table, if it has one.
+
+    Args:
+        key: The config key being reported.
+
+    Returns:
+        The path relative to the model table, or ``None`` for a key read
+        from ``pyproject.toml`` — anything outside ``[tool.forge.c4]``, and
+        ``config`` itself, which selects the model file.
+    """
+    if key.path[: len(_C4_PREFIX)] != _C4_PREFIX:
+        return None
+    inner = key.path[len(_C4_PREFIX) :]
+    return None if inner == ("config",) else inner
+
+
+def build_report(data: dict, repo_root: Path) -> list[str]:
+    """Build the ``forge-config`` report lines for a repo.
+
+    Most keys are read straight from ``pyproject.toml``. The
+    ``[tool.forge.c4]`` keys are read from the *resolved* model table
+    instead, because that is where forge itself reads them: reporting them
+    from ``pyproject.toml`` alone calls a key set in a model file "not set"
+    (:func:`forge.config.resolve_model_section`).
 
     Args:
         data: Parsed ``pyproject.toml`` data (``{}`` when absent).
+        repo_root: Repo whose C4 model table is resolved for the C4 keys.
 
     Returns:
         Human-readable report lines: per-section key listing with current
         values or defaults, the native-section pointers, and a suggested-
         setup block for recommended keys that are unset.
     """
-    lines = ["forge config in this repo (pyproject.toml)", "=" * 42]
+    lines = ["forge config in this repo", "=" * 42]
+    model = resolve_model_section(repo_root) or {}
     missing: list[ConfigKey] = []
     for section, keys in keys_by_section():
         lines.append(f"[{section}]")
+        if section == "tool.forge.c4":
+            lines.append(_C4_NOTE)
         for key in keys:
-            value = _lookup(data, key.path)
+            inner = _c4_model_path(key)
+            value = _lookup(data, key.path) if inner is None else _lookup(model, inner)
             leaf = key.path[-1]
             if value is _UNSET:
                 lines.append(f"  {leaf:<14} = <default: {key.default!r}>   (not set)")
@@ -711,7 +1123,8 @@ def main() -> int:
     )
     parser.parse_args()
 
-    for line in build_report(read_pyproject_raw(Path.cwd())):
+    root = Path.cwd()
+    for line in build_report(read_pyproject_raw(root), root):
         logger.info("%s", line)
     return 0
 
