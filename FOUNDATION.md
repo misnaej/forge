@@ -509,7 +509,6 @@ Reviewed by `forge-design-checker` (foundation) + per-repo wrappers.
 - Output depends only on working tree, GitHub state, caller-supplied text → mechanical: CLI, better a subcommand of an existing one (§16 Pattern C); run once per tree, hand output on.
 - Only judgment (intent, trade-offs, writing for people) → agent, taking that output as evidence (§6).
 - CLI performing a §2-guarded effect enforces that guard in own code — hooks see only agent-typed commands, never CLI's own calls.
-- Default to the CLI when planning: if a step's output is determined by the tree, GitHub state, or caller text, name the CLI in the plan — do not spawn an agent for it. An agent on a mechanical step pays a model round trip per run and can act on a stale read of the tree it inspects.
 - Why: agent step = model round trip; program = one call, same result each run.
 
 **KISS.** Complexity the task requires, no more. Three similar lines beat premature abstraction. No configurability / plugins / indirection for hypothetical needs.
