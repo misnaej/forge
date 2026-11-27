@@ -380,8 +380,10 @@ class Component:
             when ``active`` is true AND ``hidden`` is false, so either
             ``hidden = true`` or ``active = false`` hides it.
         tags: Free-form labels for bulk include/exclude-by-tag view slimming.
-        group: Optional band name; elements sharing a ``group`` cluster into one
-            labelled band in the Container view (empty = ungrouped).
+        group: Accepted and parsed, but **not rendered**: banding is applied to
+            containers and externals in the Container view, never to the
+            components inside a container. A dense Component view is thinned
+            with ``direction``, ``tags`` or ``render.route_views`` instead.
     """
 
     name: str

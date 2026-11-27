@@ -819,11 +819,14 @@ name = "Datadog"
 tags = ["third-party"]   # exclude_tags = ["third-party"] slims it from views
 ```
 
-**Grouping into bands.** Every element also accepts a `group = "<band name>"`.
-In the **Container view**, elements sharing a `group` cluster into one labelled
-band — containers band inside the system boundary, externals beside it — so a
-dense system reads as a few organized zones ("Capabilities", "Our
-infrastructure", "Third-party", …). Ungrouped elements render flat, unchanged.
+**Grouping into bands.** `[[container]]` and `[[external]]` accept a
+`group = "<band name>"`. In the **Container view**, elements sharing a `group`
+cluster into one labelled band — containers band inside the system boundary,
+externals beside it — so a dense system reads as a few organized zones
+("Capabilities", "Our infrastructure", "Third-party", …). Ungrouped elements
+render flat, unchanged. **A `group` on a `[[component]]` is parsed and then
+ignored**: components are never banded inside their container, so thin a dense
+Component view with `direction`, `tags` or `render.route_views` instead.
 
 ```toml
 [[container]]

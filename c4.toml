@@ -9,6 +9,10 @@
 system = "Forge"
 description = "Python CI/CD & code-quality foundation: deterministic CLIs + pre-commit hook + optional Claude Code plugin"
 output = "docs/architecture.dsl"
+
+# Sixteen components in one container render as an unreadable strip
+# left-to-right; top-to-bottom keeps each box legible.
+direction = "TB"
 # When set, forge-gen-c4 also keeps the managed C4 block (between the
 # <!-- forge:c4:start/end --> markers) in this file in sync, and --check
 # fails on drift — so the diagram refreshes at each PR if the structure changed.
@@ -74,7 +78,7 @@ tags = ["component"]
 name = "Doc generators"
 technology = "Python"
 description = "Generate drift-checked docs: API digest, CLI reference, and this C4 model"
-modules = ["forge.gen_api_digest", "forge.gen_cli_reference", "forge.gen_c4", "forge.gen_commit_types", "forge.gen_common"]
+modules = ["forge.gen_api_digest", "forge.gen_cli_reference", "forge.gen_c4", "forge.gen_commit_types", "forge.gen_common", "forge.gen_config_doc", "forge.regen_docs"]
 
 [[component]]
 tags = ["component"]
@@ -88,21 +92,70 @@ tags = ["component"]
 name = "Release tooling"
 technology = "Python + git/gh"
 description = "Rolling-next versioning, tag-per-merge releases, PR squash messages, continuation status panel"
-modules = ["forge.next_prep", "forge.upgrade", "forge.pr_squash_comment", "forge.pr_delta", "forge.continuation", "forge.continuation_state"]
+modules = ["forge.next_prep", "forge.upgrade", "forge.changelog", "forge.changelog_fragments", "forge.release", "forge.version_surfaces", "forge.ci_tree_gate"]
 
 [[component]]
 tags = ["component"]
 name = "Smart-test"
 technology = "Python (ast) + git/pytest"
 description = "Change-driven test selection by import depth: git diff + reverse import graph (+ opt-in mock-patch edges / coverage union) run in depth-tiered pytest batches"
-modules = ["forge.smart_test.cli", "forge.smart_test.dependencies", "forge.smart_test.git_helpers", "forge.smart_test.runner", "forge.smart_test.coverage"]
+modules = ["forge.smart_test"]
 
 [[component]]
 tags = ["component"]
 name = "Config + shared"
 technology = "Python"
 description = "Shared foundation: pyproject/[tool.forge] config, git + logging utils, CI run-context, ruff/doctor, single-scan pip-audit helper"
-modules = ["forge.config", "forge.forge_config", "forge.git_utils", "forge.run_context", "forge.fix_ruff", "forge.doctor", "forge.slow_tests_report", "forge.pip_audit_json"]
+modules = ["forge.config", "forge.forge_config", "forge.git_utils", "forge.run_context", "forge.fix_ruff", "forge.doctor", "forge.slow_tests_report", "forge.pip_audit_json", "forge.import_graph", "forge.text_budget", "forge.text_clip", "forge.scratch_repo"]
+
+[[component]]
+tags = ["component"]
+name = "PR workflow"
+technology = "Python + gh"
+description = "Publishes and tends a PR: create, wrap-up compose and post, squash message, review comments, watch, evidence and plan freshness"
+modules = ["forge.pr_create", "forge.pr_plan", "forge.pr_evidence", "forge.pr_wrapup", "forge.pr_wrapup_compose", "forge.pr_squash_comment", "forge.pr_delta", "forge.pr_review_comments", "forge.pr_watch", "forge.pr_watch_log", "forge.gh_comments"]
+
+[[component]]
+tags = ["component"]
+name = "Guarded VCS surface"
+technology = "Python"
+description = "The version-control surface agents are routed through: commit, base-branch sync, checkpoint recovery"
+modules = ["forge.commit", "forge.update_branch", "forge.resync"]
+
+[[component]]
+tags = ["component"]
+name = "Backlog + planning"
+technology = "Python + gh"
+description = "GitHub-native backlog: index curation, intake of sightings, plan readiness, drift and overlap checks, tracks"
+modules = ["forge.backlog_index", "forge.intake", "forge.plan_check_cli", "forge.plan_staleness", "forge.plan_staleness_gh", "forge.plan_tracks", "forge.memory_audit"]
+
+[[component]]
+tags = ["component"]
+name = "Harness integration"
+technology = "Python"
+description = "Turns the shipped agents, skills and guard wiring into each harness's generated form"
+modules = ["forge.install_claude", "forge.install_vibe", "forge.gen_vibe_agents", "forge.gen_vibe_hooks", "forge.hook_dispatch", "forge.hook_registry", "forge.plugin_roster", "forge.instruction_files", "forge.vibe_metadata", "forge.vibe_sessions"]
+
+[[component]]
+tags = ["component"]
+name = "Agent telemetry"
+technology = "Python"
+description = "Measures what agent sessions cost and what PRs take: session profiling, token accounting, PR metrics and their charts"
+modules = ["forge.agent_harness", "forge.agent_profile", "forge.agent_profile_tokens", "forge.verify_agent_doc", "forge.pr_metrics", "forge.pr_metrics_bench", "forge.pr_metrics_bench_results", "forge.pr_metrics_charts", "forge.pr_metrics_publish", "forge.pr_metrics_report", "forge.telemetry"]
+
+[[component]]
+tags = ["component"]
+name = "Emergency ledger"
+technology = "Python"
+description = "Human-armed ceremony bypass and its audit ledger: what was skipped, who armed it, what verification is still owed"
+modules = ["forge.emergency", "forge.emergency_state", "forge.ledger"]
+
+[[component]]
+tags = ["component"]
+name = "Continuation"
+technology = "Python"
+description = "The note between sessions: the generated status panel and the written hand-off below it"
+modules = ["forge.continuation", "forge.continuation_state"]
 
 # Runtime/subprocess edges the import graph can't derive (the dispatcher and
 # bootstrap orchestrate other components by shelling out, not importing).
