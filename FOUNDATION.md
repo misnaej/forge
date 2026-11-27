@@ -264,8 +264,12 @@ Git procedures (gate kinds, destructive forms, base sync):
   `OldName = NewName`, no deprecation warnings, no re-exports of moved
   modules. Clean breaks by default.
 - **No secrets in code or commits.** Use `.env` (gitignored) or env vars;
-  provide `.env.example` with placeholders. CI secret scanning blocks
-  detected secrets.
+  provide `.env.example` with placeholders. CI scans each branch's own
+  commits and **blocks** on a finding (`gitleaks`, the shipped recipe's
+  step — `forge-docs/ci-recipe.md`); a repo that has not adopted that
+  workflow has no such gate. A real credential that reaches history is
+  **rotated, never allowlisted** — an allowlist entry hides it from the
+  scanner and leaves it in the history.
 - **No private organizational names in code, docs, or examples.** Generic
   placeholders (`<repo>`, `<scope>`, `<service>`, `foo`, `bar`) or in-repo
   names only — never private employer / client / project / process names;
@@ -430,7 +434,7 @@ Pin change (floor, cap, new pin — advisory or not) never rides a feature/fix P
 
 ### PR descriptions
 
-- **300-word ceiling** (same bands as the squash message below). Sections: Summary / Changes / Testing / Breaking Changes (omit if none). Update if scope shifts.
+- **300-word ceiling, and past it the publish refuses** — over the ceiling warns, far over is refused by `forge-pr-create`, unlike the squash message below, which warns and never refuses. Sections: Summary / Changes / Testing / Breaking Changes (omit if none). Update if scope shifts.
 - **Summary and Changes carry the change, never the release bookkeeping.** No word counts for the repo's own documents, no note that a changelog entry exists, no check status outside `Testing`.
 - **The `## Summary` lead is plain English** for product user, not codebase reader: no class/function names or internals; consequence before mechanism; say plainly when results stop being comparable. Technical detail → `Changes`.
 - **A close keyword closes the whole issue.** GitHub acts on `Closes`/`Fixes`/`Resolves #N` anywhere in description (mid-sentence too), closing on merge to default branch however little PR delivers. Partial delivery → `Part of #N`; only completing PR closes. Forge style: one bare `Closes #N` per line; publishing warns (best effort) when description seems to close an issue not listed that way.

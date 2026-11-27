@@ -55,7 +55,10 @@ FORGE_DOCS_CEILINGS: dict[str, int] = {
     "agent-authoring.md": 2100,
     "agent-contracts.md": 1000,
     "backlog-tracks.md": 1300,
-    "ci-recipe.md": 4400,
+    # Raised from 4400 for the CI secret-scan step: the recipe now carries
+    # the gate FOUNDATION §2 claims, its pinned-digest rationale, and the
+    # allowlist discipline a consumer needs in order to tune it safely.
+    "ci-recipe.md": 4700,
     "configuration.md": 9800,
     "continuation.md": 800,
     "instruction-compaction.md": 1200,
