@@ -386,6 +386,20 @@ def test_regen_commands_drops_c4_row_when_not_configured(tmp_path: Path) -> None
 def test_regen_commands_keeps_c4_row_when_configured(tmp_path: Path) -> None:
     """An opted-in `[tool.forge.c4]` section keeps the architecture.dsl row."""
     (tmp_path / "pyproject.toml").write_text('[tool.forge.c4]\nconfig = "c4.toml"\n')
+    (tmp_path / "c4.toml").write_text('system = "S"\n')
+    commands = regen_commands(tmp_path)
+    assert commands["docs/architecture.dsl"] == ("forge-gen-c4",)
+
+
+def test_regen_commands_keeps_c4_row_for_conventional_model_file_alone(
+    tmp_path: Path,
+) -> None:
+    """A root ``c4.toml`` with no inline section still opts in the DSL row.
+
+    BEHAVIOR: opt-in is judged on the resolved model, not on the inline table.
+    """
+    (tmp_path / "pyproject.toml").write_text("[tool.forge]\n")
+    (tmp_path / "c4.toml").write_text('system = "Demo"\n')
     commands = regen_commands(tmp_path)
     assert commands["docs/architecture.dsl"] == ("forge-gen-c4",)
 

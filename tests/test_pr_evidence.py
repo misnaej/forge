@@ -621,6 +621,7 @@ def test_gate_steps_includes_c4_only_when_configured(tmp_path: Path) -> None:
         '[tool.forge]\nbase_branch = "main"\n\n[tool.forge.c4]\nconfig = "c4.toml"\n',
         encoding="utf-8",
     )
+    (repo / "c4.toml").write_text('system = "S"\n', encoding="utf-8")
 
     assert pr_evidence._gate_steps(repo) == [*pr_evidence.PROVENANCE_GATE_STEPS, "c4"]
 

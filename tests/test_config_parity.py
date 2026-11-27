@@ -33,6 +33,15 @@ _DYNAMIC_READS: dict[tuple[str, str], str] = {
         "C4 model data, not a setting: the presence of an inline `system` "
         "table decides whether [tool.forge.c4] itself is the model"
     ),
+    # The model's structure, not its settings: these tables declare the
+    # architecture itself, so they have no default to document and are
+    # described in docs/c4-architecture.md rather than the config reference.
+    ("c4", "description"): "C4 model data: the system's own description",
+    ("c4", "system_technology"): "C4 model data: the System-Context box label",
+    ("c4", "person"): "C4 model data: the [[person]] actor tables",
+    ("c4", "container"): "C4 model data: the [[container]] tables",
+    ("c4", "external"): "C4 model data: the [[external]] system tables",
+    ("c4", "relationship"): "C4 model data: the [[relationship]] edge tables",
 }
 
 # Declared keys whose read the scan cannot see, as (section, key). Every
@@ -64,6 +73,13 @@ _NONLITERAL_SECTIONS: dict[tuple[str, str], str] = {
         "_forge_step_config forwards its `step` parameter; callers pass literals"
     ),
 }
+
+
+# Section readers whose section is fixed by the function rather than passed
+# in, as reader name -> section. ``resolve_model_section`` resolves the C4
+# model: it reads ``[tool.forge.c4]`` and overlays it on the model file, so
+# its callers look C4 keys up on what it returns.
+_FIXED_SECTION_READERS: dict[str, str] = {"resolve_model_section": "c4"}
 
 
 def _call_name(call: ast.Call) -> str:
@@ -111,6 +127,8 @@ def _section_of_call(call: ast.Call) -> str | None:
         its section is not a literal.
     """
     name = _call_name(call)
+    if name in _FIXED_SECTION_READERS:
+        return _FIXED_SECTION_READERS[name]
     if name in _SECTION_READERS:
         if len(call.args) == 1 and name == "read_tool_forge_section":
             return ""

@@ -302,6 +302,35 @@ radial edges while detailed views show the specific flow. Every default — no n
 config, no non-component relationships, no person targets — is **byte-identical**
 to the prior output, locked by the existing DSL/flat tests.
 
+### Required edges (must-reach contracts)
+
+A `[[relationship]]` normally *permits* an edge: it draws a connection the
+import graph cannot see. Adding `required = true` inverts that — the edge
+becomes an assertion, and `forge-gen-c4 --check` fails when the source
+component's modules do not reach the destination component's in the import
+graph, directly or transitively.
+
+This is the component-level counterpart of `composes_all_of` in
+`[tool.forge.layering]`, which says the same thing about a layer's children:
+both answer "reaches" from the module import closure, via the one shared
+`forge.import_graph.transitive_closure`. One difference survives the move: the
+C4 import graph is built counting `if TYPE_CHECKING:` imports and the layering
+audit's is not, so a dependency that exists only for type checking satisfies a
+required edge while the equivalent layer clause rejects it.
+
+Because the answer comes from imports, a required edge's endpoints must both be
+components. Naming a person, container, external system or the system itself
+fails at model load, as does naming one component at both ends (a component
+always reaches itself, so the assertion would pass vacuously). For the same
+reason the flag is meaningless on runtime and subprocess edges — exactly the
+edges `[[relationship]]` exists for — so reach for it only where the dependency
+ought to be a real import.
+
+There is no config key to enable required edges: `required` is per-edge opt-in
+already, which is the finest gate available. `[tool.forge.c4].blocking = false`
+downgrades an unsatisfied contract to an advisory warning along with every
+other finding of the `c4` pre-commit step.
+
 ### Slimming & grouping (activation, tags, bands)
 
 A full model can render as leaner views without maintaining copies. Each element

@@ -339,7 +339,6 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_parse_one_layer(entry: dict[str, object], index: int) -> LayerSpec | str` _(internal)_ — Parse one ``[[tool.forge.layering.layer]]`` table.
 - `parse_layers(raw: dict[str, object]) -> tuple[list[LayerSpec], list[str]]` — Parse ``[tool.forge.layering]`` into layer specs.
 - `_direct_children(layer: LayerSpec, modules: dict[str, ModuleNode]) -> dict[tuple[str, str], set[str]]` _(internal)_ — Group a layer's modules by direct child under each package prefix.
-- `_closure(graph: dict[str, set[str]], start: set[str]) -> set[str]` _(internal)_ — Return the transitive import closure of ``start`` (inclusive).
 - `_child_finding_anchor(mods: set[str], modules: dict[str, ModuleNode]) -> tuple[str, int]` _(internal)_ — Pick a stable file anchor for a child-level finding.
 - `evaluate(layers: list[LayerSpec], modules: dict[str, ModuleNode], graph: dict[str, set[str]], *, escalate_paths: set[str]) -> list[Finding]` — Evaluate every layer contract over the module graph.
 - `_parse_coverage_config(raw: dict[str, object], *, has_layers: bool) -> tuple[bool, tuple[str, ...], list[str]]` _(internal)_ — Parse the coverage-gate keys of ``[tool.forge.layering]``.
@@ -581,7 +580,10 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `is_fragments_mode(repo_root: Path) -> bool` — Return whether the repo runs changelog fragments mode.
 - `read_tool_forge_section(repo_root: Path, section: str = '') -> dict` — Return a ``[tool.forge.<section>]`` table, or ``{}`` when absent.
 - `_read_toml_file(path: Path) -> dict | None` _(internal)_ — Parse a standalone TOML file, degrading to ``None`` on any failure.
-- `resolve_model_section(repo_root: Path) -> dict | None` — Locate the C4 model table — external file or inline pyproject.
+- `_deep_merge(base: dict, overlay: dict) -> dict` _(internal)_ — Overlay *overlay* onto *base*, merging nested tables key by key.
+- `_log_model_overrides(base: dict, overlay: dict, source: str) -> None` _(internal)_ — Log, at debug level, the keys where the inline table wins.
+- `_model_file_in_repo(repo_root: Path, relative: str) -> Path | None` _(internal)_ — Resolve a model-file path, refusing one that leaves the repository.
+- `resolve_model_section(repo_root: Path) -> dict | None` — Resolve the C4 model table — a model file overlaid with inline keys.
 - `load_config(repo_root: Path) -> ForgeConfig` — Read ``[tool.forge]`` from *repo_root*'s ``pyproject.toml``.
 - `_existing_dirs(repo_root: Path, dirs: list[str]) -> list[str]` _(internal)_ — Filter *dirs* to existing in-repo paths, de-duplicated, order-preserving.
 - `resolve_tool_roots(repo_root: Path, tool: str, *, include_tests: bool = False) -> list[str]` — Resolve the scan roots a layout-consuming *tool* should use.
@@ -731,11 +733,13 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _forge-config — show what forge config this repo sets, and what it should._
 
+- `class KeyDoc` — Reference-table copy for a key documented in a generated region.
 - `class ConfigKey` — One ``[tool.forge.*]`` key forge reads in a consumer repo.
 - `_lookup(data: dict, path: tuple[str, ...]) -> object` _(internal)_ — Return the value at *path* in nested *data*, or ``_UNSET`` if absent.
 - `_section_of(key: ConfigKey) -> str` _(internal)_ — Return the section header (path without the leaf key) for *key*.
 - `keys_by_section() -> list[tuple[str, list[ConfigKey]]]` — Group :data:`CONFIG_KEYS` by section, in first-appearance order.
-- `build_report(data: dict) -> list[str]` — Build the ``forge-config`` report lines from parsed pyproject data.
+- `_c4_model_path(key: ConfigKey) -> tuple[str, ...] | None` _(internal)_ — Return *key*'s path inside the resolved C4 model table, if it has one.
+- `build_report(data: dict, repo_root: Path) -> list[str]` — Build the ``forge-config`` report lines for a repo.
 - `main() -> int` — Entry point for ``forge-config``.
 
 ## `forge.gen_api_digest`
@@ -777,7 +781,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `class External` — An external software system the system depends on.
 - `class Container` — A deployable unit inside the system (Container level).
 - `class Component` — A named component and the module prefixes that constitute it.
-- `class Relationship` — A human-declared component-to-component relationship.
+- `class Relationship` — A human-declared relationship between two model elements.
 - `class RenderConfig` — Consumer-tunable knobs for the offline HTML view (``[tool.forge.c4.render]``).
 - `class C4Config` — The human-authored ``[tool.forge.c4]`` model skeleton.
 - `class _IdMaps` _(internal)_ — Maps display names to unique DSL-safe identifiers.
@@ -793,6 +797,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_validate_component_containers(components: tuple[Component, ...], containers: tuple[Container, ...]) -> None` _(internal)_ — Fail loudly on a duplicate container name or an undeclared reference.
 - `_parse_render_config(section: dict) -> RenderConfig` _(internal)_ — Build the HTML :class:`RenderConfig` from the model's ``render`` table.
 - `load_c4_config(root: Path) -> C4Config | None` — Load the C4 model skeleton for the repo.
+- `_validate_required_relationships(relationships: tuple[Relationship, ...], components: tuple[Component, ...]) -> None` _(internal)_ — Reject a ``required`` relationship the import graph cannot answer.
 - `_visible_config(config: C4Config, edges: set[tuple[str, str]], *, include_tags: tuple[str, ...] = (), exclude_tags: tuple[str, ...] = ()) -> tuple[C4Config, set[tuple[str, str]]]` _(internal)_ — Drop deactivated / tag-filtered elements and their dangling edges.
 - `assign_components(modules: list[str], components: tuple[Component, ...]) -> tuple[dict[str, str], list[str]]` — Map each module to a component by longest-prefix match.
 - `derive_component_edges(graph: dict[str, set[str]], assigned: dict[str, str]) -> set[tuple[str, str]]` — Collapse module-level import edges to component-level edges.
@@ -807,7 +812,8 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_component_description(component: Component) -> str` _(internal)_ — Return a component's box description for C4 rendering.
 - `_render_relationships(config: C4Config, ids: _IdMaps, edges: set[tuple[str, str]]) -> list[str]` _(internal)_ — Render the relationship statements of the ``model`` block.
 - `_render_views(config: C4Config, sys_id: str, container_ids: dict[str, str]) -> list[str]` _(internal)_ — Render the ``views`` block.
-- `build_model(root: Path, roots: list[Path]) -> tuple[C4Config, set[tuple[str, str]], list[str], list[str]] | None` — Assemble the C4 model: config, derived edges, unmatched + all modules.
+- `class BuiltModel` — Everything one model build produces, for every consumer of it.
+- `build_model(root: Path, roots: list[Path]) -> BuiltModel | None` — Assemble the C4 model: config, edges, module assignment and import graph.
 - `generate(root: Path, roots: list[Path]) -> tuple[str, list[str]] | None` — Build the DSL text and unmatched-module list for the repo.
 - `_m(text: str) -> str` _(internal)_ — Escape label *text* for safe embedding in a Mermaid node label.
 - `_external_node_line(node_id: str, ext: External, *, indent: str = '    ', markdown: bool = False) -> str` _(internal)_ — Render the flat ``[[...]]`` node line for one external system.
@@ -841,6 +847,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_warn_unmatched(unmatched: list[str]) -> None` _(internal)_ — Log a coverage warning naming modules in no component.
 - `_dead_prefixes(components: tuple[Component, ...], modules: list[str]) -> list[tuple[str, str]]` _(internal)_ — Find declared component prefixes that match zero discovered modules.
 - `_check_strict_coverage(config: C4Config, modules: list[str], unmatched: list[str]) -> int` _(internal)_ — Fail ``--check`` on incomplete or dead component coverage.
+- `_check_required_relationships(built: BuiltModel) -> int` _(internal)_ — Fail ``--check`` on a ``required`` relationship the imports do not back.
 - `_readme_block_body(mermaid_text: str) -> str` _(internal)_ — Render what sits between the README C4 markers.
 - `render_readme_block(mermaid_text: str) -> str` — Render the managed README block embedding the Mermaid diagram.
 - `_readme_path(root: Path, config: C4Config) -> Path` _(internal)_ — Return the configured README path under *root*.
@@ -892,15 +899,19 @@ A compact index of this codebase's symbols — every top-level function and clas
 
 > _Shared helpers for forge's generated-doc CLIs._
 
+- `config_region_markers(group: str) -> tuple[str, str]` — Return the start/end markers for a named config-doc region.
 - `replace_region(text: str, start: str, end: str, body: str) -> str | None` — Replace what lies between the *start* and *end* markers in *text*.
 - `check_doc_drift(root: Path, doc_relpath: str, generated: str, regen_cmd: str) -> int` — Compare freshly generated content against a committed doc.
 
 ## `forge.gen_config_doc`
 
-> _Generate the key/default table in ``forge-docs/configuration.md``._
+> _Generate the key tables in ``forge-docs/configuration.md``._
 
+- `_toml_literal(value: object) -> str` _(internal)_ — Return *value* spelled as it would be written in TOML.
 - `_render_default(default: object) -> str` _(internal)_ — Return *default* as a table cell.
+- `_escape_cell(text: str) -> str` _(internal)_ — Return *text* safe to place in a markdown table cell.
 - `render_table() -> str` — Render every config key and its default as a markdown table.
+- `render_group_table(group: str) -> str` — Render one key group's reference table for its generated region.
 - `main() -> int` — Entry point for ``forge-gen-config-doc``.
 
 ## `forge.gen_vibe_agents`
@@ -1099,6 +1110,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 > _Shared AST import-graph primitives._
 
 - `closest_known(target: str, modules: AbstractSet[str]) -> str | None` — Resolve an import *target* to the deepest known module that covers it.
+- `transitive_closure(graph: dict[str, set[str]], start: set[str]) -> set[str]` — Return the transitive import closure of *start* (inclusive).
 - `ancestor_edges(modules: AbstractSet[str]) -> dict[str, set[str]]` — Map each known module to its known ancestor packages.
 - `_rel_to_dotted(rel: Path) -> str | None` _(internal)_ — Convert a root-relative ``.py`` path to a dotted module name.
 - `resolve_module_name(path: Path, package_roots: list[Path]) -> str | None` — Translate a ``.py`` path to a dotted module name.

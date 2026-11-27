@@ -1,8 +1,17 @@
 # Configuring forge in your repo
 
-forge reads all of its configuration from your repo's **`pyproject.toml`** —
-there is no separate `forge.toml` or config file to manage. This page is the
-complete reference.
+forge reads its configuration from your repo's **`pyproject.toml`** — there is
+no separate `forge.toml` to manage. One artifact sits outside it: a C4
+architecture model is its own file, so it may live in a `c4.toml` (or the path
+named by `[tool.forge.c4].config`), and any `[tool.forge.c4]` keys left inline
+are overlaid on that file's.
+
+This page is the complete reference for the keys forge reads. The C4 model's
+own *structure* — the `[[container]]`, `[[component]]` and `[[relationship]]`
+tables — is documented in
+[`docs/c4-architecture.md`](../docs/c4-architecture.md) instead: those tables
+declare a model rather than set an option, so they are not keys with
+defaults.
 
 **For a live view of what forge reads in *your* repo right now** — current
 values, unset defaults, and what you should add — run:
@@ -48,45 +57,45 @@ by `forge-gen-config-doc`; the sections below explain each key.
 <!-- forge:config:start -->
 | Key | Default |
 |---|---|
-| `[tool.forge].base_branch` | `'main'` |
+| `[tool.forge].base_branch` | `"main"` |
 | `[tool.forge].source_dirs` | smart-detect (src/ or top-level packages) |
 | `[tool.forge].test_dirs` | smart-detect (tests/ or test/) |
 | `[tool.forge].exclude` | `[]` |
-| `[tool.forge.cli_wiring].enabled` | `False` |
+| `[tool.forge.cli_wiring].enabled` | `false` |
 | `[tool.forge.agent_doc].path` | unset (agent_doc step self-skips) |
 | `[tool.forge.agent_doc].guarded_by` | unset (guard-map edge check self-skips) |
 | `[tool.forge.agent_doc].extra_clis` | unset (no extra known CLIs) |
 | `[tool.forge.agent_doc].extra_hooks` | unset (no extra known hooks) |
 | `[tool.forge.agent_doc].extra_skills` | unset (no extra known skills) |
-| `[tool.forge.vibe].enabled` | `False` |
-| `[tool.forge.docstring_coverage].badge` | `False` |
+| `[tool.forge.vibe].enabled` | `false` |
+| `[tool.forge.docstring_coverage].badge` | `false` |
 | `[tool.forge.docstring_coverage].paths` | source_dirs + test_dirs |
 | `[tool.forge.docstring_verification].paths` | source_dirs + test_dirs |
 | `[tool.forge.test_naming_check].paths` | test_dirs (smart-detect) |
 | `[tool.forge.slow_tests_report].paths` | source_dirs (smart-detect) |
 | `[tool.forge.ruff].paths` | source_dirs + test_dirs |
-| `[tool.forge.api_digest].paths` | `'source_dirs'` |
+| `[tool.forge.api_digest].paths` | `"source_dirs"` |
 | `[tool.forge.precommit].disable` | `[]` |
 | `[tool.forge.precommit].enable` | `[]` |
-| `[tool.forge.precommit].scope` | `'all'` |
+| `[tool.forge.precommit].scope` | `"all"` |
 | `[tool.forge.precommit].scope_overrides` | `{}` |
-| `[tool.forge.precommit].echo_ci_output` | `True` |
+| `[tool.forge.precommit].echo_ci_output` | `true` |
 | `[tool.forge.doctest].paths` | source_dirs (smart-detect) |
-| `[tool.forge.doctest].blocking` | `False` |
+| `[tool.forge.doctest].blocking` | `false` |
 | `[tool.forge.typecheck].paths` | source_dirs (smart-detect) |
-| `[tool.forge.typecheck].blocking` | `False` |
-| `[tool.forge.typecheck].file_set` | `'roots'` |
-| `[tool.forge.typecheck].include_tests` | `False` |
-| `[tool.forge.pip_audit].blocking` | `False` |
-| `[tool.forge.pip_audit].cadence` | `'branch'` |
+| `[tool.forge.typecheck].blocking` | `false` |
+| `[tool.forge.typecheck].file_set` | `"roots"` |
+| `[tool.forge.typecheck].include_tests` | `false` |
+| `[tool.forge.pip_audit].blocking` | `false` |
+| `[tool.forge.pip_audit].cadence` | `"branch"` |
 | `[tool.forge.pip_audit].max_age_hours` | `24.0` |
 | `[tool.forge.cve_usage].paths` | source_dirs + test_dirs |
 | `[tool.forge.release].auto` | unset |
-| `[tool.forge.changelog].blocking` | `True` |
+| `[tool.forge.changelog].blocking` | `true` |
 | `[tool.forge.changelog].exempt_paths` | `[]` |
 | `[tool.forge.changelog].require_paths` | `[]` |
-| `[tool.forge.changelog].precommit_enforce` | `True` |
-| `[tool.forge.changelog].mode` | `'headings'` |
+| `[tool.forge.changelog].precommit_enforce` | `true` |
+| `[tool.forge.changelog].mode` | `"headings"` |
 | `[tool.forge.audit_agents].reporter_agents` | `[]` |
 | `[tool.forge.audit_agents].reporter_with_artifact_agents` | `[]` |
 | `[tool.forge.audit_agents].exclude` | `[]` |
@@ -94,37 +103,65 @@ by `forge-gen-config-doc`; the sections below explain each key.
 | `[tool.forge.plan_check].hub_paths` | `[]` |
 | `[tool.forge.layering].paths` | unset (source_dirs → auto-detect) |
 | `[tool.forge.layering].layer` | unset (audit + step skipped) |
-| `[tool.forge.layering].require_all_classified` | `False` |
+| `[tool.forge.layering].require_all_classified` | `false` |
 | `[tool.forge.layering].unclassified_allow` | `[]` |
 | `[tool.forge.smart_test].paths` | source_dirs + test_dirs |
-| `[tool.forge.smart_test].follow_mock_patches` | `False` |
-| `[tool.forge.smart_test].coverage_validate` | `False` |
-| `[tool.forge.smart_test].coverage_json` | `'unset'` |
+| `[tool.forge.smart_test].follow_mock_patches` | `false` |
+| `[tool.forge.smart_test].coverage_validate` | `false` |
+| `[tool.forge.smart_test].coverage_json` | `"unset"` |
 | `[tool.forge.smart_test].commit_directive_re` | built-in [depth-N] / [full] regex |
 | `[tool.forge.smart_test].lifecycle_skip_days` | `30` |
 | `[tool.forge.smart_test].nonpython_ignore` | built-in list (*.md, .plan/*, .gitignore) |
-| `[tool.forge.smart_test].safe_fallback` | `'escalate'` |
+| `[tool.forge.smart_test].safe_fallback` | `"escalate"` |
 | `[tool.forge.continuation].judgment_max_lines` | `60` |
 | `[tool.forge.continuation].judgment_max_items` | `12` |
 | `[tool.forge.memory_audit].threshold` | `5` |
-| `[tool.forge.intake].dir` | `'docs/intake'` |
+| `[tool.forge.intake].dir` | `"docs/intake"` |
 | `[tool.forge.intake].redact` | `[]` |
 | `[tool.forge.telemetry].sample_interval` | `1.0` |
-| `[tool.forge.telemetry].plot` | `True` |
-| `[tool.forge.env_sync].blocking` | `True` |
+| `[tool.forge.telemetry].plot` | `true` |
+| `[tool.forge.env_sync].blocking` | `true` |
 | `[tool.forge.env_sync].rebuild_command` | unset (auto_rebuild step self-skips) |
-| `[tool.forge.badges].enabled` | `False` |
-| `[tool.forge.badges].readme` | `'README.md'` |
+| `[tool.forge.badges].enabled` | `false` |
+| `[tool.forge.badges].readme` | `"README.md"` |
 | `[tool.forge.badges].workflow` | ci.yml / ci.yaml, else first pull_request workflow |
 | `[tool.forge.c4].config` | c4.toml (if present) |
-| `[tool.forge.c4].output` | `'docs/architecture.dsl'` |
+| `[tool.forge.c4].output` | `"docs/architecture.dsl"` |
 | `[tool.forge.c4].readme` | unset (no README block) |
-| `[tool.forge.c4].strict_coverage` | `False` |
+| `[tool.forge.c4].strict_coverage` | `false` |
 | `[tool.forge.c4].paths` | source_dirs (smart-detect) |
-| `[tool.forge.c4].direction` | `'LR'` |
-| `[tool.forge.c4].edges` | `'imports'` |
+| `[tool.forge.c4].direction` | `"LR"` |
+| `[tool.forge.c4].edges` | `"imports"` |
 | `[tool.forge.c4].container_edges` | inherit edges |
 | `[tool.forge.c4].component_edges` | inherit edges |
+| `[tool.forge.c4].blocking` | `true` |
+| `[tool.forge.c4.render].pdf_fit` | `"auto"` |
+| `[tool.forge.c4.render].pdf_page_size` | `"A4"` |
+| `[tool.forge.c4.render].pdf_orientation` | `"landscape"` |
+| `[tool.forge.c4.render].pdf_margin` | `10` |
+| `[tool.forge.c4.render].wrapping_width` | `220` |
+| `[tool.forge.c4.render].html_labels` | unset |
+| `[tool.forge.c4.render].font_family` | unset |
+| `[tool.forge.c4.render].font_size` | unset |
+| `[tool.forge.c4.render].node_spacing` | unset |
+| `[tool.forge.c4.render].rank_spacing` | unset |
+| `[tool.forge.c4.render].elk_node_spacing` | unset |
+| `[tool.forge.c4.render].elk_layer_spacing` | unset |
+| `[tool.forge.c4.render].elk_base_value` | unset |
+| `[tool.forge.c4.render].padding` | unset |
+| `[tool.forge.c4.render].custom_css` | unset |
+| `[tool.forge.c4.render].layout` | `"elk"` |
+| `[tool.forge.c4.render].node_placement_strategy` | `"NETWORK_SIMPLEX"` |
+| `[tool.forge.c4.render].force_node_model_order` | `true` |
+| `[tool.forge.c4.render].theme` | `"neutral"` |
+| `[tool.forge.c4.render].theme_colors` | `{}` |
+| `[tool.forge.c4.render].diagram_padding` | unset |
+| `[tool.forge.c4.render].consider_model_order` | unset |
+| `[tool.forge.c4.render].merge_edges` | `false` |
+| `[tool.forge.c4.render].cycle_breaking_strategy` | unset |
+| `[tool.forge.c4.render].include_tags` | `[]` |
+| `[tool.forge.c4.render].exclude_tags` | `[]` |
+| `[tool.forge.c4.render].route_views` | `[]` |
 <!-- forge:config:end -->
 
 ---
@@ -711,12 +748,17 @@ import graph) **by presence** of this table; it self-skips otherwise.
 | `edges` | Whether import-**derived** ("depends-on") edges are drawn: `"imports"` / `"both"` draw them, `"declared"` draws only hand-authored `[[relationship]]` edges. Declared edges always render. | You want a curated conceptual flow instead of the noisy import graph. |
 | `container_edges` / `component_edges` | Per-view override of `edges` for the Container view / the per-container Component views. | You want the Container view to show a clean curated flow while Component views keep real import coupling. |
 | `strict_coverage` | Makes `forge-gen-c4 --check` **fail** on any module mapped to no `[[component]]`, or any declared component prefix matching zero real modules (typo / dead prefix). | You use the component table as a drift-checked "every module accounted for" map and want stale entries to fail CI, not just warn. |
+| `blocking` | Whether the `c4` pre-commit step **refuses** the commit when `forge-gen-c4 --check` exits non-zero. `false` reports the same finding as a non-blocking `WARN` instead — drift, an invalid model and an unsatisfied `required` relationship alike. | You are restructuring packages and want the drift reported without every move refusing the commit. |
 
 The model itself — the `system` / `person` / `external` / `container` /
 `component` / `relationship` tables — lives in the external `c4.toml` (pointed
-at by `config`) or inline under `[tool.forge.c4]`. The component-to-component
-edges are machine-derived from the import graph; everything else is
-human-declared.
+at by `config`) or inline under `[tool.forge.c4]`. With a model file in play,
+the inline table is **overlaid** on it rather than ignored: tables merge key by
+key, so a single knob kept in `pyproject.toml` takes effect while the file
+supplies the rest, and arrays like `[[component]]` replace wholesale when the
+inline table declares them. `config` is the one key read from `pyproject.toml`
+only — it selects the file. The component-to-component edges are
+machine-derived from the import graph; everything else is human-declared.
 
 **`--format html` renders each C4 view (System Context / Containers / one per
 container's Components) on its own scrollable tab**, at intrinsic size — large
@@ -736,7 +778,22 @@ may name **any** declared element — person, container, component, or external
 system — so you can express container↔container edges, an actor → a specific
 component, and produce/consume data flows (a component "publishes results to"
 an external store, another "reads results from" it). An endpoint matching no
-element warns and is skipped. When an external is the destination of a declared
+element warns and is skipped.
+
+**Required edges.** A `[[relationship]]` may add `required = true`, which turns
+it from a drawing into a **contract**: `forge-gen-c4 --check` fails unless the
+source component's modules actually reach the destination component's in the
+import graph, directly or transitively. This is the component-level counterpart
+of `composes_all_of` in `[tool.forge.layering]`, so a composition rule can move
+onto the architecture model without losing its must-reach half — with one
+difference worth knowing: the C4 import graph counts `if TYPE_CHECKING:`
+imports, where the layering audit does not. Because the answer comes from
+imports, both endpoints must be **components** (naming a person, container or
+external system fails at model load, as does naming one component twice), and
+the flag is meaningless on the runtime and subprocess edges a declared
+relationship otherwise exists to capture. `required` needs no config key to
+enable — it is per-edge opt-in already; `[tool.forge.c4].blocking = false`
+downgrades its findings along with the rest of the step. When an external is the destination of a declared
 relationship, the generic `system → external` edge is suppressed in the views
 where the specific edge renders (Container / flat); the System Context view
 keeps its clean radial `system → external`.
@@ -798,12 +855,14 @@ auto-detected; set `FORGE_C4_BROWSER=/path/to/browser` to pin one) via
 it says so and points at the manual route (open the `--format html` page, then
 Print → Save as PDF). The page setup is tunable:
 
+<!-- forge:config:c4-pdf:start -->
 | Key | Default | What it does |
 |---|---|---|
 | `pdf_fit` | `"auto"` | `auto` (default) sizes **each page to its own diagram** — one tight page per view (needs `pdfunite`/`qpdf`; falls back to `contain` without them). `contain` scales every view to fit **one fixed page** (uniform pages; a wide-short view letterboxes). `width` fits a fixed page's width only (a tall view may span extra pages). |
 | `pdf_page_size` | `"A4"` | Fixed-page size for `contain`/`width`: `A4`, `A3`, `A5`, `Letter`, `Legal`, `Tabloid` (unknown → A4). Ignored by `auto`. |
 | `pdf_orientation` | `"landscape"` | `landscape` or `portrait` — `contain`/`width` only. |
 | `pdf_margin` | `10` | Page margin in millimetres. |
+<!-- forge:config:c4-pdf:end -->
 
 **SVG export.** `forge-gen-c4 --format svg` writes **one standalone vector SVG
 file per view** — `<stem>.<view-slug>.svg` next to `--output` (default
@@ -834,42 +893,48 @@ model interactively.
 ### `[tool.forge.c4.render]` — HTML rendering knobs
 
 Tunes the offline `--format html` view only — the DSL, README block, and
-`--format mermaid` output are unaffected. Every key passes straight through to
-the page's `mermaid.initialize(...)`. **All keys are optional; the defaults
-reproduce the shipped look** (wrapped, auto-sized labels + the ELK layout), so
-you only set a key to deviate. Unknown keys are ignored. Lives under
-`[tool.forge.c4.render]` (inline) or `[render]` in a standalone `c4.toml`.
+`--format mermaid` output are unaffected. Most keys pass straight through to
+the page's `mermaid.initialize(...)`; the view filters at the end of the second
+table are forge's own, and say so in place of a Mermaid setting. **All keys are
+optional; the defaults reproduce the shipped look** (wrapped, auto-sized labels
++ the ELK layout), so you only set a key to deviate. Unknown keys are ignored.
+Lives under `[render]` in a standalone `c4.toml`, or inline under
+`[tool.forge.c4.render]` — set in both, the inline value wins, key by key.
 
+<!-- forge:config:c4-render:start -->
 | Key | Default | → Mermaid (scope) | What it does |
 |---|---|---|---|
 | `wrapping_width` | `220` | `flowchart.wrappingWidth` | Px width the description wraps at; Mermaid auto-sizes the box. The label-overflow fix. |
-| `html_labels` | _unset_ | `htmlLabels` (root) | Render labels as HTML. Set `false` to dodge the Firefox empty-label bug (#5785). |
-| `font_family` | _unset_ | `fontFamily` (root) | Font stack (offline-safe stacks only — no web fonts). |
-| `font_size` | _unset_ | `fontSize` (root) | Base font size. |
-| `node_spacing` | _unset_ | `flowchart.nodeSpacing` | Gap between sibling nodes. **Honored under `layout = "dagre"` only** — the ELK engine ignores it; use `elk_node_spacing` for the ELK default. |
-| `rank_spacing` | _unset_ | `flowchart.rankSpacing` | Gap between ranks/layers. **Honored under `layout = "dagre"` only** — ELK ignores it; use `elk_layer_spacing` under ELK. |
-| `elk_node_spacing` | _unset_ | `elk.spacing.nodeNode` | Gap between sibling nodes under **ELK** (the ELK counterpart of `node_spacing`). Raising it visibly widens within-layer gaps. `unset` keeps the bundle default. |
-| `elk_layer_spacing` | _unset_ | `elk.layered.spacing.nodeNodeBetweenLayers` | Gap between layers under **ELK** (counterpart of `rank_spacing`). |
-| `elk_base_value` | _unset_ | `elk.spacing.baseValue` | ELK master spacing all unset per-pair spacings derive from — raises every gap proportionally. |
-| `padding` | _unset_ | `flowchart.padding` | Inner node padding. |
-| `custom_css` | _unset_ | `themeCSS` (root) | Raw-CSS escape hatch injected into the diagram. Every element's `tags` are emitted as Mermaid CSS classes on its node (e.g. `.agent`), so this can style by role — see the [element tag vocabulary](../docs/c4-architecture.md) for the reserved tag set. |
+| `html_labels` | unset | `htmlLabels` (root) | Render labels as HTML. Set `false` to dodge the Firefox empty-label bug (#5785). |
+| `font_family` | unset | `fontFamily` (root) | Font stack (offline-safe stacks only — no web fonts). |
+| `font_size` | unset | `fontSize` (root) | Base font size. |
+| `node_spacing` | unset | `flowchart.nodeSpacing` | Gap between sibling nodes. **Honored under `layout = "dagre"` only** — the ELK engine ignores it; use `elk_node_spacing` for the ELK default. |
+| `rank_spacing` | unset | `flowchart.rankSpacing` | Gap between ranks/layers. **Honored under `layout = "dagre"` only** — ELK ignores it; use `elk_layer_spacing` under ELK. |
+| `elk_node_spacing` | unset | `elk.spacing.nodeNode` | Gap between sibling nodes under **ELK** (the ELK counterpart of `node_spacing`). Raising it visibly widens within-layer gaps. `unset` keeps the bundle default. |
+| `elk_layer_spacing` | unset | `elk.layered.spacing.nodeNodeBetweenLayers` | Gap between layers under **ELK** (counterpart of `rank_spacing`). |
+| `elk_base_value` | unset | `elk.spacing.baseValue` | ELK master spacing all unset per-pair spacings derive from — raises every gap proportionally. |
+| `padding` | unset | `flowchart.padding` | Inner node padding. |
+| `custom_css` | unset | `themeCSS` (root) | Raw-CSS escape hatch injected into the diagram. Every element's `tags` are emitted as Mermaid CSS classes on its node (e.g. `.agent`), so this can style by role — see the [element tag vocabulary](../docs/c4-architecture.md) for the reserved tag set. |
 | `layout` | `"elk"` | `layout` (root) | `elk` (= `elk.layered`) or `dagre` — the two supported, **hierarchy-aware** engines (they keep C4's clusters separated and route every edge). ELK routes dense cross-cluster edges more cleanly and tunes spacing via `elk_node_spacing` / `elk_layer_spacing`; `dagre` tunes `node_spacing` / `rank_spacing`. The organic ELK engines (`elk.stress` / `elk.force` / `elk.radial`) are **rejected at config-load** — they silently drop edges + overlap nodes on multi-cluster views. |
 | `node_placement_strategy` | `"NETWORK_SIMPLEX"` | `elk.nodePlacementStrategy` | ELK node placement (`BRANDES_KOEPF`, `NETWORK_SIMPLEX`, …). |
 | `force_node_model_order` | `true` | `elk.forceNodeModelOrder` | Preserve declared node order. |
+<!-- forge:config:c4-render:end -->
 
 **Step 2 — theming + advanced ELK** (optional):
 
+<!-- forge:config:c4-render-advanced:start -->
 | Key | Default | → Mermaid (scope) | What it does |
 |---|---|---|---|
 | `theme` | `"neutral"` | `theme` (root) | Must be `"base"` for `theme_colors` to apply. |
-| `[render.theme_colors]` | _unset_ | `themeVariables` (theme vars) | Hex color overrides (e.g. `primaryColor`, `lineColor`, `tertiaryColor`); applied only under `theme = "base"`. |
-| `diagram_padding` | _unset_ | `flowchart.diagramPadding` | Padding around the whole diagram. |
-| `consider_model_order` | _unset_ | `elk.considerModelOrder` | ELK ordering hint (e.g. `NODES_AND_EDGES`). |
+| `theme_colors` | `{}` | `themeVariables` (theme vars) | Hex color overrides (e.g. `primaryColor`, `lineColor`, `tertiaryColor`); applied only under `theme = "base"`. |
+| `diagram_padding` | unset | `flowchart.diagramPadding` | Padding around the whole diagram. |
+| `consider_model_order` | unset | `elk.considerModelOrder` | ELK ordering hint (e.g. `NODES_AND_EDGES`). |
 | `merge_edges` | `false` | `elk.mergeEdges` | Merge parallel edges. |
-| `cycle_breaking_strategy` | _unset_ | `elk.cycleBreakingStrategy` | ELK cycle-breaking (e.g. `GREEDY_MODEL_ORDER`). |
-| `include_tags` | _unset_ | _(HTML/PDF view filter)_ | When set, the HTML/PDF views keep only elements carrying one of these tags. The DSL, README block, and `--format mermaid` are canonical and unaffected. |
-| `exclude_tags` | _unset_ | _(HTML/PDF view filter)_ | The HTML/PDF views drop elements carrying any of these tags (applied after `include_tags`). The DSL / README / `--format mermaid` are unaffected. |
-| `route_views` | _unset_ | _(HTML/PDF extra tabs)_ | List of component names; each adds one extra HTML/PDF tab scoped to that component and the components one edge hop away — isolating a single relationship path out of a dense Container view. A name matching no connected component warns and is skipped. Unset adds no tab (canonical view set unchanged). |
+| `cycle_breaking_strategy` | unset | `elk.cycleBreakingStrategy` | ELK cycle-breaking (e.g. `GREEDY_MODEL_ORDER`). |
+| `include_tags` | `[]` | _(HTML/PDF view filter)_ | When set, the HTML/PDF views keep only elements carrying one of these tags. The DSL, README block, and `--format mermaid` are canonical and unaffected. |
+| `exclude_tags` | `[]` | _(HTML/PDF view filter)_ | The HTML/PDF views drop elements carrying any of these tags (applied after `include_tags`). The DSL / README / `--format mermaid` are unaffected. |
+| `route_views` | `[]` | _(HTML/PDF extra tabs)_ | List of component names; each adds one extra HTML/PDF tab scoped to that component and the components one edge hop away — isolating a single relationship path out of a dense Container view. A name matching no connected component warns and is skipped. Unset adds no tab (canonical view set unchanged). |
+<!-- forge:config:c4-render-advanced:end -->
 
 ```toml
 [tool.forge.c4.render]

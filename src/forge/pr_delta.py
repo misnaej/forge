@@ -802,6 +802,6 @@ def regen_commands(repo_root: Path) -> dict[str, tuple[str, ...]]:
         Path → generator argv for every generator that applies here.
     """
     commands = dict(REGEN_COMMANDS)
-    if not config.read_tool_forge_section(repo_root, "c4"):
+    if config.resolve_model_section(repo_root) is None:
         commands.pop("docs/architecture.dsl")
     return commands

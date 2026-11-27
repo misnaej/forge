@@ -3126,7 +3126,7 @@ def test_generator_check_steps_launch_running_install_not_path_decoy(
     (tmp_path / "docs").mkdir()
     (tmp_path / doc).write_text("x\n", encoding="utf-8")
     monkeypatch.setattr(shutil, "which", lambda name: f"/decoy/{name}")
-    monkeypatch.setattr(precommit, "resolve_model_section", lambda _root: object())
+    monkeypatch.setattr(precommit, "resolve_model_section", lambda _root: {})
     captured: dict[str, list[str]] = {}
 
     def _run(cmd: list[str], **_kw: object) -> tuple[bool, str]:
@@ -3137,6 +3137,57 @@ def test_generator_check_steps_launch_running_install_not_path_decoy(
     getattr(precommit, step)(tmp_path)
 
     assert captured["cmd"] == [sys.executable, "-m", module, "--check"]
+
+
+@pytest.mark.parametrize(
+    ("model", "non_blocking"),
+    [({}, False), ({"blocking": False}, True)],
+    ids=["default-blocks", "blocking-false-warns"],
+)
+def test_step_c4_blocking_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    model: dict[str, object],
+    *,
+    non_blocking: bool,
+) -> None:
+    """A failing c4 check blocks by default; ``blocking = false`` downgrades it.
+
+    BEHAVIOR: drift fails the step either way; only ``blocking = false`` in the
+    resolved model table makes that failure advisory.
+    MOCK SETUP: model table stubbed; the generator check always reports drift.
+
+    Args:
+        model: Resolved model table the step sees.
+        non_blocking: Whether the failing result must be advisory.
+    """
+    monkeypatch.setattr(precommit, "resolve_model_section", lambda _root: model)
+    monkeypatch.setattr(precommit, "_run_gen_check", lambda _r, _d: (False, "drift"))
+    result = precommit.step_c4(tmp_path)
+    assert not result.passed
+    assert result.non_blocking is non_blocking
+
+
+def test_step_c4_blocking_read_from_model_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``blocking = false`` set in the model file, not pyproject, still applies.
+
+    BEHAVIOR: the step reads the resolved model table, so a key kept beside
+    ``strict_coverage`` in ``c4.toml`` takes effect.
+    MOCK SETUP: real resolver over a tmp repo; only the generator check is
+    stubbed to fail.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.forge.c4]\nconfig = "c4.toml"\n',
+    )
+    # blocking precedes every table: appended after one it would land inside it.
+    (tmp_path / "c4.toml").write_text('system = "S"\nblocking = false\n')
+    monkeypatch.setattr(precommit, "_run_gen_check", lambda _r, _d: (False, "drift"))
+    result = precommit.step_c4(tmp_path)
+    assert not result.passed
+    assert result.non_blocking
 
 
 # ---------------------------------------------------------------------------

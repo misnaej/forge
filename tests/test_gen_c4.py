@@ -24,6 +24,7 @@ from forge.gen_c4 import (
     MERMAID_JS_NAME,
     README_C4_END,
     README_C4_START,
+    BuiltModel,
     C4Config,
     Component,
     Container,
@@ -32,6 +33,7 @@ from forge.gen_c4 import (
     Relationship,
     RenderConfig,
     _build_views,
+    _check_required_relationships,
     _check_strict_coverage,
     _copy_vendored_mermaid,
     _dead_prefixes,
@@ -182,6 +184,164 @@ def test_resolve_model_section_none_when_unconfigured(tmp_path: Path) -> None:
     """No [tool.forge.c4], no c4.toml → not opted in."""
     _write_pyproject(tmp_path, "[tool.forge]\n")
     assert resolve_model_section(tmp_path) is None
+
+
+@pytest.mark.parametrize(
+    "pyproject",
+    [
+        '[tool.forge.c4]\nconfig = "c4.toml"\ndescription = "inline"\n',
+        '[tool.forge.c4]\ndescription = "inline"\n',
+    ],
+    ids=["explicit-config", "conventional-c4-toml"],
+)
+def test_resolve_model_section_inline_scalar_overrides_file(
+    tmp_path: Path,
+    pyproject: str,
+) -> None:
+    """An inline key wins over the model file's, for both file-selection branches.
+
+    Args:
+        pyproject: pyproject body, with or without an explicit ``config`` path.
+    """
+    _write_pyproject(tmp_path, pyproject)
+    (tmp_path / "c4.toml").write_text(SAMPLE_MODEL)
+    section = resolve_model_section(tmp_path)
+    assert section is not None
+    assert section["description"] == "inline"
+    assert section["system"] == "Demo"
+
+
+def test_resolve_model_section_deep_merges_nested_tables_and_replaces_arrays(
+    tmp_path: Path,
+) -> None:
+    """Nested tables merge key by key; arrays are replaced whole; ``config`` drops.
+
+    BEHAVIOR: overriding one ``[render]`` knob inline keeps its file siblings,
+    while an inline ``[[component]]`` array replaces the file's rather than
+    merging element-wise. ``config`` only selects the file, so it is not part
+    of the resolved model.
+    """
+    _write_pyproject(
+        tmp_path,
+        '[tool.forge.c4]\nconfig = "c4.toml"\n\n'
+        '[tool.forge.c4.render]\nlayout = "dagre"\n\n'
+        '[[tool.forge.c4.component]]\nname = "Only"\n',
+    )
+    (tmp_path / "c4.toml").write_text(
+        'system = "Demo"\n\n'
+        '[render]\nlayout = "elk"\nfont_size = 14\n\n'
+        '[[component]]\nname = "A"\n\n[[component]]\nname = "B"\n',
+    )
+    section = resolve_model_section(tmp_path)
+    assert section is not None
+    assert section["render"] == {"layout": "dagre", "font_size": 14}
+    assert section["component"] == [{"name": "Only"}]
+    assert "config" not in section
+
+
+def test_resolve_model_section_inline_system_ignores_file(tmp_path: Path) -> None:
+    """An inline ``system`` makes the inline table the model; no file is merged."""
+    _write_pyproject(tmp_path, '[tool.forge.c4]\nsystem = "Inline"\n')
+    (tmp_path / "c4.toml").write_text(SAMPLE_MODEL)
+    assert resolve_model_section(tmp_path) == {"system": "Inline"}
+
+
+def test_resolve_model_section_none_when_file_absent_without_inline_system(
+    tmp_path: Path,
+) -> None:
+    """Inline keys with no model file and no ``system`` do not opt the repo in.
+
+    BEHAVIOR: an overlay-only table must not masquerade as a model, or every
+    caller would flip from skipped to opted-in.
+    """
+    _write_pyproject(
+        tmp_path,
+        '[tool.forge.c4]\nconfig = "missing.toml"\nstrict_coverage = true\n',
+    )
+    assert resolve_model_section(tmp_path) is None
+
+
+def _repo_and_outside_model(tmp_path: Path) -> tuple[Path, Path]:
+    """Create a repo dir and a sibling model file outside it.
+
+    Args:
+        tmp_path: Temporary directory holding both.
+
+    Returns:
+        The repo root and the outside model file path.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    outside = tmp_path / "outside" / "evil.toml"
+    outside.parent.mkdir()
+    outside.write_text('system = "Evil"\n')
+    return repo, outside
+
+
+def test_resolve_model_section_refuses_conventional_c4_toml_symlinked_outside(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A root ``c4.toml`` symlinked to a file outside the repo is not read.
+
+    BEHAVIOR: the filename is fixed but a symlink at it is followed, so the
+    resolved target must be checked; the refusal is logged.
+    """
+    repo, outside = _repo_and_outside_model(tmp_path)
+    (repo / "c4.toml").symlink_to(outside)
+    _write_pyproject(repo, "[tool.forge]\n")
+    with caplog.at_level(logging.ERROR):
+        assert resolve_model_section(repo) is None
+    assert "escapes the repository root" in caplog.text
+
+
+def test_resolve_model_section_refuses_explicit_config_escaping_root(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An explicit ``config`` path leaving the repo is refused and logged."""
+    repo, _outside = _repo_and_outside_model(tmp_path)
+    _write_pyproject(repo, '[tool.forge.c4]\nconfig = "../outside/evil.toml"\n')
+    with caplog.at_level(logging.ERROR):
+        assert resolve_model_section(repo) is None
+    assert "escapes the repository root" in caplog.text
+
+
+def test_resolve_model_section_logs_overridden_key_names_once(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """One DEBUG record names every key the inline table overrides, sorted.
+
+    BEHAVIOR: no record when nothing collides.
+    """
+
+    def overrides() -> list[str]:
+        return [
+            r.getMessage()
+            for r in caplog.records
+            if r.name == "forge.config" and "overrides" in r.getMessage()
+        ]
+
+    (tmp_path / "c4.toml").write_text(SAMPLE_MODEL)
+    _write_pyproject(
+        tmp_path,
+        '[tool.forge.c4]\nconfig = "c4.toml"\n'
+        'output = "x.dsl"\ndescription = "inline"\n',
+    )
+    with caplog.at_level(logging.DEBUG):
+        resolve_model_section(tmp_path)
+    assert len(overrides()) == 1
+    assert "'description', 'output'" in overrides()[0]
+
+    caplog.clear()
+    _write_pyproject(
+        tmp_path,
+        '[tool.forge.c4]\nconfig = "c4.toml"\nstrict_coverage = true\n',
+    )
+    with caplog.at_level(logging.DEBUG):
+        resolve_model_section(tmp_path)
+    assert overrides() == []
 
 
 def test_load_c4_config_parses_external_file(tmp_path: Path) -> None:
@@ -555,6 +715,197 @@ def test_main_check_strict_coverage_fails_on_dead_prefix(
     messages = " ".join(r.getMessage() for r in caplog.records)
     assert "Ghost" in messages
     assert "demo.ghost" in messages
+
+
+def _required_model(source: str, destination: str, *, required: bool = True) -> str:
+    """Build a c4.toml with one person, one container, two components, one edge.
+
+    Args:
+        source: Relationship source element name.
+        destination: Relationship destination element name.
+        required: Whether the relationship carries ``required = true``.
+
+    Returns:
+        The model text.
+    """
+    return (
+        _STRICT_HEADER
+        + '\n[[person]]\nname = "User"\n'
+        + _STRICT_CONTAINER
+        + '\n[components]\n"Core" = ["demo.core"]\n"IO" = ["demo.io"]\n'
+        + f'\n[[relationship]]\nsource = "{source}"\ndestination = "{destination}"\n'
+        + f"required = {str(required).lower()}\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "destination"),
+    [("User", "IO"), ("Core", "app")],
+    ids=["person-as-source", "container-as-destination"],
+)
+def test_required_relationship_rejects_non_component_endpoint(
+    tmp_path: Path,
+    source: str,
+    destination: str,
+) -> None:
+    """A required edge naming a non-component is refused at model load.
+
+    Args:
+        source: Relationship source element name.
+        destination: Relationship destination element name.
+    """
+    _strict_repo(tmp_path, _required_model(source, destination))
+    with pytest.raises(ValueError, match="not a declared"):
+        load_c4_config(tmp_path)
+
+
+def test_required_relationship_rejects_same_component_both_ends(
+    tmp_path: Path,
+) -> None:
+    """A required self-edge is refused: a component trivially reaches itself."""
+    _strict_repo(tmp_path, _required_model("Core", "Core"))
+    with pytest.raises(ValueError, match="both ends"):
+        load_c4_config(tmp_path)
+
+
+def test_non_required_relationship_to_non_component_still_loads(
+    tmp_path: Path,
+) -> None:
+    """Endpoint rule applies only to required edges; a drawn edge may name a person."""
+    _strict_repo(tmp_path, _required_model("User", "IO", required=False))
+    config = load_c4_config(tmp_path)
+    assert config is not None
+    assert config.relationships == (Relationship("User", "IO", "uses"),)
+
+
+def _built_with_required(
+    graph: dict[str, set[str]],
+    assigned: dict[str, str],
+) -> BuiltModel:
+    """Build a ``BuiltModel`` requiring ``Alpha -> Beta`` over a hand-made graph.
+
+    Args:
+        graph: Module import adjacency.
+        assigned: Module name to owning component name.
+
+    Returns:
+        A model with no filesystem or import scan behind it.
+    """
+    config = C4Config(
+        system="Demo",
+        description="",
+        output="docs/architecture.dsl",
+        components=(Component("Alpha", ("alpha",)), Component("Beta", ("beta",))),
+        relationships=(Relationship("Alpha", "Beta", "uses", required=True),),
+    )
+    return BuiltModel(
+        config=config,
+        edges=set(),
+        unmatched=[],
+        modules=sorted(graph),
+        assigned=assigned,
+        graph=graph,
+    )
+
+
+def test_check_required_relationships_satisfied_transitively() -> None:
+    """Reach through an intermediate component satisfies the contract."""
+    built = _built_with_required(
+        {"alpha.a": {"middle.m"}, "middle.m": {"beta.b"}, "beta.b": set()},
+        {"alpha.a": "Alpha", "middle.m": "Middle", "beta.b": "Beta"},
+    )
+    assert _check_required_relationships(built) == 0
+
+
+def test_check_required_relationships_unsatisfied_fails_and_logs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No import path from source to destination returns 1 and says so."""
+    built = _built_with_required(
+        {"alpha.a": set(), "beta.b": set()},
+        {"alpha.a": "Alpha", "beta.b": "Beta"},
+    )
+    with caplog.at_level(logging.ERROR):
+        assert _check_required_relationships(built) == 1
+    assert "unsatisfied" in caplog.text
+
+
+def test_check_required_relationships_component_without_modules_is_distinct(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A component matching no module reports that, not a misleading 'unsatisfied'."""
+    built = _built_with_required({"alpha.a": set()}, {"alpha.a": "Alpha"})
+    with caplog.at_level(logging.ERROR):
+        assert _check_required_relationships(built) == 1
+    assert "matches no real module" in caplog.text
+    assert "unsatisfied" not in caplog.text
+
+
+def test_check_required_relationships_names_empty_source_component(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Empty component as source: the message names it, not the destination."""
+    built = _built_with_required({"beta.b": set()}, {"beta.b": "Beta"})
+    with caplog.at_level(logging.ERROR):
+        assert _check_required_relationships(built) == 1
+    assert "component 'Alpha' matches no real module" in caplog.text
+
+
+def test_check_required_relationships_checks_every_edge_after_a_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A passing edge then two failing ones: every failure is reported, result 1.
+
+    BEHAVIOR: a failure must not stop the loop, so a later unsatisfied edge is
+    still reported.
+    """
+    config = C4Config(
+        system="Demo",
+        description="",
+        output="docs/architecture.dsl",
+        components=(
+            Component("Alpha", ("alpha",)),
+            Component("Beta", ("beta",)),
+            Component("Gamma", ("gamma",)),
+        ),
+        relationships=(
+            Relationship("Alpha", "Beta", "uses", required=True),
+            Relationship("Alpha", "Gamma", "uses", required=True),
+            Relationship("Beta", "Gamma", "uses", required=True),
+        ),
+    )
+    graph = {"alpha.a": {"beta.b"}, "beta.b": set(), "gamma.g": set()}
+    built = BuiltModel(
+        config=config,
+        edges=set(),
+        unmatched=[],
+        modules=sorted(graph),
+        assigned={"alpha.a": "Alpha", "beta.b": "Beta", "gamma.g": "Gamma"},
+        graph=graph,
+    )
+    with caplog.at_level(logging.ERROR):
+        assert _check_required_relationships(built) == 1
+    assert caplog.text.count("unsatisfied") == 2
+
+
+def test_main_check_fails_on_unsatisfied_required_relationship_without_strict_coverage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unsatisfied required edge fails --check with no strict_coverage set.
+
+    SCENARIO: demo.core imports demo.io, but the model requires IO -> Core.
+    MOCK SETUP: repo_root patched to tmp_path; no strict_coverage key.
+    EXPECTED BEHAVIOR: write mode exits 0; --check exits 1 (the check is wired
+    into main, not config-gated, and feeds its exit code).
+    """
+    _strict_repo(tmp_path, _required_model("IO", "Core"))
+    monkeypatch.setattr("forge.gen_c4.repo_root", lambda: tmp_path)
+    monkeypatch.setattr("sys.argv", ["forge-gen-c4"])
+    assert main() == 0
+
+    monkeypatch.setattr("sys.argv", ["forge-gen-c4", "--check"])
+    assert main() == 1
 
 
 def test_main_check_without_strict_coverage_only_warns(

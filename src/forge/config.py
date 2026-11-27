@@ -531,41 +531,128 @@ def _read_toml_file(path: Path) -> dict | None:
         return None
 
 
-def resolve_model_section(repo_root: Path) -> dict | None:
-    """Locate the C4 model table — external file or inline pyproject.
+def _deep_merge(base: dict, overlay: dict) -> dict:
+    """Overlay *overlay* onto *base*, merging nested tables key by key.
 
-    Resolution, highest precedence first:
+    Tables merge so that overriding one knob leaves its siblings in
+    *base* intact. Every other value — scalars and arrays alike — is
+    replaced outright: an array of tables (``[[component]]`` and the
+    rest) describes a whole set, so merging element-wise would need an
+    identity rule the model does not define.
+
+    Args:
+        base: Lower-precedence table (the model file).
+        overlay: Higher-precedence table (the inline ``[tool.forge.c4]``).
+
+    Returns:
+        A new merged table; neither argument is mutated.
+    """
+    merged = dict(base)
+    for key, value in overlay.items():
+        current = merged.get(key)
+        if isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = _deep_merge(current, value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _log_model_overrides(base: dict, overlay: dict, source: str) -> None:
+    """Log, at debug level, the keys where the inline table wins.
+
+    Debug rather than info because the resolver is pure and called several
+    times per commit — by the ``c4`` step, the generator it shells out to,
+    the bootstrap opt-in probe and ``forge-config``. The overlay itself is
+    explained where a reader acts on it: ``forge-config --list`` labels the
+    section, and the configuration reference states the precedence.
+
+    Args:
+        base: The model file's table.
+        overlay: The inline ``[tool.forge.c4]`` table.
+        source: Model file path, for the message.
+    """
+    shadowed = sorted(set(base) & set(overlay))
+    if shadowed:
+        logger.debug(
+            "C4 model: inline [tool.forge.c4] overrides %r for %s.",
+            source,
+            ", ".join(repr(key) for key in shadowed),
+        )
+
+
+def _model_file_in_repo(repo_root: Path, relative: str) -> Path | None:
+    """Resolve a model-file path, refusing one that leaves the repository.
+
+    Applied to both model-file sources, including the conventional
+    ``c4.toml``: the name is fixed, but a symlink at that name is followed
+    by :meth:`~pathlib.Path.is_file` and :meth:`~pathlib.Path.read_text`,
+    so resolving before the check is what makes the refusal hold. A model
+    read from outside the tree would describe code the repo does not
+    contain, and the drift verdict drawn from it would be meaningless.
+
+    Args:
+        repo_root: Repository root directory.
+        relative: Repo-relative path to the model file.
+
+    Returns:
+        The resolved path, or ``None`` when it lands outside *repo_root*.
+    """
+    candidate = (repo_root / relative).resolve()
+    if not candidate.is_relative_to(repo_root.resolve()):
+        logger.error(
+            "C4 model path %r escapes the repository root — refusing to read.",
+            relative,
+        )
+        return None
+    return candidate
+
+
+def resolve_model_section(repo_root: Path) -> dict | None:
+    """Resolve the C4 model table — a model file overlaid with inline keys.
+
+    A model file supplies the base table:
 
     1. ``[tool.forge.c4].config`` — an explicit path to a standalone TOML
        model file (the model's tables live at that file's top level).
     2. A conventional ``c4.toml`` at the repo root (used when present and
        ``[tool.forge.c4]`` carries no inline ``system``).
-    3. The inline ``[tool.forge.c4]`` table itself.
+
+    The inline ``[tool.forge.c4]`` table is then overlaid on it, so a key
+    kept in ``pyproject.toml`` beside the pointer takes effect rather than
+    sitting inert: nested tables merge key by key, arrays replace. A repo
+    whose inline table declares ``system`` is the model itself, and no file
+    is consulted.
 
     Keeping the verbose model out of ``pyproject.toml`` is the point of
     (1)/(2): a Structurizr model is its own artifact, like ``ruff.toml``.
+    ``config`` itself is never part of the merged table — it selects the
+    file, so it can only be read from ``pyproject.toml``.
 
     Args:
         repo_root: Repository root directory.
 
     Returns:
-        The model table dict, or ``None`` when C4 generation is not opted
-        into (no section, no file, and no inline ``system``).
+        The merged model table, or ``None`` when C4 generation is not opted
+        into — no inline ``system`` and no model file that is readable and
+        inside the repository.
     """
     section = read_tool_forge_section(repo_root, "c4")
+    overlay = {key: value for key, value in section.items() if key != "config"}
     configured = section.get("config")
     if configured:
-        candidate = (repo_root / configured).resolve()
-        if not candidate.is_relative_to(repo_root.resolve()):
-            logger.error(
-                "C4 model path %r escapes the repository root — refusing to read.",
-                configured,
-            )
-            return None
-        return _read_toml_file(candidate)
-    if not section.get("system"):
-        return _read_toml_file(repo_root / DEFAULT_C4_MODEL_FILE)
-    return section
+        source = str(configured)
+    elif not section.get("system"):
+        source = DEFAULT_C4_MODEL_FILE
+    else:
+        return section
+    candidate = _model_file_in_repo(repo_root, source)
+    if candidate is None:
+        return None
+    base = _read_toml_file(candidate)
+    if base is None:
+        return None
+    _log_model_overrides(base, overlay, source)
+    return _deep_merge(base, overlay)
 
 
 def load_config(repo_root: Path) -> ForgeConfig:

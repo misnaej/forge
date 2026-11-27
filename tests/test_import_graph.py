@@ -10,6 +10,7 @@ from forge.import_graph import (
     closest_known,
     extract_import_targets,
     resolve_module_name,
+    transitive_closure,
 )
 
 
@@ -174,3 +175,31 @@ def test_ancestor_edges_flat_names_no_dots() -> None:
 def test_ancestor_edges_empty_input_returns_empty_dict() -> None:
     """An empty module set produces an empty edge map."""
     assert ancestor_edges(set()) == {}
+
+
+# ---------------------------------------------------------------------------
+# transitive_closure
+# ---------------------------------------------------------------------------
+
+
+def test_closure_transitive_chain() -> None:
+    """A closure follows a multi-hop chain a -> b -> c."""
+    graph = {"a": {"b"}, "b": {"c"}, "c": set()}
+    assert transitive_closure(graph, {"a"}) == {"a", "b", "c"}
+
+
+def test_closure_cycle_terminates() -> None:
+    """A two-node import cycle terminates instead of looping forever."""
+    graph = {"a": {"b"}, "b": {"a"}}
+    assert transitive_closure(graph, {"a"}) == {"a", "b"}
+
+
+def test_closure_no_edge_seed_returns_itself() -> None:
+    """A seed absent from the graph (no outgoing edges) returns just itself."""
+    assert transitive_closure({}, {"x"}) == {"x"}
+
+
+def test_closure_multi_seed_union() -> None:
+    """Multiple seeds union their independent reachable sets."""
+    graph = {"a": {"b"}, "c": {"d"}}
+    assert transitive_closure(graph, {"a", "c"}) == {"a", "b", "c", "d"}

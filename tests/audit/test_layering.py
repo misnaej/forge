@@ -389,34 +389,6 @@ def test_direct_children_multi_prefix_layer_keys_children_by_prefix() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _closure
-# ---------------------------------------------------------------------------
-
-
-def test_closure_transitive_chain() -> None:
-    """A closure follows a multi-hop chain a -> b -> c."""
-    graph = {"a": {"b"}, "b": {"c"}, "c": set()}
-    assert layering._closure(graph, {"a"}) == {"a", "b", "c"}
-
-
-def test_closure_cycle_terminates() -> None:
-    """A two-node import cycle terminates instead of looping forever."""
-    graph = {"a": {"b"}, "b": {"a"}}
-    assert layering._closure(graph, {"a"}) == {"a", "b"}
-
-
-def test_closure_no_edge_seed_returns_itself() -> None:
-    """A seed absent from the graph (no outgoing edges) returns just itself."""
-    assert layering._closure({}, {"x"}) == {"x"}
-
-
-def test_closure_multi_seed_union() -> None:
-    """Multiple seeds union their independent reachable sets."""
-    graph = {"a": {"b"}, "c": {"d"}}
-    assert layering._closure(graph, {"a", "c"}) == {"a", "b", "c", "d"}
-
-
-# ---------------------------------------------------------------------------
 # evaluate
 # ---------------------------------------------------------------------------
 
