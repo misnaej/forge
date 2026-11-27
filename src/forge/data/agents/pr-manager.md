@@ -30,7 +30,7 @@ forge-pr-review-comments list --pr <PR#>
 git diff --stat main...HEAD
 ```
 
-Report PR status, CI checks, approval state, comment summary. For "what public symbols moved," read `docs/api-digest.md`, not the raw diff.
+Report PR status, CI checks, approval state, comment summary. For "what public symbols moved," read `docs/api-digest.md` when present (`install-forge-bootstrap` generates it), not the raw diff.
 
 ## Task: Fetch & Categorize Review Comments
 
@@ -89,7 +89,7 @@ Rules (sections, word cap, plain-English `## Summary` lead): [FOUNDATION §6 "PR
 
 ## Task: Fill Wrap-up Slots (pre-publication)
 
-The caller ran `forge-pr-wrapup compose` (`/pr` Step 3.92): `code_health/pr_wrapup.md` already holds every mechanical part — header, mode line, skipped or clean reporter sections, Issue Management, Code Quality, CI Status — plus `<!-- forge:fill … -->` slots. Replace each slot line and nothing else: `summary` → one plain line on what the PR does; `findings: <reporter>` → that reporter's findings, each with where and how it was dispositioned, in the exact disposition forms and compressed per `forge-docs/agent-contracts.md` "Report shape"; `recommendation` → one line on what the reader must decide. Never edit a rendered section — re-run `compose` when its inputs changed. Run `forge-pr-wrapup validate code_health/pr_wrapup.md` until it passes. **Each slot marker states its own allowance** and `compose` prints the total; fill to them. Over it, cut before posting: process state first, then compress each disposition — compress, never drop one. A slot must not restate a section the wrap-up renders (FOUNDATION §6). Return the squash-merge message in your report; never write it into the wrap-up. Post nothing.
+The caller ran `forge-pr-wrapup compose` (`/pr` Step 3.92): `code_health/pr_wrapup.md` already holds every mechanical part — header, mode line, skipped or clean reporter sections, Issue Management, Code Quality, CI Status — plus `<!-- forge:fill … -->` slots. Replace each slot line and nothing else: `summary` → labelled bullets per `forge.pr_wrapup_compose.SUMMARY_LABELS`; `findings: <reporter>` → that reporter's findings, each with where and how it was dispositioned, in the exact disposition forms and compressed per `forge-docs/agent-contracts.md` "Report shape"; `recommendation` → one line on what the reader must decide. Never edit a rendered section — re-run `compose` when its inputs changed. Run `forge-pr-wrapup validate code_health/pr_wrapup.md` until it passes. **Each slot marker states its own allowance** and `compose` prints the total; fill to them. Over it, cut before posting: process state first, then compress each disposition — compress, never drop one. A slot must not restate a section the wrap-up renders (FOUNDATION §6). Return the squash-merge message in your report; never write it into the wrap-up. Post nothing.
 
 **Never hard-wrap the slot text** (`forge-docs/agent-contracts.md` "Report shape").
 

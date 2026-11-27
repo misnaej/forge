@@ -65,6 +65,33 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Secret scan first: a leak must fail before anything else runs, and
+      # this step needs no Python. Scope is the commits the PR adds to its
+      # base, not full history — a first-adoption scan of everything
+      # produces a backlog nobody clears, and the gate then gets switched
+      # off; the cost is that pre-adoption history and direct pushes go
+      # unscanned (on a push to the base the range is empty). `--redact` is
+      # not optional: without it a finding prints the secret into a public
+      # log. It masks the matched secret only, so the surrounding line
+      # still shows. The binary is pinned by version AND digest because it
+      # runs unattended: the version alone does not say which bytes
+      # arrive. Keep the pins equal to the shipped recipe's — a test
+      # enforces it (`tests/test_ci_recipe_sync.py`).
+      - name: Secret scan (gitleaks)
+        env:
+          GITLEAKS_VERSION: '8.18.4'
+          GITLEAKS_SHA256: 'ba6dbb656933921c775ee5a2d1c13a91046e7952e9d919f9bac4cec61d628e7d'
+          BASE_REF: ${{ github.base_ref || 'main' }}
+        run: |
+          set -euo pipefail
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL -o "$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
+          echo "${GITLEAKS_SHA256}  ${archive}" | sha256sum -c -
+          tar -xzf "$archive" gitleaks
+          ./gitleaks detect --source . --log-opts="origin/${BASE_REF}..HEAD" \
+            --config=.gitleaks.toml --verbose --redact
+
       - name: Setup Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:

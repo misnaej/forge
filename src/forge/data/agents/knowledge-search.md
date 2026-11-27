@@ -54,7 +54,7 @@ For `local:` or `code:` sources, if `REPO_STRUCTURE.md` exists at the
 repo root, read it first — it is the canonical, drift-verified repo map
 and lets you locate the relevant areas of the codebase quickly instead
 of scanning blind. When the query is about Python symbols (functions,
-classes, signatures), read `docs/api-digest.md` too — it is the
+classes, signatures), read `docs/api-digest.md` too when present — it is the
 auto-generated index of every top-level symbol and lets you cite
 exact signatures without re-parsing source.
 

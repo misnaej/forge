@@ -297,9 +297,10 @@ A broad rule like `Bash(git *)` trades some safety for ergonomics: it is
 tolerable because forge's PreToolUse hooks (`block_raw_git`,
 `block_force_push`, `block_protected_branches`, `block_pr_merge`) block
 the worst calls (commit / push / force-push / merge / protected-branch
-writes) regardless of allow-rules. A few destructive forms
-(`git reset --hard`, `git clean`) are not hook-covered — commands outside
-`allow` still prompt in-context, so prefer a narrow rule for anything new
+writes) regardless of allow-rules, and `block_git_destructive` covers
+every form of `git reset` and any `git clean` carrying `-f`, `-d` or `-x`
+(a dry run stays allowed). A command outside
+`allow` still prompts in-context, so prefer a narrow rule for anything new
 unless a hook already covers its dangerous forms. Reserve `deny` for the
 rare case you want a hard, unconditional block (it cannot be approved
 in-context), not as a routine safety net.
