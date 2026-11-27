@@ -1658,6 +1658,101 @@ def test_unassembled_notes_warning_none_when_no_release_heading() -> None:
     assert upgrade._unassembled_notes_warning("v8.4.1", text) is None
 
 
+def test_unassembled_notes_warning_enumerates_affected_releases() -> None:
+    """With upstream tags known, every release in the gap is named, not just boundaries.
+
+    behavior class: behavior
+    Justification: boundary-only output cannot distinguish tag-lag from a
+    missing assembly (#1118); the enumeration can.
+    """
+    warning = upgrade._unassembled_notes_warning(
+        "v8.4.1",
+        _TWO_RELEASE_CHANGELOG,
+        upstream_tags=["v8.2.0", "v8.3.0", "v8.4.0", "v8.4.1", "v9.0.0"],
+    )
+    assert warning is not None
+    assert "v8.3.0, v8.4.0, v8.4.1" in warning
+    assert "v9.0.0" not in warning
+
+
+def test_unassembled_notes_warning_points_at_upstream_repo() -> None:
+    """The advice resolves to forge's repo URLs, not the consumer's cwd files.
+
+    behavior class: behavior
+    Justification: a cwd-relative changelog.d/ in a consumer checkout says
+    nothing about forge (#1118).
+    """
+    warning = upgrade._unassembled_notes_warning("v8.4.1", _TWO_RELEASE_CHANGELOG)
+    assert warning is not None
+    repo = f"https://github.com/{upgrade._FORGE_GITHUB_REPO}"
+    assert f"{repo}/blob/main/CHANGELOG.md" in warning
+    assert f"{repo}/tree/main/changelog.d" in warning
+
+
+def test_upstream_v_tags_none_when_remote_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unreachable upstream stays silent: None, never a guessed list.
+
+    behavior class: behavior
+    Justification: unknowable input must not fabricate releases (FOUNDATION §1).
+    """
+
+    def _boom(*_args: object, **_kw: object) -> str:
+        msg = "offline"
+        raise OSError(msg)
+
+    monkeypatch.setattr(upgrade, "run_git", _boom)
+    assert upgrade._upstream_v_tags() is None
+
+
+def test_upstream_v_tags_dedupes_annotated_peel_lines(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Annotated tags list twice (tag + ^{} peel); the result dedupes them.
+
+    behavior class: behavior
+    """
+    monkeypatch.setattr(
+        upgrade,
+        "run_git",
+        lambda *_a, **_k: (
+            "abc123\trefs/tags/v8.4.1\nabc123\trefs/tags/v8.4.1^{}\n"
+            "def456\trefs/tags/v8.3.0\n"
+        ),
+    )
+    assert upgrade._upstream_v_tags() == ["v8.3.0", "v8.4.1"]
+
+
+def test_phase1_check_warns_on_unassembled_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """--check surfaces the unassembled-notes warning before any install.
+
+    behavior class: behavior
+    Justification: #1118 — the read-only check must mention the gap, not
+    only post-install surfaces.
+
+    Args:
+        tmp_path: Temporary consumer repo.
+        monkeypatch: Pytest fixture for mocking.
+        caplog: Pytest log capture.
+    """
+    (tmp_path / "pyproject.toml").write_text(_BASE_PYPROJECT)
+    monkeypatch.setattr(upgrade, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(upgrade, "_read_changelog", lambda: _TWO_RELEASE_CHANGELOG)
+    monkeypatch.setattr(upgrade, "_upstream_v_tags", lambda: ["v8.3.0", "v8.4.1"])
+    argv = ["forge-upgrade", "--to", "v8.4.1", "--check"]
+    with patch.object(upgrade.sys, "argv", argv), caplog.at_level("WARNING"):
+        rc = upgrade.main()
+    assert rc == 0
+    msgs = " ".join(r.getMessage() for r in caplog.records)
+    assert "not assembled yet" in msgs
+    assert "v8.3.0, v8.4.1" in msgs
+
+
 # ---------------------------------------------------------------------------
 # pixi-locked repos: the install step is a re-lock, never pip
 # ---------------------------------------------------------------------------
