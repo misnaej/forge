@@ -1,5 +1,7 @@
-# Secret-scan config for the CI gate in .github/workflows/ci.yml.
-# gitleaks' native config location, per FOUNDATION §8's config-home rule.
+# Secret-scan config for the CI gate in .github/workflows/ci.yml, which
+# passes `--config=.gitleaks.toml`, and for the same step in the shipped
+# `forge-docs/ci-recipe.md`. Repo root is gitleaks' own conventional
+# location; no forge CLI wraps it, so no `[tool.forge.*]` key applies.
 #
 # The allowlist is empty, and that is the intended state: forge's own
 # secret-shaped test fixtures are built at runtime (`"AKIA" + "A" * 16`),

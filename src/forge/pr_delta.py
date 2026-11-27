@@ -60,6 +60,9 @@ HIGH_BLAST_RADIUS_PATHS: Final[tuple[str, ...]] = (
     ".github/workflows/",
     "pyproject.toml",
     "ruff.toml",
+    # An allowlist edit here exempts a secret shape from the CI scan, so a
+    # diff touching it weakens a gate and earns a full review.
+    ".gitleaks.toml",
     "FOUNDATION.md",
     "CLAUDE.md",
 )
