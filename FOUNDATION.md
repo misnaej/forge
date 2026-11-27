@@ -264,12 +264,13 @@ Git procedures (gate kinds, destructive forms, base sync):
   `OldName = NewName`, no deprecation warnings, no re-exports of moved
   modules. Clean breaks by default.
 - **No secrets in code or commits.** Use `.env` (gitignored) or env vars;
-  provide `.env.example` with placeholders. CI scans each branch's own
-  commits and **blocks** on a finding (`gitleaks`, the shipped recipe's
-  step — `forge-docs/ci-recipe.md`); a repo that has not adopted that
-  workflow has no such gate. A real credential that reaches history is
-  **rotated, never allowlisted** — an allowlist entry hides it from the
-  scanner and leaves it in the history.
+  provide `.env.example` with placeholders. CI scans the commits a PR adds
+  to its base and **fails the check** on a finding (`gitleaks`, the shipped
+  recipe's step — `forge-docs/ci-recipe.md`); it blocks a *merge* only
+  where that check is required. History before adoption and direct pushes
+  are never scanned, and a pushed secret is already exposed: **rotate it**,
+  never allowlist it — an allowlist entry hides it from the scanner and
+  leaves it in the history.
 - **No private organizational names in code, docs, or examples.** Generic
   placeholders (`<repo>`, `<scope>`, `<service>`, `foo`, `bar`) or in-repo
   names only — never private employer / client / project / process names;
@@ -429,7 +430,7 @@ Pin change (floor, cap, new pin — advisory or not) never rides a feature/fix P
 
 ### Commit messages
 
-- What + why, under the squash message's budget and **content rule** (below). **No Claude/AI attribution.**
+- What + why, under the squash message's 45-word ceiling and **content rule** (below) — but `forge-commit` **refuses** far past it, where the squash message only warns. **No Claude/AI attribution.**
 - Conventional format — types in `forge.pr_squash_comment.CONVENTIONAL_COMMIT_TYPES` (canonical; shell hook synced via `forge-gen-commit-types`).
 
 ### PR descriptions

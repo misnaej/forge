@@ -55,10 +55,13 @@ FORGE_DOCS_CEILINGS: dict[str, int] = {
     "agent-authoring.md": 2100,
     "agent-contracts.md": 1000,
     "backlog-tracks.md": 1300,
-    # Raised from 4400 for the CI secret-scan step: the recipe now carries
-    # the gate FOUNDATION §2 claims, its pinned-digest rationale, and the
-    # allowlist discipline a consumer needs in order to tune it safely.
-    "ci-recipe.md": 4700,
+    # A decision, not a measurement of the page: this is the only page a
+    # consumer copies verbatim, and it now carries five workflows plus the
+    # secret-scan gate and the allowlist discipline needed to tune it.
+    # Past this it stops being adoptable in one sitting and should be split
+    # per workflow rather than grown — so the number is where a split
+    # becomes the right answer, not where the page happens to sit.
+    "ci-recipe.md": 4900,
     "configuration.md": 9800,
     "continuation.md": 800,
     "instruction-compaction.md": 1200,

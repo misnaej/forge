@@ -367,14 +367,15 @@ def test_step_intake_check_skipped_without_intake_dir(tmp_path: Path) -> None:
 
 def test_step_intake_check_fails_on_bad_entry(tmp_path: Path) -> None:
     """A secret-shaped string in an entry fails the step with a problem count."""
-    _write_intake_entry(
-        tmp_path, "# Trap\n\n- seen: 2026-01-01\n\nAKIAABCDEFGHIJKLMNOP\n"
-    )
+    # Built at runtime so no contiguous key-shaped literal sits in source.
+    aws_shaped = "AKIA" + "A" * 16
+    _write_intake_entry(tmp_path, f"# Trap\n\n- seen: 2026-01-01\n\n{aws_shaped}\n")
     result = precommit.step_intake_check(tmp_path)
     assert not result.passed
     assert not result.skipped
     assert "AWS access key-shaped string" in result.output
     assert "1 intake problem(s)" in result.output
+    assert aws_shaped not in result.output
 
 
 def test_step_intake_check_passes_on_valid_entries(tmp_path: Path) -> None:

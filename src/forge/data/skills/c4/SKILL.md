@@ -37,7 +37,7 @@ ask — a wrong guess produces a confidently misleading diagram.
    a **refresh**: read it, re-derive, and ask only about gaps or changes. If
    absent → this is a **first adoption**: run the full interview below.
 
-2. **Orient (machine side).** Read `REPO_STRUCTURE.md`, `docs/api-digest.md`,
+2. **Orient (machine side).** Read `REPO_STRUCTURE.md` and `docs/api-digest.md` when present,
    and `code_health/audit_deps_tree.log` (run `forge-audit-deps --tree` if
    absent). For large repos, delegate the read to the `Explore` agent. Form a
    *draft* component grouping from package/directory boundaries — a proposal to

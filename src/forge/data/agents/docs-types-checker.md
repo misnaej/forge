@@ -45,7 +45,7 @@ Check and fix documentation issues in the specified file(s). Ensure docstrings m
    - Read the function to understand its purpose
    - Read the implementation to see actual parameter usage
    - When the verification log flags a parameter-name or return-type
-     mismatch, cross-check against `docs/api-digest.md` (auto-generated
+     mismatch, cross-check against `docs/api-digest.md` when present (auto-generated
      by `forge-gen-api-digest`) — it carries the canonical signature
      for every top-level symbol and is a one-grep way to confirm the
      real Args before editing

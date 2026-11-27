@@ -335,6 +335,7 @@ Pytest suite mirroring the `src/forge/` layout:
    - test_pr_metrics_bench_results.py: tests for pr_metrics_bench_results (first share commits on main with the bench branch untouched, dirty clone refused, second machine appends, same run id replaces, rejected push retried after merge, all pushes rejected stays local, report from sandbox, page escaping, newer schema refused) — real bare-repo sandbox and clones
    - test_changelog_fragments.py: tests for changelog_fragments (fragment validation, discovery, assembly, and the `forge-changelog` CLI)
    - test_dev_setup_hook.py: tests for the `dev/setup.sh` auto-refresh git-hook extensions, run as real bash subprocesses
+   - test_ci_recipe_sync.py: parity between the secret-scan step in `.github/workflows/ci.yml` and the shipped `forge-docs/ci-recipe.md` (gitleaks version and digest pins, the detect invocation, the `BASE_REF` derivation)
    - test_forge_config.py: tests for forge_config
    - test_foundation_budget.py: shrink-only word-count ratchet on FOUNDATION.md (`FOUNDATION_WORD_BASELINE`)
    - test_gh_comments.py: tests for gh_comments (shared PR-comment plumbing: paging, filtering, attribution)

@@ -1,25 +1,17 @@
 # Secret-scan config for the CI gate in .github/workflows/ci.yml.
 # gitleaks' native config location, per FOUNDATION §8's config-home rule.
 #
-# Two rules bind every allowlist entry below, and both are correctness
-# rules rather than style:
+# The allowlist is empty, and that is the intended state: forge's own
+# secret-shaped test fixtures are built at runtime (`"AKIA" + "A" * 16`),
+# so no contiguous literal exists for a scanner to find. Prefer that over
+# an entry here.
 #
-# 1. An allowlist regex is tested against the matched fragment, never the
-#    line it sits on, so an entry describes a secret-shaped string and not
-#    its context. Anchor and length-bound every one: an unanchored entry
-#    silently exempts every longer string that contains it.
-# 2. A real credential that reaches history is ROTATED, never allowlisted.
-#    An entry here hides it from the scanner and leaves it in the history,
-#    which is the opposite of a fix.
+# Before adding one, read the allowlist discipline in
+# `forge-docs/ci-recipe.md` — it is the home for those rules, because
+# consumers tuning their own config need them. The short version: an entry
+# is matched against the secret itself rather than its line, so anchor and
+# length-bound it; and a real credential that reaches history is ROTATED,
+# never allowlisted.
 
 [extend]
 useDefault = true
-
-[allowlist]
-description = "Synthetic fixtures forge's own tests require"
-regexes = [
-  # tests/test_precommit.py: an AWS-shaped literal the intake-redaction
-  # test needs in order to prove a secret-shaped string in a trap file is
-  # redacted before it reaches rendered output. Never a live key.
-  '''^AKIAABCDEFGHIJKLMNOP$''',
-]
