@@ -80,8 +80,10 @@ and per-PR placement reads that line; any other wording ("deferred to a
 later PR", "see #N") goes unlisted. A wrap-up quotes the reporters' PASS
 lines; verbosity scales with findings, never with the number of checks
 run. `forge-pr-wrapup validate` is the enforcer: it refuses a wrap-up
-that narrates a clean check, carries more than one summary line, or
-exceeds its findings-scaled word budget.
+with an unfilled slot, a body far past its ceiling, a clean section that
+runs past one line, or a summary that is neither a single line nor
+labelled bullets throughout — prose between the header and the first
+section is narration. An unlabelled bullet warns.
 
 ## Delegating agents wait for their helpers
 

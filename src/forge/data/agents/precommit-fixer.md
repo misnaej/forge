@@ -102,7 +102,7 @@ Ruff residue is not auto-fixable. Dispatch by step:
 
 Ask `design-checker` for "report-only refactor guidance for complexity violation X in `file:line`" and apply it yourself.
 
-For an `F401` / `F841` / naming symbol lookup, grep `docs/api-digest.md`.
+For an `F401` / `F841` / naming symbol lookup, grep `docs/api-digest.md` when present (`install-forge-bootstrap` generates it).
 
 ### Phase 3 — Re-verify the steps you touched, then close
 

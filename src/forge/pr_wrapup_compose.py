@@ -94,8 +94,10 @@ def unlabelled_summary_bullets(body: list[str]) -> list[str]:
 
     A bullet is labelled when its text begins with one of
     :data:`SUMMARY_LABELS` in bold, as ``- **shipped:** …``. Lines that
-    are not bullets are not judged here: a short lead line above the
-    bullets is allowed, and the word budget already discourages prose.
+    are not bullets are not judged *here* — but they are not allowed
+    either: :func:`forge.pr_wrapup._check_head` refuses a multi-line
+    summary whose lines are not all bullets, so a prose lead line is
+    narration and fails validation there.
 
     Args:
         body: The summary section's lines.

@@ -76,11 +76,38 @@ jobs:
       # (or run `gha-update`).
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
-          # At least 2 for the tree gate below: it needs HEAD's first
-          # parent, which the default shallow checkout (depth 1) does
-          # not fetch — the gate would then decline every run. Use 0 if
-          # anything in your build derives a version from git history.
-          fetch-depth: 2
+          # 0, because the secret scan below resolves `origin/main..HEAD`:
+          # a shallow checkout has no `origin/main` to diff against. The
+          # tree gate needs at least 2 (HEAD's first parent, which depth 1
+          # does not fetch), and anything deriving a version from git
+          # history needs 0 as well.
+          fetch-depth: 0
+
+      # Secret scan before the rest: a leak must fail fast, and this step
+      # needs no Python. Scanning only the commits the PR adds keeps the
+      # gate adoptable — a first-adoption scan of full history produces a
+      # backlog nobody clears, and the gate then gets switched off, so
+      # history before adoption and direct pushes stay unscanned.
+      # `--redact` masks the matched secret, not the rest of its line, so
+      # the log still shows surrounding context. The binary is pinned by
+      # digest as well as version because it runs unattended; both values
+      # come from the release's own checksums file, and a bump means
+      # refreshing both. Assumes a Linux x64 runner with curl.
+      - name: Secret scan (gitleaks)
+        env:
+          GITLEAKS_VERSION: '8.18.4'
+          GITLEAKS_SHA256: 'ba6dbb656933921c775ee5a2d1c13a91046e7952e9d919f9bac4cec61d628e7d'
+          BASE_REF: ${{ github.base_ref || 'main' }}
+        run: |
+          set -euo pipefail
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL -o "$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
+          echo "${GITLEAKS_SHA256}  ${archive}" | sha256sum -c -
+          tar -xzf "$archive" gitleaks
+          ./gitleaks detect --source . --log-opts="origin/${BASE_REF}..HEAD" \
+            --config=.gitleaks.toml --verbose --redact
+
       - uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b  # v5.3.0
         with:
           python-version: "3.11"
@@ -88,6 +115,24 @@ jobs:
       - name: Install project + forge-scripts
         run: pip install -e ".[dev]"
 ```
+
+The scan needs a `.gitleaks.toml` at your repo root, or the step errors
+rather than passing: `[extend]` with `useDefault = true`, then a narrow
+`[allowlist]`. Two rules bind every allowlist entry. An allowlist regex is
+tested against the matched fragment, never the line it sits on, so each
+entry describes a secret-shaped string and must be anchored and
+length-bounded — an unanchored entry silently exempts every longer string
+containing it. And a real credential that reaches history is **rotated,
+never allowlisted**: an entry hides it from the scanner and leaves it in
+the history. Expect to allowlist synthetic fixtures (a test's fake AWS key)
+and, if you commit a lock file, any digest whose first characters happen to
+spell a token prefix — allowlist the shape, not the value, since a
+regenerated lock carries a different digest. Better still, avoid the entry:
+build a test's secret-shaped fixture at runtime (`"AKIA" + "A" * 16`) so no
+literal exists to flag. Entries are global in 8.18.4, not path-scoped, so
+one exempts that string everywhere. And rotating a leaked credential does
+not clear the finding: the commit stays in the scanned range until it
+leaves it, so the branch stays red until the history is dealt with.
 
 A failing step prints its own captured output under the `see code_health/<step>.log` line whenever `forge.run_context.is_ci()` is true — the log itself lives on a runner that is gone by the time anyone reads the run, so the pointer alone names the failure without saying what was wrong. Blocking failures only, to bound volume; locally nothing changes.
 

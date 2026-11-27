@@ -50,7 +50,7 @@ The hard rules (enforced by FOUNDATION §2):
 
 What forge tooling does:
 
-- The pre-commit hook scans for committed secrets via the consumer's secret-scanning step (not bundled — add `gitleaks` or `trufflehog` if you want strict enforcement).
+- CI scans each branch's own commits with a digest-pinned `gitleaks` and blocks on a finding — the step ships in the recipe (`forge-docs/ci-recipe.md`), so a repo that has not adopted that workflow has no such gate. A local `gitleaks protect --staged` in the pre-commit hook is an optional earlier layer, never a substitute: a developer-side scan is skippable.
 - `block_protected_files` (Claude Code hook) prevents agents from editing known secret files.
 
 What consumers do:
