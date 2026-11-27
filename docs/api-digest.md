@@ -582,6 +582,7 @@ A compact index of this codebase's symbols — every top-level function and clas
 - `_read_toml_file(path: Path) -> dict | None` _(internal)_ — Parse a standalone TOML file, degrading to ``None`` on any failure.
 - `_deep_merge(base: dict, overlay: dict) -> dict` _(internal)_ — Overlay *overlay* onto *base*, merging nested tables key by key.
 - `_log_model_overrides(base: dict, overlay: dict, source: str) -> None` _(internal)_ — Log, at debug level, the keys where the inline table wins.
+- `_model_file_in_repo(repo_root: Path, relative: str) -> Path | None` _(internal)_ — Resolve a model-file path, refusing one that leaves the repository.
 - `resolve_model_section(repo_root: Path) -> dict | None` — Resolve the C4 model table — a model file overlaid with inline keys.
 - `load_config(repo_root: Path) -> ForgeConfig` — Read ``[tool.forge]`` from *repo_root*'s ``pyproject.toml``.
 - `_existing_dirs(repo_root: Path, dirs: list[str]) -> list[str]` _(internal)_ — Filter *dirs* to existing in-repo paths, de-duplicated, order-preserving.

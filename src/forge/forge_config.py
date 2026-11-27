@@ -568,7 +568,8 @@ CONFIG_KEYS: tuple[ConfigKey, ...] = (
         "c4.toml (if present)",
         "Path to a standalone C4 model file (Structurizr DSL skeleton) read "
         "by forge-gen-c4. Keeps the verbose model out of pyproject. The "
-        "section's presence (or a c4.toml) is the opt-in signal.",
+        "section's presence (or a c4.toml) is the opt-in signal. A path that "
+        "resolves outside the repository — by symlink too — is refused.",
     ),
     ConfigKey(
         ("tool", "forge", "c4", "output"),

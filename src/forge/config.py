@@ -580,6 +580,33 @@ def _log_model_overrides(base: dict, overlay: dict, source: str) -> None:
         )
 
 
+def _model_file_in_repo(repo_root: Path, relative: str) -> Path | None:
+    """Resolve a model-file path, refusing one that leaves the repository.
+
+    Applied to both model-file sources, including the conventional
+    ``c4.toml``: the name is fixed, but a symlink at that name is followed
+    by :meth:`~pathlib.Path.is_file` and :meth:`~pathlib.Path.read_text`,
+    so resolving before the check is what makes the refusal hold. A model
+    read from outside the tree would describe code the repo does not
+    contain, and the drift verdict drawn from it would be meaningless.
+
+    Args:
+        repo_root: Repository root directory.
+        relative: Repo-relative path to the model file.
+
+    Returns:
+        The resolved path, or ``None`` when it lands outside *repo_root*.
+    """
+    candidate = (repo_root / relative).resolve()
+    if not candidate.is_relative_to(repo_root.resolve()):
+        logger.error(
+            "C4 model path %r escapes the repository root — refusing to read.",
+            relative,
+        )
+        return None
+    return candidate
+
+
 def resolve_model_section(repo_root: Path) -> dict | None:
     """Resolve the C4 model table — a model file overlaid with inline keys.
 
@@ -606,26 +633,22 @@ def resolve_model_section(repo_root: Path) -> dict | None:
 
     Returns:
         The merged model table, or ``None`` when C4 generation is not opted
-        into (no inline ``system`` and no readable model file).
+        into — no inline ``system`` and no model file that is readable and
+        inside the repository.
     """
     section = read_tool_forge_section(repo_root, "c4")
     overlay = {key: value for key, value in section.items() if key != "config"}
     configured = section.get("config")
     if configured:
-        candidate = (repo_root / configured).resolve()
-        if not candidate.is_relative_to(repo_root.resolve()):
-            logger.error(
-                "C4 model path %r escapes the repository root — refusing to read.",
-                configured,
-            )
-            return None
-        base = _read_toml_file(candidate)
         source = str(configured)
     elif not section.get("system"):
-        base = _read_toml_file(repo_root / DEFAULT_C4_MODEL_FILE)
         source = DEFAULT_C4_MODEL_FILE
     else:
         return section
+    candidate = _model_file_in_repo(repo_root, source)
+    if candidate is None:
+        return None
+    base = _read_toml_file(candidate)
     if base is None:
         return None
     _log_model_overrides(base, overlay, source)

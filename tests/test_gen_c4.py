@@ -261,6 +261,52 @@ def test_resolve_model_section_none_when_file_absent_without_inline_system(
     assert resolve_model_section(tmp_path) is None
 
 
+def _repo_and_outside_model(tmp_path: Path) -> tuple[Path, Path]:
+    """Create a repo dir and a sibling model file outside it.
+
+    Args:
+        tmp_path: Temporary directory holding both.
+
+    Returns:
+        The repo root and the outside model file path.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    outside = tmp_path / "outside" / "evil.toml"
+    outside.parent.mkdir()
+    outside.write_text('system = "Evil"\n')
+    return repo, outside
+
+
+def test_resolve_model_section_refuses_conventional_c4_toml_symlinked_outside(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A root ``c4.toml`` symlinked to a file outside the repo is not read.
+
+    BEHAVIOR: the filename is fixed but a symlink at it is followed, so the
+    resolved target must be checked; the refusal is logged.
+    """
+    repo, outside = _repo_and_outside_model(tmp_path)
+    (repo / "c4.toml").symlink_to(outside)
+    _write_pyproject(repo, "[tool.forge]\n")
+    with caplog.at_level(logging.ERROR):
+        assert resolve_model_section(repo) is None
+    assert "escapes the repository root" in caplog.text
+
+
+def test_resolve_model_section_refuses_explicit_config_escaping_root(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An explicit ``config`` path leaving the repo is refused and logged."""
+    repo, _outside = _repo_and_outside_model(tmp_path)
+    _write_pyproject(repo, '[tool.forge.c4]\nconfig = "../outside/evil.toml"\n')
+    with caplog.at_level(logging.ERROR):
+        assert resolve_model_section(repo) is None
+    assert "escapes the repository root" in caplog.text
+
+
 def test_resolve_model_section_logs_overridden_key_names_once(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
