@@ -12,6 +12,14 @@
 
 ## Forge-specific rules
 
+- **Mechanical-first is a planning-time default here**: when planning
+  forge work, if a step's output is determined by the tree,
+  GitHub state, or caller-supplied text, name the CLI in the plan — do not
+  spawn an agent for it. FOUNDATION §3's mandatory delegations and §11's
+  agent boundaries stand regardless; this default governs discretionary
+  agent use only. An agent on a mechanical step pays a model round trip
+  per run and can act on a stale read of the tree it inspects.
+
 - **A fix lands in the repo or it did not happen.** FOUNDATION §12 says
   process feedback ships into the rule surface; this is what that means in
   practice when the feedback is a defect you found rather than a
