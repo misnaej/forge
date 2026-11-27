@@ -12,9 +12,8 @@
 
 ## Forge-specific rules
 
-- **Mechanical-first is a planning-time default here** (forge-development
-  practice, deliberately NOT in FOUNDATION — that ships to consumers):
-  when planning forge work, if a step's output is determined by the tree,
+- **Mechanical-first is a planning-time default here**: when planning
+  forge work, if a step's output is determined by the tree,
   GitHub state, or caller-supplied text, name the CLI in the plan — do not
   spawn an agent for it. FOUNDATION §3's mandatory delegations and §11's
   agent boundaries stand regardless; this default governs discretionary
