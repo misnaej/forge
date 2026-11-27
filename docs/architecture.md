@@ -20,18 +20,18 @@ graph TB
         audit_suite["<b>Audit suite</b><br/>[Python (AST)]<br/>Deeper code-health audits: dependency graph, duplication, dead code, doc-claim checks"]
         verifiers["<b>Verifiers</b><br/>[Python (AST)]<br/>Single-responsibility pre-commit checks: docstrings, naming, repo structure, wiring, CVE usage"]
         installers["<b>Installers</b><br/>[Python + gh]<br/>Install/refresh git hooks, CLAUDE.md, labels, README badges, and Claude settings; bootstrap umbrella"]
-        doc_generators["<b>Doc generators</b><br/>[Python]<br/>Generate drift-checked docs: API digest, CLI reference, and this C4 model"]
+        doc_generators["<b>Doc generators</b><br/>[Python]<br/>Generate drift-checked docs: API digest, CLI reference, config tables, this C4 model; verify the agent-architecture doc"]
         git_hook_entrypoints["<b>Git-hook entrypoints</b><br/>[Python]<br/>Managed post-merge / post-checkout hooks: foundation drift check + backgrounded self-refresh"]
-        release_tooling["<b>Release tooling</b><br/>[Python + git/gh]<br/>Rolling-next versioning, tag-per-merge releases, PR squash messages, continuation status panel"]
-        smart_test["<b>Smart-test</b><br/>[Python (ast) + git/pytest]<br/>Change-driven test selection by import depth: git diff + reverse import graph (+ opt-in mock-patch edges / coverage union) run in depth-tiered pytest batches"]
+        release_tooling["<b>Release tooling</b><br/>[Python + git/gh]<br/>Rolling-next versioning, changelog fragments, tag-per-merge releases, install-surface and CI tree-gate checks"]
+        smart_test["<b>Smart-test</b><br/>[Python (ast) + git/pytest]<br/>Change-driven test selection by import depth, with per-run resource profiling: git diff + reverse import graph (+ opt-in mock-patch edges / coverage union) run in depth-tiered pytest batches"]
         config_shared["<b>Config + shared</b><br/>[Python]<br/>Shared foundation: pyproject/[tool.forge] config, git + logging utils, CI run-context, ruff/doctor, single-scan pip-audit helper"]
         pr_workflow["<b>PR workflow</b><br/>[Python + gh]<br/>Publishes and tends a PR: create, wrap-up compose and post, squash message, review comments, watch, evidence and plan freshness"]
         guarded_vcs_surface["<b>Guarded VCS surface</b><br/>[Python]<br/>The version-control surface agents are routed through: commit, base-branch sync, checkpoint recovery"]
         backlog_planning["<b>Backlog + planning</b><br/>[Python + gh]<br/>GitHub-native backlog: index curation, intake of sightings, plan readiness, drift and overlap checks, tracks"]
         harness_integration["<b>Harness integration</b><br/>[Python]<br/>Turns the shipped agents, skills and guard wiring into each harness's generated form"]
-        agent_telemetry["<b>Agent telemetry</b><br/>[Python]<br/>Measures what agent sessions cost and what PRs take: session profiling, token accounting, PR metrics and their charts"]
-        emergency_ledger["<b>Emergency ledger</b><br/>[Python]<br/>Human-armed ceremony bypass and its audit ledger: what was skipped, who armed it, what verification is still owed"]
-        continuation["<b>Continuation</b><br/>[Python]<br/>The note between sessions: the generated status panel and the written hand-off below it"]
+        cost_metrics["<b>Cost metrics</b><br/>[Python]<br/>What a session and a PR cost: agent session profiling, token accounting, and the PR metrics and charts built on them"]
+        emergency_bypass["<b>Emergency bypass</b><br/>[Python]<br/>Human-armed ceremony bypass: what was skipped, who armed it, and what verification is still owed afterwards"]
+        continuation["<b>Continuation</b><br/>[Python]<br/>State between sessions: the generated status panel, the written hand-off below it, and the agent-memory audit count"]
     end
     forge_developer -->|"develops, commits, runs CLIs"| forge_scripts
     consumer_repo -->|"installs + invokes forge CLIs/hooks"| forge_scripts
@@ -40,11 +40,6 @@ graph TB
     pre_commit_dispatcher -->|"runs audit steps via subprocess"| audit_suite
     pre_commit_dispatcher -->|"runs --check drift steps"| doc_generators
     installers -->|"bootstrap runs generators"| doc_generators
-    agent_telemetry -->|"imports"| config_shared
-    agent_telemetry -->|"imports"| doc_generators
-    agent_telemetry -->|"imports"| emergency_ledger
-    agent_telemetry -->|"imports"| harness_integration
-    agent_telemetry -->|"imports"| release_tooling
     audit_suite -->|"imports"| config_shared
     backlog_planning -->|"imports"| config_shared
     backlog_planning -->|"imports"| pr_workflow
@@ -55,23 +50,27 @@ graph TB
     continuation -->|"imports"| config_shared
     continuation -->|"imports"| pr_workflow
     continuation -->|"imports"| release_tooling
+    cost_metrics -->|"imports"| config_shared
+    cost_metrics -->|"imports"| doc_generators
+    cost_metrics -->|"imports"| harness_integration
+    cost_metrics -->|"imports"| release_tooling
     doc_generators -->|"imports"| audit_suite
     doc_generators -->|"imports"| config_shared
     doc_generators -->|"imports"| pr_workflow
-    emergency_ledger -->|"imports"| config_shared
-    emergency_ledger -->|"imports"| pr_workflow
+    emergency_bypass -->|"imports"| config_shared
+    emergency_bypass -->|"imports"| pr_workflow
     git_hook_entrypoints -->|"imports"| config_shared
-    guarded_vcs_surface -->|"imports"| agent_telemetry
     guarded_vcs_surface -->|"imports"| backlog_planning
     guarded_vcs_surface -->|"imports"| config_shared
+    guarded_vcs_surface -->|"imports"| cost_metrics
     guarded_vcs_surface -->|"imports"| doc_generators
-    guarded_vcs_surface -->|"imports"| emergency_ledger
+    guarded_vcs_surface -->|"imports"| emergency_bypass
     guarded_vcs_surface -->|"imports"| installers
     guarded_vcs_surface -->|"imports"| pr_workflow
     guarded_vcs_surface -->|"imports"| pre_commit_dispatcher
     guarded_vcs_surface -->|"imports"| release_tooling
-    harness_integration -->|"imports"| agent_telemetry
     harness_integration -->|"imports"| config_shared
+    harness_integration -->|"imports"| cost_metrics
     harness_integration -->|"imports"| installers
     installers -->|"imports"| config_shared
     installers -->|"imports"| harness_integration
@@ -80,25 +79,24 @@ graph TB
     pr_workflow -->|"imports"| backlog_planning
     pr_workflow -->|"imports"| config_shared
     pr_workflow -->|"imports"| continuation
-    pr_workflow -->|"imports"| emergency_ledger
+    pr_workflow -->|"imports"| emergency_bypass
     pr_workflow -->|"imports"| pre_commit_dispatcher
     pr_workflow -->|"imports"| release_tooling
     pre_commit_dispatcher -->|"imports"| backlog_planning
     pre_commit_dispatcher -->|"imports"| config_shared
     pre_commit_dispatcher -->|"imports"| continuation
-    pre_commit_dispatcher -->|"imports"| emergency_ledger
+    pre_commit_dispatcher -->|"imports"| emergency_bypass
     pre_commit_dispatcher -->|"imports"| installers
     pre_commit_dispatcher -->|"imports"| pr_workflow
     pre_commit_dispatcher -->|"imports"| release_tooling
     release_tooling -->|"imports"| config_shared
     release_tooling -->|"imports"| doc_generators
     release_tooling -->|"imports"| installers
-    smart_test -->|"imports"| agent_telemetry
     smart_test -->|"imports"| config_shared
-    smart_test -->|"imports"| emergency_ledger
     smart_test -->|"imports"| pr_workflow
     verifiers -->|"imports"| audit_suite
     verifiers -->|"imports"| config_shared
+    verifiers -->|"imports"| harness_integration
     verifiers -->|"imports"| pr_workflow
     classDef component fill:#e0f2fe,stroke:#0369a1,color:#0c4a6e
     classDef container fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
@@ -121,8 +119,8 @@ graph TB
     class guarded_vcs_surface component
     class backlog_planning component
     class harness_integration component
-    class agent_telemetry component
-    class emergency_ledger component
+    class cost_metrics component
+    class emergency_bypass component
     class continuation component
 ```
 <!-- forge:c4:end -->

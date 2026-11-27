@@ -824,9 +824,11 @@ tags = ["third-party"]   # exclude_tags = ["third-party"] slims it from views
 cluster into one labelled band — containers band inside the system boundary,
 externals beside it — so a dense system reads as a few organized zones
 ("Capabilities", "Our infrastructure", "Third-party", …). Ungrouped elements
-render flat, unchanged. **A `group` on a `[[component]]` is parsed and then
-ignored**: components are never banded inside their container, so thin a dense
-Component view with `direction`, `tags` or `render.route_views` instead.
+render flat, unchanged. **A `group` on a `[[component]]` or a `[[person]]` is
+parsed and then ignored**: components are never banded inside their container,
+and every person is placed in one fixed `Actors` band whatever their `group`
+says. Thin a dense Component view with `direction`, `tags` or
+`render.route_views` instead.
 
 ```toml
 [[container]]
