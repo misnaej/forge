@@ -570,6 +570,21 @@ The layer tables are the enforcement source; a C4 model
 (`[tool.forge.c4]`) describing the same packages stays the *descriptive*
 view — keep the two aligned when both exist.
 
+**What it does not express, and will not.** Two rules are the complement
+of this one, and an import-permission tool (import-linter and its kin)
+expresses both natively: **direction**, that a layer's members may not
+import upward, and **forbidding** a named import outright. A child that
+reaches both of two layers satisfies `composes_all_of` however its edges
+point, and a package in no layer cannot be named by any clause — give it
+a layer of its own with no `composes_all_of` if it must be nameable.
+
+**It also fits some layers much better than others.** The clause is
+sharp where every member shares a seam, and misfits a layer of
+heterogeneous members, where a leaf that correctly imports nothing gets
+flagged and the contract degrades into an `exempt` list. A layer needing
+most of its children excused is a sign the clause is wrong for that
+layer, not that the exemptions need better wording.
+
 ```toml
 [[tool.forge.layering.layer]]
 name = "pipelines"
@@ -819,11 +834,16 @@ name = "Datadog"
 tags = ["third-party"]   # exclude_tags = ["third-party"] slims it from views
 ```
 
-**Grouping into bands.** Every element also accepts a `group = "<band name>"`.
-In the **Container view**, elements sharing a `group` cluster into one labelled
-band — containers band inside the system boundary, externals beside it — so a
-dense system reads as a few organized zones ("Capabilities", "Our
-infrastructure", "Third-party", …). Ungrouped elements render flat, unchanged.
+**Grouping into bands.** `[[container]]` and `[[external]]` accept a
+`group = "<band name>"`. In the **Container view**, elements sharing a `group`
+cluster into one labelled band — containers band inside the system boundary,
+externals beside it — so a dense system reads as a few organized zones
+("Capabilities", "Our infrastructure", "Third-party", …). Ungrouped elements
+render flat, unchanged. **A `group` on a `[[component]]` or a `[[person]]` is
+parsed and then ignored**: components are never banded inside their container,
+and every person is placed in one fixed `Actors` band whatever their `group`
+says. Thin a dense Component view with `direction`, `tags` or
+`render.route_views` instead.
 
 ```toml
 [[container]]

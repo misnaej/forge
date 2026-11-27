@@ -16,6 +16,27 @@ transitive closure — not per module, which drowns the signal in leaf
 noise. The layer package's own ``__init__`` module is the layer surface,
 not a child, and is never evaluated.
 
+Scope, stated so it is not mistaken for more: this gate expresses the
+positive clause and nothing else. **Direction** — that a layer's members
+may not import *upward* — and **forbidding** a named import outright are
+the complement, and an import-permission tool (import-linter and its
+kin) expresses both natively. Neither is planned here: a layer reaching
+both of two layers satisfies ``composes_all_of`` however its edges
+point, and a package in no layer cannot be named by any clause at all.
+Classifying such a package in a layer of its own, with no
+``composes_all_of``, is the cheap way to make it nameable.
+
+The clause also fits some layers far better than others. It is sharp
+where every member genuinely shares a seam — forge's own ``audit`` layer
+composes ``audit-common`` with no exemptions, because every
+``forge-audit-*`` script must speak that log/scope/severity contract. It
+misfits a layer of heterogeneous members, where a leaf that correctly
+imports nothing is flagged for it and the contract degrades into an
+``exempt`` list; forge's ``smart-test`` layer exempts five of seven
+children for exactly that reason. A layer needing most of its children
+excused is evidence the clause is wrong for it, not that the exemptions
+need better wording.
+
 Configuration (``pyproject.toml``)::
 
     [tool.forge.layering]
